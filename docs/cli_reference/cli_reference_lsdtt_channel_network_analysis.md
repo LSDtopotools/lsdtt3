@@ -34,6 +34,7 @@ key: value
 | 5 | Junction selection for bearing / angle analyses |
 | 6 | Channel-link bearing analysis |
 | 7 | Junction-angle analysis |
+| 7b | Bearing and junction-angle statistics by group (optional, `write_channel_bearing_statistics` / `write_junction_angle_statistics`) |
 | 8 | Junction drainage-area ratios, then Strahler / Tokunaga ordering and output |
 
 Steps 6 and 7 operate on the **selected junction subset** (see junction selection below). Step 8 (junction area ratios, Strahler / Tokunaga) always operates on the **full extracted network**.
@@ -155,6 +156,298 @@ One record is written per valid two-donor junction. Attributes include: junction
 | `write_junction_angle_bearing_vectors` | bool | `false` | `<write_fname>_junction_angle_bearing_vectors.<ext>` — three short line features per junction (donor 1, donor 2, receiver) for visual QA. CSV is not supported. |
 
 ---
+
+## Step 7b: Bearing and junction-angle statistics by group
+
+Steps 6 and 7 write one record per channel link and per junction. Step 7b asks
+whether their angles differ between groups: between Strahler orders, between
+basins or regions, or between lithologic units. It summarises each group's
+distribution, compares the groups pairwise (or one against the rest), and
+writes the comparisons with two kinds of p-value. Two switches turn it on:
+`write_channel_bearing_statistics` and `write_junction_angle_statistics`. They
+add output files; the record files are unchanged except for the lithology
+columns listed below.
+
+The statistical model and its tolerances are in
+[Channel-link bearing statistics](../design_and_algorithms/channel_bearing_statistics.md)
+and [Lithology and channel steepness statistics](../design_and_algorithms/lithology_channel_statistics.md).
+
+### Angular convention
+
+- **Bearings** are in degrees, measured clockwise from grid north (the projected
+  CRS's y axis). A link's bearing is the direction from its upstream junction to
+  its downstream junction; the **directional** form uses this downstream bearing
+  (period 360).
+- The **axial** form folds a bearing and its reverse onto one value
+  (theta and theta + 180, period 180), so its mean lies in [0, 180). Use it when
+  the direction of flow along a link is not the quantity of interest.
+  `channel_bearing_angular_type` chooses `directional`, `axial` or `both` (default).
+- **Junction angles** are not directions. `alpha` is the donor opening angle
+  (`donor_opening_angle_deg`), and the sector magnitudes `beta_min` and `beta_max`
+  are the smaller and the larger donor-receiver angle. The beta values do not
+  depend on which donor is labelled 1 or 2. They are compared with linear
+  statistics (KS and linear Wasserstein), not circular ones.
+- **D8 quantisation.** The flow direction is on a grid, so a link's bearing is
+  quantised: a two-node link is exactly 0, 45, 90, ... degrees. The axial
+  mean resultant length cancels the four-fold D8 pattern, so the axial statistics
+  are the more robust of the two to D8 quantisation. The summaries report
+  `fraction_on_d8_multiples` (within 0.5 degrees of a multiple of 45) so the
+  quantisation can be seen directly.
+
+### Grouping and stratifying keys
+
+| Key | Applies to | Groups |
+|---|---|---|
+| `strahler_order` | bearings and junctions | the link's own order (bearings) or the order at the confluence pixel (junctions). `channel_bearing_max_order_group` = k pools every order >= k into one group labelled `k+` (default 0 = no pooling). High orders are small, so pooling is usually needed. |
+| `donor_order_pair` | junctions only | the two donor orders, as `i_j`. Refused for bearings. |
+| `basin` | bearings and junctions | the basin holding the record. `channel_bearing_basin_order` = 0 uses the analysis-selection outlets (nested outlets resolve so the innermost wins). k > 0 uses the Strahler order-k basin; records of order above k have no such basin and are excluded and counted. |
+| `region` | bearings and junctions | the region in `channel_region_fname` (a polygon field or a code raster) at the record's pixel. |
+| `lithology` | bearings and junctions | the unit of the record, with `lithology_fname` (below). |
+| `lithology_interior` | junctions only | the unit of the junction's pixel, but only when all three sampled arms are in it. |
+
+`*_stratify_by` takes a second key whose levels are analysed separately (or
+`none`); it must differ from the group key. Groups are compared only within a
+level of the stratum. A pooled level `all` is always written.
+
+Keys for bearings are set with `channel_bearing_group_by` and
+`channel_bearing_stratify_by`; keys for junctions with `junction_angle_group_by` and
+`junction_angle_stratify_by`.
+
+### Lithology grouping and the "mixed" and "arms disagree" groups
+
+With `lithology_fname`, each link takes the **length-weighted majority unit** of the
+nodes its bearing was fitted on (ties go to the lower code). Its **purity** is that
+majority's share of the length. A link below `lithology_min_majority_fraction`
+(default 0.8) goes into a group named `mixed (<80% one unit)`, with the percentage
+following the parameter. Every record keeps its majority unit and its purity in
+the record columns, so a record can be re-grouped later.
+
+For junctions there are two selections:
+
+- `lithology` (the group key): every junction, by the unit of its own pixel.
+- `lithology_interior`: the unit only when the three sampled arms (donor 1, donor 2,
+  receiver) all have that unit with purity at or above the threshold; otherwise the
+  group is `arms disagree`.
+
+**Descriptive only.** The `mixed` and `arms disagree` groups have summary and rose
+rows (with the note `descriptive only: not compared`). They are never compared, they
+are never part of `rest` in one-vs-rest mode, and they are not compared with a
+reference. The reason is that they have no single unit: pooling them into `rest`
+would put a contact effect into a lithology contrast. The run prints how many
+records this leaves out of the comparisons.
+
+Unmapped records form a group like any other unit.
+
+### Comparison modes and the Holm adjustment
+
+`channel_bearing_comparison_mode` (also used for junction angles) is one of:
+
+- `pairwise`: every pair of groups in a stratum. Default.
+- `one_vs_rest`: each group against the other (eligible) records of its stratum.
+- `none`: summaries and roses only.
+- `reference` comparisons are added whenever `channel_bearing_reference_fname` is
+  given: each group is also compared with the bearings in that file (a
+  `_channel_link_bearings.csv` from another run, read from the column
+  `channel_bearing_reference_column`, default `bearing_deg`). With
+  `channel_bearing_reference_order_filter` > 0 only reference rows of that Strahler
+  order are used. Reference comparisons form a family of their own.
+
+Groups smaller than `channel_bearing_min_group_size` (default 30) are summarised
+with `meets_min_group_size` = 0 and take no part in any comparison. The Holm
+adjustment is applied per family (per stratum and angular type). The comparisons
+for bearings are circular Wasserstein distance (W1, in degrees) and Kuiper's V;
+for junction angles they are the KS statistic D and linear W1. With
+`channel_bearing_rotation_invariant`, the bearing W1 also allows one global
+rotation; comparisons with more than 250000 pairs of records are then skipped
+(nan, with a note).
+
+### Count and length weighting
+
+Each summary is given twice. The **count** version gives every link weight 1. The
+**length** version weights each link by its `total_length_metres` (the whole link,
+not the sampled part). Both are written in the group summary.
+
+### Block order, block permutation and the p-values
+
+Links in one valley are not independent, so the p-values that assume independence
+are optimistic. Two things are reported beside them.
+
+**Blocks.** `channel_bearing_block_order` = 0 (default) chooses the block order
+automatically: the largest Strahler order k whose order-k basins, holding at least
+one analysed record, number at least `channel_bearing_min_blocks` (default 30). A
+block is one order-k basin, and `n_blocks` in every summary and comparison row is
+the number of distinct blocks that contribute records to the group. `n` is the count
+of records, `n_blocks` the count of quasi-independent units.
+
+The reason for the default of 30 is a resolution argument. The smallest attainable
+permutation p is
+1 / (number of distinct label assignments + 1). With 30 blocks even a 5-vs-25
+split has C(30, 5) = 142506 assignments, so the number of permutations, not the
+block count, sets the resolution. With about 10 blocks an unbalanced split can have
+fewer than 100 assignments and the p-value is coarse.
+
+- A positive `channel_bearing_block_order` is used as given. If it has fewer blocks
+  than `channel_bearing_min_blocks`, the run notes it.
+- **Too small.** If no order reaches the minimum, no blocks are defined. Every
+  permutation p is nan, with the note `network too small for block permutation`,
+  the descriptive statistics are still written, and a WARNING is printed.
+- **Records above the block order** (links of order above k, for the chosen k)
+  have no block. Their summary rows say so in `note`, and `n_unblocked` counts them.
+  They are summarised and enter the iid comparisons, but take no part in the
+  block permutation.
+- The counts per order are in `<write_fname>_channel_network_block_order_counts.csv`
+  (`strahler_order, n_basins_with_records, chosen`), so the automatic choice can be
+  checked.
+
+**Permutation.** `channel_bearing_permutations` (default 999; 0 = off) and
+`channel_bearing_permutation_seed` (default 1) give each comparison a block
+permutation p-value:
+
+    permutation_p = (1 + #{T* >= T}) / (1 + permutations)
+
+T is Kuiper's V for bearings and the KS D for junction angles, computed over the
+records that have a block. What is permuted depends on the key:
+
+- **Spatial keys** (`basin`, `region`, `lithology`): each block takes the majority
+  group of its records in the comparison (ties go to group a), and the group labels
+  are permuted among the blocks. `permutation_statistic` is T computed on these
+  block-majority samples, so it is not the same number as the record-level T in
+  `kuiper_V` or `ks_D`.
+- **Order keys** (`strahler_order`, `donor_order_pair`): the group labels are
+  permuted among the records within each block, so block membership is kept.
+
+The p is nan, with a note, when a group has no blocked record, when every block
+has the same majority group, or, for order keys, when no block holds both groups.
+Each comparison row has its own random stream (`std::mt19937_64`, seeded from the
+seed and the row's labels), so a row's p does not depend on which other rows were
+run.
+
+**Labels.** The iid p-values are named by the statistic: `kuiper_p_iid_approx` (bearing
+comparisons), `ks_p_iid_approx` (junction comparisons) and `rayleigh_p_iid_approx`
+(the per-group Rayleigh test). Their `_iid_approx` suffix means they assume
+independent records and use an approximation to the null distribution; they are
+given beside `n_blocks` so the two can be read together. The `kuiper_p_holm` and
+`ks_p_holm` columns are the Holm-adjusted iid p-values. `permutation_p` is the
+block permutation p-value. These are reported values, not verdicts: read them with
+the block counts.
+
+### Outputs
+
+All files are written under `write_fname`. Bearing statistics write four files and
+junction statistics two; the block-order counts file is written with either.
+
+| File | Columns |
+|---|---|
+| `_channel_bearing_group_summary.csv` | `measurand, group_key, group_value, stratum_key, stratum_value, angular_type, period_deg, n, n_blocks, total_length_m`, the count-weighted `circular_mean_deg_count, mean_resultant_length_count, circular_variance_count, circular_sd_deg_count`, the length-weighted `circular_mean_deg_length, mean_resultant_length_length, n_eff_length`, the Rayleigh `rayleigh_z, rayleigh_p_iid_approx`, `fraction_on_d8_multiples, meets_min_group_size, block_order, block_order_mode, min_blocks, n_unblocked, note`. |
+| `_channel_bearing_comparisons.csv` | `measurand, stratum_key, stratum_value, angular_type, comparison_mode, group_a, group_b, n_a, n_b, n_blocks_a, n_blocks_b, circular_wasserstein_deg, rotation_invariant, optimal_rotation_deg, kuiper_V, kuiper_p_iid_approx, kuiper_p_holm, n_comparisons_in_family, permutation_p, note, permutation_statistic`. |
+| `_channel_bearing_rose.csv` | `measurand, group_key, group_value, stratum_key, stratum_value, angular_type, bin_centre_deg, bin_lower_deg, bin_upper_deg, count, fraction_count, length_m, fraction_length`. Bins are centred on 0, so D8 directions sit on bin centres (`channel_bearing_rose_bin_width_degrees`, default 10). |
+| `_channel_bearing_group_membership.csv` | One row per record: its upstream and downstream junction, `stream_order, total_length_m, bearing_deg, axial_bearing_deg`, its `group_value` and `stratum_value`, `basin_id, block_id, region_value, region_purity`. |
+| `_junction_angle_group_summary.csv` | `measurand, group_key, group_value, stratum_key, stratum_value, n, n_blocks, mean_deg, median_deg, sd_deg, q25_deg, q75_deg, iqr_deg, meets_min_group_size, median_ci_low_deg, median_ci_high_deg, n_bootstrap, block_order, block_order_mode, min_blocks, n_unblocked, note`. The median interval is given only for lithology-keyed rows (one bootstrap stream per run). |
+| `_junction_angle_comparisons.csv` | `measurand, stratum_key, stratum_value, comparison_mode, group_a, group_b, n_a, n_b, n_blocks_a, n_blocks_b, ks_D, ks_p_iid_approx, ks_p_holm, n_comparisons_in_family, linear_wasserstein_deg, permutation_p, note, permutation_statistic`. For lithology rows the `note` carries `group_key=lithology` or `group_key=lithology_interior`. |
+| `_channel_network_block_order_counts.csv` | `strahler_order, n_basins_with_records, chosen`, one row per order. |
+
+With `lithology_fname` the record files gain columns at the end:
+
+- `_channel_link_bearings.csv`: `lith_code, lith_name, lith_majority_fraction`.
+- `_junction_angles.csv`: `junction_lith_code, junction_lith_name, donor_1_lith_code,
+  donor_1_lith_fraction, donor_2_lith_code, donor_2_lith_fraction, receiver_lith_code,
+  receiver_lith_fraction, lith_all_arms_agree`.
+
+Without `lithology_fname` every record output is unchanged.
+
+Two more outputs come from the lithology map: `<write_fname>_lithology_units.csv`
+(`code, name, map_values, n_pixels, area_km2, n_pixels_in_analysed_basins`) and,
+with `write_lithology_code_raster`, `<write_fname>_lithology_code.tif`.
+
+### Worked example: West Virginia, the Allegheny Front
+
+This run uses the 2185 x 1148 cell COP30 box of the Allegheny Front at 30 m (EPSG:32617),
+with Macrostrat SGMC `lith_primary` grouped into five units (codes 10 sandstone,
+20 siltstone, 30 shale, 40 limestone, 90 alluvium) by the crosswalk used in the
+chi example. The parameter file is the key lines of the lithology run:
+
+```
+read_fname: wvbig_DEM.tif
+threshold_contributing_pixels: 300
+analyse_all_junctions: true
+only_complete_basins: true
+link_sampling_mode: full_link
+link_sampling_min_nodes: 5
+write_channel_link_bearings: true
+write_channel_link_bearing_vectors: true
+write_junction_angles: true
+write_strahler_channels: true
+write_channel_bearing_statistics: true
+channel_bearing_angular_type: both
+channel_bearing_max_order_group: 4
+channel_bearing_rose_bin_width_degrees: 10
+write_junction_angle_statistics: true
+write_fname: wvbig_lith_by_unit
+lithology_fname: wvbig_macrostrat_units.fgb
+lithology_field_name: lith_primary
+lithology_crosswalk_fname: wvks_crosswalk_lith_primary.csv
+lithology_min_majority_fraction: 0.8
+lithology_bootstrap_replicates: 1000
+lithology_bootstrap_random_seed: 5489
+write_lithology_code_raster: true
+channel_bearing_comparison_mode: one_vs_rest
+channel_bearing_group_by: lithology
+channel_bearing_stratify_by: strahler_order
+junction_angle_group_by: lithology
+junction_angle_stratify_by: strahler_order
+```
+
+The block order is automatic: order 3 (108 basins with records); order 4 has 23,
+below the minimum of 30. Of 2974 links, 732 are `mixed (<80% one unit)` (majority sandstone 266,
+siltstone 40, shale 250, limestone 159, alluvium 17); of 953 junctions, 489 are
+`arms disagree` in `lithology_interior`. No channel node is unmapped.
+
+Axial bearings, all orders pooled, one-vs-rest against the other comparable records
+(counts, n_blocks as in the file, 999 permutations, seed 1):
+
+| Unit | n (rest) | n_blocks (rest) | Axial mean / R (count) | W1 (deg) | Kuiper V | kuiper_p_iid_approx | kuiper_p_holm | permutation_p |
+|---|---|---|---|---|---|---|---|---|
+| sandstone | 585 (1657) | 66 (102) | 110.6 / 0.047 | 2.68 | 0.069 | 0.215 | 0.464 | 0.562 |
+| siltstone | 318 (1924) | 27 (101) | 114.8 / 0.138 | 2.97 | 0.083 | 0.291 | 0.464 | 0.959 |
+| shale | 945 (1297) | 82 (91) | 113.4 / 0.124 | 2.47 | 0.065 | 0.154 | 0.464 | 0.678 |
+| limestone | 343 (1899) | 46 (106) | 63.7 / 0.023 | 4.50 | 0.118 | 0.008 | 0.041 | 0.863 |
+| alluvium | 51 (2191) | 5 (108) | 110.9 / 0.322 | 9.66 | 0.236 | 0.062 | 0.249 | 0.200 |
+
+The `rest` count excludes the mixed records: 2974 - 732 mixed - 585 sandstone =
+1657. Mixed has its own row (585, not compared): 732 links, 85 blocks, axial mean
+110.7, R 0.262, and no comparison row.
+
+Junction angles, by lithology (median alpha, with the bootstrap interval of the
+median, n junctions in brackets):
+
+| Unit | lithology | lithology_interior |
+|---|---|---|
+| sandstone | 62.3 [60.3, 68.2] (284) | 64.8 [60.1, 72.5] (126) |
+| siltstone | 66.2 [58.9, 72.4] (113) | 70.7 [60.3, 76.9] (76) |
+| shale | 60.3 [57.0, 65.5] (385) | 58.4 [54.5, 60.9] (206) |
+| limestone | 63.9 [59.3, 69.6] (155) | 66.9 [61.2, 80.0] (53) |
+| alluvium | 43.6 [28.0, 83.1] (16) | 19.8, no interval (3) |
+| arms disagree | - | 62.0 [60.0, 66.2] (489) |
+
+The order run (`wvbig_order`, the same DEM with no lithology map) gives the
+Strahler comparisons for the same box. Axial, pairwise: order 1 against order 2 has
+W1 1.9 degrees, Kuiper V 0.056, `kuiper_p_iid_approx` 0.38 and `permutation_p` 0.33;
+order 1 against order 3 has W1 4.7 degrees, V 0.107, iid p 0.046 and permutation p
+0.012. Order 4+ has no order-3 block (n_blocks 0), so its `permutation_p` is nan. The
+isotropic-null run (`wvnull_order`, a diamond-square surface matched to the DEM)
+chooses block order 4 and gives axial R of 0.063, 0.056, 0.074 and 0.137 for orders
+1, 2, 3 and 4+.
+
+The WV numbers are from a live-data run and are not a CTest. The test suite's
+own numbers are in the developer testing notes.
+
+### Removed command and reference comparisons
+
+The separate `lsdtt-bearing-comparison` CLI has been removed; this step replaces
+it. To compare the bearings of this run with another site, set
+`channel_bearing_reference_fname` to the other run's `_channel_link_bearings.csv`.
+For arbitrary CSV files, the Python function `lsdtt3.compare_bearings` takes any
+bearing CSV.
 
 ## Step 8a: Junction drainage-area ratios
 
@@ -441,14 +734,17 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_channel_bearing_statistics` | `bool` | `false` | `switch` | - | (experimental) Summarise and compare channel-link bearing distributions by group. | Groups the analysed links by channel_bearing_group_by (optionally within each level of channel_bearing_stratify_by) and writes &lt;write_fname&gt;_channel_bearing_group_summary.csv (circular mean, mean resultant length, count- and length-weighted), _channel_bearing_comparisons.csv (circular Wasserstein and Kuiper between groups), _channel_bearing_rose.csv and _channel_bearing_group_membership.csv. Bearings are directional (downstream, period 360) and axial (period 180). p-values assume independent links, which links in one valley are not: read n_blocks. |
-| `channel_bearing_group_by` | `string` | `strahler_order` | `param` | `write_channel_bearing_statistics` | (experimental) The key whose groups are compared. | strahler_order (the link's own order), basin (see channel_bearing_basin_order), region (channel_region_fname) or lithology (lithology_fname: the length-weighted majority unit of the nodes the bearing was fitted on; links below lithology_min_majority_fraction are excluded and counted). |
+| `channel_bearing_group_by` | `string` | `strahler_order` | `param` | `write_channel_bearing_statistics` | (experimental) The key whose groups are compared. | strahler_order (the link's own order), basin (see channel_bearing_basin_order), region (channel_region_fname) or lithology (lithology_fname: the length-weighted majority unit of the nodes the bearing was fitted on; links below lithology_min_majority_fraction form the group 'mixed (&lt;x% one unit)', which is summarised but never compared and never part of 'rest'). |
 | `channel_bearing_stratify_by` | `string` | `none` | `param` | `write_channel_bearing_statistics` | (experimental) A key whose levels are analysed separately. | none, strahler_order, basin, region or lithology; must differ from channel_bearing_group_by. Groups are compared only within a level; a pooled level 'all' is always written. |
 | `channel_bearing_angular_type` | `string` | `both` | `param` | `write_channel_bearing_statistics` | (experimental) directional, axial or both. | Directional uses the downstream bearing (period 360). Axial folds theta and theta + 180 (period 180); a four-fold D8 artefact cancels in the axial mean resultant length, so axial is the more robust to D8 quantisation. |
 | `channel_bearing_comparison_mode` | `string` | `pairwise` | `param` | `write_channel_bearing_statistics` | (experimental) pairwise, one_vs_rest or none. | pairwise compares every pair of groups in a stratum; one_vs_rest each group against the other records of its stratum. Also used for junction angles. Holm-adjusted p-values are given per family (stratum, angular type); comparisons against the reference file are a family of their own. |
 | `channel_bearing_min_group_size` | `int` | `30` | `param` | `write_channel_bearing_statistics` | (experimental) Groups smaller than this are summarised but not compared. | Flagged meets_min_group_size = 0. Also used for junction angles. |
 | `channel_bearing_max_order_group` | `int` | `0` | `param` | `write_channel_bearing_statistics` | (experimental) Pool Strahler orders &gt;= this into one group labelled '&lt;k&gt;+'. | 0 = no pooling. High-order groups are small, so pooling is usually needed. |
 | `channel_bearing_basin_order` | `int` | `0` | `param` | `write_channel_bearing_statistics` | (experimental) Which basins the basin key uses. | 0 = the analysis-selection outlets (the outlet file's outlets, or the network outlets), nested outlets resolved so the innermost wins. k &gt; 0 = the Strahler order-k basin holding the record; records of order &gt; k have none and are excluded (counted). |
-| `channel_bearing_block_order` | `int` | `3` | `param` | `write_channel_bearing_statistics` | (experimental) Strahler order of the basins counted as independence blocks. | n_blocks is the number of distinct order-k basins contributing records to a group: an honest count of quasi-independent units beside n. |
+| `channel_bearing_block_order` | `int` | `0` | `param` | `write_channel_bearing_statistics` | (experimental) Strahler order of the basins counted as independence blocks; 0 = automatic. | Automatic: the largest order k whose order-k basins holding at least one analysed record number at least channel_bearing_min_blocks; if no order reaches it, no blocks are defined (permutation p-values nan, a WARNING). A positive value is used as given. n_blocks is the number of distinct blocks contributing records to a group: a count of quasi-independent units beside n. Records above the block order have no block: they are summarised but take no part in permutations. The counts per order are written to &lt;write_fname&gt;_channel_network_block_order_counts.csv. |
+| `channel_bearing_min_blocks` | `int` | `30` | `param` | `write_channel_bearing_statistics` | (experimental) Minimum number of blocks for the automatic block order. | With B blocks the smallest attainable permutation p is 1 / (number of distinct label assignments + 1). With 30 blocks even a 5-vs-25 split has C(30, 5) = 142506 assignments, so the number of permutations, not the block count, sets the resolution; with about 10 blocks an unbalanced split can have fewer than 100 assignments and the p-value is coarse. |
+| `channel_bearing_permutations` | `int` | `999` | `param` | `write_channel_bearing_statistics` | (experimental) Block permutations per comparison; 0 = off. | permutation_p = (1 + #{T* &gt;= T}) / (1 + permutations), T = Kuiper V for bearings, KS D for junction angles, over records with a block. Spatial keys (basin, region, lithology): each block takes the majority group of its records in the comparison and block labels are permuted among blocks (permutation_statistic is T on those block-majority samples). Orders (strahler_order, donor_order_pair): groups are permuted among the records of each block. Descriptive-only groups (lithology mixed, arms disagree) take no part. |
+| `channel_bearing_permutation_seed` | `int` | `1` | `param` | `write_channel_bearing_statistics` | (experimental) Seed of the block permutations. | Each comparison row draws from its own std::mt19937_64, seeded from this and the row's labels, so a row's p does not depend on the other rows. |
 | `channel_bearing_rose_bin_width_degrees` | `float` | `10.0` | `param` | `write_channel_bearing_statistics` | (experimental) Rose-histogram bin width in degrees. | Bins are centred on 0 so D8 directions sit on bin centres. 180 divided by the width must be an integer. |
 | `channel_bearing_rotation_invariant` | `bool` | `false` | `param` | `write_channel_bearing_statistics` | (experimental) Also allow one global rotation in the Wasserstein distance. | Cost grows as n_a * n_b; comparisons with n_a * n_b &gt; 250000 are skipped (nan, with a note). |
 | `channel_bearing_reference_fname` | `string` | `NULL` | `param` | `write_channel_bearing_statistics` | (experimental) _channel_link_bearings.csv of another channel-network-analysis run. | Each group is also compared against these bearings (comparison_mode 'reference'), e.g. to compare two sites. Relative to read_path. |
@@ -461,7 +757,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_junction_angle_statistics` | `bool` | `false` | `switch` | - | (experimental) Summarise and compare junction angles by group. | Linear statistics (the angles are sector magnitudes, not directions) of alpha (donor_opening_angle_deg) and beta_min / beta_max (the smaller and larger donor-receiver angle, which do not depend on the arbitrary donor labels). Writes &lt;write_fname&gt;_junction_angle_group_summary.csv and _junction_angle_comparisons.csv (Kolmogorov-Smirnov, linear Wasserstein). Uses the channel_bearing_* comparison settings. |
-| `junction_angle_group_by` | `string` | `strahler_order` | `param` | `write_junction_angle_statistics` | (experimental) The key whose junction groups are compared. | strahler_order (the order at the confluence pixel), donor_order_pair ('i_j' from the two donor orders), basin, region (the region of the junction pixel) or lithology (lithology_fname). Lithology writes two selections: group_key lithology (every junction, by the unit of its pixel) and lithology_interior (only junctions whose three sampled arms are in the junction's unit, each with purity &gt;= lithology_min_majority_fraction). Lithology-keyed rows also get a bootstrap interval of the median (the junction is the resampling unit; lithology_bootstrap_replicates, _random_seed; none below 5 junctions). |
+| `junction_angle_group_by` | `string` | `strahler_order` | `param` | `write_junction_angle_statistics` | (experimental) The key whose junction groups are compared. | strahler_order (the order at the confluence pixel), donor_order_pair ('i_j' from the two donor orders), basin, region (the region of the junction pixel) or lithology (lithology_fname). Lithology writes two selections: group_key lithology (every junction, by the unit of its pixel) and lithology_interior (the same unit when the three sampled arms are all in it with purity &gt;= lithology_min_majority_fraction, else the group 'arms disagree', summarised but never compared). Lithology-keyed rows also get a bootstrap interval of the median (the junction is the resampling unit; lithology_bootstrap_replicates, _random_seed, one random stream per run; none below 5 junctions). |
 | `junction_angle_stratify_by` | `string` | `none` | `param` | `write_junction_angle_statistics` | (experimental) A key whose levels are analysed separately. | none or one of the junction_angle_group_by keys; must differ from it. |
 
 ### Channel region input
@@ -488,8 +784,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `lithology_min_majority_fraction` | `float` | `0.8` | `param` | `lithology_fname` | Minimum fraction of a channel link or junction arm in its majority lithologic unit for it to be assigned to that unit. | The fraction is length-weighted over the sampled nodes. Links and arms below it are left out of the per-unit statistics. |
+| `lithology_min_majority_fraction` | `float` | `0.8` | `param` | `lithology_fname` | Minimum fraction of a channel link or junction arm in its majority lithologic unit for it to count as that unit. | The fraction is length-weighted over the sampled nodes. No record is dropped: links below it form the group 'mixed (&lt;x% one unit)' and junctions whose arms fall short the group 'arms disagree'; both are summarised but left out of every comparison (never compared, never part of 'rest'). Every record keeps its majority unit and fraction in the per-record columns. |
 | `lithology_bootstrap_replicates` | `int` | `1000` | `param` | `lithology_fname` | Number of bootstrap replicates for the per-unit confidence intervals. | 0 = no bootstrap; the interval columns are written as NaN. |
-| `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | Seeds one std::mt19937_64 once per run, so a fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
+| `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
 
 <!-- END GENERATED CLI PARAMETERS -->

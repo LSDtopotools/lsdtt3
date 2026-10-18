@@ -832,9 +832,12 @@ void declare_lithology_network_summary_parameters(std::map<std::string, float>& 
     float_default_map[k] = 0.8f;
     help_map[k] = {"float","0.8",
         "Minimum fraction of a channel link or junction arm in its majority lithologic unit "
-        "for it to be assigned to that unit.",
-        "The fraction is length-weighted over the sampled nodes. Links and arms below it are "
-        "left out of the per-unit statistics.",
+        "for it to count as that unit.",
+        "The fraction is length-weighted over the sampled nodes. No record is dropped: links "
+        "below it form the group 'mixed (<x% one unit)' and junctions whose arms fall short "
+        "the group 'arms disagree'; both are summarised but left out of every comparison "
+        "(never compared, never part of 'rest'). Every record keeps its majority unit and "
+        "fraction in the per-record columns.",
         group, "param", "lithology_fname"};
 }
 
@@ -855,8 +858,10 @@ void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_defa
     int_default_map[k_seed] = 5489;
     help_map[k_seed] = {"int","5489",
         "Random seed for the per-unit bootstrap.",
-        "Seeds one std::mt19937_64 once per run, so a fixed seed reproduces the intervals. "
-        "Same default as bootstrap_random_seed.",
+        "lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from "
+        "seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n "
+        "values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A "
+        "fixed seed reproduces the intervals. Same default as bootstrap_random_seed.",
         group, "param", "lithology_fname"};
 }
 

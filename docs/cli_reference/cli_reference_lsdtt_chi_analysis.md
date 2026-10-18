@@ -180,6 +180,242 @@ Requires Eigen3. Performs Tikhonov-regularised spatial inversion of channel stee
 
 ---
 
+## k_sn by lithologic unit
+
+With `lithology_fname` set (and `fit_chi_networks: true`), the fitted channel
+network is split by lithologic unit: each channel node is given the unit of the
+DEM pixel it sits on, and the k_sn of the fitted segments is summarised per unit,
+for every m/n value the run fits. Relative erodibility is not implemented; the
+per-unit k_sn values are the measurement, and their ratios are left to the reader.
+The model behind a k_sn contrast is described in
+[Lithology and channel steepness statistics](../design_and_algorithms/lithology_channel_statistics.md).
+
+### Inputs
+
+- **`lithology_fname`** is a polygon vector (any OGR polygon layer: GeoPackage,
+  FlatGeobuf, GeoJSON, Shapefile; reprojected to the DEM's CRS) or an integer
+  code raster (`lithology_source`: `auto` decides from the extension). A raster
+  not on the DEM grid is warped onto it with nearest neighbour.
+- **`lithology_field_name`** (default `lith_primary`) names the attribute that
+  holds the unit. Each distinct value is a unit unless a crosswalk groups them.
+  Output from `lsdtt-fetch-lithology` carries `lith_primary` (the first
+  lithology of each map unit).
+- **`lithology_crosswalk_fname`** is an optional CSV with columns
+  `value,code[,name]`. When given, every value present in the map must be listed
+  (a missing value is a FATAL error that names the value and its pixel count).
+  The `code` column sets the unit codes; the optional `name` column names each
+  code, and without it a code is named by the map values joined with `; `. Two
+  values with the same code are one unit.
+- **Without a crosswalk**, units are numbered 1, 2, ... within the run, so the
+  codes are only meaningful within one output set. Compare runs by unit name, not
+  by code (`_lithology_units.csv` gives the legend).
+- **Unmapped** pixels (a valid DEM pixel that no polygon touches, or nodata in a
+  code raster) get code -1 and the name `unmapped`. They form their own group and
+  appear as an `unmapped` row in every per-unit table.
+
+### How nodes get their unit
+
+Every channel node takes the unit of its own pixel. Each fitted segment (one piece of
+the piecewise chi-elevation fit) also gets a length-weighted majority unit and a purity
+(`lith_majority_fraction`, with `n_lith_units`), but segments are **not split at
+contacts**. A node's k_sn is the k_sn of its segment, so a segment that crosses a
+contact gives every node in it the segment's k_sn. This is why the per-unit
+statistics use the node's own unit and the reaches described below, and why the
+contact buffer exists.
+
+### Distance to contact and the contact buffer
+
+For each node the distance to the nearest mapped unit boundary is computed
+(`distance_to_contact_m`). With `lithology_contact_buffer_metres` (default `0`),
+nodes closer than that distance to a contact are set aside from the per-unit
+statistics and flagged `near_contact = 1` in the node table
+(`n_nodes_excluded_near_contact` counts them per unit). `0` keeps every node.
+A buffer is useful when the map's positional error is comparable to a reach's
+length: a node next to a contact may be in the wrong unit. The buffer also
+shortens reaches at a contact: the end of a reach at a buffer is recorded as
+`buffer`, not `contact`.
+
+### Lithologic reaches
+
+A **lithologic reach** is a run of consecutive channel nodes in one unit on one
+branch. Reaches are the sampling unit of the per-unit k_sn statistics.
+
+- **Construction.** Reaches are built along each branch of the fitted network
+  (`branch_id`) and break whenever the unit changes or a buffer is entered.
+  Each reach is a contiguous piece, so a unit that crosses the same channel
+  several times gives several reaches.
+- **OLS k_sn.** For each reach, the elevation of its nodes is regressed on chi:
+  `k_sn_ols` is the slope, `k_sn_ols_se` its standard error and `r_squared` the
+  coefficient of determination. The fit is ordinary least squares on the reach's
+  own nodes. `k_sn_fit_chi_weighted` is a second estimate: the mean of the nodes'
+  segment k_sn values, each weighted by the chi interval it spans.
+- **End types.** `upstream_end` and `downstream_end` are one of `source` (the
+  channel head), `junction` (a confluence), `outlet` (the network outlet),
+  `contact` (the unit changes) or `buffer` (the contact buffer).
+- **Qualifies.** A reach enters the per-unit statistics when it has at least
+  `lithology_min_reach_pixels` nodes (default 10, minimum 2), spans a chi
+  interval greater than 0, and has a finite slope. `qualifies` is written as 1 or 0
+  in the reaches file.
+
+### Statistics per unit and the bootstrap interval
+
+Per unit (and per basin, in the basin table) the summary gives:
+
+- **Node statistics** over every node not set aside by the buffer: node count,
+  segment and basin counts, channel length, the median and quartiles of node
+  k_sn, mean, minimum, maximum, and length-weighted mean and quartiles (weights
+  are each node's flow length to its receiver).
+- **Reach statistics** over the qualifying reaches: the number of reaches and of
+  qualifying reaches, the median and quartiles of reach k_sn, the reach-length
+  weighted median, and the median drainage area of the unit's nodes.
+- **`low_sample`** is 1 when fewer than 5 reaches qualify. No bootstrap interval
+  is computed for a low-sample unit (its interval columns are NaN).
+
+The interval on the per-unit median reach k_sn is a percentile bootstrap: the
+resampling draws reaches (or whole basins) with replacement, pools them, takes the
+median, repeats `lithology_bootstrap_replicates` times (default 1000), and reports
+the 2.5 and 97.5 percentiles of the medians.
+
+- **`lithology_bootstrap_cluster`** `reach` (default) resamples lithologic reaches
+  within a unit. `basin` resamples whole basins, so the reaches on one basin stay
+  together. Reaches on one trunk channel are correlated, so the reach interval is
+  a lower bound on the uncertainty; the basin interval is wider when there are few
+  basins, and the per-basin table shows the spread between basins.
+- **Seeding.** Each m/n value gets its own random stream, a `std::mt19937_64`
+  seeded with `std::seed_seq{lithology_bootstrap_random_seed, round(m/n * 10000)}`.
+  A fixed seed reproduces the intervals, and a value's interval does not depend
+  on which other m/n values are in the same run.
+
+### Outputs
+
+Written once per run and per m/n value. The per-m/n names carry the value with
+its `.` replaced by `p` (m/n 0.45 is `mn_0p450`). Each file is written only when
+`write_ksn_lithology_summary` is true (the default with `lithology_fname`).
+
+| File | Columns and contents |
+|---|---|
+| `<write_fname>_chi_ksn_by_lithology_mn_*.csv` | One row per unit, plus `unmapped` and `all`. `lith_code, lith_name, n_nodes, n_segments, n_basins, channel_length_m, k_sn_median, k_sn_q25, k_sn_q75, k_sn_mean, k_sn_min, k_sn_max, k_sn_length_weighted_mean, low_sample, m_over_n, A_0, contact_buffer_metres, min_reach_pixels, n_nodes_excluded_near_contact, n_reaches, n_reaches_qualifying, median_drainage_area_m2, reach_k_sn_median, reach_k_sn_p25, reach_k_sn_p75, reach_k_sn_length_weighted_median, reach_k_sn_median_ci_low, reach_k_sn_median_ci_high, n_bootstrap, bootstrap_cluster, node_k_sn_length_weighted_median, node_k_sn_length_weighted_p25, node_k_sn_length_weighted_p75`. The reach interval is in the `reach_k_sn_median_ci_*` columns. |
+| `<write_fname>_chi_ksn_by_lithology_and_basin_mn_*.csv` | Reach statistics per unit and basin, with no interval. `lith_code, lith_name, basin_index, n_nodes, n_nodes_excluded_near_contact, channel_length_m, k_sn_median, n_reaches, n_reaches_qualifying, median_drainage_area_m2, reach_k_sn_median, reach_k_sn_p25, reach_k_sn_p75, reach_k_sn_length_weighted_median, low_sample, m_over_n, A_0, contact_buffer_metres, min_reach_pixels`. |
+| `<write_fname>_chi_ksn_histogram_by_lithology_mn_*.csv` | Counts per unit in common k_sn bins. `lith_code, lith_name, bin_index, bin_lower, bin_upper, n_nodes, channel_length_m, m_over_n, A_0`. The bins span the 1st to 99th percentile of all nodes (`lithology_ksn_histogram_n_bins`, default 30, optionally log-spaced with `lithology_ksn_histogram_log_bins`). Nodes outside the range are in a row with `bin_index` -1 (below) or `n_bins` (above). |
+| `<write_fname>_chi_ksn_lithology_nodes_mn_*.csv` | Every channel node, whether or not it was set aside. `basin_index, node_flat, row, col, x, y, chi, elevation, segment_id, k_sn, flow_length_to_receiver_m, lith_code, lith_name, distance_to_contact_m, latitude, longitude, drainage_area_m2, branch_id, near_contact, reach_id`. |
+| `<write_fname>_chi_lithology_reaches_mn_*.csv` | Every lithologic reach. `reach_id, basin_index, branch_id, lith_code, lith_name, n_nodes, length_metres, chi_span, dz_metres, median_drainage_area_m2, k_sn_ols, k_sn_ols_se, r_squared, k_sn_fit_chi_weighted, upstream_flat, downstream_flat, upstream_end, downstream_end, qualifies`. |
+| `<write_fname>_chi_lithology_segments_mn_*.csv` | Every fitted segment. `basin_index, segment_id, branch_id, k_sn, length_metres, lith_code, lith_name, lith_majority_fraction, n_lith_units, n_nodes`. |
+| `<write_fname>_lithology_units.csv` | Once per run: the unit legend. `code, name, map_values, n_pixels, area_km2, n_pixels_in_analysed_basins`. |
+| `<write_fname>_lithology_code.tif` | With `write_lithology_code_raster: true`: the unit code of every DEM pixel (-1 unmapped). |
+
+### Interpreting per-unit k_sn
+
+- **Uniform uplift and steady state.** A k_sn contrast between units reflects
+  lithology only if uplift and base level are uniform and the landscape is near
+  steady state. The CLI prints this as a reminder at each run.
+- **Knickzones.** A transient knickzone puts a high or low k_sn on whichever unit
+  it is crossing.
+- **Strike-parallel sampling.** Drainage parallel to strike puts a unit mostly at
+  channel heads or near water gaps, where k_sn is not comparable with mid-network
+  reaches. `median_drainage_area_m2` per unit shows this; compare units at similar
+  drainage areas before reading a contrast as lithological.
+- **Alluvium** is a surface deposit, not bedrock. The k_sn of channels crossing
+  it is not a measure of the bedrock beneath, and it often has few reaches (see
+  the `low_sample` flag).
+- **Map-scale positional error.** A contact drawn at 1:50 000 can be 50 m or more
+  from the true contact. Use `lithology_contact_buffer_metres` to set aside the
+  nodes that may be in the wrong unit, and compare runs with and without it.
+- **Non-independence.** Nodes are not independent samples, and reaches on one
+  channel are correlated. The intervals are a lower bound (see above).
+
+### Coverage checks
+
+- A map that labels **no** valid DEM pixel is refused (FATAL). The message gives
+  the map's and the DEM's extents and CRSs, so a wrong CRS or an offset map is
+  visible at once.
+- A **partial** cover gives a note in the run output with the number and fraction of
+  valid DEM pixels that have no unit. Above 10 % of the valid pixels a WARNING is
+  also printed: the map covers part of the DEM, and the unlabelled pixels are in
+  the `unmapped` group.
+
+### Worked example: fetch, basins, chi
+
+This uses the West Virginia Allegheny Front data (COP30 DEM, Macrostrat SGMC
+units, `lith_primary`). The steps assume the Macrostrat fetch writes
+`<write_fname>_macrostrat_units.fgb` and `<write_fname>_crosswalk_template.csv`,
+as described in the [fetch lithology page](cli_reference_lsdtt_fetch_lithology.md).
+
+```
+# 1. DEM (keyless COP30)
+write_fname: wvaf
+dem_source: cop30_aws
+west: -79.45
+east: -79.15
+south: 38.85
+north: 39.05
+target_epsg: 32617
+grid_spacing: 30
+```
+
+Run `lsdtt-fetch-raster` on this, then `lsdtt-fetch-lithology` for the same box
+(see its page). Fill in the crosswalk template with codes 10 (sandstone), 20
+(siltstone), 30 (shale), 40 (limestone) and 90 (alluvium), and save it as
+`wvks_crosswalk_lith_primary.csv` with a `name` column:
+
+```
+value,code,name
+sandstone,10,sandstone
+siltstone,20,siltstone
+shale,30,shale
+limestone,40,limestone
+fine alluvium,90,alluvium
+```
+
+The basins come from `lsdtt-basin-extraction` (threshold 200 contributing pixels,
+complete and non-nested basins of at least 1000 pixels, `write_selected_basin_outlets_csv: true`),
+and the chi run takes its outlets from that file (`basin_outlet_fname`).
+
+```
+# lsdtt-chi-analysis parameter file (West Virginia, k_sn by lithology)
+write_fname: wvks_lithprimary
+read_fname: wvfront_DEM.tif
+raster_is_filled: false
+threshold_contributing_pixels: 200
+min_channel_pixels: 30
+m_over_n: 0.45
+chi_A0: 1
+n_largest_basins: 0
+basin_outlet_fname: wvaf_selected_basin_outlets.csv
+basin_outlet_snapping_method: none
+fit_chi_networks: true
+write_ksn_basin_summary: true
+lithology_fname: wvfront_macrostrat_units.fgb
+lithology_field_name: lith_primary
+lithology_crosswalk_fname: wvks_crosswalk_lith_primary.csv
+lithology_min_reach_pixels: 10
+lithology_bootstrap_replicates: 1000
+lithology_bootstrap_random_seed: 5489
+lithology_bootstrap_cluster: reach
+lithology_contact_buffer_metres: 0
+write_lithology_code_raster: true
+write_fit_tables: true
+write_chi_fit_segment_lines: true
+```
+
+Measured on that run (live data, not a CTest; the same values are recorded in the
+developer testing notes). Reach median k_sn with the 95 % bootstrap interval, buffer
+0 m, m/n 0.45, 1000 replicates by reach, seed 5489:
+
+| Unit | Reaches (qualifying) | Reach median k_sn [95 % interval] |
+|---|---|---|
+| sandstone | 358 (190) | 65.34 [60.01, 69.59] |
+| siltstone | 68 (44) | 54.09 [45.86, 60.09] |
+| shale | 334 (177) | 41.14 [36.66, 48.97] |
+| limestone | 196 (113) | 57.84 [51.62, 64.87] |
+| alluvium | 11 (7) | 8.63 [4.65, 14.69] |
+| all | 967 (531) | 54.58 [51.05, 58.22] |
+
+The run had 15847 channel nodes and none unmapped. With a 120 m contact buffer,
+4677 of those nodes are set aside, and the reach medians become sandstone 64.56,
+siltstone 55.99, shale 36.23, limestone 44.31 and alluvium 7.02 (the buffer
+changes limestone most). The basin table, the histogram and the node table are
+in the same output set.
+
 ## Outputs
 
 | Parameter | Type | Default | Description |
@@ -379,6 +615,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `lithology_min_reach_pixels` | `int` | `10` | `param` | `lithology_fname` | Minimum number of channel nodes for a lithologic reach to enter the per-unit statistics. | A lithologic reach is a run of channel nodes in one unit on one branch. It must also span a chi interval greater than 0. |
 | `lithology_bootstrap_cluster` | `string` | `reach` | `param` | `lithology_fname` | Resampling unit of the bootstrap interval of the per-unit median k_sn: reach or basin. | reach resamples lithologic reaches within a unit; basin resamples whole basins. Reaches on one trunk channel are correlated, so the reach interval is a lower bound on the uncertainty. |
 | `lithology_bootstrap_replicates` | `int` | `1000` | `param` | `lithology_fname` | Number of bootstrap replicates for the per-unit confidence intervals. | 0 = no bootstrap; the interval columns are written as NaN. |
-| `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | Seeds one std::mt19937_64 once per run, so a fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
+| `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
 
 <!-- END GENERATED CLI PARAMETERS -->

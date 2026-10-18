@@ -5417,6 +5417,50 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(failure_chi_lithology_bad_cluster PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
 
+# A lithology map that labels no valid DEM pixel (200 km east, same CRS) is
+# refused with both extents and CRSs: a code raster and a vector.
+foreach(_lithks_far raster vector)
+    add_lsdtt_cli_smoke_test(
+        failure_chi_lithology_no_overlap_${_lithks_far}
+        lsdtt-chi-analysis
+        chi_lithology_no_overlap_${_lithks_far}.param.in
+        unused_expected_output
+        --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "labels no valid DEM pixel: the map covers x 700000.0 to 704800.0, y 5000000.0 to 5003600.0 (WGS 84 / UTM zone 32N)"
+        --stderr-contains "the DEM covers x 500000.0 to 504800.0, y 5000000.0 to 5003600.0 (WGS 84 / UTM zone 32N)"
+    )
+    lsdtt_set_tests_properties(failure_chi_lithology_no_overlap_${_lithks_far} PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli)
+endforeach()
+
+# The bootstrap stream is per m/n: the 0.45 tables of a run with m/n 0.4 and
+# 0.45 equal those of the single-m/n run byte for byte.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_multi_mn
+    lsdtt-chi-analysis
+    chi_lithology_multi_mn.param.in
+    lithksmn_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithksmn_chi_ksn_by_lithology_mn_0p400.csv
+)
+if(TEST smoke_chi_lithology_multi_mn)
+    lsdtt_set_tests_properties(smoke_chi_lithology_multi_mn PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli
+        FIXTURES_SETUP smoke_chi_lithology_multi_mn)
+    add_test(NAME rigorous_chi_lithology_bootstrap_per_mn
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_multi_mn/out/lithksmn"
+                 "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_bootstrap_per_mn PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_multi_mn")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_bootstrap_per_mn)
+endif()
+
 # Channel-link bearings and junction angles by lithologic unit (T12, T13): link
 # and junction tags on the synthetic trellis with in-process unit grids, the
 # axial rose by unit, the junction median bootstrap, the appended record
@@ -5448,7 +5492,14 @@ lsdtt_add_channel_bearing_cli_test(
     # the lowest junctions do not drain through an analysed junction.
     --expect-file-contains "cbslith_lithology_units.csv:1,1,1,24000,2.4,24000"
     --expect-file-contains "cbslith_lithology_units.csv:2,2,2,24000,2.4,23636"
-    --stdout-contains "Link bearings, lithology: 4 of 2388 records have no group and are excluded"
+    # The 4 links of no single unit are the group mixed: summarised, never compared.
+    --stdout-contains "Link bearings, lithology: 4 link(s) with majority unit 1 are 'mixed (<80% one unit)'"
+    --stdout-contains "Note: 4 link record(s) in 'mixed (<80% one unit)' and"
+    --expect-file-contains "cbslith_channel_bearing_group_summary.csv:link_bearing,lithology,mixed (<80% one unit),"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:alpha,lithology_interior,arms disagree,"
+    --expect-file-not-contains "cbslith_channel_bearing_comparisons.csv:mixed"
+    --expect-file-contains "cbslith_channel_bearing_group_summary.csv:meets_min_group_size,block_order,block_order_mode,min_blocks,n_unblocked,note"
+    --expect cbslith_channel_network_block_order_counts.csv
     --stdout-contains "2 lithologic unit(s)"
     --stdout-contains "Bearing group lithology=1 (strahler_order=2) [axial]: n="
     --stdout-contains "Junction-angle group lithology_interior=1 [alpha]: n="
@@ -5490,6 +5541,18 @@ lsdtt_add_channel_bearing_cli_test(
     channel_network_analysis_lithology_key_without_map.param.in
     unused.csv --expect-exit-code 1
     --stderr-contains "lithology_fname is required when channel_bearing_group_by or channel_bearing_stratify_by is lithology")
+
+# Lithology and region maps that label no valid DEM pixel (200 km east, same
+# CRS): refused, naming both extents and CRSs.
+foreach(_cbs_far lithology_no_overlap_raster lithology_no_overlap_vector
+                 region_no_overlap_raster region_no_overlap_vector)
+    lsdtt_add_channel_bearing_cli_test(
+        failure_channel_network_analysis_${_cbs_far}
+        channel_network_analysis_${_cbs_far}.param.in
+        unused.csv --expect-exit-code 1
+        --stderr-contains "labels no valid DEM pixel: the map covers x 913650.1 to 915250.1"
+        --stderr-contains "the DEM covers x 713650.1 to 715250.1, y 8711785.5 to 8714785.5 (WGS 84 / UTM zone 58S)")
+endforeach()
 
 # Spatially varying erodibility (K): kernels, steady state, values, grid modes.
 add_executable(lsdtt-test-lem-erodibility cpp/test_lem_erodibility.cpp)

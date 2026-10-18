@@ -73,6 +73,8 @@ nav:
     - Hydrological modelling: design_and_algorithms/hydrological_modelling.md
     - Cosmogenic nuclides: design_and_algorithms/cosmogenic_nuclides.md
     - Landscape evolution modelling: design_and_algorithms/landscape_evolution_modelling.md
+    - Lithology and channel steepness statistics: design_and_algorithms/lithology_channel_statistics.md
+    - Channel-link bearing statistics: design_and_algorithms/channel_bearing_statistics.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md

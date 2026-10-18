@@ -17,6 +17,7 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -577,6 +578,13 @@ lsdtt_chi_lithology_tables build_chi_lithology_tables(
     return t;
 }
 
+std::mt19937_64 lithology_bootstrap_engine(std::int64_t seed, double m_over_n)
+{
+    const long long mn = std::llround(m_over_n * 10000.0);
+    std::seed_seq seq{static_cast<std::uint32_t>(seed), static_cast<std::uint32_t>(mn)};
+    return std::mt19937_64(seq);
+}
+
 lsdtt_lithology_median_ci bootstrap_lithology_median_ci(const std::vector<double>& values,
                                                         const std::vector<std::int32_t>& cluster_of_value,
                                                         int n_replicates, std::mt19937_64& rng)
@@ -811,6 +819,13 @@ std::map<int, std::string> category_names(const lsdtt_lithology_units_on_grid& u
 
 } // namespace
 
+std::string lithology_mixed_category_name(double min_majority_fraction)
+{
+    std::ostringstream os;
+    os << std::setprecision(6) << 100.0 * min_majority_fraction;
+    return "mixed (<" + os.str() + "% one unit)";
+}
+
 channel_record_categories lithology_categories_of_links(const std::vector<lsdtt_lithology_tag>& tags,
                                                         const lsdtt_lithology_units_on_grid& units,
                                                         double min_majority_fraction,
@@ -819,11 +834,26 @@ channel_record_categories lithology_categories_of_links(const std::vector<lsdtt_
     channel_record_categories c;
     c.key = key;
     c.names = category_names(units);
+    c.names[k_lithology_category_mixed] = lithology_mixed_category_name(min_majority_fraction);
+    c.descriptive_only.insert(k_lithology_category_mixed);
     c.category.assign(tags.size(), -1);
     for (std::size_t i = 0; i < tags.size(); ++i)
-        if (tags[i].n_units > 0 && tags[i].majority_fraction >= min_majority_fraction)
-            c.category[i] = category_of_code(tags[i].code);
+    {
+        if (tags[i].n_units == 0) continue;
+        c.category[i] = tags[i].majority_fraction >= min_majority_fraction
+                            ? category_of_code(tags[i].code)
+                            : k_lithology_category_mixed;
+    }
     return c;
+}
+
+std::map<std::int32_t, std::size_t> lithology_mixed_links_by_majority_unit(
+    const std::vector<lsdtt_lithology_tag>& tags, double min_majority_fraction)
+{
+    std::map<std::int32_t, std::size_t> out;
+    for (const auto& t : tags)
+        if (t.n_units > 0 && !(t.majority_fraction >= min_majority_fraction)) ++out[t.code];
+    return out;
 }
 
 channel_record_categories lithology_categories_of_junctions(
@@ -833,10 +863,19 @@ channel_record_categories lithology_categories_of_junctions(
     channel_record_categories c;
     c.key = key;
     c.names = category_names(units);
+    if (interior_only)
+    {
+        c.names[k_lithology_category_arms_disagree] = "arms disagree";
+        c.descriptive_only.insert(k_lithology_category_arms_disagree);
+    }
     c.category.assign(tags.size(), -1);
     for (std::size_t i = 0; i < tags.size(); ++i)
-        if (tags[i].valid && (!interior_only || tags[i].all_arms_agree))
-            c.category[i] = category_of_code(tags[i].junction_code);
+    {
+        if (!tags[i].valid) continue;
+        c.category[i] = (!interior_only || tags[i].all_arms_agree)
+                            ? category_of_code(tags[i].junction_code)
+                            : k_lithology_category_arms_disagree;
+    }
     return c;
 }
 

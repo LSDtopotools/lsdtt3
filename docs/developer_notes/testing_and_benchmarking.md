@@ -5237,6 +5237,8 @@ exact on the UTM grid).
 | `smoke_chi_lithology_crosswalk` | `smoke;cli;chi;lithology` | codes 10 and 30 and names from a crosswalk's `name` column, a 60 m contact buffer (52 nodes set aside), the bootstrap by basin |
 | `rigorous_chi_lithology_observation_only` | `rigorous;cli;chi;lithology` | the `chi_analysis_smoke` run plus a lithology map keeps the fit-nodes hash that `rigorous_chi_nodes_sha256` pins |
 | `failure_chi_lithology_{without_fit,missing_file,bad_field,crosswalk_gap,bad_cluster}` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true`; a map that does not exist; a field the map lacks (the fields are listed); a value missing from the crosswalk (with its pixel count); `lithology_bootstrap_cluster` other than reach or basin |
+| `failure_chi_lithology_no_overlap_{raster,vector}` | `failure;cli;chi;lithology` | a code raster and a polygon map 200 km east of the DEM (same CRS) label no valid DEM pixel: refused, the message giving both extents and CRSs |
+| `smoke_chi_lithology_multi_mn`, `rigorous_chi_lithology_bootstrap_per_mn` | `smoke`/`rigorous`, `cli;chi;lithology` | the bootstrap stream is per m/n (`std::seed_seq{seed, round(m/n * 10000)}`): with m/n 0.4 and 0.45 the 0.45 summary, unit x basin and reach tables equal those of the single-m/n run byte for byte |
 
 **Known answer.** A 120 x 160 grid at 30 m (a tilted red-noise surface, seed 11, D8,
 open edges, draining north) with K1 = 1e-5 and K2 = 4e-5, U = 2e-4, map area, steady
@@ -5274,12 +5276,15 @@ Reach median k_sn [95 % interval], buffer 0 / buffer 120 m:
 
 | Unit | Reaches (qualifying), buffer 0 | Median [interval], buffer 0 | Reaches (qualifying), 120 m | Median [interval], 120 m |
 |---|---|---|---|---|
-| sandstone | 358 (190) | 65.34 [60.42, 69.54] | 265 (126) | 64.56 [59.52, 69.48] |
-| siltstone | 68 (44) | 54.09 [45.90, 59.95] | 60 (39) | 55.99 [40.84, 66.77] |
-| shale | 334 (177) | 41.14 [35.56, 48.97] | 277 (134) | 36.23 [30.94, 42.30] |
-| limestone | 196 (113) | 57.84 [51.62, 64.58] | 167 (68) | 44.31 [38.70, 54.71] |
+| sandstone | 358 (190) | 65.34 [60.01, 69.59] | 265 (126) | 64.56 [58.64, 69.43] |
+| siltstone | 68 (44) | 54.09 [45.86, 60.09] | 60 (39) | 55.99 [40.84, 66.77] |
+| shale | 334 (177) | 41.14 [36.66, 48.97] | 277 (134) | 36.23 [31.30, 42.34] |
+| limestone | 196 (113) | 57.84 [51.62, 64.87] | 167 (68) | 44.31 [38.45, 54.22] |
 | alluvium | 11 (7) | 8.63 [4.65, 14.69] | 9 (5) | 7.02 [3.00, 15.55] |
-| all | 967 (531) | 54.58 [51.25, 58.22] | 778 (372) | 48.43 [43.43, 53.08] |
+| all | 967 (531) | 54.58 [51.05, 58.22] | 778 (372) | 48.43 [43.72, 53.23] |
+
+(Intervals from the per-m/n bootstrap stream, seed 5489; the medians do not depend
+on the seed.)
 
 The 120 m buffer sets aside 4677 of 15847 nodes. With `name` (no crosswalk), 28 map
 units are on the grid, 27 with channel nodes, 21 with at least 5 qualifying reaches.
@@ -5292,53 +5297,71 @@ Lithology is a grouping key of the bearing and junction-angle statistics
 `_stratify_by`: `lithology`), so its rows are in the same summary, rose and
 comparison files as every other key. A link takes the length-weighted majority unit
 of the nodes its bearing was fitted on (each node weighted by its D8 step, ties to the
-lower code); links below `lithology_min_majority_fraction` (default 0.8) are excluded
-and counted. A junction takes the unit of its pixel (`group_key` lithology) and, as a
-second selection, only if its three sampled arms are in that unit with purity at or
-above the threshold (`lithology_interior`). Unmapped records are a group of their own.
+lower code). No record is dropped for impurity: a link below
+`lithology_min_majority_fraction` (default 0.8) goes into the group
+"mixed (<80% one unit)" (the percentage follows the parameter; code -3), and every
+record keeps its majority unit and fraction in the per-record columns. A junction takes
+the unit of its pixel (`group_key` lithology) and, as a second selection
+(`lithology_interior`), the same unit when its three sampled arms are all in it with
+purity at or above the threshold, else the group "arms disagree" (code -4). Mixed and
+arms disagree are **descriptive only** (`channel_record_categories::descriptive_only`):
+they have their own summary and rose rows (note "descriptive only: not compared") but
+are never compared, never part of "rest", and never compared with a reference, because
+they have no single unit and pooling them into "rest" would put a contact effect into a
+lithology contrast. One stdout note per run gives how many records that leaves out of
+the comparisons. Unmapped records are a group like any unit.
 Lithology-keyed junction rows carry a 95 % percentile bootstrap interval of the median
-(the junction is the resampling unit, none below 5 junctions); the three interval
-columns are appended to `_junction_angle_group_summary.csv` for every row and are
-`nan` / 0 elsewhere. In `_junction_angle_comparisons.csv`, which has no group-key
-column, lithology rows carry `group_key=lithology` or `group_key=lithology_interior`
-in `note`. With `lithology_fname`, `_channel_link_bearings` and `_junction_angles` gain
-the unit columns after all others; without it every output is unchanged.
+(the junction is the resampling unit, none below 5 junctions, one random stream per
+run). In `_junction_angle_comparisons.csv`, which has no group-key column, lithology
+rows carry `group_key=lithology` or `group_key=lithology_interior` in `note`. With
+`lithology_fname`, `_channel_link_bearings` and `_junction_angles` gain the unit
+columns after all others; without it every record output is unchanged.
+
+A lithology or region map that labels no valid DEM pixel is refused, with the map's
+and the DEM's extents and CRSs (for a raster, the warp's "do not overlap" is caught and
+reported the same way). A partial cover gives a note with the unlabelled fraction and a
+WARNING above 10 %.
 
 | Test | Labels | What it covers |
 |---|---|---|
-| `unit_lithology_channel_network_stats` | `unit;network;lithology` | on the in-memory trellis (2400 junctions, 2396 links): with the contact parallel to the trunks every link takes the unit of its side with purity 1 (1198 / 1198); with it across them the 12 crossing links' unit and purity equal a length-weighted computation in the test, links below 0.8 are excluded, and a 4-node sample at the upstream end makes the 8 crossing links longer than 4 nodes pure (the tag follows the sampled nodes); unmapped links are the group unmapped; 1192 junctions in lithology, 1180 interior, equal to an independent check of the arms; the axial 10-degree rose by unit equals counts made in the test (596 / 602 in the N-S and E-W bins of each unit); the junction median bootstrap (seed-reproducible, fills only lithology rows, brackets the median, refuses rows that do not match the values, none below min_n); the junction summary and record writers (appended columns, unit names with commas quoted); the analysed-area mask against a brute-force walk. Driver `tests/cpp/test_lithology_network_stats.cpp` (17 checks) |
-| `smoke_channel_network_analysis_lithology` | `smoke;cli;network;lithology` | the trellis fixture with its north/south code raster as the map: appended record columns, the interval columns, `lithology_interior` rows and comparison notes, the unit legend (24000 / 23636 pixels in analysed basins), 4 of 2388 links excluded by purity |
+| `unit_lithology_channel_network_stats` | `unit;network;lithology` | on the in-memory trellis (2400 junctions, 2396 links): with the contact parallel to the trunks every link takes the unit of its side with purity 1 (1198 / 1198); with it across them the 12 crossing links' unit and purity equal a length-weighted computation in the test, the 4 links below 0.8 are the group "mixed (<80% one unit)" (none excluded), and a 4-node sample at the upstream end makes the 8 crossing links longer than 4 nodes pure (the tag follows the sampled nodes); mixed has its own summary row, the group n sum to every link, and mixed is in no comparison row and not in "rest" (north vs rest compares with the south links only); unmapped links are the group unmapped; 1192 junctions in lithology and in lithology_interior (1180 in their unit, 12 arms disagree); the axial rose by unit equals counts made in the test (596 / 602); the junction median bootstrap; the writers (appended columns, comma quoting); the analysed-area mask; the block-order rule on synthetic counts (auto picks the largest k with >= min, override with a note, nothing reaching min = no blocks with the note, nan p); block permutations (an extreme separation over 40 blocks gives p = 1/(1 + 199); same seed, same p; within-block nan when no block holds both groups; on the trellis by order with order-1 blocks, order 2 has no blocked record = nan with a note; with order-2 blocks the statistic equals Kuiper V on the blocked records, 4 unblocked links left out). Driver `tests/cpp/test_lithology_network_stats.cpp` (30 checks) |
+| `smoke_channel_network_analysis_lithology` | `smoke;cli;network;lithology` | the trellis fixture with its north/south code raster as the map: appended record columns, the interval and block columns, the mixed summary row, the arms-disagree junction rows, no comparison row naming mixed, the stdout note, the unit legend (24000 / 23636 pixels in analysed basins), the block-order counts file |
 | `smoke_channel_network_analysis_lithology_observation`, `rigorous_channel_network_analysis_lithology_observation_only` | `smoke`/`rigorous`, `cli;network;lithology` | a lithology map that no key uses leaves the six statistics outputs byte-identical to `smoke_channel_network_analysis_bearing_statistics_order` (`tests/cmake/compare_output_sets.cmake`) |
 | `failure_channel_network_analysis_lithology_{bad_source,key_without_map}` | `failure;cli;network;lithology` | `lithology_source: shapefile`; `channel_bearing_group_by: lithology` without `lithology_fname` |
+| `failure_channel_network_analysis_{lithology,region}_no_overlap_{raster,vector}` | `failure;cli;network` | lithology and region maps 200 km east of the trellis (same CRS), as a code raster and as a polygon layer: refused with both extents and CRSs |
 
-Without lithology, 32 outputs of two full runs (the lake and Allegheny Front DEMs, every
-record, Tokunaga, area-ratio, area-scaling and vector output) were byte-identical to
-the outputs before this change, and the statistics outputs of an order-grouped run
-were identical except for the three columns appended to the junction summary.
+Without the statistics switches, 32 outputs of two full runs (the lake and Allegheny
+Front DEMs, every record, Tokunaga, area-ratio, area-scaling and vector output) are
+byte-identical to those before the lithology and permutation work. With them, the
+summaries gain `block_order, block_order_mode, min_blocks, n_unblocked, note`, the
+comparisons fill `permutation_p` and gain `permutation_statistic`, and n_blocks follows
+the automatic block order (section 10s.6).
 
 **West Virginia (live data, not a CTest).** `wvbig_DEM.tif` (-79.80/-79.05/38.85/39.15),
 Macrostrat SGMC `lith_primary` with the five-class crosswalk (codes 10/20/30/40/90),
 threshold 300 pixels, all complete-basin junctions, full-link sampling with at least
-5 nodes, blocks are order-3 basins, purity 0.8, 1000 replicates, seed 5489. Of 2974
-links, 732 are excluded by purity (by majority unit: sandstone 266, siltstone 40, shale
-250, limestone 159, alluvium 17); no channel node is unmapped. Of 953 junctions, 489 are
-not interior.
+5 nodes, automatic block order (order 3), purity 0.8, 1000 replicates, seed 5489,
+`one_vs_rest`. Of 2974 links, 732 are "mixed" (by majority unit: sandstone 266,
+siltstone 40, shale 250, limestone 159, alluvium 17); no channel node is unmapped. Of
+953 junctions, 489 are "arms disagree" in `lithology_interior`.
 
-| Unit (all orders) | Links | n_blocks | Axial mean / R (count) | Axial mean / R (length) | D8 fraction | One-vs-rest axial W1 (deg) / Kuiper V |
+| Unit (all orders) | Links | n_blocks | Axial mean / R (count) | Axial mean / R (length) | D8 fraction | One-vs-rest axial W1 (deg) / Kuiper V / p_iid / permutation p |
 |---|---|---|---|---|---|---|
-| sandstone | 585 | 66 | 110.6 / 0.047 | 166.3 / 0.018 | 0.056 | 2.7 / 0.069 |
-| siltstone | 318 | 27 | 114.8 / 0.138 | 121.4 / 0.207 | 0.053 | 3.0 / 0.083 |
-| shale | 945 | 82 | 113.4 / 0.124 | 116.4 / 0.149 | 0.048 | 2.5 / 0.065 |
-| limestone | 343 | 46 | 63.7 / 0.023 | 17.2 / 0.044 | 0.076 | 4.5 / 0.118 |
-| alluvium | 51 | 5 | 110.9 / 0.322 | 114.3 / 0.415 | 0.039 | 9.7 / 0.236 |
+| sandstone | 585 | 66 | 110.6 / 0.047 | 166.3 / 0.018 | 0.056 | 2.7 / 0.069 / 0.215 / 0.562 |
+| siltstone | 318 | 27 | 114.8 / 0.138 | 121.4 / 0.207 | 0.053 | 3.0 / 0.083 / 0.291 / 0.959 |
+| shale | 945 | 82 | 113.4 / 0.124 | 116.4 / 0.149 | 0.048 | 2.5 / 0.065 / 0.155 / 0.678 |
+| limestone | 343 | 46 | 63.7 / 0.023 | 17.2 / 0.044 | 0.076 | 4.5 / 0.118 / 0.008 / 0.863 |
+| alluvium | 51 | 5 | 110.9 / 0.322 | 114.3 / 0.415 | 0.039 | 9.7 / 0.236 / 0.062 / 0.200 |
+| mixed (<80% one unit) | 732 | 85 | 110.7 / 0.262 | – | – | not compared |
 
 | Unit | Junction alpha median [interval], lithology (n) | lithology_interior (n) |
 |---|---|---|
-| sandstone | 62.3 [60.3, 68.2] (284) | 64.8 [59.9, 71.7] (126) |
-| siltstone | 66.2 [58.9, 72.4] (113) | 70.7 [61.4, 76.0] (76) |
-| shale | 60.3 [57.0, 65.5] (385) | 58.4 [54.4, 60.9] (206) |
-| limestone | 63.9 [59.3, 69.6] (155) | 66.9 [60.0, 80.9] (53) |
+| sandstone | 62.3 [60.3, 68.2] (284) | 64.8 [60.1, 72.5] (126) |
+| siltstone | 66.2 [58.9, 72.4] (113) | 70.7 [60.3, 76.9] (76) |
+| shale | 60.3 [57.0, 65.5] (385) | 58.4 [54.5, 60.9] (206) |
+| limestone | 63.9 [59.3, 69.6] (155) | 66.9 [61.2, 80.0] (53) |
 | alluvium | 43.6 [28.0, 83.1] (16) | 19.8, no interval (3) |
+| arms disagree | – | 62.0 [60.0, 66.2] (489) |
 
 ### 8c.2 Macrostrat lithology fetch (`lsdtt-fetch-lithology`)
 
@@ -7998,6 +8021,102 @@ timings and not a performance claim.
 
 The province run (region within order) has not been run: the province polygon is
 to be drawn by hand on a hillshade.
+
+### 10s.6 Automatic block order and block permutation (2026-10-17)
+
+`channel_bearing_block_order` defaults to 0 = automatic: the largest Strahler order k
+whose order-k basins holding at least one analysed record (link or junction, after the
+basin selection) number at least `channel_bearing_min_blocks` (default 30). With B
+blocks the smallest attainable permutation p is 1 / (number of distinct label
+assignments + 1); with 30 blocks even a 5-vs-25 split has C(30, 5) = 142 506
+assignments, so the 999 permutations set the resolution, while with about 10 blocks an
+unbalanced split can have fewer than 100. If no order reaches the minimum, no blocks
+are defined: every permutation p is nan with the note "network too small for block
+permutation: largest order-k basin count n < min_blocks", the descriptive statistics
+are written, and a WARNING is printed. A positive value is used as given, with a note
+when it has fewer blocks than the minimum. The counts per order are written to
+`<wf>_channel_network_block_order_counts.csv` (`strahler_order, n_basins_with_records,
+chosen`).
+
+`channel_bearing_permutations` (default 999; 0 = off) and
+`channel_bearing_permutation_seed` (default 1) give each comparison a block permutation
+p = (1 + #{T* >= T}) / (1 + permutations), with T = Kuiper V (axial or directional) for
+bearings and KS D for junction angles, over the records that have a block and a finite
+value (the number left out is in the note). Spatial keys (basin, region, lithology):
+each block takes the majority group of its records in the comparison (ties to group a)
+and the block labels are permuted among blocks; `permutation_statistic` is T on those
+block-majority samples. Orders (strahler_order, donor_order_pair): groups are permuted
+among the records of each block. The p is nan, with a note, when a group has no blocked
+record, when every block has the same majority group, or (within blocks) when no block
+holds both groups. Records above the block order have no block: their summary rows say
+so in `note`, and n_unblocked counts them. Each comparison row has its own
+std::mt19937_64 seeded from the seed and the row's labels, so a p does not depend on
+which other comparisons were run. The unit tests are listed with
+`unit_lithology_channel_network_stats` in section 8c.4.
+
+West Virginia, the run of section 10s.5 with the automatic order (order-k basins with
+links or junctions, k = 1..6): wvbig 1765 / 471 / 108 / 23 / 6 / 2, chosen order 3;
+the isotropic null 1914 / 525 / 136 / 33 / 9 / 2, chosen order 4. Pairwise by order,
+permutation p (999) beside the iid p:
+
+| run, type | a vs b | n | n_blocks | Kuiper V | p_iid | permutation p |
+|---|---|---|---|---|---|---|
+| wvbig, axial | 1 vs 2 | 1765 / 791 | 108 / 106 | 0.056 | 0.379 | 0.329 |
+| wvbig, axial | 1 vs 3 | 1765 / 311 | 108 / 83 | 0.107 | 0.046 | 0.012 |
+| wvbig, axial | 2 vs 3 | 791 / 311 | 106 / 83 | 0.094 | 0.244 | 0.539 |
+| wvbig, axial | x vs 4+ | – / 107 | – / 0 | 0.227-0.309 | < 0.001 | nan (order 4+ has no order-3 block) |
+| wvbig, directional | 1 vs 2 | 1765 / 791 | 108 / 106 | 0.041 | 0.861 | 0.140 |
+| wvbig, directional | 1 vs 3 | 1765 / 311 | 108 / 83 | 0.142 | 0.0008 | 0.006 |
+| wvbig, directional | 2 vs 3 | 791 / 311 | 106 / 83 | 0.137 | 0.006 | 0.031 |
+| null, axial | 1 vs 2 | 1914 / 887 | 33 / 33 | 0.044 | 0.700 | 0.255 |
+| null, axial | 1 vs 3 | 1914 / 333 | 33 / 32 | 0.087 | 0.198 | 0.562 |
+| null, axial | 1 vs 4+ | 1914 / 235 | 33 / 21 | 0.114 | 0.079 | 0.853 |
+| null, axial | 2 vs 3 | 887 / 333 | 33 / 32 | 0.080 | 0.439 | 0.241 |
+| null, axial | 2 vs 4+ | 887 / 235 | 33 / 21 | 0.114 | 0.130 | 0.620 |
+| null, axial | 3 vs 4+ | 333 / 235 | 32 / 21 | 0.110 | 0.371 | 0.965 |
+| null, directional | 1 vs 4+ | 1914 / 235 | 33 / 21 | 0.209 | < 0.0001 | 0.014 |
+| null, directional | 2 vs 4+ | 887 / 235 | 33 / 21 | 0.172 | 0.0005 | 0.289 |
+
+Junction alpha (KS), wvbig 2 vs 3: D 0.228, p_iid < 0.0001, permutation p 0.001; null
+2 vs 3: D 0.139, p_iid 0.0014, permutation p 0.037; null 2 vs 4+: D 0.126, p_iid 0.021,
+permutation p 0.044. Wall times with 999 permutations (WSL2 laptop, thermally
+limited, one run each, not a performance claim): wvbig order 3.3 s, null 4.4 s,
+lithology by unit 8.1 s.
+
+### 10s.7 Plateau and Valley and Ridge by map-unit age (2026-10-17)
+
+A cross-check of the province split built from the map, not drawn: each Macrostrat
+`name` in the wvbig map is assigned by its older age bound (`best_age_bottom`):
+<= 358.9 Ma (Mississippian or younger) = allegheny_plateau, otherwise
+valley_and_ridge. 28 names: 12 plateau (including Quaternary Alluvium, 2.6 Ma, by the
+rule) and 16 Valley and Ridge; no name has conflicting bounds. The crosswalk is a
+`value,code,name` CSV used through the lithology key (`lithology_field_name: name`).
+By construction, deep plateau valleys that cut into Devonian rocks (Cheat near Parsons,
+Blackwater Canyon) are labelled valley_and_ridge by this rule. Same parameters as
+section 10s.5, automatic block order (3), pairwise; 153 links are "mixed" (83 with a
+plateau majority, 70 Valley and Ridge).
+
+| province, order | n | n_blocks | axial mean / R (count) | axial mean / R (length) | D8 fraction |
+|---|---|---|---|---|---|
+| plateau, 1 | 790 | 64 | 113.2 / 0.142 | 118.5 / 0.159 | 0.065 |
+| V&R, 1 | 874 | 71 | 105.4 / 0.156 | 108.6 / 0.166 | 0.040 |
+| plateau, 2 | 343 | 57 | 135.4 / 0.107 | 139.5 / 0.100 | 0.055 |
+| V&R, 2 | 406 | 59 | 109.1 / 0.185 | 110.6 / 0.221 | 0.052 |
+| plateau, 3 | 144 | 33 | 170.4 / 0.107 | 167.9 / 0.146 | 0.028 |
+| V&R, 3 | 160 | 56 | 118.5 / 0.136 | 116.9 / 0.261 | 0.031 |
+| plateau, 4+ | 59 | 0 | 66.0 / 0.118 | 42.7 / 0.204 | 0.136 |
+| V&R, 4+ | 45 | 0 | 83.2 / 0.355 | 86.5 / 0.294 | 0.044 |
+| plateau, all | 1336 | 68 | 120.2 / 0.101 | 126.5 / 0.105 | 0.061 |
+| V&R, all | 1485 | 76 | 106.4 / 0.163 | 109.6 / 0.192 | 0.042 |
+
+Plateau vs Valley and Ridge (axial / directional): order 1 V 0.057 / 0.093, p_iid
+0.59 / 0.019, permutation p 0.83 / 0.70; order 2 V 0.141 / 0.111, p_iid 0.015 / 0.16,
+permutation p 0.31 / 0.59; order 3 V 0.169 / 0.356, p_iid 0.18 / < 0.0001, permutation
+p 0.34 / 0.032; all orders V 0.082 / 0.121, p_iid 0.003 / < 0.0001, permutation p
+0.27 / 0.24; order 4+ has no block (nan). Junction alpha median (all junctions, by the
+junction pixel): plateau 63.4 [60.9, 67.7] (n 451), Valley and Ridge 60.8 [58.8, 65.3]
+(n 502); order 3: 77.4 [71.4, 80.9] (124) and 66.9 [59.5, 73.1] (138), KS D 0.178,
+p_iid 0.027, permutation p 0.060.
 
 ## 11. Adding a test
 

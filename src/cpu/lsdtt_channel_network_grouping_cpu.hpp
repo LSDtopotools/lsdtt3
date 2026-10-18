@@ -67,11 +67,14 @@ struct channel_network_zone_labels
     std::vector<std::string>  values;        // label for each index
     std::size_t n_unmapped_valid = 0;        // valid DEM pixels with no label
     std::vector<std::string> notes;          // for the CLI to print
+    std::vector<std::string> warnings;       // for the CLI to print as WARNING
 };
 
 // Polygon vector map: thin wrapper over rasterise_polygon_field_values
 // (cell-centre rule, coverage gap fill, reprojection to the DEM CRS). The
 // field must exist (else std::invalid_argument listing the layer's fields).
+// Both builders apply check_categorical_map_coverage: a map that labels no
+// valid DEM pixel throws; partial cover gives a note, and a warning above 10 %.
 channel_network_zone_labels make_zone_labels_from_polygon_field(
     const lsdtt_raster_cpu& reference_dem,
     const std::string&      vector_path,
@@ -179,6 +182,49 @@ channel_record_categories basin_categories(
     const std::vector<std::int32_t>& record_junctions,
     const std::vector<std::int32_t>& basin_of_junction,
     const std::string&               key = "basin");
+
+// -----------------------------------------------------------------------------
+// Independence-block order.
+//
+// count_order_k_basins_with_records: entry k-1 = the number of distinct
+// order-k basins that contain at least one of record_junctions, for
+// k = 1 .. the network's highest junction order.
+//
+// choose_channel_block_order:
+//   override_order > 0: that order, as given (a note when it has fewer than
+//     min_blocks basins with records).
+//   override_order <= 0 (auto): the largest k with at least min_blocks basins.
+//     If no k reaches min_blocks, block_order = 0: no blocks are defined, and
+//     note says why. The reason for a minimum: with B blocks the smallest
+//     attainable permutation p is 1 / (number of distinct label assignments +
+//     1); with >= 30 blocks even a 5-vs-25 split has C(30, 5) = 142 506
+//     assignments, so the number of permutations, not the block count, sets the
+//     resolution; with about 10 blocks an unbalanced split can have fewer than
+//     100 assignments and the p-value is coarse.
+// -----------------------------------------------------------------------------
+std::vector<std::size_t> count_order_k_basins_with_records(
+    const lsdtt_junction_network_base& network,
+    const std::vector<std::int32_t>&   record_junctions);
+
+struct channel_block_order_choice
+{
+    int  block_order = 0;                      // 0 = no blocks
+    bool automatic = true;
+    int  min_blocks = 30;
+    std::vector<std::size_t> n_basins_by_order; // entry k-1
+    std::string note;                           // empty unless worth printing
+};
+
+channel_block_order_choice choose_channel_block_order(
+    const std::vector<std::size_t>& n_basins_by_order,
+    int                             override_order,
+    int                             min_blocks);
+
+// <wf>_channel_network_block_order_counts.csv:
+//   strahler_order,n_basins_with_records,chosen
+void write_channel_network_block_order_counts_csv(
+    const channel_block_order_choice& choice,
+    const std::string&                out_path);
 
 // Block id per record (-1 = none), from a per-junction basin vector.
 std::vector<std::int64_t> block_ids_of_records(

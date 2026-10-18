@@ -909,12 +909,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Lithology: drainage area per pixel, a latitude/longitude transform built
-    // once (never per node) and one random engine for every bootstrap of the run.
+    // Lithology: drainage area per pixel and a latitude/longitude transform,
+    // built once (never per node). The bootstrap engine is per m/n (below).
     std::vector<float> lith_drainage_area;
     std::unique_ptr<lsdtt::lsdtt_coordinate_transform> lith_to_wgs84;
-    std::mt19937_64 lith_rng(
-        static_cast<std::uint64_t>(ifs["lithology_bootstrap_random_seed"]));
     bool lith_units_written = false;
     if (lithology_on)
     {
@@ -1444,6 +1442,9 @@ int main(int argc, char* argv[])
                             r.longitude = ll.longitude;
                         }
                     const lsdtt::lsdtt_chi_lithology_node_table& lnodes = ltables.nodes;
+                    // One reproducible stream per m/n, independent of the others.
+                    std::mt19937_64 lith_rng = lsdtt::lithology_bootstrap_engine(
+                        ifs["lithology_bootstrap_random_seed"], mn);
                     const lsdtt::lsdtt_chi_ksn_lithology_summary lsum =
                         lsdtt::summarise_chi_ksn_by_lithology(
                             ltables, lith_units, mn, chi_opts.A_0, lith_opts, lith_rng);

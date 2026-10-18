@@ -457,8 +457,9 @@ int main(int argc, char* argv[])
         "strahler_order (the link's own order), basin (see "
         "channel_bearing_basin_order), region (channel_region_fname) or lithology "
         "(lithology_fname: the length-weighted majority unit of the nodes the "
-        "bearing was fitted on; links below lithology_min_majority_fraction are "
-        "excluded and counted).",
+        "bearing was fitted on; links below lithology_min_majority_fraction form "
+        "the group 'mixed (<x% one unit)', which is summarised but never compared "
+        "and never part of 'rest').",
         bearing_stats_group, "param", "write_channel_bearing_statistics"};
 
     string_default_map["channel_bearing_stratify_by"] = "none";
@@ -508,11 +509,48 @@ int main(int argc, char* argv[])
         "have none and are excluded (counted).",
         bearing_stats_group, "param", "write_channel_bearing_statistics"};
 
-    int_default_map["channel_bearing_block_order"] = 3;
-    help_map["channel_bearing_block_order"] = {"int","3",
-        "(experimental) Strahler order of the basins counted as independence blocks.",
-        "n_blocks is the number of distinct order-k basins contributing records "
-        "to a group: an honest count of quasi-independent units beside n.",
+    int_default_map["channel_bearing_block_order"] = 0;
+    help_map["channel_bearing_block_order"] = {"int","0",
+        "(experimental) Strahler order of the basins counted as independence blocks; "
+        "0 = automatic.",
+        "Automatic: the largest order k whose order-k basins holding at least one "
+        "analysed record number at least channel_bearing_min_blocks; if no order "
+        "reaches it, no blocks are defined (permutation p-values nan, a WARNING). A "
+        "positive value is used as given. n_blocks is the number of distinct "
+        "blocks contributing records to a group: a count of quasi-independent units "
+        "beside n. Records above the block order have no block: they are summarised "
+        "but take no part in permutations. The counts per order are written to "
+        "<write_fname>_channel_network_block_order_counts.csv.",
+        bearing_stats_group, "param", "write_channel_bearing_statistics"};
+
+    int_default_map["channel_bearing_min_blocks"] = 30;
+    help_map["channel_bearing_min_blocks"] = {"int","30",
+        "(experimental) Minimum number of blocks for the automatic block order.",
+        "With B blocks the smallest attainable permutation p is 1 / (number of "
+        "distinct label assignments + 1). With 30 blocks even a 5-vs-25 split has "
+        "C(30, 5) = 142506 assignments, so the number of permutations, not the "
+        "block count, sets the resolution; with about 10 blocks an unbalanced "
+        "split can have fewer than 100 assignments and the p-value is coarse.",
+        bearing_stats_group, "param", "write_channel_bearing_statistics"};
+
+    int_default_map["channel_bearing_permutations"] = 999;
+    help_map["channel_bearing_permutations"] = {"int","999",
+        "(experimental) Block permutations per comparison; 0 = off.",
+        "permutation_p = (1 + #{T* >= T}) / (1 + permutations), T = Kuiper V for "
+        "bearings, KS D for junction angles, over records with a block. Spatial "
+        "keys (basin, region, lithology): each block takes the majority group of "
+        "its records in the comparison and block labels are permuted among blocks "
+        "(permutation_statistic is T on those block-majority samples). Orders "
+        "(strahler_order, donor_order_pair): groups are permuted among the records "
+        "of each block. Descriptive-only groups (lithology mixed, arms disagree) "
+        "take no part.",
+        bearing_stats_group, "param", "write_channel_bearing_statistics"};
+
+    int_default_map["channel_bearing_permutation_seed"] = 1;
+    help_map["channel_bearing_permutation_seed"] = {"int","1",
+        "(experimental) Seed of the block permutations.",
+        "Each comparison row draws from its own std::mt19937_64, seeded from this "
+        "and the row's labels, so a row's p does not depend on the other rows.",
         bearing_stats_group, "param", "write_channel_bearing_statistics"};
 
     float_default_map["channel_bearing_rose_bin_width_degrees"] = 10.0f;
@@ -571,11 +609,12 @@ int main(int argc, char* argv[])
         "('i_j' from the two donor orders), basin, region (the region of the "
         "junction pixel) or lithology (lithology_fname). Lithology writes two "
         "selections: group_key lithology (every junction, by the unit of its "
-        "pixel) and lithology_interior (only junctions whose three sampled arms "
-        "are in the junction's unit, each with purity >= "
-        "lithology_min_majority_fraction). Lithology-keyed rows also get a "
-        "bootstrap interval of the median (the junction is the resampling unit; "
-        "lithology_bootstrap_replicates, _random_seed; none below 5 junctions).",
+        "pixel) and lithology_interior (the same unit when the three sampled arms "
+        "are all in it with purity >= lithology_min_majority_fraction, else the "
+        "group 'arms disagree', summarised but never compared). Lithology-keyed "
+        "rows also get a bootstrap interval of the median (the junction is the "
+        "resampling unit; lithology_bootstrap_replicates, _random_seed, one "
+        "random stream per run; none below 5 junctions).",
         "Junction-angle statistics", "param", "write_junction_angle_statistics"};
 
     string_default_map["junction_angle_stratify_by"] = "none";
@@ -919,11 +958,25 @@ int main(int argc, char* argv[])
                          "channel_bearing_basin_order must be >= 0.\n";
             return 1;
         }
-        if (ifs["channel_bearing_block_order"] < 1)
+        if (ifs["channel_bearing_block_order"] < 0)
         {
-            std::cerr << "FATAL: channel_bearing_block_order must be >= 1.\n";
+            std::cerr << "FATAL: channel_bearing_block_order must be >= 0 (0 = automatic).\n";
             return 1;
         }
+        if (ifs["channel_bearing_min_blocks"] < 1)
+        {
+            std::cerr << "FATAL: channel_bearing_min_blocks must be >= 1.\n";
+            return 1;
+        }
+        if (ifs["channel_bearing_permutations"] < 0)
+        {
+            std::cerr << "FATAL: channel_bearing_permutations must be >= 0 (0 = off).\n";
+            return 1;
+        }
+        bearing_stats_options.n_permutations =
+            static_cast<std::size_t>(ifs["channel_bearing_permutations"]);
+        bearing_stats_options.permutation_seed =
+            static_cast<std::uint64_t>(ifs["channel_bearing_permutation_seed"]);
 
         bearing_stats_options.rose_bin_width_deg =
             static_cast<double>(ff["channel_bearing_rose_bin_width_degrees"]);
@@ -1261,6 +1314,10 @@ int main(int argc, char* argv[])
         for (const std::string& note : region_labels.notes)
         {
             std::cout << "  " << note << "\n";
+        }
+        for (const std::string& w : region_labels.warnings)
+        {
+            std::cerr << "WARNING: " << w << "\n";
         }
         std::cout << "Regions: ";
         for (std::size_t i = 0; i < region_labels.values.size(); ++i)
@@ -1984,7 +2041,6 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Bearing and junction-angle statistics (experimental) ---\n";
 
         const int basin_order = ifs["channel_bearing_basin_order"];
-        const int block_order = ifs["channel_bearing_block_order"];
         const int max_order_group = ifs["channel_bearing_max_order_group"];
         const double min_purity = ff["channel_region_min_purity"];
 
@@ -1993,16 +2049,61 @@ int main(int argc, char* argv[])
             basin_order > 0
             ? lsdtt::order_k_basin_of_junctions(*channel_network, basin_order)
             : lsdtt::outlet_basin_of_junctions(*channel_network, selection_outlet_junctions);
+        // Independence blocks: order-k basins, k automatic unless overridden.
+        std::vector<std::int32_t> analysed_record_junctions;
+        for (const auto& b : bearing_records)
+            if (!b.empty()) analysed_record_junctions.push_back(b.upstream_junction);
+        for (const auto& a : angle_records)
+            if (!a.empty()) analysed_record_junctions.push_back(a.junction);
+        const lsdtt::channel_block_order_choice block_choice = lsdtt::choose_channel_block_order(
+            lsdtt::count_order_k_basins_with_records(*channel_network, analysed_record_junctions),
+            ifs["channel_bearing_block_order"], ifs["channel_bearing_min_blocks"]);
+        const int block_order = block_choice.block_order;
         const std::vector<std::int32_t> block_of_junction =
-            lsdtt::order_k_basin_of_junctions(*channel_network, block_order);
+            block_order > 0
+            ? lsdtt::order_k_basin_of_junctions(*channel_network, block_order)
+            : std::vector<std::int32_t>(
+                  static_cast<std::size_t>(std::max(0, channel_network->n_junctions())), -1);
+        bearing_stats_options.block_order = block_order;
+        bearing_stats_options.block_order_mode = block_choice.automatic ? "auto" : "override";
+        bearing_stats_options.min_blocks = block_choice.min_blocks;
+        if (block_order == 0) bearing_stats_options.permutation_unavailable_note = block_choice.note;
+
+        std::cout << "Order-k basins holding analysed records:";
+        for (std::size_t k = 0; k < block_choice.n_basins_by_order.size(); ++k)
+            std::cout << " order " << (k + 1) << ": " << block_choice.n_basins_by_order[k] << ";";
+        std::cout << "\n";
+        if (block_choice.automatic)
+            std::cout << "Block order rule             : the largest order with >= "
+                      << block_choice.min_blocks << " such basins (channel_bearing_min_blocks)\n";
+        if (block_order == 0)
+            std::cerr << "WARNING: " << block_choice.note
+                      << ". No independence blocks: permutation p-values are nan; the "
+                         "descriptive statistics are written.\n";
+        else if (!block_choice.note.empty())
+            std::cout << "Note: " << block_choice.note << "\n";
+        try
+        {
+            const std::string f = pp.make_output_path("_channel_network_block_order_counts", ".csv");
+            lsdtt::write_channel_network_block_order_counts_csv(block_choice, f);
+            std::cout << "Writing: " << f << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
 
         std::cout << "Basins                       : "
                   << (basin_order > 0 ? "Strahler order-" + std::to_string(basin_order) +
                                         " basins"
                                       : std::string("analysis-selection outlets"))
                   << "\n";
-        std::cout << "Independence blocks          : Strahler order-" << block_order
-                  << " basins\n";
+        std::cout << "Independence blocks          : "
+                  << (block_order > 0 ? "Strahler order-" + std::to_string(block_order) +
+                                            " basins (" + (block_choice.automatic ? "auto" : "override") + ")"
+                                      : std::string("none"))
+                  << "\n";
 
         // One fixed-precision line, without touching std::cout's format state.
         auto fixed = [](double v, int precision)
@@ -2038,6 +2139,9 @@ int main(int argc, char* argv[])
                 "region", *zones, region_labels, min_purity);
         };
 
+        // Records in descriptive-only groups (lithology mixed / arms disagree):
+        // summarised, left out of every comparison. One note at the end.
+        std::size_t n_descriptive_links = 0, n_descriptive_junctions = 0;
         auto report_excluded = [&](const std::string& what,
                                    const lsdtt::channel_record_categories& c,
                                    std::size_t n_records)
@@ -2049,11 +2153,7 @@ int main(int argc, char* argv[])
                 if (c.key == "region")
                     std::cout << " (no region, or purity < " << min_purity << ")";
                 if (c.key == "lithology" && what.rfind("Link", 0) == 0)
-                    std::cout << " (majority-unit purity of the sampled nodes < "
-                              << lith_min_fraction << ")";
-                if (c.key == "lithology_interior")
-                    std::cout << " (not all three arms in the junction's unit with purity >= "
-                              << lith_min_fraction << ")";
+                    std::cout << " (no sampled node)";
                 if (c.key == "basin" && basin_order > 0)
                     std::cout << " (order > " << basin_order << ", or no order-"
                               << basin_order << " basin downstream)";
@@ -2095,20 +2195,21 @@ int main(int argc, char* argv[])
                 strata = bearing_key(bearing_stratify_by);
             if (bearing_group_by == "lithology" || bearing_stratify_by == "lithology")
             {
-                // Links set aside by purity, by their majority unit.
-                std::map<std::int32_t, std::size_t> below;
-                for (const auto& t : link_lith_tags)
-                    if (t.n_units > 0 && !(t.majority_fraction >= lith_min_fraction))
-                        ++below[t.code];
-                for (const auto& [code, count] : below)
+                // Links of no single unit, by their majority unit.
+                for (const auto& [code, count] :
+                     lsdtt::lithology_mixed_links_by_majority_unit(link_lith_tags, lith_min_fraction))
                 {
                     std::string name = "unmapped";
                     for (const auto& u : lith_units.units)
                         if (u.code == code) name = u.name;
                     std::cout << "Link bearings, lithology: " << count << " link(s) with majority "
-                              << "unit " << name << " below purity " << lith_min_fraction << "\n";
+                              << "unit " << name << " are '"
+                              << lsdtt::lithology_mixed_category_name(lith_min_fraction) << "'\n";
                 }
             }
+            n_descriptive_links = std::max(groups.n_descriptive_only(),
+                                           stratified ? strata.n_descriptive_only() : std::size_t{0});
+            bearing_stats_options.permute_within_blocks = groups.key == "strahler_order";
             const lsdtt::channel_record_categories* strata_ptr =
                 stratified ? &strata : nullptr;
 
@@ -2286,6 +2387,12 @@ int main(int argc, char* argv[])
                 std::vector<lsdtt::junction_angle_group_summary_row> summaries;
                 std::vector<lsdtt::junction_angle_comparison_row> comparisons;
                 for (const auto& [g_ptr, s_ptr] : selections)
+                {
+                n_descriptive_junctions = std::max(
+                    {n_descriptive_junctions, g_ptr->n_descriptive_only(),
+                     s_ptr ? s_ptr->n_descriptive_only() : std::size_t{0}});
+                bearing_stats_options.permute_within_blocks =
+                    g_ptr->key == "strahler_order" || g_ptr->key == "donor_order_pair";
                 for (const auto& [name, values] :
                      std::vector<std::pair<std::string, const std::vector<double>*>>{
                          {"alpha", &m.alpha}, {"beta_min", &m.beta_min},
@@ -2302,9 +2409,11 @@ int main(int argc, char* argv[])
                     // The comparisons CSV has no group_key column: name the
                     // lithology selection (lithology / lithology_interior) here.
                     if (g_ptr->key.rfind("lithology", 0) == 0)
-                        for (auto& row : c) row.note = "group_key=" + g_ptr->key;
+                        for (auto& row : c)
+                            row.note = "group_key=" + g_ptr->key + (row.note.empty() ? "" : "; ") + row.note;
                     summaries.insert(summaries.end(), s.begin(), s.end());
                     comparisons.insert(comparisons.end(), c.begin(), c.end());
+                }
                 }
 
                 std::size_t printed = 0;
@@ -2362,6 +2471,14 @@ int main(int argc, char* argv[])
             }
         }
 
+        if (n_descriptive_links > 0 || n_descriptive_junctions > 0)
+        {
+            std::cout << "Note: " << n_descriptive_links << " link record(s) in '"
+                      << lsdtt::lithology_mixed_category_name(lith_min_fraction) << "' and "
+                      << n_descriptive_junctions << " junction record(s) in 'arms disagree' "
+                         "are summarised but left out of every comparison (never compared, "
+                         "never part of 'rest'): they have no single lithologic unit.\n";
+        }
         if (small_block_note)
         {
             std::cerr << "Note: some p-values are below 0.05 while a group has fewer than "

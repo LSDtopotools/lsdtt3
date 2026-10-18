@@ -218,11 +218,15 @@ std::vector<channel_bearing_angular_type> requested_types(
 // The pairs (a, b) to compare in one stratum, by group category. b < 0 means
 // "rest". Only groups with at least min_group_size records take part.
 std::vector<std::pair<std::int32_t, std::int32_t>> comparison_pairs(
-    const stratum_level& level, const channel_bearing_statistics_options& options)
+    const stratum_level& level, const channel_record_categories& groups,
+    const channel_bearing_statistics_options& options)
 {
     std::vector<std::int32_t> eligible;
+    std::size_t n_comparable_groups = 0;
     for (const auto& kv : level.records_by_group)
     {
+        if (groups.is_descriptive_only(kv.first)) continue;
+        ++n_comparable_groups;
         if (kv.second.size() >= options.min_group_size) eligible.push_back(kv.first);
     }
 
@@ -235,8 +239,8 @@ std::vector<std::pair<std::int32_t, std::int32_t>> comparison_pairs(
     }
     else if (options.comparison_mode == channel_bearing_comparison_mode::one_vs_rest)
     {
-        // A "rest" needs at least one other group present.
-        if (level.records_by_group.size() >= 2)
+        // A "rest" needs at least one other comparable group present.
+        if (n_comparable_groups >= 2)
         {
             for (const std::int32_t a : eligible) pairs.emplace_back(a, -1);
         }
@@ -244,12 +248,13 @@ std::vector<std::pair<std::int32_t, std::int32_t>> comparison_pairs(
     return pairs;
 }
 
-std::vector<std::size_t> rest_of(const stratum_level& level, std::int32_t group)
+std::vector<std::size_t> rest_of(const stratum_level& level, std::int32_t group,
+                                 const channel_record_categories& groups)
 {
     std::vector<std::size_t> rest;
     for (const auto& kv : level.records_by_group)
     {
-        if (kv.first == group) continue;
+        if (kv.first == group || groups.is_descriptive_only(kv.first)) continue;
         rest.insert(rest.end(), kv.second.begin(), kv.second.end());
     }
     std::sort(rest.begin(), rest.end());
@@ -269,6 +274,68 @@ std::ofstream open_csv(const std::string& out_path, const char* where)
 std::string blocks_text(long long n_blocks)
 {
     return n_blocks < 0 ? std::string("nan") : std::to_string(n_blocks);
+}
+
+std::size_t count_unblocked(const std::vector<std::int64_t>& block_id,
+                            const std::vector<std::size_t>& record_indices)
+{
+    std::size_t n = 0;
+    for (const std::size_t i : record_indices)
+        if (i >= block_id.size() || block_id[i] < 0) ++n;
+    return n;
+}
+
+void join_note(std::string& note, const std::string& more)
+{
+    if (more.empty()) return;
+    note += (note.empty() ? "" : "; ") + more;
+}
+
+// The summary-row note: descriptive-only groups and records without a block.
+std::string summary_note(bool descriptive_only, std::size_t n, std::size_t n_unblocked,
+                         const channel_bearing_statistics_options& options)
+{
+    std::string note;
+    if (descriptive_only) join_note(note, "descriptive only: not compared");
+    if (n_unblocked > 0)
+    {
+        if (options.block_order <= 0)
+            join_note(note, "no independence blocks defined");
+        else if (n_unblocked == n)
+            join_note(note, "no record has an order-" + std::to_string(options.block_order) +
+                            " basin block: descriptive only for permutations");
+        else
+            join_note(note, std::to_string(n_unblocked) + " record(s) above block order " +
+                            std::to_string(options.block_order) + " have no block");
+    }
+    return note;
+}
+
+// A seed for one comparison row from the base seed and its labels (FNV-1a),
+// so a row's permutation p does not depend on the other rows.
+std::mt19937_64 permutation_engine(std::uint64_t seed, const std::string& label)
+{
+    std::uint64_t h = 1469598103934665603ULL;
+    for (const unsigned char c : label)
+    {
+        h ^= c;
+        h *= 1099511628211ULL;
+    }
+    std::seed_seq seq{static_cast<std::uint32_t>(seed), static_cast<std::uint32_t>(seed >> 32),
+                      static_cast<std::uint32_t>(h), static_cast<std::uint32_t>(h >> 32)};
+    return std::mt19937_64(seq);
+}
+
+double kuiper_statistic(const std::vector<double>& a, const std::vector<double>& b, int axial)
+{
+    return compare_channel_bearing_samples(
+               a, b, axial ? channel_bearing_angular_type::axial
+                           : channel_bearing_angular_type::directional).kuiper_V;
+}
+
+double ks_statistic(const std::vector<double>& a, const std::vector<double>& b, int)
+{
+    return compare_junction_angle_samples(a, b).ks_D;
 }
 
 } // namespace
@@ -302,6 +369,19 @@ std::size_t channel_record_categories::n_excluded() const
     return static_cast<std::size_t>(
         std::count_if(category.begin(), category.end(),
                       [](std::int32_t c) { return c < 0; }));
+}
+
+bool channel_record_categories::is_descriptive_only(std::int32_t category_value) const
+{
+    return descriptive_only.count(category_value) > 0;
+}
+
+std::size_t channel_record_categories::n_descriptive_only() const
+{
+    if (descriptive_only.empty()) return 0;
+    return static_cast<std::size_t>(
+        std::count_if(category.begin(), category.end(),
+                      [&](std::int32_t c) { return descriptive_only.count(c) > 0; }));
 }
 
 std::string channel_record_categories::name_of(std::int32_t category_value) const
@@ -611,6 +691,165 @@ junction_angle_measurands make_junction_angle_measurands(
 }
 
 // =============================================================================
+// Block permutation
+// =============================================================================
+channel_block_permutation_result channel_block_permutation_test(
+    const std::vector<double>&       values,
+    const std::vector<std::int64_t>& block_id,
+    const std::vector<std::size_t>&  a_idx,
+    const std::vector<std::size_t>&  b_idx,
+    bool                             within_blocks,
+    std::size_t                      n_permutations,
+    std::mt19937_64&                 rng,
+    double (*statistic)(const std::vector<double>&, const std::vector<double>&, int),
+    int                              statistic_arg)
+{
+    channel_block_permutation_result out;
+    // Pooled records with a block and a finite value: (block, value, is_a).
+    struct rec { std::int64_t block; double value; bool is_a; };
+    std::vector<rec> recs;
+    std::size_t n_a = 0, n_b = 0;
+    for (const auto* idx : {&a_idx, &b_idx})
+        for (const std::size_t i : *idx)
+        {
+            const bool blocked = i < block_id.size() && block_id[i] >= 0;
+            if (!blocked || i >= values.size() || !std::isfinite(values[i]))
+            {
+                ++out.n_unblocked;
+                continue;
+            }
+            recs.push_back({block_id[i], values[i], idx == &a_idx});
+            (idx == &a_idx ? n_a : n_b) += 1;
+        }
+    if (n_permutations == 0) return out;
+    if (n_a == 0 || n_b == 0)
+    {
+        out.note = std::string("no blocked records in ") + (n_a == 0 ? "group_a" : "group_b");
+        return out;
+    }
+
+    // Blocks, in ascending id.
+    std::map<std::int64_t, std::vector<std::size_t>> by_block;
+    for (std::size_t k = 0; k < recs.size(); ++k) by_block[recs[k].block].push_back(k);
+    out.n_blocks = by_block.size();
+
+    std::vector<double> a, b;
+    auto split = [&](const std::vector<char>& label_of_record) {
+        a.clear();
+        b.clear();
+        for (std::size_t k = 0; k < recs.size(); ++k)
+            (label_of_record[k] ? a : b).push_back(recs[k].value);
+    };
+
+    std::vector<char> label(recs.size());
+    std::size_t n_ge = 0;
+    if (!within_blocks)
+    {
+        // Each block takes its majority group (ties to a).
+        std::vector<char> block_label;
+        for (const auto& kv : by_block)
+        {
+            std::size_t ca = 0;
+            for (const std::size_t k : kv.second) ca += recs[k].is_a ? 1 : 0;
+            block_label.push_back(2 * ca >= kv.second.size() ? 1 : 0);
+        }
+        const std::size_t n_a_blocks =
+            static_cast<std::size_t>(std::count(block_label.begin(), block_label.end(), 1));
+        if (n_a_blocks == 0 || n_a_blocks == block_label.size())
+        {
+            out.note = "every block has the same majority group";
+            return out;
+        }
+        auto apply = [&](const std::vector<char>& bl) {
+            std::size_t j = 0;
+            for (const auto& kv : by_block)
+            {
+                for (const std::size_t k : kv.second) label[k] = bl[j];
+                ++j;
+            }
+            split(label);
+        };
+        apply(block_label);
+        out.observed = statistic(a, b, statistic_arg);
+        std::vector<char> perm = block_label;
+        for (std::size_t t = 0; t < n_permutations; ++t)
+        {
+            std::shuffle(perm.begin(), perm.end(), rng);
+            apply(perm);
+            if (statistic(a, b, statistic_arg) >= out.observed * (1.0 - 1e-12)) ++n_ge;
+        }
+        out.note = "block-majority labels";
+    }
+    else
+    {
+        std::size_t n_mixed_blocks = 0;
+        for (const auto& kv : by_block)
+        {
+            std::size_t ca = 0;
+            for (const std::size_t k : kv.second) ca += recs[k].is_a ? 1 : 0;
+            n_mixed_blocks += (ca > 0 && ca < kv.second.size()) ? 1 : 0;
+        }
+        if (n_mixed_blocks == 0)
+        {
+            out.note = "no block holds both groups";
+            return out;
+        }
+        for (std::size_t k = 0; k < recs.size(); ++k) label[k] = recs[k].is_a ? 1 : 0;
+        split(label);
+        out.observed = statistic(a, b, statistic_arg);
+        std::vector<char> perm = label;
+        for (std::size_t t = 0; t < n_permutations; ++t)
+        {
+            for (const auto& kv : by_block)
+            {
+                // Shuffle the labels of this block's records among them.
+                std::vector<char> lab;
+                for (const std::size_t k : kv.second) lab.push_back(perm[k]);
+                std::shuffle(lab.begin(), lab.end(), rng);
+                for (std::size_t q = 0; q < kv.second.size(); ++q) perm[kv.second[q]] = lab[q];
+            }
+            split(perm);
+            if (statistic(a, b, statistic_arg) >= out.observed * (1.0 - 1e-12)) ++n_ge;
+        }
+        out.note = "labels permuted within blocks";
+    }
+    out.p = (1.0 + static_cast<double>(n_ge)) / (1.0 + static_cast<double>(n_permutations));
+    return out;
+}
+
+namespace
+{
+
+// Fill a comparison row's permutation p and note.
+template <class Row>
+void add_permutation(Row& row, const std::vector<double>& values,
+                     const std::vector<std::int64_t>& block_id,
+                     const std::vector<std::size_t>& ia, const std::vector<std::size_t>& ib,
+                     const channel_bearing_statistics_options& options,
+                     double (*statistic)(const std::vector<double>&, const std::vector<double>&, int),
+                     int arg, const std::string& label)
+{
+    if (options.n_permutations == 0) return;
+    if (!options.permutation_unavailable_note.empty())
+    {
+        join_note(row.note, options.permutation_unavailable_note);
+        return;
+    }
+    std::mt19937_64 rng = permutation_engine(options.permutation_seed, label);
+    const channel_block_permutation_result pr = channel_block_permutation_test(
+        values, block_id, ia, ib, options.permute_within_blocks, options.n_permutations, rng,
+        statistic, arg);
+    row.permutation_p = pr.p;
+    row.permutation_statistic = pr.observed;
+    std::string note = "permutation: " + pr.note;
+    if (pr.n_unblocked > 0)
+        note += ", " + std::to_string(pr.n_unblocked) + " record(s) without a block left out";
+    join_note(row.note, note);
+}
+
+} // namespace
+
+// =============================================================================
 // Category-keyed bearing statistics
 // =============================================================================
 std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_by_category(
@@ -651,6 +890,12 @@ std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_b
                 row.n_blocks         = n_blocks;
                 row.summary          = summarise_channel_bearing_group(v, w, type);
                 row.meets_min_group_size = row.summary.n >= options.min_group_size;
+                row.block_order      = options.block_order;
+                row.block_order_mode = options.block_order_mode;
+                row.min_blocks       = options.min_blocks;
+                row.n_unblocked      = count_unblocked(block_id, idx);
+                row.note = summary_note(groups.is_descriptive_only(group), idx.size(),
+                                        row.n_unblocked, options);
                 rows.push_back(std::move(row));
             }
         }
@@ -730,7 +975,7 @@ channel_bearing_comparison_result compare_channel_link_bearings_by_category(
 
     for (const stratum_level& level : make_stratum_levels(groups, strata))
     {
-        const auto pairs = comparison_pairs(level, options);
+        const auto pairs = comparison_pairs(level, groups, options);
 
         for (const channel_bearing_angular_type type : requested_types(options))
         {
@@ -740,7 +985,7 @@ channel_bearing_comparison_result compare_channel_link_bearings_by_category(
             {
                 const std::vector<std::size_t>& ia = level.records_by_group.at(ga);
                 const std::vector<std::size_t>  ib =
-                    gb >= 0 ? level.records_by_group.at(gb) : rest_of(level, ga);
+                    gb >= 0 ? level.records_by_group.at(gb) : rest_of(level, ga, groups);
 
                 channel_bearing_comparison_row row;
                 row.measurand       = options.measurand;
@@ -763,6 +1008,12 @@ channel_bearing_comparison_result compare_channel_link_bearings_by_category(
                     row.note = "rotation_invariant_skipped_sample_too_large";
                     ++out.n_rotation_invariant_skipped;
                 }
+                add_permutation(row, bearing_deg, block_id, ia, ib, options, &kuiper_statistic,
+                                type == channel_bearing_angular_type::axial ? 1 : 0,
+                                row.measurand + "|" + row.group_key + "|" + row.stratum_key + "=" +
+                                    row.stratum_value + "|" +
+                                    channel_bearing_angular_type_name(type) + "|" + row.group_a +
+                                    "|" + row.group_b);
                 family.push_back(std::move(row));
             }
 
@@ -772,7 +1023,8 @@ channel_bearing_comparison_result compare_channel_link_bearings_by_category(
             {
                 for (const auto& [group, idx] : level.records_by_group)
                 {
-                    if (idx.size() < options.min_group_size) continue;
+                    if (idx.size() < options.min_group_size || groups.is_descriptive_only(group))
+                        continue;
                     channel_bearing_comparison_row row;
                     row.measurand       = options.measurand;
                     row.group_key       = groups.key;
@@ -846,6 +1098,12 @@ std::vector<junction_angle_group_summary_row> summarise_junction_angles_by_categ
             row.n_blocks         = count_distinct_blocks(block_id, idx);
             row.summary          = summarise_junction_angle_group(gather(values_deg, idx));
             row.meets_min_group_size = row.summary.n >= options.min_group_size;
+            row.block_order      = options.block_order;
+            row.block_order_mode = options.block_order_mode;
+            row.min_blocks       = options.min_blocks;
+            row.n_unblocked      = count_unblocked(block_id, idx);
+            row.note = summary_note(groups.is_descriptive_only(group), idx.size(),
+                                    row.n_unblocked, options);
             rows.push_back(std::move(row));
         }
     }
@@ -912,11 +1170,11 @@ std::vector<junction_angle_comparison_row> compare_junction_angles_by_category(
     for (const stratum_level& level : make_stratum_levels(groups, strata))
     {
         std::vector<junction_angle_comparison_row> family;
-        for (const auto& [ga, gb] : comparison_pairs(level, options))
+        for (const auto& [ga, gb] : comparison_pairs(level, groups, options))
         {
             const std::vector<std::size_t>& ia = level.records_by_group.at(ga);
             const std::vector<std::size_t>  ib =
-                gb >= 0 ? level.records_by_group.at(gb) : rest_of(level, ga);
+                gb >= 0 ? level.records_by_group.at(gb) : rest_of(level, ga, groups);
 
             junction_angle_comparison_row row;
             row.measurand       = measurand;
@@ -936,6 +1194,9 @@ std::vector<junction_angle_comparison_row> compare_junction_angles_by_category(
             for (const double x : gather(values_deg, ia)) if (std::isfinite(x)) a.push_back(x);
             for (const double x : gather(values_deg, ib)) if (std::isfinite(x)) b.push_back(x);
             row.result = compare_junction_angle_samples(a, b);
+            add_permutation(row, values_deg, block_id, ia, ib, options, &ks_statistic, 0,
+                            row.measurand + "|" + row.group_key + "|" + row.stratum_key + "=" +
+                                row.stratum_value + "|" + row.group_a + "|" + row.group_b);
             family.push_back(std::move(row));
         }
 
@@ -1017,7 +1278,7 @@ void write_channel_bearing_group_summary_csv(
           "circular_variance_count,circular_sd_deg_count,"
           "circular_mean_deg_length,mean_resultant_length_length,n_eff_length,"
           "rayleigh_z,rayleigh_p_iid_approx,fraction_on_d8_multiples,"
-          "meets_min_group_size\n";
+          "meets_min_group_size,block_order,block_order_mode,min_blocks,n_unblocked,note\n";
     for (const auto& r : rows)
     {
         const auto& s = r.summary;
@@ -1036,7 +1297,9 @@ void write_channel_bearing_group_summary_csv(
            << format_double(s.rayleigh_z) << ','
            << format_double(s.rayleigh_p_iid_approx) << ','
            << format_double(s.fraction_on_d8_multiples) << ','
-           << (r.meets_min_group_size ? 1 : 0) << '\n';
+           << (r.meets_min_group_size ? 1 : 0) << ',' << r.block_order << ','
+           << r.block_order_mode << ',' << r.min_blocks << ',' << r.n_unblocked << ','
+           << csv_field(r.note) << '\n';
     }
 }
 
@@ -1049,7 +1312,7 @@ void write_channel_bearing_comparisons_csv(
           "group_a,group_b,n_a,n_b,n_blocks_a,n_blocks_b,"
           "circular_wasserstein_deg,rotation_invariant,optimal_rotation_deg,"
           "kuiper_V,kuiper_p_iid_approx,kuiper_p_holm,n_comparisons_in_family,"
-          "permutation_p,note\n";
+          "permutation_p,note,permutation_statistic\n";
     for (const auto& r : rows)
     {
         os << r.measurand << ',' << r.stratum_key << ',' << csv_field(r.stratum_value) << ','
@@ -1065,7 +1328,7 @@ void write_channel_bearing_comparisons_csv(
            << format_double(r.kuiper_p_holm) << ','
            << r.n_comparisons_in_family << ','
            << format_double(r.permutation_p) << ','
-           << r.note << '\n';
+           << csv_field(r.note) << ',' << format_double(r.permutation_statistic) << '\n';
     }
 }
 
@@ -1098,7 +1361,8 @@ void write_junction_angle_group_summary_csv(
     std::ofstream os = open_csv(out_path, "write_junction_angle_group_summary_csv");
     os << "measurand,group_key,group_value,stratum_key,stratum_value,"
           "n,n_blocks,mean_deg,median_deg,sd_deg,q25_deg,q75_deg,iqr_deg,"
-          "meets_min_group_size,median_ci_low_deg,median_ci_high_deg,n_bootstrap\n";
+          "meets_min_group_size,median_ci_low_deg,median_ci_high_deg,n_bootstrap,"
+          "block_order,block_order_mode,min_blocks,n_unblocked,note\n";
     for (const auto& r : rows)
     {
         const auto& s = r.summary;
@@ -1109,7 +1373,9 @@ void write_junction_angle_group_summary_csv(
            << format_double(s.sd_deg) << ',' << format_double(s.q25_deg) << ','
            << format_double(s.q75_deg) << ',' << format_double(s.iqr_deg) << ','
            << (r.meets_min_group_size ? 1 : 0) << ',' << format_double(r.median_ci_low_deg) << ','
-           << format_double(r.median_ci_high_deg) << ',' << r.n_bootstrap << '\n';
+           << format_double(r.median_ci_high_deg) << ',' << r.n_bootstrap << ','
+           << r.block_order << ',' << r.block_order_mode << ',' << r.min_blocks << ','
+           << r.n_unblocked << ',' << csv_field(r.note) << '\n';
     }
 }
 
@@ -1120,7 +1386,8 @@ void write_junction_angle_comparisons_csv(
     std::ofstream os = open_csv(out_path, "write_junction_angle_comparisons_csv");
     os << "measurand,stratum_key,stratum_value,comparison_mode,group_a,group_b,"
           "n_a,n_b,n_blocks_a,n_blocks_b,ks_D,ks_p_iid_approx,ks_p_holm,"
-          "n_comparisons_in_family,linear_wasserstein_deg,permutation_p,note\n";
+          "n_comparisons_in_family,linear_wasserstein_deg,permutation_p,note,"
+          "permutation_statistic\n";
     for (const auto& r : rows)
     {
         os << r.measurand << ',' << r.stratum_key << ',' << csv_field(r.stratum_value) << ','
@@ -1133,7 +1400,7 @@ void write_junction_angle_comparisons_csv(
            << r.n_comparisons_in_family << ','
            << format_double(r.result.linear_wasserstein_deg) << ','
            << format_double(r.permutation_p) << ','
-           << r.note << '\n';
+           << csv_field(r.note) << ',' << format_double(r.permutation_statistic) << '\n';
     }
 }
 

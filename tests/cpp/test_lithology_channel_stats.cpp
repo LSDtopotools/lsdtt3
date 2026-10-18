@@ -811,8 +811,11 @@ void test_check_mode(const std::string& dir)
 // --write-fixtures: a steady-state DEM and its unit map for the CLI, and a
 // two-unit code raster on tiny_dem.asc's grid for the observation-only check.
 // ---------------------------------------------------------------------------
-void write_polygon_units(const std::string& path, const lsdtt_raster_meta& m, int split)
+void write_polygon_units(const std::string& path, const lsdtt_raster_meta& m_in, int split,
+                         double shift_x = 0.0)
 {
+    lsdtt_raster_meta m = m_in;
+    m.x_min += shift_x;
     gdal_init();
     std::filesystem::remove(path);
     GDALDataset* ds = GetGDALDriverManager()->GetDriverByName("GPKG")->Create(
@@ -851,6 +854,15 @@ int write_fixtures(const std::string& dir, const std::string& tiny_dem)
     w.write_full(f.elevation.get_data(), f.elevation.get_meta(), dir + "/lithks_steady_dem.tif",
                  raster_output_format::gtiff);
     write_polygon_units(dir + "/lithks_units.gpkg", f.elevation.get_meta(), k_split);
+    // The same units 200 km east, and a code raster there: maps that label no
+    // valid DEM pixel (same CRS, no overlap).
+    write_polygon_units(dir + "/lithks_units_far.gpkg", f.elevation.get_meta(), k_split, 200000.0);
+    {
+        lsdtt_raster_meta far = f.elevation.get_meta();
+        far.x_min += 200000.0;
+        std::vector<float> c(static_cast<std::size_t>(far.n_rows) * far.n_cols, 1.0f);
+        w.write_full(c, far, dir + "/lithks_codes_far.tif", raster_output_format::gtiff);
+    }
     {
         // A crosswalk with unit names, and one missing the value "shale".
         std::ofstream cw(dir + "/lithks_crosswalk.csv");

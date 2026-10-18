@@ -536,6 +536,51 @@ lsdtt_lithology_unit_codes lithology_unit_codes_for_values(
     return out;
 }
 
+namespace
+{
+
+// The name of a CRS from its WKT (the first quoted string), or "no CRS".
+std::string crs_name(const std::string& wkt)
+{
+    const auto a = wkt.find('"');
+    if (a == std::string::npos) return "no CRS";
+    const auto b = wkt.find('"', a + 1);
+    return b == std::string::npos ? wkt.substr(a + 1) : wkt.substr(a + 1, b - a - 1);
+}
+
+std::string extent_text(double x0, double y0, double x1, double y1, const std::string& wkt)
+{
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(1) << "x " << x0 << " to " << x1 << ", y " << y0
+       << " to " << y1 << " (" << crs_name(wkt) << ")";
+    return os.str();
+}
+
+} // namespace
+
+void check_categorical_map_coverage(const std::string& what, const std::string& path,
+                                    std::size_t n_valid, std::size_t n_unlabelled,
+                                    const lsdtt_categorical_map_extent& e,
+                                    const lsdtt_raster_meta& g, std::vector<std::string>& notes,
+                                    std::vector<std::string>& warnings)
+{
+    if (n_valid == 0) return;
+    if (n_unlabelled >= n_valid)
+        throw std::invalid_argument(
+            what + " map " + path + " labels no valid DEM pixel: the map covers " +
+            extent_text(e.x_min, e.y_min, e.x_max, e.y_max, e.crs_wkt) + "; the DEM covers " +
+            extent_text(g.x_min, g.y_min, g.x_min + g.n_cols * g.cell_size,
+                        g.y_min + g.n_rows * g.cell_size, g.crs_wkt));
+    const double pct = 100.0 * static_cast<double>(n_unlabelled) / static_cast<double>(n_valid);
+    std::ostringstream os;
+    os << std::setprecision(4) << pct;
+    notes.push_back(std::to_string(n_unlabelled) + " of " + std::to_string(n_valid) +
+                    " valid DEM pixels (" + os.str() + " %) have no " + what + " label");
+    if (pct > 10.0)
+        warnings.push_back(os.str() + " % of the valid DEM pixels have no " + what +
+                           " label (the " + what + " map covers part of the DEM only)");
+}
+
 lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cpu& grid,
                                                            const lsdtt_lithology_map_source& src)
 {
@@ -549,6 +594,7 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
     lsdtt_lithology_units_on_grid out;
     std::vector<std::int32_t> value_index;
     std::vector<std::string> values;
+    lsdtt_categorical_map_extent map_extent;
 
     if (lithology_source_from_path(src.path, src.source) == "vector_map")
     {
@@ -561,6 +607,7 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
             throw std::invalid_argument("lithology map " + src.path + " has no field '" +
                                         src.field_name + "'; its fields are: " + list);
         }
+        map_extent = {info.x_min, info.y_min, info.x_max, info.y_max, info.crs_wkt};
         polygon_field_rasterise_result r =
             rasterise_polygon_field_values(grid, src.path, src.layer_name, src.field_name);
         value_index = std::move(r.value_index);
@@ -581,6 +628,8 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
         lsdtt_data_loader l;
         l.open_raster(src.path);
         const lsdtt_raster_meta sm = l.get_meta();
+        map_extent = {sm.x_min, sm.y_min, sm.x_min + sm.n_cols * sm.cell_size,
+                      sm.y_min + sm.n_rows * sm.cell_size, sm.crs_wkt};
         const double tol = 1e-6 * gm.cell_size;
         const bool on_grid = sm.n_rows == gm.n_rows && sm.n_cols == gm.n_cols &&
                              std::abs(sm.cell_size - gm.cell_size) < tol &&
@@ -597,7 +646,19 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
         {
             lsdtt_warp_options wo;
             wo.resampling_method = "near";
-            tile = warp_raster_to_grid_in_memory(src.path, gm, wo);
+            try
+            {
+                tile = warp_raster_to_grid_in_memory(src.path, gm, wo);
+            }
+            catch (const std::exception& e)
+            {
+                if (std::string(e.what()).find("do not overlap") == std::string::npos) throw;
+                std::size_t n_valid = 0;
+                for (const std::uint8_t v : gmask) n_valid += v ? 1 : 0;
+                check_categorical_map_coverage("lithology", src.path, n_valid, n_valid, map_extent,
+                                               gm, out.notes, out.warnings);   // throws
+                throw;
+            }
             out.notes.push_back("code raster warped onto the grid (nearest neighbour)");
         }
         if (tile.data.size() != npix)
@@ -637,6 +698,8 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
         if (value_index[i] >= 0) ++counts[static_cast<std::size_t>(value_index[i])];
         else ++out.n_unmapped_valid;
     }
+    check_categorical_map_coverage("lithology", src.path, out.n_valid, out.n_unmapped_valid,
+                                   map_extent, gm, out.notes, out.warnings);
 
     std::map<std::string, int> crosswalk;
     std::map<int, std::string> cw_names;
@@ -675,10 +738,6 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(const lsdtt_raster_cp
             out.code_of_pixel[i] = uc.codes[static_cast<std::size_t>(used_of[value_index[i]])];
     for (auto& [c, l] : labels) out.units.push_back(std::move(l));
 
-    if (out.n_unmapped_valid > 0)
-        out.notes.push_back(std::to_string(out.n_unmapped_valid) + " of " +
-                            std::to_string(out.n_valid) +
-                            " valid pixels have no lithologic unit (unmapped)");
     return out;
 }
 

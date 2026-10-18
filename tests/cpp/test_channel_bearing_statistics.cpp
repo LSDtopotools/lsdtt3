@@ -72,7 +72,11 @@
 #include <string>
 #include <vector>
 
+#include <gdal_priv.h>
+#include <ogrsf_frmts.h>
+
 #include "lsdtt_data_loader.hpp"
+#include "lsdtt_gdal_init.hpp"
 #include "lsdtt_flow_base.hpp"
 #include "lsdtt_junction_network_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
@@ -960,6 +964,7 @@ void run_isotropic_null_checks(int seed)
 // =============================================================================
 void write_fixtures(const std::string& output_dir, const std::string& reference_csv)
 {
+    lsdtt::gdal_init();
     std::filesystem::create_directories(output_dir);
     lsdtt::lsdtt_data_loader loader;
 
@@ -988,6 +993,38 @@ void write_fixtures(const std::string& output_dir, const std::string& reference_
     loader.write_full(std::vector<float>(static_cast<std::size_t>(50) * 40, 1.0f), off,
                       output_dir + "/cbs_region_off_grid.tif",
                       lsdtt::raster_output_format::gtiff);
+
+    // Region / lithology maps 200 km east of the trellis (same CRS, no
+    // overlap): a code raster and a one-polygon GeoPackage (field "unit").
+    {
+        lsdtt::lsdtt_raster_meta far = m;
+        far.x_min += 200000.0;
+        loader.write_full(std::vector<float>(codes.size(), 1.0f), far,
+                          output_dir + "/cbs_region_far.tif", lsdtt::raster_output_format::gtiff);
+        const std::string gpkg = output_dir + "/cbs_region_far.gpkg";
+        std::filesystem::remove(gpkg);
+        GDALDataset* ds = GetGDALDriverManager()->GetDriverByName("GPKG")->Create(
+            gpkg.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+        OGRSpatialReference srs;
+        srs.importFromWkt(m.crs_wkt.c_str());
+        srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        OGRLayer* layer = ds->CreateLayer("units", &srs, wkbPolygon, nullptr);
+        OGRFieldDefn fd("unit", OFTString);
+        (void)layer->CreateField(&fd);
+        OGRFeature* f = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        f->SetField("unit", "far");
+        const double x0 = far.x_min, x1 = far.x_min + far.n_cols * far.cell_size;
+        const double y0 = far.y_min, y1 = far.y_min + far.n_rows * far.cell_size;
+        OGRLinearRing ring;
+        ring.addPoint(x0, y0); ring.addPoint(x1, y0); ring.addPoint(x1, y1); ring.addPoint(x0, y1);
+        ring.addPoint(x0, y0);
+        OGRPolygon poly;
+        poly.addRing(&ring);
+        f->SetGeometry(&poly);
+        if (layer->CreateFeature(f) != OGRERR_NONE) std::cerr << "could not write the far polygon\n";
+        OGRFeature::DestroyFeature(f);
+        GDALClose(ds);
+    }
 
     if (!reference_csv.empty())
     {

@@ -1,3 +1,4 @@
+import math
 import os
 
 from qgis.core import (
@@ -5,6 +6,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingOutputFile,
+    QgsProcessingOutputRasterLayer,
     QgsProcessingOutputVectorLayer,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterDefinition,
@@ -45,6 +47,21 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     WRITE_AREA_RATIO_SUMMARY = "WRITE_AREA_RATIO_SUMMARY"
     WRITE_COM_BEARINGS = "WRITE_COM_BEARINGS"
 
+    # Grouped bearing / junction-angle statistics (experimental). Parameter
+    # ids are the upper-cased lsdtt keys, so backend help resolves by name.
+    WRITE_CHANNEL_BEARING_STATISTICS = "WRITE_CHANNEL_BEARING_STATISTICS"
+    CHANNEL_BEARING_GROUP_BY = "CHANNEL_BEARING_GROUP_BY"
+    CHANNEL_BEARING_STRATIFY_BY = "CHANNEL_BEARING_STRATIFY_BY"
+    WRITE_JUNCTION_ANGLE_STATISTICS = "WRITE_JUNCTION_ANGLE_STATISTICS"
+    JUNCTION_ANGLE_GROUP_BY = "JUNCTION_ANGLE_GROUP_BY"
+    JUNCTION_ANGLE_STRATIFY_BY = "JUNCTION_ANGLE_STRATIFY_BY"
+
+    # Region and lithology maps (grouping keys region / lithology)
+    CHANNEL_REGION_FNAME = "CHANNEL_REGION_FNAME"
+    CHANNEL_REGION_FIELD_NAME = "CHANNEL_REGION_FIELD_NAME"
+    LITHOLOGY_FNAME = "LITHOLOGY_FNAME"
+    WRITE_LITHOLOGY_CODE_RASTER = "WRITE_LITHOLOGY_CODE_RASTER"
+
     # Advanced
     THREADS = "THREADS"
     BOUNDARY_CONDITIONS = "BOUNDARY_CONDITIONS"
@@ -65,6 +82,37 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     ONLY_COMPLETE_BASINS = "ONLY_COMPLETE_BASINS"
     MINIMUM_BASIN_PIXELS = "MINIMUM_BASIN_PIXELS"
 
+    # Advanced: statistics settings (shared by bearings and junction angles)
+    CHANNEL_BEARING_ANGULAR_TYPE = "CHANNEL_BEARING_ANGULAR_TYPE"
+    CHANNEL_BEARING_COMPARISON_MODE = "CHANNEL_BEARING_COMPARISON_MODE"
+    CHANNEL_BEARING_MIN_GROUP_SIZE = "CHANNEL_BEARING_MIN_GROUP_SIZE"
+    CHANNEL_BEARING_MAX_ORDER_GROUP = "CHANNEL_BEARING_MAX_ORDER_GROUP"
+    CHANNEL_BEARING_BASIN_ORDER = "CHANNEL_BEARING_BASIN_ORDER"
+    CHANNEL_BEARING_BLOCK_ORDER = "CHANNEL_BEARING_BLOCK_ORDER"
+    CHANNEL_BEARING_MIN_BLOCKS = "CHANNEL_BEARING_MIN_BLOCKS"
+    CHANNEL_BEARING_PERMUTATIONS = "CHANNEL_BEARING_PERMUTATIONS"
+    CHANNEL_BEARING_PERMUTATION_SEED = "CHANNEL_BEARING_PERMUTATION_SEED"
+    CHANNEL_BEARING_ROSE_BIN_WIDTH_DEGREES = "CHANNEL_BEARING_ROSE_BIN_WIDTH_DEGREES"
+    CHANNEL_BEARING_ROTATION_INVARIANT = "CHANNEL_BEARING_ROTATION_INVARIANT"
+    CHANNEL_BEARING_REFERENCE_FNAME = "CHANNEL_BEARING_REFERENCE_FNAME"
+    CHANNEL_BEARING_REFERENCE_COLUMN = "CHANNEL_BEARING_REFERENCE_COLUMN"
+    CHANNEL_BEARING_REFERENCE_ORDER_FILTER = "CHANNEL_BEARING_REFERENCE_ORDER_FILTER"
+    CHANNEL_BEARING_REFERENCE_ORDER_COLUMN = "CHANNEL_BEARING_REFERENCE_ORDER_COLUMN"
+
+    # Advanced: region map reading
+    CHANNEL_REGION_SOURCE = "CHANNEL_REGION_SOURCE"
+    CHANNEL_REGION_LAYER_NAME = "CHANNEL_REGION_LAYER_NAME"
+    CHANNEL_REGION_MIN_PURITY = "CHANNEL_REGION_MIN_PURITY"
+
+    # Advanced: lithology map reading and per-unit statistics
+    LITHOLOGY_SOURCE = "LITHOLOGY_SOURCE"
+    LITHOLOGY_LAYER_NAME = "LITHOLOGY_LAYER_NAME"
+    LITHOLOGY_FIELD_NAME = "LITHOLOGY_FIELD_NAME"
+    LITHOLOGY_CROSSWALK_FNAME = "LITHOLOGY_CROSSWALK_FNAME"
+    LITHOLOGY_MIN_MAJORITY_FRACTION = "LITHOLOGY_MIN_MAJORITY_FRACTION"
+    LITHOLOGY_BOOTSTRAP_REPLICATES = "LITHOLOGY_BOOTSTRAP_REPLICATES"
+    LITHOLOGY_BOOTSTRAP_RANDOM_SEED = "LITHOLOGY_BOOTSTRAP_RANDOM_SEED"
+
     OUTPUT_LINK_BEARINGS = "OUTPUT_LINK_BEARINGS"
     OUTPUT_JUNCTION_ANGLES = "OUTPUT_JUNCTION_ANGLES"
     OUTPUT_STRAHLER_CHANNELS = "OUTPUT_STRAHLER_CHANNELS"
@@ -79,6 +127,15 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_COM_BEARINGS = "OUTPUT_COM_BEARINGS"
     OUTPUT_LINK_BEARING_VECTORS = "OUTPUT_LINK_BEARING_VECTORS"
     OUTPUT_JUNCTION_ANGLE_VECTORS = "OUTPUT_JUNCTION_ANGLE_VECTORS"
+    OUTPUT_BEARING_GROUP_SUMMARY = "OUTPUT_BEARING_GROUP_SUMMARY"
+    OUTPUT_BEARING_COMPARISONS = "OUTPUT_BEARING_COMPARISONS"
+    OUTPUT_BEARING_ROSE = "OUTPUT_BEARING_ROSE"
+    OUTPUT_BEARING_GROUP_MEMBERSHIP = "OUTPUT_BEARING_GROUP_MEMBERSHIP"
+    OUTPUT_JUNCTION_ANGLE_GROUP_SUMMARY = "OUTPUT_JUNCTION_ANGLE_GROUP_SUMMARY"
+    OUTPUT_JUNCTION_ANGLE_COMPARISONS = "OUTPUT_JUNCTION_ANGLE_COMPARISONS"
+    OUTPUT_BLOCK_ORDER_COUNTS = "OUTPUT_BLOCK_ORDER_COUNTS"
+    OUTPUT_LITHOLOGY_UNITS = "OUTPUT_LITHOLOGY_UNITS"
+    OUTPUT_LITHOLOGY_CODE = "OUTPUT_LITHOLOGY_CODE"
 
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg", "csv"]
     SELECTION_MODE_OPTIONS = [
@@ -94,6 +151,16 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
     SNAPPING_OPTIONS = ["downstream", "expanding_square", "none"]
     LINK_SAMPLING_OPTIONS = ["full_link", "fixed_length", "fixed_n_pixels"]
     ANCHOR_OPTIONS = ["upstream_end", "downstream_end"]
+    # Grouping keys; donor_order_pair is valid for junction angles only.
+    BEARING_GROUP_OPTIONS = ["strahler_order", "basin", "region", "lithology"]
+    BEARING_STRATIFY_OPTIONS = ["none"] + BEARING_GROUP_OPTIONS
+    JUNCTION_GROUP_OPTIONS = [
+        "strahler_order", "donor_order_pair", "basin", "region", "lithology",
+    ]
+    JUNCTION_STRATIFY_OPTIONS = ["none"] + JUNCTION_GROUP_OPTIONS
+    ANGULAR_TYPE_OPTIONS = ["both", "directional", "axial"]
+    COMPARISON_MODE_OPTIONS = ["pairwise", "one_vs_rest", "none"]
+    MAP_SOURCE_OPTIONS = ["auto", "vector_map", "code_raster"]
 
     def _add_advanced(self, param):
         param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -195,6 +262,81 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.WRITE_COM_BEARINGS, "Write junction centre-of-mass bearings (CSV)", False
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.WRITE_CHANNEL_BEARING_STATISTICS,
+                "Write channel-bearing statistics by group (experimental, CSV)",
+                False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.CHANNEL_BEARING_GROUP_BY,
+                "Channel bearings: group by",
+                options=self.BEARING_GROUP_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.CHANNEL_BEARING_STRATIFY_BY,
+                "Channel bearings: stratify by (must differ from group by)",
+                options=self.BEARING_STRATIFY_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.WRITE_JUNCTION_ANGLE_STATISTICS,
+                "Write junction-angle statistics by group (experimental, CSV)",
+                False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.JUNCTION_ANGLE_GROUP_BY,
+                "Junction angles: group by",
+                options=self.JUNCTION_GROUP_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.JUNCTION_ANGLE_STRATIFY_BY,
+                "Junction angles: stratify by (must differ from group by)",
+                options=self.JUNCTION_STRATIFY_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.CHANNEL_REGION_FNAME,
+                "Region map (optional; polygon vector or code raster; for the region key)",
+                optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterString(
+                self.CHANNEL_REGION_FIELD_NAME,
+                "Region vector attribute naming the regions (required for a vector map)",
+                "",
+                optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.LITHOLOGY_FNAME,
+                "Lithology map (optional; polygon vector or code raster; for the lithology key)",
+                optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.WRITE_LITHOLOGY_CODE_RASTER,
+                "Write lithologic unit code raster (with a lithology map)",
+                False,
             )
         )
 
@@ -334,6 +476,221 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        # --- Advanced: grouped statistics settings ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.CHANNEL_BEARING_ANGULAR_TYPE,
+                "Statistics: bearing angular type",
+                options=self.ANGULAR_TYPE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.CHANNEL_BEARING_COMPARISON_MODE,
+                "Statistics: comparison mode (bearings and junction angles)",
+                options=self.COMPARISON_MODE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_MIN_GROUP_SIZE,
+                "Statistics: minimum group size to compare",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=30,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_MAX_ORDER_GROUP,
+                "Statistics: pool Strahler orders >= this (0 = no pooling)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_BASIN_ORDER,
+                "Statistics: basin key order (0 = analysis outlets)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_BLOCK_ORDER,
+                "Statistics: independence block Strahler order (0 = automatic)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_MIN_BLOCKS,
+                "Statistics: minimum blocks for the automatic block order",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=30,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_PERMUTATIONS,
+                "Statistics: block permutations per comparison (0 = off)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=999,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_PERMUTATION_SEED,
+                "Statistics: permutation seed",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=1,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_ROSE_BIN_WIDTH_DEGREES,
+                "Statistics: rose bin width (degrees; must divide 180)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=10.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.CHANNEL_BEARING_ROTATION_INVARIANT,
+                "Statistics: also compute the rotation-invariant Wasserstein distance",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterFile(
+                self.CHANNEL_BEARING_REFERENCE_FNAME,
+                "Statistics: reference _channel_link_bearings.csv from another run (optional)",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.CHANNEL_BEARING_REFERENCE_COLUMN,
+                "Statistics: reference bearing column",
+                "bearing_deg",
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_BEARING_REFERENCE_ORDER_FILTER,
+                "Statistics: use only reference rows of this order (-1 = all)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=-1,
+                defaultValue=-1,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.CHANNEL_BEARING_REFERENCE_ORDER_COLUMN,
+                "Statistics: reference order column",
+                "stream_order",
+            )
+        )
+
+        # --- Advanced: region map ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.CHANNEL_REGION_SOURCE,
+                "Region map type",
+                options=self.MAP_SOURCE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.CHANNEL_REGION_LAYER_NAME,
+                "Region vector layer name (empty = first layer)",
+                "",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.CHANNEL_REGION_MIN_PURITY,
+                "Region: minimum fraction of a link in its majority region",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=1.0,
+                defaultValue=0.0,
+            )
+        )
+
+        # --- Advanced: lithology map ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.LITHOLOGY_SOURCE,
+                "Lithology map type",
+                options=self.MAP_SOURCE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.LITHOLOGY_LAYER_NAME,
+                "Lithology vector layer name (empty = first layer)",
+                "",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.LITHOLOGY_FIELD_NAME,
+                "Lithology vector attribute holding the unit",
+                "lith_primary",
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterFile(
+                self.LITHOLOGY_CROSSWALK_FNAME,
+                "Lithology crosswalk CSV (optional; columns value,code[,name])",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_MIN_MAJORITY_FRACTION,
+                "Lithology: minimum fraction of a link or junction arm in its majority unit",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=1.0,
+                defaultValue=0.8,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_BOOTSTRAP_REPLICATES,
+                "Lithology: bootstrap replicates (0 = no interval)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=1000,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_BOOTSTRAP_RANDOM_SEED,
+                "Lithology: bootstrap random seed",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=5489,
+            )
+        )
+
         self.addOutput(
             QgsProcessingOutputVectorLayer(self.OUTPUT_LINK_BEARINGS, "Channel link bearings")
         )
@@ -375,6 +732,43 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingOutputVectorLayer(
                 self.OUTPUT_JUNCTION_ANGLE_VECTORS, "Junction-angle bearing QA vectors"
             )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(
+                self.OUTPUT_BEARING_GROUP_SUMMARY, "Channel-bearing group summary"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_BEARING_COMPARISONS, "Channel-bearing comparisons")
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_BEARING_ROSE, "Channel-bearing rose histogram")
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(
+                self.OUTPUT_BEARING_GROUP_MEMBERSHIP, "Channel-bearing group membership"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(
+                self.OUTPUT_JUNCTION_ANGLE_GROUP_SUMMARY, "Junction-angle group summary"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(
+                self.OUTPUT_JUNCTION_ANGLE_COMPARISONS, "Junction-angle comparisons"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(
+                self.OUTPUT_BLOCK_ORDER_COUNTS, "Independence-block counts per Strahler order"
+            )
+        )
+        self.addOutput(
+            QgsProcessingOutputFile(self.OUTPUT_LITHOLOGY_UNITS, "Lithologic unit legend")
+        )
+        self.addOutput(
+            QgsProcessingOutputRasterLayer(self.OUTPUT_LITHOLOGY_CODE, "Lithologic unit code raster")
         )
 
         attach_backend_help(
@@ -448,13 +842,72 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
         write_junction_angle_vectors = self.parameterAsBool(
             parameters, self.WRITE_JUNCTION_ANGLE_VECTORS, context
         )
+        write_bearing_statistics = self.parameterAsBool(
+            parameters, self.WRITE_CHANNEL_BEARING_STATISTICS, context
+        )
+        write_angle_statistics = self.parameterAsBool(
+            parameters, self.WRITE_JUNCTION_ANGLE_STATISTICS, context
+        )
         if not any([
             write_link_bearings, write_junction_angles, write_strahler, write_tokunaga,
             write_tokunaga_data, write_tokunaga_summary, write_area_ratio_data,
             write_area_ratio_summary, write_com_bearings, write_link_bearing_vectors,
-            write_junction_angle_vectors,
+            write_junction_angle_vectors, write_bearing_statistics, write_angle_statistics,
         ]):
             raise QgsProcessingException("Enable at least one analysis output.")
+
+        region_file = self.parameterAsFile(parameters, self.CHANNEL_REGION_FNAME, context)
+        lithology_file = self.parameterAsFile(parameters, self.LITHOLOGY_FNAME, context)
+
+        # Grouping keys, checked as the CLI does before any raster work.
+        statistics_keys = {}
+        if write_bearing_statistics:
+            statistics_keys["channel_bearing"] = (
+                self.BEARING_GROUP_OPTIONS[
+                    self.parameterAsEnum(parameters, self.CHANNEL_BEARING_GROUP_BY, context)
+                ],
+                self.BEARING_STRATIFY_OPTIONS[
+                    self.parameterAsEnum(parameters, self.CHANNEL_BEARING_STRATIFY_BY, context)
+                ],
+            )
+        if write_angle_statistics:
+            statistics_keys["junction_angle"] = (
+                self.JUNCTION_GROUP_OPTIONS[
+                    self.parameterAsEnum(parameters, self.JUNCTION_ANGLE_GROUP_BY, context)
+                ],
+                self.JUNCTION_STRATIFY_OPTIONS[
+                    self.parameterAsEnum(parameters, self.JUNCTION_ANGLE_STRATIFY_BY, context)
+                ],
+            )
+        for stem, (group_by, stratify_by) in statistics_keys.items():
+            if stratify_by == group_by:
+                raise QgsProcessingException(
+                    "{0}_stratify_by must differ from {0}_group_by.".format(stem)
+                )
+            used = {group_by, stratify_by}
+            if "region" in used and not region_file:
+                raise QgsProcessingException(
+                    "A region map is required when {} statistics are grouped or "
+                    "stratified by region.".format(stem.replace("_", "-"))
+                )
+            if "lithology" in used and not lithology_file:
+                raise QgsProcessingException(
+                    "A lithology map is required when {} statistics are grouped or "
+                    "stratified by lithology.".format(stem.replace("_", "-"))
+                )
+
+        rose_bin_width = self.parameterAsDouble(
+            parameters, self.CHANNEL_BEARING_ROSE_BIN_WIDTH_DEGREES, context
+        )
+        if statistics_keys:
+            n_rose_bins = 180.0 / rose_bin_width if rose_bin_width > 0 else 0.0
+            if rose_bin_width <= 0 or not math.isclose(
+                n_rose_bins, round(n_rose_bins), rel_tol=0.0, abs_tol=1e-9
+            ):
+                raise QgsProcessingException(
+                    "The rose bin width must be > 0 and divide 180 degrees into a "
+                    "whole number of bins."
+                )
 
         vector_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.VECTOR_FORMAT, context)
@@ -521,6 +974,9 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 parameters, self.AREA_RATIO_SEED, context
             ),
             "write_junction_centre_of_mass_bearings": write_com_bearings,
+            # grouped statistics (experimental; settings added below when on)
+            "write_channel_bearing_statistics": write_bearing_statistics,
+            "write_junction_angle_statistics": write_angle_statistics,
             # QA bearing vectors
             "write_channel_link_bearing_vectors": write_link_bearing_vectors,
             "write_junction_angle_bearing_vectors": write_junction_angle_vectors,
@@ -542,6 +998,115 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                     parameters, self.SNAPPING_MAX_RADIUS, context
                 ),
             })
+
+        for stem, (group_by, stratify_by) in statistics_keys.items():
+            param_values["{}_group_by".format(stem)] = group_by
+            param_values["{}_stratify_by".format(stem)] = stratify_by
+        if statistics_keys:
+            # These settings are shared by the bearing and junction-angle
+            # statistics.
+            param_values.update({
+                "channel_bearing_angular_type": self.ANGULAR_TYPE_OPTIONS[
+                    self.parameterAsEnum(parameters, self.CHANNEL_BEARING_ANGULAR_TYPE, context)
+                ],
+                "channel_bearing_comparison_mode": self.COMPARISON_MODE_OPTIONS[
+                    self.parameterAsEnum(
+                        parameters, self.CHANNEL_BEARING_COMPARISON_MODE, context
+                    )
+                ],
+                "channel_bearing_min_group_size": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_MIN_GROUP_SIZE, context
+                ),
+                "channel_bearing_max_order_group": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_MAX_ORDER_GROUP, context
+                ),
+                "channel_bearing_basin_order": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_BASIN_ORDER, context
+                ),
+                "channel_bearing_block_order": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_BLOCK_ORDER, context
+                ),
+                "channel_bearing_min_blocks": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_MIN_BLOCKS, context
+                ),
+                "channel_bearing_permutations": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_PERMUTATIONS, context
+                ),
+                "channel_bearing_permutation_seed": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_PERMUTATION_SEED, context
+                ),
+                "channel_bearing_rose_bin_width_degrees": rose_bin_width,
+                "channel_bearing_rotation_invariant": self.parameterAsBool(
+                    parameters, self.CHANNEL_BEARING_ROTATION_INVARIANT, context
+                ),
+            })
+        reference_file = self.parameterAsFile(
+            parameters, self.CHANNEL_BEARING_REFERENCE_FNAME, context
+        )
+        if write_bearing_statistics and reference_file:
+            param_values.update({
+                "channel_bearing_reference_fname": reference_file,
+                "channel_bearing_reference_column": self.parameterAsString(
+                    parameters, self.CHANNEL_BEARING_REFERENCE_COLUMN, context
+                ) or "bearing_deg",
+                "channel_bearing_reference_order_filter": self.parameterAsInt(
+                    parameters, self.CHANNEL_BEARING_REFERENCE_ORDER_FILTER, context
+                ),
+                "channel_bearing_reference_order_column": self.parameterAsString(
+                    parameters, self.CHANNEL_BEARING_REFERENCE_ORDER_COLUMN, context
+                ) or "stream_order",
+            })
+
+        if region_file:
+            param_values.update({
+                "channel_region_fname": region_file,
+                "channel_region_source": self.MAP_SOURCE_OPTIONS[
+                    self.parameterAsEnum(parameters, self.CHANNEL_REGION_SOURCE, context)
+                ],
+                "channel_region_min_purity": self.parameterAsDouble(
+                    parameters, self.CHANNEL_REGION_MIN_PURITY, context
+                ),
+            })
+            for key, parameter in (
+                ("channel_region_layer_name", self.CHANNEL_REGION_LAYER_NAME),
+                ("channel_region_field_name", self.CHANNEL_REGION_FIELD_NAME),
+            ):
+                value = self.parameterAsString(parameters, parameter, context)
+                if value:
+                    param_values[key] = value
+
+        write_lithology_code_raster = False
+        if lithology_file:
+            write_lithology_code_raster = self.parameterAsBool(
+                parameters, self.WRITE_LITHOLOGY_CODE_RASTER, context
+            )
+            param_values.update({
+                "lithology_fname": lithology_file,
+                "lithology_source": self.MAP_SOURCE_OPTIONS[
+                    self.parameterAsEnum(parameters, self.LITHOLOGY_SOURCE, context)
+                ],
+                "lithology_field_name": self.parameterAsString(
+                    parameters, self.LITHOLOGY_FIELD_NAME, context
+                ) or "lith_primary",
+                "lithology_min_majority_fraction": self.parameterAsDouble(
+                    parameters, self.LITHOLOGY_MIN_MAJORITY_FRACTION, context
+                ),
+                "lithology_bootstrap_replicates": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_BOOTSTRAP_REPLICATES, context
+                ),
+                "lithology_bootstrap_random_seed": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_BOOTSTRAP_RANDOM_SEED, context
+                ),
+                "write_lithology_code_raster": write_lithology_code_raster,
+            })
+            layer_name = self.parameterAsString(parameters, self.LITHOLOGY_LAYER_NAME, context)
+            if layer_name:
+                param_values["lithology_layer_name"] = layer_name
+            crosswalk_file = self.parameterAsFile(
+                parameters, self.LITHOLOGY_CROSSWALK_FNAME, context
+            )
+            if crosswalk_file:
+                param_values["lithology_crosswalk_fname"] = crosswalk_file
 
         run_lsdtt_tool(
             "lsdtt-channel-network-analysis", param_values, output_folder, output_prefix, feedback
@@ -618,6 +1183,44 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
                 "_junction_angle_bearing_vectors.{}".format(extension_for_format(qa_format)),
                 "junction-angle bearing QA vectors",
             )
+        if write_bearing_statistics:
+            for output_id, suffix, description in (
+                (self.OUTPUT_BEARING_GROUP_SUMMARY, "_channel_bearing_group_summary.csv",
+                 "channel-bearing group summary"),
+                (self.OUTPUT_BEARING_COMPARISONS, "_channel_bearing_comparisons.csv",
+                 "channel-bearing comparisons"),
+                (self.OUTPUT_BEARING_ROSE, "_channel_bearing_rose.csv",
+                 "channel-bearing rose histogram"),
+                (self.OUTPUT_BEARING_GROUP_MEMBERSHIP, "_channel_bearing_group_membership.csv",
+                 "channel-bearing group membership"),
+            ):
+                outputs[output_id] = require_output(
+                    output_folder, output_prefix, suffix, description
+                )
+        if write_angle_statistics:
+            outputs[self.OUTPUT_JUNCTION_ANGLE_GROUP_SUMMARY] = require_output(
+                output_folder, output_prefix,
+                "_junction_angle_group_summary.csv", "junction-angle group summary",
+            )
+            outputs[self.OUTPUT_JUNCTION_ANGLE_COMPARISONS] = require_output(
+                output_folder, output_prefix,
+                "_junction_angle_comparisons.csv", "junction-angle comparisons",
+            )
+        if statistics_keys:
+            outputs[self.OUTPUT_BLOCK_ORDER_COUNTS] = require_output(
+                output_folder, output_prefix,
+                "_channel_network_block_order_counts.csv",
+                "independence-block counts per Strahler order",
+            )
+        if lithology_file:
+            outputs[self.OUTPUT_LITHOLOGY_UNITS] = require_output(
+                output_folder, output_prefix, "_lithology_units.csv", "lithologic unit legend",
+            )
+        if write_lithology_code_raster:
+            outputs[self.OUTPUT_LITHOLOGY_CODE] = require_output(
+                output_folder, output_prefix, "_lithology_code.tif",
+                "lithologic unit code raster",
+            )
         return outputs
 
     def name(self):
@@ -639,6 +1242,10 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
             "channel-link bearings, junction angles, Strahler and Tokunaga "
             "channel layers with their summary tables, junction "
             "drainage-area ratios, and junction centre-of-mass bearings. "
+            "Experimental grouped statistics compare channel-bearing and "
+            "junction-angle distributions by Strahler order, basin, a "
+            "user-drawn region map or a lithology map (lithology also adds "
+            "unit columns to the bearing and junction-angle records). "
             "Junctions can be selected network-wide, upstream of all "
             "complete-basin outlets, or upstream of supplied outlet points. "
             "Backend path is managed in plugin settings."

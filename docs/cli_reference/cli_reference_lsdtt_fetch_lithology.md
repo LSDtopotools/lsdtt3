@@ -86,6 +86,45 @@ cell_size_metres: 30
 write_fname: edinburgh
 ```
 
+## Example: fetch, then k_sn by lithology
+
+The same units file can feed `lsdtt-chi-analysis` directly, without a property
+table. The crosswalk template's columns are `value,code,lith_class,area_km2`; for the
+chi crosswalk, keep `value` and `code` and add a `name` column (the chi reader uses
+the name, and the other columns are ignored):
+
+```
+# fetch.param (the Allegheny Front box used in the West Virginia examples)
+west: -79.45
+south: 38.85
+east: -79.15
+north: 39.05
+write_fname: wvfront
+```
+
+```
+value,code,name
+sandstone,10,sandstone
+siltstone,20,siltstone
+shale,30,shale
+limestone,40,limestone
+fine alluvium,90,alluvium
+```
+
+```
+# chi.param (after lsdtt-fetch-raster has written wvfront_DEM.tif)
+fit_chi_networks: true
+lithology_fname: wvfront_macrostrat_units.fgb
+lithology_field_name: lith_primary
+lithology_crosswalk_fname: wvks_crosswalk_lith_primary.csv
+lithology_contact_buffer_metres: 0
+write_lithology_code_raster: true
+```
+
+Each unit's k_sn, its reach statistics and a bootstrap interval are written per m/n
+value. See the [chi analysis reference](cli_reference_lsdtt_chi_analysis.md#k_sn-by-lithologic-unit)
+for the outputs and the caveats on reading the contrasts.
+
 ## Working offline
 
 `macrostrat_tile_dir` reads tiles from a directory laid out as

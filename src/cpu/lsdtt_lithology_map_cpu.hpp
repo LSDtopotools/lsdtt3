@@ -210,6 +210,24 @@ struct lsdtt_lithology_units_on_grid
 lsdtt_lithology_units_on_grid read_lithology_units_on_grid(
     const lsdtt_raster_cpu& grid, const lsdtt_lithology_map_source& src);
 
+// Coverage of a categorical map (lithology or region) on the DEM grid. Throws
+// std::invalid_argument when the map labels no valid pixel of the grid, giving
+// the map's extent and CRS against the DEM's; otherwise appends a note with
+// the fraction of valid pixels left unlabelled and, when that is above 10 %,
+// a warning. Extents are in each layer's own CRS.
+struct lsdtt_categorical_map_extent
+{
+    double x_min = 0.0, y_min = 0.0, x_max = 0.0, y_max = 0.0;
+    std::string crs_wkt;
+};
+
+void check_categorical_map_coverage(const std::string& what, const std::string& path,
+                                    std::size_t n_valid, std::size_t n_unlabelled,
+                                    const lsdtt_categorical_map_extent& map_extent,
+                                    const lsdtt_raster_meta& grid,
+                                    std::vector<std::string>& notes,
+                                    std::vector<std::string>& warnings);
+
 // The units as a float code raster on `grid` (nodata where unmapped or outside
 // the grid's mask), for writing.
 [[nodiscard]] lsdtt_raster_cpu lithology_unit_code_raster(

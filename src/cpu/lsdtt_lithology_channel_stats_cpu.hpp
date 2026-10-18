@@ -57,7 +57,8 @@
 //     weighted quantile, compute_weighted_quantile). The interval is a 95 %
 //     percentile bootstrap of the reach median (2.5 and 97.5 % of the
 //     replicate medians, compute_quantile_interpolated_in_place), resampling
-//     reaches (cluster reach) or whole basins (cluster basin) within the unit.
+//     reaches (cluster reach) or whole basins (cluster basin) within the unit,
+//     drawing from lithology_bootstrap_engine(seed, m/n).
 //     Reaches on one trunk are correlated, so the reach interval is a lower
 //     bound on the uncertainty. node_k_sn_length_weighted_*: the lower
 //     weighted quantiles of the nodes' segment k_sn, weighted by node length.
@@ -73,6 +74,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <random>
 #include <string>
 #include <vector>
@@ -313,6 +315,11 @@ struct lsdtt_lithology_median_ci
     const std::vector<double>& values, const std::vector<std::int32_t>& cluster_of_value,
     int n_replicates, std::mt19937_64& rng);
 
+// The bootstrap engine for one m/n: std::seed_seq{seed, llround(m_over_n *
+// 10000)} -> std::mt19937_64. Each m/n has its own reproducible stream, so the
+// interval for m/n 0.45 is the same whether 0.45 is run alone or in a list.
+[[nodiscard]] std::mt19937_64 lithology_bootstrap_engine(std::int64_t seed, double m_over_n);
+
 // The first-cut node statistics plus the reach, interval and node
 // length-weighted columns, and the unit x basin rows. Intervals are drawn in
 // row order (units ascending, unmapped, all); a low_sample row draws nothing.
@@ -384,14 +391,32 @@ void write_chi_ksn_lithology_by_basin_csv(const std::string& path,
 // arm's purity is >= the threshold.
 //
 // As grouping keys (channel_record_categories): category = unit code, name =
-// unit name. Category -1 there means EXCLUDED, so an unmapped record (code -1)
-// gets k_lithology_category_unmapped instead, named "unmapped", and is a group
-// of its own (never dropped). Links below the purity threshold are excluded.
+// unit name. Category -1 there means EXCLUDED, so the special groups get ids
+// above every unit code (0..65534), which also sorts them after the units:
+//   unmapped       (code -1): a record whose majority is no unit; a group like
+//                  any unit, compared like any unit.
+//   mixed          (code -3): a link whose majority-unit fraction is below the
+//                  threshold, named "mixed (<80% one unit)" for 0.8. Summarised
+//                  but never compared (descriptive_only): it has no single unit,
+//                  and pooling it into "rest" would put a contact effect into a
+//                  lithology contrast.
+//   arms disagree  (code -4): in the lithology_interior key, a junction whose
+//                  three arms are not all in its unit with purity >= the
+//                  threshold; descriptive only, like mixed.
+// No record is dropped for impurity: every record keeps its majority unit and
+// purity in the per-record columns. Codes -3 / -4 are the values to write
+// wherever a code column for these groups is written (as -1 unmapped and -2
+// all in the chi tables).
 // ===========================================================================
 
-// Category id of unmapped records; unit codes are 0..65534, so it cannot
-// collide, and it sorts after every unit.
 inline constexpr std::int32_t k_lithology_category_unmapped = 1000000;
+inline constexpr std::int32_t k_lithology_category_mixed = 1000001;
+inline constexpr std::int32_t k_lithology_category_arms_disagree = 1000002;
+inline constexpr std::int32_t k_lithology_code_mixed = -3;
+inline constexpr std::int32_t k_lithology_code_arms_disagree = -4;
+
+// "mixed (<80% one unit)" for min_majority_fraction 0.8.
+[[nodiscard]] std::string lithology_mixed_category_name(double min_majority_fraction);
 
 // The D8 step length (m) from each node to its receiver; 0 at an outlet.
 [[nodiscard]] std::vector<double> lithology_node_step_lengths(
@@ -421,16 +446,21 @@ struct lsdtt_junction_lithology
     const std::vector<lsdtt_junction_angle_record>& records,
     const lsdtt_lithology_units_on_grid& units, double min_majority_fraction);
 
-// Grouping keys. Links: the majority unit, excluded (-1) below
-// min_majority_fraction. Junctions: the junction-pixel unit (key
-// "lithology"), or with interior_only only all_arms_agree junctions (key
-// "lithology_interior"); invalid records are excluded.
+// Grouping keys. Links: the majority unit, or "mixed" (descriptive only)
+// below min_majority_fraction; a link with no sampled node is excluded (-1).
+// Junctions: the junction-pixel unit (key "lithology"); with interior_only
+// (key "lithology_interior") the same for all_arms_agree junctions and "arms
+// disagree" (descriptive only) for the others. Invalid records are excluded.
 [[nodiscard]] channel_record_categories lithology_categories_of_links(
     const std::vector<lsdtt_lithology_tag>& tags, const lsdtt_lithology_units_on_grid& units,
     double min_majority_fraction, const std::string& key = "lithology");
 [[nodiscard]] channel_record_categories lithology_categories_of_junctions(
     const std::vector<lsdtt_junction_lithology>& tags, const lsdtt_lithology_units_on_grid& units,
     bool interior_only, const std::string& key);
+
+// Records per majority unit whose link is "mixed" (for the run report).
+[[nodiscard]] std::map<std::int32_t, std::size_t> lithology_mixed_links_by_majority_unit(
+    const std::vector<lsdtt_lithology_tag>& tags, double min_majority_fraction);
 
 // Per-record columns appended to _channel_link_bearings (lith_code, lith_name,
 // lith_majority_fraction) and _junction_angles (junction_lith_code,

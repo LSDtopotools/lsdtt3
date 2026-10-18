@@ -235,10 +235,52 @@ void test_links(const routed& t)
     check("T12 layout B: crossing links' unit and purity equal the independent length-weighted values",
           n_cross == 12 && n_cross_ok == n_cross, std::to_string(n_cross_ok) + " of " + std::to_string(n_cross));
     const auto cats_b = lithology_categories_of_links(tags_b, units_b, 0.8);
-    std::size_t expect_excluded = 0;
-    for (const auto& tg : tags_b) expect_excluded += tg.majority_fraction < 0.8;
-    check("T12 layout B: links below purity 0.8 are excluded and counted",
-          cats_b.n_excluded() == expect_excluded && expect_excluded > 0, std::to_string(expect_excluded));
+    std::size_t expect_mixed = 0, n_mixed = 0;
+    for (const auto& tg : tags_b) expect_mixed += tg.majority_fraction < 0.8;
+    for (const auto c : cats_b.category) n_mixed += c == k_lithology_category_mixed;
+    check("T12 layout B: the 4 links below purity 0.8 are 'mixed (<80% one unit)', none excluded",
+          n_mixed == expect_mixed && n_mixed == 4 && cats_b.n_excluded() == 0 &&
+              cats_b.name_of(k_lithology_category_mixed) == "mixed (<80% one unit)" &&
+              cats_b.is_descriptive_only(k_lithology_category_mixed) &&
+              cats_b.n_descriptive_only() == 4,
+          std::to_string(n_mixed));
+    check("mixed name follows the threshold: 0.75 -> 'mixed (<75% one unit)'",
+          lithology_mixed_category_name(0.75) == "mixed (<75% one unit)");
+
+    // Mixed is summarised but never compared, and no record is lost.
+    std::vector<double> bearing_b, length_b;
+    for (const auto& l : links) { bearing_b.push_back(l.bearing_deg); length_b.push_back(l.total_length_metres); }
+    const std::vector<std::int64_t> no_blocks(links.size(), -1);
+    channel_bearing_statistics_options ob;
+    ob.do_directional = false;
+    ob.min_group_size = 1;
+    const auto rows_b = summarise_channel_link_bearings_by_category(bearing_b, length_b, no_blocks, cats_b, nullptr, ob);
+    std::size_t n_sum = 0;
+    bool mixed_row = false;
+    for (const auto& rw : rows_b)
+    {
+        n_sum += rw.summary.n;
+        if (rw.group_value == "mixed (<80% one unit)")
+            mixed_row = rw.summary.n == 4 && rw.note.find("descriptive only") != std::string::npos;
+    }
+    check("mixed has its own summary row (n 4, note 'descriptive only'); the group n sum to every link",
+          mixed_row && n_sum == links.size(), std::to_string(n_sum) + " of " + std::to_string(links.size()));
+    std::size_t n_north = 0, n_south = 0;
+    for (const auto c : cats_b.category) { n_north += c == 1; n_south += c == 2; }
+    bool none_mixed = true, rest_ok = false;
+    for (const auto mode : {channel_bearing_comparison_mode::pairwise, channel_bearing_comparison_mode::one_vs_rest})
+    {
+        ob.comparison_mode = mode;
+        const auto cmp = compare_channel_link_bearings_by_category(bearing_b, no_blocks, cats_b, nullptr, ob);
+        for (const auto& rw : cmp.rows)
+        {
+            none_mixed = none_mixed && rw.group_a.rfind("mixed", 0) != 0 && rw.group_b.rfind("mixed", 0) != 0;
+            if (mode == channel_bearing_comparison_mode::one_vs_rest && rw.group_a == "north")
+                rest_ok = rw.n_a == n_north && rw.n_b == n_south;   // rest = south only, no mixed
+        }
+    }
+    check("mixed is in no comparison row and not in 'rest' (north vs rest: rest = the south links only)",
+          none_mixed && rest_ok, std::to_string(n_north) + " / " + std::to_string(n_south));
 
     // The tag follows the SAMPLED nodes. The crossing links are E-W
     // tributaries that cross the contact as they turn into the trunk, at
@@ -314,9 +356,16 @@ void test_junctions_and_summaries(const routed& t, const std::string& dir)
     }
     std::cout << "   layout B: " << angles.size() << " junction records, lithology " << n_all
               << ", lithology_interior " << n_int << "\n";
-    check("T13 every valid junction is in 'lithology' (1192); interior = agreeing junctions (1180)",
-          n_all == angles.size() && n_all == 1192 && n_int == n_agree && n_int == 1180,
-          std::to_string(n_int) + " / " + std::to_string(n_all));
+    std::size_t n_disagree = 0;
+    for (const auto c : interior.category) n_disagree += c == k_lithology_category_arms_disagree;
+    std::size_t n_int_units = n_int - n_disagree;
+    check("T13 every valid junction is in 'lithology' (1192) and in 'lithology_interior' (1180 in "
+          "their unit, 12 'arms disagree', descriptive only)",
+          n_all == angles.size() && n_all == 1192 && n_int == 1192 && n_int_units == n_agree &&
+              n_int_units == 1180 && n_disagree == 12 &&
+              interior.is_descriptive_only(k_lithology_category_arms_disagree) &&
+              interior.name_of(k_lithology_category_arms_disagree) == "arms disagree",
+          std::to_string(n_int_units) + " / " + std::to_string(n_disagree));
 
     // On layout A no arm crosses the contact, so every junction is interior.
     const auto units_a = make_units([](int, int c) { return c < 80 ? 1 : 2; }, "west", "east");
@@ -419,8 +468,8 @@ void test_junctions_and_summaries(const routed& t, const std::string& dir)
     bool found = false;
     for (const auto& r : tab.rows) found = found || csv_row_string(r, "group_value") == "Tonoloway, Wills Creek";
     check("T13 junction summary: interval columns at the end, a comma in a unit name quoted",
-          tab.headers.size() == 17 && tab.headers[14] == "median_ci_low_deg" &&
-              tab.headers[16] == "n_bootstrap" && found);
+          tab.headers.size() == 22 && tab.headers[14] == "median_ci_low_deg" &&
+              tab.headers[16] == "n_bootstrap" && tab.headers[21] == "note" && found);
 
     // Junction columns appended by the record writer.
     const auto jcols = lithology_columns_of_junctions(jt, units_b);
@@ -465,6 +514,118 @@ void test_draining_mask(const routed& t)
           std::to_string(n_in) + " pixels, " + std::to_string(n_bad) + " differ");
 }
 
+// ---------------------------------------------------------------------------
+// Block order rule and block permutations
+// ---------------------------------------------------------------------------
+double axial_v(const std::vector<double>& a, const std::vector<double>& b, int)
+{
+    return compare_channel_bearing_samples(a, b, channel_bearing_angular_type::axial).kuiper_V;
+}
+
+void test_block_rule_and_permutation(const routed& t)
+{
+    std::cout << "-- block order rule and permutations --\n";
+    // Synthetic order counts: order 1 120, 2 45, 3 31, 4 12, 5 3.
+    const std::vector<std::size_t> counts = {120, 45, 31, 12, 3};
+    const auto a = choose_channel_block_order(counts, 0, 30);
+    check("auto: the largest k with >= 30 basins is 3", a.automatic && a.block_order == 3 && a.note.empty());
+    const auto b = choose_channel_block_order(counts, 0, 40);
+    check("auto with min 40: k = 2", b.block_order == 2);
+    const auto o = choose_channel_block_order(counts, 4, 30);
+    check("override 4 is used as given, with a note (12 < 30)",
+          !o.automatic && o.block_order == 4 && o.note.find("12 basin(s)") != std::string::npos, o.note);
+    const auto n = choose_channel_block_order({20, 6, 1}, 0, 30);
+    check("nothing reaches min: no blocks, note names the largest count",
+          n.block_order == 0 &&
+              n.note == "network too small for block permutation: largest order-k basin count 20 < min_blocks 30",
+          n.note);
+
+    // With no blocks every permutation p is nan with that note.
+    std::vector<double> v = {0, 1, 2, 90, 91, 92};
+    channel_record_categories g;
+    g.key = "region";
+    g.category = {1, 1, 1, 2, 2, 2};
+    channel_bearing_statistics_options op;
+    op.do_directional = false;
+    op.min_group_size = 1;
+    op.n_permutations = 99;
+    op.permutation_unavailable_note = n.note;
+    const auto cn = compare_channel_link_bearings_by_category(v, std::vector<std::int64_t>(6, -1), g, nullptr, op);
+    check("no blocks: permutation_p nan, note carries the reason",
+          cn.rows.size() == 1 && std::isnan(cn.rows[0].permutation_p) &&
+              cn.rows[0].note.find("network too small") != std::string::npos);
+
+    // Known extreme separation: 40 blocks, 20 all at ~0 deg (group a), 20 at ~90.
+    std::vector<double> val;
+    std::vector<std::int64_t> blk;
+    std::vector<std::size_t> ia, ib;
+    for (int bk = 0; bk < 40; ++bk)
+        for (int q = 0; q < 3; ++q)
+        {
+            (bk < 20 ? ia : ib).push_back(val.size());
+            val.push_back((bk < 20 ? 0.0 : 90.0) + q + 0.1 * bk);
+            blk.push_back(bk);
+        }
+    std::mt19937_64 r1(7), r2(7);
+    const auto p1 = channel_block_permutation_test(val, blk, ia, ib, false, 199, r1, &axial_v, 1);
+    const auto p2 = channel_block_permutation_test(val, blk, ia, ib, false, 199, r2, &axial_v, 1);
+    check("extreme separation between blocks: p = 1 / (1 + 199)", p1.p == 1.0 / 200.0 && p1.n_blocks == 40,
+          fmt(p1.p));
+    check("same seed, identical p and statistic", p1.p == p2.p && p1.observed == p2.observed);
+    std::mt19937_64 r3(7);
+    const auto pw = channel_block_permutation_test(val, blk, ia, ib, true, 199, r3, &axial_v, 1);
+    check("within blocks when no block holds both groups: nan, noted",
+          std::isnan(pw.p) && pw.note == "no block holds both groups", pw.note);
+
+    // The trellis by Strahler order, blocks = order-1 basins: order-2 links
+    // have no block, so order 1 vs 2 has no blocked records in group_b.
+    lsdtt_link_sampling_options full;
+    const auto links = calculate_channel_link_bearings(*t.flow, *t.network, {}, full);
+    std::vector<double> bear, len;
+    std::vector<std::int32_t> js, ords;
+    for (const auto& l : links)
+    {
+        bear.push_back(l.bearing_deg);
+        len.push_back(l.total_length_metres);
+        js.push_back(l.upstream_junction);
+        ords.push_back(l.stream_order);
+    }
+    const auto groups = strahler_order_categories(ords, 0);
+    channel_bearing_statistics_options ot;
+    ot.do_directional = false;
+    ot.n_permutations = 99;
+    ot.permute_within_blocks = true;
+    ot.block_order = 1;
+    const auto blocks1 = block_ids_of_records(js, order_k_basin_of_junctions(*t.network, 1));
+    const auto c1 = compare_channel_link_bearings_by_category(bear, blocks1, groups, nullptr, ot);
+    check("order 1 vs 2 with order-1 blocks: no blocked order-2 record, p nan with a note",
+          c1.rows.size() == 1 && std::isnan(c1.rows[0].permutation_p) &&
+              c1.rows[0].note.find("no blocked records in group_b") != std::string::npos,
+          c1.rows.empty() ? "" : c1.rows[0].note);
+    const auto counts_t = count_order_k_basins_with_records(*t.network, js);
+    std::cout << "   trellis order-k basins with links: " << counts_t[0] << ", " << counts_t[1] << "\n";
+    ot.block_order = 2;
+    const auto blocks2 = block_ids_of_records(js, order_k_basin_of_junctions(*t.network, 2));
+    const auto c2a = compare_channel_link_bearings_by_category(bear, blocks2, groups, nullptr, ot);
+    const auto c2b = compare_channel_link_bearings_by_category(bear, blocks2, groups, nullptr, ot);
+    std::vector<double> b1, b2;
+    std::size_t n_unblocked = 0;
+    for (std::size_t i = 0; i < links.size(); ++i)
+    {
+        if (blocks2[i] < 0) { ++n_unblocked; continue; }
+        (ords[i] == 1 ? b1 : b2).push_back(bear[i]);
+    }
+    const double v_blocked = compare_channel_bearing_samples(b1, b2, channel_bearing_angular_type::axial).kuiper_V;
+    check("order-2 blocks: p in (0, 1], identical for the same seed; the statistic is Kuiper V on "
+          "the blocked records (4 order-1 links without a block left out, as the note says)",
+          c2a.rows.size() == 1 && std::isfinite(c2a.rows[0].permutation_p) &&
+              c2a.rows[0].permutation_p > 0.0 && c2a.rows[0].permutation_p <= 1.0 &&
+              c2a.rows[0].permutation_p == c2b.rows[0].permutation_p &&
+              c2a.rows[0].permutation_statistic == v_blocked && n_unblocked == 4 &&
+              c2a.rows[0].note.find("4 record(s) without a block left out") != std::string::npos,
+          c2a.rows.empty() ? "" : fmt(c2a.rows[0].permutation_p) + ", " + c2a.rows[0].note);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -478,6 +639,7 @@ int main(int argc, char* argv[])
     test_links(t);
     test_junctions_and_summaries(t, dir);
     test_draining_mask(t);
+    test_block_rule_and_permutation(t);
     std::cout << (g_checks - g_failures) << " / " << g_checks << " checks passed\n"
               << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;

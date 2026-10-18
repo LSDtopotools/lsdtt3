@@ -44,6 +44,7 @@
 #include <limits>
 #include <map>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -243,6 +244,12 @@ junction_angle_measurands make_junction_angle_measurands(
 // Categories are written in ascending integer order; a combined key
 // (e.g. order * 100000 + unit code) needs nothing special.
 //
+// DESCRIPTIVE-ONLY categories (descriptive_only) are summarised and get rose
+// rows like any other, but take no part in any comparison: they are never a
+// compared group, never part of "rest", and never compared with a reference.
+// (Lithology uses this for links of no single unit, "mixed", and junctions
+// whose arms do not share the junction's unit, "arms disagree".)
+//
 // Grouping and stratification: `groups` is the key that is compared; `strata`
 // (optional, nullptr = none) is a key whose levels are analysed separately.
 // Comparisons happen only within a stratum. A pooled stratum "all" is always
@@ -253,9 +260,13 @@ struct channel_record_categories
     std::string key = "none";                 // e.g. "strahler_order", "region"
     std::vector<std::int32_t> category;       // per record; -1 = excluded
     std::map<int, std::string> names;         // category -> label
+    std::set<std::int32_t> descriptive_only;  // summarised, never compared
 
     [[nodiscard]] std::size_t n_excluded() const;
     [[nodiscard]] std::string name_of(std::int32_t category_value) const;
+    [[nodiscard]] bool is_descriptive_only(std::int32_t category_value) const;
+    // Records in descriptive-only categories.
+    [[nodiscard]] std::size_t n_descriptive_only() const;
 };
 
 enum class channel_bearing_comparison_mode
@@ -280,6 +291,29 @@ struct channel_bearing_statistics_options
     std::size_t rotation_invariant_max_pairs =
         k_channel_bearing_rotation_invariant_max_pairs;
     double rose_bin_width_deg = 10.0;
+
+    // Independence blocks (written to the summaries). block_order 0 = no
+    // blocks were defined; block_order_mode "auto" or "override".
+    int block_order = 0;
+    std::string block_order_mode = "override";
+    int min_blocks = 0;
+
+    // Block permutation p-value of each comparison (Step 7). 0 = off (nan).
+    //   between_blocks (spatial keys: basin, region, lithology): each block
+    //     takes the majority group of its records in the comparison, and the
+    //     block labels are permuted among blocks; the statistic is computed on
+    //     the block-majority samples.
+    //   within_blocks (strahler_order, donor_order_pair): records keep their
+    //     groups, which are permuted among the records of each block.
+    // Only records with a block (block_id >= 0) and a finite value take part.
+    // p = (1 + #{T* >= T}) / (1 + permutations), T = Kuiper V (bearings) or
+    // KS D (junction angles). Each comparison row draws from its own engine,
+    // seeded from permutation_seed and the row's labels, so a p does not
+    // depend on which other comparisons were run.
+    std::size_t n_permutations = 0;
+    std::uint64_t permutation_seed = 1;
+    bool permute_within_blocks = false;
+    std::string permutation_unavailable_note;  // non-empty: every p is nan with this note
 };
 
 // One row of <wf>_channel_bearing_group_summary.csv.
@@ -296,6 +330,13 @@ struct channel_bearing_group_summary_row
     std::size_t n_blocks = 0;
     bool meets_min_group_size = false;
     channel_bearing_group_summary summary;
+    // Blocks (copied from the options) and the records of the group with no
+    // block; note: descriptive-only groups and groups without blocks.
+    int block_order = 0;
+    std::string block_order_mode;
+    int min_blocks = 0;
+    std::size_t n_unblocked = 0;
+    std::string note;
 };
 
 // One row of <wf>_channel_bearing_rose.csv.
@@ -333,6 +374,9 @@ struct channel_bearing_comparison_row
     double kuiper_p_holm = std::numeric_limits<double>::quiet_NaN();
     std::size_t n_comparisons_in_family = 0;
     double permutation_p = std::numeric_limits<double>::quiet_NaN();
+    // The statistic the permutation p refers to (Kuiper V on the permuted
+    // records; for between_blocks, on the block-majority samples).
+    double permutation_statistic = std::numeric_limits<double>::quiet_NaN();
     std::string note;
 };
 
@@ -387,6 +431,11 @@ struct junction_angle_group_summary_row
     std::size_t n_blocks = 0;
     bool meets_min_group_size = false;
     junction_angle_group_summary summary;
+    int block_order = 0;
+    std::string block_order_mode;
+    int min_blocks = 0;
+    std::size_t n_unblocked = 0;
+    std::string note;
     // Bootstrap interval of the median (add_junction_angle_median_bootstrap);
     // NaN with n_bootstrap 0 when not computed.
     double median_ci_low_deg  = std::numeric_limits<double>::quiet_NaN();
@@ -411,6 +460,7 @@ struct junction_angle_comparison_row
     double ks_p_holm = std::numeric_limits<double>::quiet_NaN();
     std::size_t n_comparisons_in_family = 0;
     double permutation_p = std::numeric_limits<double>::quiet_NaN();
+    double permutation_statistic = std::numeric_limits<double>::quiet_NaN();  // KS D
     std::string note;
 };
 
@@ -448,6 +498,32 @@ std::vector<junction_angle_comparison_row> compare_junction_angles_by_category(
     const channel_record_categories&     groups,
     const channel_record_categories*     strata,
     const channel_bearing_statistics_options& options);
+
+// =============================================================================
+// Block permutation primitive (used by both comparison functions). values are
+// per record; a_idx / b_idx the records of the two samples; statistic(a, b)
+// the two-sample statistic. Records with block_id < 0 or a non-finite value
+// are left out (counted in n_unblocked / reported in note).
+// =============================================================================
+struct channel_block_permutation_result
+{
+    double p = std::numeric_limits<double>::quiet_NaN();
+    double observed = std::numeric_limits<double>::quiet_NaN();
+    std::size_t n_blocks = 0;
+    std::size_t n_unblocked = 0;
+    std::string note;
+};
+
+channel_block_permutation_result channel_block_permutation_test(
+    const std::vector<double>&       values,
+    const std::vector<std::int64_t>& block_id,
+    const std::vector<std::size_t>&  a_idx,
+    const std::vector<std::size_t>&  b_idx,
+    bool                             within_blocks,
+    std::size_t                      n_permutations,
+    std::mt19937_64&                 rng,
+    double (*statistic)(const std::vector<double>&, const std::vector<double>&, int),
+    int                              statistic_arg);
 
 // =============================================================================
 // Reference CSV (another lsdtt3 channel-network-analysis run's

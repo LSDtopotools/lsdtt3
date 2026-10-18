@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -101,6 +102,11 @@ channel_network_zone_labels make_zone_labels_from_polygon_field(
         "'; " + std::to_string(r.n_gap_filled) + " sliver pixels filled by coverage; " +
         std::to_string(r.n_overlap_pixels) + " overlapping pixels; " +
         std::to_string(r.n_unmapped_valid) + " valid pixels with no " + key_name);
+    std::size_t n_valid = 0;
+    for (const std::uint8_t m : reference_dem.get_mask()) n_valid += m ? 1 : 0;
+    check_categorical_map_coverage(key_name, vector_path, n_valid, out.n_unmapped_valid,
+                                   {info.x_min, info.y_min, info.x_max, info.y_max, info.crs_wkt},
+                                   reference_dem.get_meta(), out.notes, out.warnings);
     return out;
 }
 
@@ -146,7 +152,22 @@ channel_network_zone_labels make_zone_labels_from_code_raster(
         }
         lsdtt_warp_options wo;
         wo.resampling_method = "near";
-        tile = warp_raster_to_grid_in_memory(raster_path, gm, wo);
+        try
+        {
+            tile = warp_raster_to_grid_in_memory(raster_path, gm, wo);
+        }
+        catch (const std::exception& e)
+        {
+            if (std::string(e.what()).find("do not overlap") == std::string::npos) throw;
+            std::size_t n_valid = 0;
+            for (const std::uint8_t v : gmask) n_valid += v ? 1 : 0;
+            check_categorical_map_coverage(
+                key_name, raster_path, n_valid, n_valid,
+                {sm.x_min, sm.y_min, sm.x_min + sm.n_cols * sm.cell_size,
+                 sm.y_min + sm.n_rows * sm.cell_size, sm.crs_wkt},
+                gm, out.notes, out.warnings);   // throws
+            throw;
+        }
         out.notes.push_back(key_name + " code raster warped onto the DEM grid (nearest neighbour)");
     }
     if (tile.data.size() != npix)
@@ -186,6 +207,13 @@ channel_network_zone_labels make_zone_labels_from_code_raster(
     out.notes.push_back(std::to_string(out.values.size()) + " distinct " + key_name +
                         " codes; " + std::to_string(out.n_unmapped_valid) +
                         " valid pixels with no " + key_name);
+    std::size_t n_valid = 0;
+    for (const std::uint8_t m : gmask) n_valid += m ? 1 : 0;
+    check_categorical_map_coverage(
+        key_name, raster_path, n_valid, out.n_unmapped_valid,
+        {sm.x_min, sm.y_min, sm.x_min + sm.n_cols * sm.cell_size,
+         sm.y_min + sm.n_rows * sm.cell_size, sm.crs_wkt},
+        gm, out.notes, out.warnings);
     return out;
 }
 
@@ -544,6 +572,73 @@ void write_channel_bearing_group_membership_csv(
            << basin_of_record[i] << ',' << block_of_record[i] << ','
            << csv_field(region_value) << ',' << format_double(purity) << '\n';
     }
+}
+
+std::vector<std::size_t> count_order_k_basins_with_records(
+    const lsdtt_junction_network_base& network,
+    const std::vector<std::int32_t>&   record_junctions)
+{
+    int max_order = 0;
+    for (std::int32_t j = 0; j < network.n_junctions(); ++j)
+        max_order = std::max(max_order, static_cast<int>(network.stream_order_of_junction(j)));
+    std::vector<std::size_t> counts;
+    for (int k = 1; k <= max_order; ++k)
+    {
+        const std::vector<std::int32_t> basin = order_k_basin_of_junctions(network, k);
+        std::set<std::int32_t> seen;
+        for (const std::int32_t j : record_junctions)
+            if (j >= 0 && static_cast<std::size_t>(j) < basin.size() &&
+                basin[static_cast<std::size_t>(j)] >= 0)
+                seen.insert(basin[static_cast<std::size_t>(j)]);
+        counts.push_back(seen.size());
+    }
+    return counts;
+}
+
+channel_block_order_choice choose_channel_block_order(
+    const std::vector<std::size_t>& n_basins_by_order,
+    int                             override_order,
+    int                             min_blocks)
+{
+    channel_block_order_choice c;
+    c.n_basins_by_order = n_basins_by_order;
+    c.min_blocks = min_blocks;
+    auto count_at = [&](int k) -> std::size_t {
+        return k >= 1 && static_cast<std::size_t>(k) <= n_basins_by_order.size()
+                   ? n_basins_by_order[static_cast<std::size_t>(k - 1)] : 0;
+    };
+    if (override_order > 0)
+    {
+        c.automatic = false;
+        c.block_order = override_order;
+        if (count_at(override_order) < static_cast<std::size_t>(std::max(0, min_blocks)))
+            c.note = "block order " + std::to_string(override_order) + " (override) has " +
+                     std::to_string(count_at(override_order)) + " basin(s) with records, fewer than " +
+                     "channel_bearing_min_blocks = " + std::to_string(min_blocks);
+        return c;
+    }
+    std::size_t largest = 0;
+    for (std::size_t i = 0; i < n_basins_by_order.size(); ++i)
+    {
+        largest = std::max(largest, n_basins_by_order[i]);
+        if (n_basins_by_order[i] >= static_cast<std::size_t>(std::max(0, min_blocks)))
+            c.block_order = static_cast<int>(i + 1);
+    }
+    if (c.block_order == 0)
+        c.note = "network too small for block permutation: largest order-k basin count " +
+                 std::to_string(largest) + " < min_blocks " + std::to_string(min_blocks);
+    return c;
+}
+
+void write_channel_network_block_order_counts_csv(const channel_block_order_choice& choice,
+                                                  const std::string& out_path)
+{
+    std::ofstream os(out_path);
+    if (!os) throw std::runtime_error("write_channel_network_block_order_counts_csv: could not open " + out_path);
+    os << "strahler_order,n_basins_with_records,chosen\n";
+    for (std::size_t i = 0; i < choice.n_basins_by_order.size(); ++i)
+        os << (i + 1) << ',' << choice.n_basins_by_order[i] << ','
+           << (static_cast<int>(i + 1) == choice.block_order ? 1 : 0) << '\n';
 }
 
 } // namespace lsdtt

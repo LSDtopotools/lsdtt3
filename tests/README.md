@@ -268,7 +268,9 @@ then runs `lsdtt-lem` on the K raster the own-grid test wrote.
 `fixture_chi_lithology_cli` (`lsdtt-test-lithology-channel-stats --write-fixtures`)
 writes `build/tests/chi_lithology_cli_fixture/`: a steady-state DEM with two units
 (k_sn about 20 west, 5 east), the unit polygons, a crosswalk naming the units
-(`lithks_crosswalk.csv`) and one missing a value (`lithks_crosswalk_gap.csv`), and a
+(`lithks_crosswalk.csv`) and one missing a value (`lithks_crosswalk_gap.csv`), the
+unit polygons and a code raster 200 km east of the DEM in the same CRS
+(`lithks_units_far.gpkg`, `lithks_codes_far.tif`, for the no-overlap refusals), and a
 two-unit code raster beside a copy of `tiny_dem.asc`. `rigorous_chi_lithology_observation_only`
 reuses the hash of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, re-pin both.
 
@@ -277,6 +279,9 @@ reuses the hash of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, 
 (FIXTURES_REQUIRED on that test), and checks the sandstone/shale ratio of the reach
 median k_sn against 4. The same check mode is exercised inside
 `unit_chi_lithology_channel_stats` on a summary written in process.
+`rigorous_chi_lithology_bootstrap_per_mn` compares the 0.45 tables of
+`smoke_chi_lithology_ksn` and `smoke_chi_lithology_multi_mn` (m/n 0.4 and 0.45) byte
+for byte, with `tests/cmake/compare_output_sets.cmake`.
 
 ### Macrostrat lithology fetch
 
@@ -302,7 +307,9 @@ the measured value are recorded in the source).
 `fixture_channel_bearing_statistics` (`--write-fixtures`) writes
 `build/tests/channel_bearing_statistics_fixture/`: the trellis DEM and its
 transpose, a north/south region code raster on the trellis grid, an off-grid region
-raster with no CRS, and a copy of `data/channel_bearing_statistics/ns_trunk_bearings.csv`.
+raster with no CRS, a code raster and a one-polygon GeoPackage (field `unit`) 200 km
+east of the trellis in the same CRS (`cbs_region_far.tif`, `cbs_region_far.gpkg`, for
+the no-overlap refusals), and a copy of `data/channel_bearing_statistics/ns_trunk_bearings.csv`.
 The `*_channel_network_analysis_bearing_*` CLI tests (Python harness) read it.
 
 ### Channel-network statistics by lithologic unit
