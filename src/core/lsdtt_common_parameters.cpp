@@ -747,4 +747,117 @@ void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& 
         "Output: <write_fname>_lithology_code.tif.", group, "switch", ""};
 }
 
+void declare_channel_region_parameters(std::map<std::string, std::string>& string_default_map,
+                                       lsdtt_help_registry&                help_map,
+                                       const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Channel region input");
+    const std::string k_fname = prefixed_parameter_key(prefix, "channel_region_fname");
+
+    string_default_map[k_fname] = "";
+    help_map[k_fname] = {"string","",
+        "Region map (in read_path): a polygon vector file or an integer code raster.",
+        "User-drawn regions such as physiographic provinces, used to group channel statistics "
+        "by region. Vectors: any OGR polygon layer, reprojected to the DEM's CRS. Rasters: "
+        "integer region codes, warped onto the DEM grid with nearest neighbour if not on it "
+        "already. Empty (default) = no region grouping.",
+        group, "param", ""};
+
+    const std::string k_source = prefixed_parameter_key(prefix, "channel_region_source");
+    string_default_map[k_source] = "auto";
+    help_map[k_source] = {"string","auto",
+        "auto, vector_map or code_raster.",
+        "auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc "
+        "are rasters).",
+        group, "param", "channel_region_fname"};
+
+    const std::string k_layer = prefixed_parameter_key(prefix, "channel_region_layer_name");
+    string_default_map[k_layer] = "";
+    help_map[k_layer] = {"string","",
+        "Vector layer to read. Empty (default) = the first layer.", "",
+        group, "param", "channel_region_fname"};
+
+    const std::string k_field = prefixed_parameter_key(prefix, "channel_region_field_name");
+    string_default_map[k_field] = "";
+    help_map[k_field] = {"string","",
+        "Attribute of the vector layer whose values name the regions.",
+        "Required for a vector map; each distinct value is one region. Ignored for a code "
+        "raster.",
+        group, "param", "channel_region_fname"};
+}
+
+void declare_lithology_ksn_summary_parameters(std::map<std::string, float>&       float_default_map,
+                                              std::map<std::string, int>&         int_default_map,
+                                              std::map<std::string, std::string>& string_default_map,
+                                              lsdtt_help_registry&                help_map,
+                                              const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+
+    const std::string k_buffer = prefixed_parameter_key(prefix, "lithology_contact_buffer_metres");
+    float_default_map[k_buffer] = 0.0f;
+    help_map[k_buffer] = {"float","0.0",
+        "Exclude channel nodes closer than this to a mapped lithologic contact from the "
+        "per-unit k_sn statistics.",
+        "Excluded nodes are still written, flagged near_contact = 1. 0 keeps every node. "
+        "Mapped contacts carry a positional error of about 0.5 mm at map scale (about 125 m "
+        "at 1:250,000).",
+        group, "param", "lithology_fname"};
+
+    const std::string k_min_reach = prefixed_parameter_key(prefix, "lithology_min_reach_pixels");
+    int_default_map[k_min_reach] = 10;
+    help_map[k_min_reach] = {"int","10",
+        "Minimum number of channel nodes for a lithologic reach to enter the per-unit "
+        "statistics.",
+        "A lithologic reach is a run of channel nodes in one unit on one branch. It must also "
+        "span a chi interval greater than 0.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_cluster = prefixed_parameter_key(prefix, "lithology_bootstrap_cluster");
+    string_default_map[k_cluster] = "reach";
+    help_map[k_cluster] = {"string","reach",
+        "Resampling unit of the bootstrap interval of the per-unit median k_sn: reach or basin.",
+        "reach resamples lithologic reaches within a unit; basin resamples whole basins. "
+        "Reaches on one trunk channel are correlated, so the reach interval is a lower bound "
+        "on the uncertainty.",
+        group, "param", "lithology_fname"};
+}
+
+void declare_lithology_network_summary_parameters(std::map<std::string, float>& float_default_map,
+                                                  lsdtt_help_registry&          help_map,
+                                                  const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+    const std::string k = prefixed_parameter_key(prefix, "lithology_min_majority_fraction");
+    float_default_map[k] = 0.8f;
+    help_map[k] = {"float","0.8",
+        "Minimum fraction of a channel link or junction arm in its majority lithologic unit "
+        "for it to be assigned to that unit.",
+        "The fraction is length-weighted over the sampled nodes. Links and arms below it are "
+        "left out of the per-unit statistics.",
+        group, "param", "lithology_fname"};
+}
+
+void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+
+    const std::string k_reps = prefixed_parameter_key(prefix, "lithology_bootstrap_replicates");
+    int_default_map[k_reps] = 1000;
+    help_map[k_reps] = {"int","1000",
+        "Number of bootstrap replicates for the per-unit confidence intervals.",
+        "0 = no bootstrap; the interval columns are written as NaN.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_seed = prefixed_parameter_key(prefix, "lithology_bootstrap_random_seed");
+    int_default_map[k_seed] = 5489;
+    help_map[k_seed] = {"int","5489",
+        "Random seed for the per-unit bootstrap.",
+        "Seeds one std::mt19937_64 once per run, so a fixed seed reproduces the intervals. "
+        "Same default as bootstrap_random_seed.",
+        group, "param", "lithology_fname"};
+}
+
 } // namespace lsdtt

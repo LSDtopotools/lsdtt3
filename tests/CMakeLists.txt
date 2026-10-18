@@ -2088,28 +2088,11 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
-# lsdtt-bearing-comparison and lsdtt-swath-profile
+# lsdtt-swath-profile
 #
-# Both shipped in the core profile with no test at all (they predate the rule
-# in tools/cli_profiles.txt). Tested 2026-10-14 against analytic answers.
+# Shipped in the core profile with no test at all (it predates the rule in
+# tools/cli_profiles.txt). Tested 2026-10-14 against analytic answers.
 # =============================================================================
-foreach(_bc_case
-        "identical|Circular Wasserstein distance : 0 degrees"
-        "rotated|Circular Wasserstein distance : 20 degrees"
-        "rotation_invariant|Optimal rotation              : 340 degrees"
-        "axial|Circular Wasserstein distance : 0 degrees")
-    string(REPLACE "|" ";" _bc_case "${_bc_case}")
-    list(GET _bc_case 0 _bc_name)
-    list(GET _bc_case 1 _bc_line)
-    add_lsdtt_cli_smoke_test(
-        smoke_bearing_comparison_${_bc_name}
-        lsdtt-bearing-comparison
-        bearing_comparison_${_bc_name}.param.in
-        bc_bearing_comparison.csv
-        --stdout-contains "${_bc_line}"
-    )
-endforeach()
-
 add_lsdtt_cli_smoke_test(
     smoke_swath_profile_plane
     lsdtt-swath-profile
@@ -2282,6 +2265,136 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'source_pixels_threshold' is deprecated"
     --stderr-contains "use 'threshold_contributing_pixels'"
     --expect-sha256 cna_legacy_tokunaga_channel_data.csv:dd48f4ace30af5b591dc788c6930bb084da2f8274d6a5403e718f8e65b04d923
+)
+
+# =============================================================================
+# Channel-link bearing and junction-angle statistics
+# (lsdtt_channel_bearing_statistics_cpu, lsdtt_channel_network_grouping_cpu,
+#  lsdtt-channel-network-analysis write_channel_bearing_statistics /
+#  write_junction_angle_statistics)
+#
+# The driver modes are native and run in every configure. The first one holds
+# the analytic circular two-sample cases that the retired lsdtt-bearing-comparison
+# CLI tests pinned (same 8 bearings, same answers), now with no Python needed.
+# The trellis and grouping modes build synthetic networks in memory: a trellis
+# whose trunks run N-S and whose tributaries run E-W, so the expected bearings,
+# axial/directional contrast and junction angles follow from the geometry.
+# =============================================================================
+add_executable(lsdtt-test-channel-bearing-statistics cpp/test_channel_bearing_statistics.cpp)
+target_link_libraries(lsdtt-test-channel-bearing-statistics PRIVATE lsdtt3_cpu)
+
+foreach(_cbs_mode
+        "circular|--circular-two-sample"
+        "summaries|--group-summaries"
+        "comparisons|--comparisons"
+        "junction_angles|--junction-angle-stats"
+        "trellis|--trellis-network"
+        "grouping|--grouping-keys"
+        "isotropic_null|--isotropic-null")
+    string(REPLACE "|" ";" _cbs_mode "${_cbs_mode}")
+    list(GET _cbs_mode 0 _cbs_name)
+    list(GET _cbs_mode 1 _cbs_flag)
+    add_test(NAME unit_channel_bearing_statistics_${_cbs_name}
+             COMMAND lsdtt-test-channel-bearing-statistics ${_cbs_flag})
+    lsdtt_set_tests_properties(unit_channel_bearing_statistics_${_cbs_name} PROPERTIES
+        LABELS "unit;network")
+endforeach()
+
+# CLI fixture: the trellis DEM and its transpose, a north/south region code
+# raster on the trellis grid, an off-grid region raster with no CRS, and the
+# committed reference CSV copied beside them.
+set(LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/channel_bearing_statistics_fixture")
+add_test(NAME fixture_channel_bearing_statistics
+         COMMAND lsdtt-test-channel-bearing-statistics --write-fixtures
+                 "${LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR}"
+                 "${LSDTT_TEST_DATA_DIR}/channel_bearing_statistics/ns_trunk_bearings.csv")
+lsdtt_set_tests_properties(fixture_channel_bearing_statistics PROPERTIES
+    LABELS "fixture;network"
+    FIXTURES_SETUP channel_bearing_statistics)
+
+function(lsdtt_add_channel_bearing_cli_test TEST_NAME TEMPLATE EXPECTED)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-channel-network-analysis
+        ${TEMPLATE} ${EXPECTED}
+        --read-path "${LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR}" ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED channel_bearing_statistics)
+    endif()
+endfunction()
+
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_bearing_statistics_order
+    channel_network_analysis_bearing_statistics_order.param.in
+    cbso_channel_bearing_group_summary.csv
+    --expect cbso_channel_bearing_comparisons.csv
+    --expect cbso_channel_bearing_rose.csv
+    --expect cbso_channel_bearing_group_membership.csv
+    --expect cbso_junction_angle_group_summary.csv
+    --expect cbso_junction_angle_comparisons.csv
+    --stdout-contains "Bearing group strahler_order=2 [axial]: n="
+    --stdout-contains "Junction-angle group strahler_order=2 [alpha]: n="
+    --expect-file-contains "cbso_channel_bearing_group_summary.csv:measurand,group_key,group_value,stratum_key,stratum_value,angular_type,period_deg,n,n_blocks,total_length_m,circular_mean_deg_count,mean_resultant_length_count,circular_variance_count,circular_sd_deg_count,circular_mean_deg_length,mean_resultant_length_length,n_eff_length,rayleigh_z,rayleigh_p_iid_approx,fraction_on_d8_multiples,meets_min_group_size"
+    --expect-file-contains "cbso_channel_bearing_comparisons.csv:measurand,stratum_key,stratum_value,angular_type,comparison_mode,group_a,group_b,n_a,n_b,n_blocks_a,n_blocks_b,circular_wasserstein_deg,rotation_invariant,optimal_rotation_deg,kuiper_V,kuiper_p_iid_approx,kuiper_p_holm,n_comparisons_in_family,permutation_p,note"
+)
+
+# The rotated trellis (trunks draining west) against a committed reference of
+# N-S trunk bearings (180, order 2) read through the order filter: axial W1 90.
+lsdtt_add_channel_bearing_cli_test(
+    rigorous_channel_network_analysis_bearing_statistics_reference
+    channel_network_analysis_bearing_statistics_reference.param.in
+    cbsr_channel_bearing_comparisons.csv
+    --stdout-contains "Reference bearings           : 4 from"
+    --stdout-contains "Bearing comparison strahler_order=2 vs reference [axial]: n="
+    --stdout-contains "W1=90.0 deg"
+)
+
+lsdtt_add_channel_bearing_cli_test(
+    rigorous_channel_network_analysis_bearing_statistics_region
+    channel_network_analysis_bearing_statistics_region.param.in
+    cbsg_channel_bearing_group_summary.csv
+    --stdout-contains "Bearing group region=1 (strahler_order=2) [axial]: n="
+    --stdout-contains "Bearing group region=2 (strahler_order=2) [axial]: n="
+    --stdout-contains "Bearing comparison region=1 vs 2 (strahler_order=2) [axial]:"
+    --stdout-contains "W1=0.0 deg"
+    --expect-file-contains "cbsg_channel_bearing_group_membership.csv:upstream_junction,downstream_junction,stream_order,total_length_m,bearing_deg,axial_bearing_deg,group_value,stratum_value,basin_id,block_id,region_value,region_purity"
+)
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_stratify_equals_group
+    channel_network_analysis_bearing_stratify_equals_group.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_bearing_stratify_by must differ from channel_bearing_group_by."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_region_missing
+    channel_network_analysis_bearing_region_missing.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_region_fname is required when channel_bearing_group_by or channel_bearing_stratify_by is region."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_unknown_key
+    channel_network_analysis_bearing_unknown_key.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_bearing_group_by must be one of: strahler_order, basin, region, lithology."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_donor_pair
+    channel_network_analysis_bearing_donor_pair.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: donor_order_pair is only valid for junction_angle_group_by."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_region_grid
+    channel_network_analysis_bearing_region_grid.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "is not on the DEM grid"
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_reference_column
+    channel_network_analysis_bearing_reference_column.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "Column 'nope' not found in"
 )
 
 # Phase 4 readiness: preserve the legacy spelling as a compatibility test after
@@ -5165,17 +5278,31 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
     --expect lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv
     --expect lithks_chi_ksn_lithology_nodes_mn_0p450.csv
+    --expect lithks_chi_lithology_reaches_mn_0p450.csv
+    --expect lithks_chi_lithology_segments_mn_0p450.csv
+    --expect lithks_chi_ksn_by_lithology_and_basin_mn_0p450.csv
+    --expect lithks_lithology_units.csv
     --expect lithks_lithology_code.tif
     --expect-raster-values lithks_lithology_code.tif:1,2
     --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:2,shale,"
     --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:-1,unmapped,0,"
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:reach_k_sn_median,reach_k_sn_p25,reach_k_sn_p75,reach_k_sn_length_weighted_median,reach_k_sn_median_ci_low,reach_k_sn_median_ci_high,n_bootstrap,bootstrap_cluster"
+    # Run-local codes 1..N from the map's own text values (no crosswalk).
+    --expect-file-contains "lithks_lithology_units.csv:1,sandstone,sandstone,9600,8.64,"
+    --expect-file-contains "lithks_lithology_units.csv:2,shale,shale,9600,8.64,"
+    --expect-file-contains "lithks_lithology_units.csv:-1,unmapped,,0,0,0"
+    --expect-file-contains "lithks_chi_lithology_reaches_mn_0p450.csv:upstream_end,downstream_end,qualifies"
     # The units separate: shale peaks in bin 0 (k_sn 4.6-5.7) where sandstone has
     # no node, sandstone in bin 14 (19.8-20.9) where shale has none.
     --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:1,sandstone,0,4.632725239,5.716628242,0,"
     --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:2,shale,14,19.80736728,20.89127028,0,"
     --stdout-contains "2 lithologic unit(s)"
+    --stdout-contains "Reading k_sn by lithologic unit:"
+    --stdout-contains "reach median k_sn and its reach-bootstrap interval"
 )
-lsdtt_set_tests_properties(smoke_chi_lithology_ksn PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+lsdtt_set_tests_properties(smoke_chi_lithology_ksn PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli
+    FIXTURES_SETUP smoke_chi_lithology_ksn)
 
 # Lithology is observation only: the fit nodes CSV keeps the hash pinned by
 # rigorous_chi_nodes_sha256 (chi_analysis_smoke.param.in without the map).
@@ -5202,6 +5329,167 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(failure_chi_lithology_without_fit PROPERTIES
     FIXTURES_REQUIRED chi_lithology_cli)
+
+# The CLI known answer. The CLI re-routes the steady-state DEM, so
+# its routing differs from the generating tree near channel heads. Measured
+# 2026-10-17: reach medians sandstone 20.40326316, shale 5.163420929, ratio
+# 3.951501038, relative error 1.212 % against 4; pinned at twice that, 2.42 %.
+# Native, but its input comes from a Python-harness test, so it is registered
+# with the Python tests.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME rigorous_chi_lithology_ksn_ratio
+             COMMAND lsdtt-test-lithology-channel-stats --check-ksn-by-lithology
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks_chi_ksn_by_lithology_mn_0p450.csv"
+                     sandstone shale 4 0.0242)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_ksn_ratio PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_ksn)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_ksn_ratio)
+endif()
+
+# A crosswalk with a name column, a contact buffer and basin
+# clusters. Codes come from the crosswalk, names from its `name` column.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_crosswalk
+    lsdtt-chi-analysis
+    chi_lithology_crosswalk.param.in
+    lithkscw_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkscw_lithology_units.csv
+    --expect lithkscw_chi_lithology_reaches_mn_0p450.csv
+    --expect-file-contains "lithkscw_lithology_units.csv:10,quartz sandstone,sandstone,9600,"
+    --expect-file-contains "lithkscw_lithology_units.csv:30,grey shale,shale,9600,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:10,quartz sandstone,"
+    # 60 m buffer: 25 + 27 = 52 nodes set aside; 200 replicates by basin.
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:-2,all,1339,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:,60,10,52,84,26,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:,200,basin,"
+    --expect-file-contains "lithkscw_chi_lithology_reaches_mn_0p450.csv:,buffer,"
+    --stdout-contains "basin-bootstrap interval"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_crosswalk PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+# Refusals: a missing map, an unknown field, a value missing from the crosswalk,
+# a bootstrap cluster other than reach or basin.
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_missing_file
+    lsdtt-chi-analysis
+    chi_lithology_missing_file.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lithology map does not exist"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_missing_file PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_bad_field
+    lsdtt-chi-analysis
+    chi_lithology_bad_field.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "has no field 'formation'"
+    --stderr-contains "its fields are: lith_primary"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_bad_field PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_crosswalk_gap
+    lsdtt-chi-analysis
+    chi_lithology_crosswalk_gap.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "'shale' (9600 pixels)"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_crosswalk_gap PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_bad_cluster
+    lsdtt-chi-analysis
+    chi_lithology_bad_cluster.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lithology_bootstrap_cluster must be reach or basin, not 'segment'"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_bad_cluster PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+# Channel-link bearings and junction angles by lithologic unit (T12, T13): link
+# and junction tags on the synthetic trellis with in-process unit grids, the
+# axial rose by unit, the junction median bootstrap, the appended record
+# columns and the analysed-area mask.
+add_executable(lsdtt-test-lithology-network-stats cpp/test_lithology_network_stats.cpp)
+target_link_libraries(lsdtt-test-lithology-network-stats PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lithology_channel_network_stats
+         COMMAND lsdtt-test-lithology-network-stats
+                 "${CMAKE_CURRENT_BINARY_DIR}/lithology_channel_network_stats_work")
+lsdtt_set_tests_properties(unit_lithology_channel_network_stats PROPERTIES LABELS "unit;network")
+
+# lsdtt-channel-network-analysis with a lithology code raster (the trellis
+# fixture's north/south halves). These use lsdtt_add_channel_bearing_cli_test,
+# defined with the bearing-statistics tests above.
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_lithology
+    channel_network_analysis_lithology.param.in
+    cbslith_channel_bearing_group_summary.csv
+    --expect cbslith_lithology_units.csv
+    --expect cbslith_lithology_code.tif
+    --expect cbslith_junction_angle_group_summary.csv
+    --expect-file-contains "cbslith_channel_link_bearings.csv:downstream_longitude,lith_code,lith_name,lith_majority_fraction"
+    --expect-file-contains "cbslith_junction_angles.csv:longitude,junction_lith_code,junction_lith_name,donor_1_lith_code,donor_1_lith_fraction,donor_2_lith_code,donor_2_lith_fraction,receiver_lith_code,receiver_lith_fraction,lith_all_arms_agree"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:meets_min_group_size,median_ci_low_deg,median_ci_high_deg,n_bootstrap"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:alpha,lithology_interior,"
+    --expect-file-contains "cbslith_junction_angle_comparisons.csv:group_key=lithology_interior"
+    --expect-file-contains "cbslith_lithology_units.csv:-1,unmapped,,0,0,0"
+    # Integer codes are their own unit names; the south half's 364 pixels below
+    # the lowest junctions do not drain through an analysed junction.
+    --expect-file-contains "cbslith_lithology_units.csv:1,1,1,24000,2.4,24000"
+    --expect-file-contains "cbslith_lithology_units.csv:2,2,2,24000,2.4,23636"
+    --stdout-contains "Link bearings, lithology: 4 of 2388 records have no group and are excluded"
+    --stdout-contains "2 lithologic unit(s)"
+    --stdout-contains "Bearing group lithology=1 (strahler_order=2) [axial]: n="
+    --stdout-contains "Junction-angle group lithology_interior=1 [alpha]: n="
+)
+
+# Lithology given but no key uses it: every statistics output equals the
+# order-grouped run byte for byte.
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_lithology_observation
+    channel_network_analysis_lithology_observation.param.in
+    cbsobs_channel_bearing_group_summary.csv
+    --expect cbsobs_lithology_units.csv)
+if(TEST smoke_channel_network_analysis_lithology_observation)
+    lsdtt_set_tests_properties(smoke_channel_network_analysis_lithology_observation PROPERTIES
+        FIXTURES_SETUP cna_lithology_observation)
+    lsdtt_set_tests_properties(smoke_channel_network_analysis_bearing_statistics_order PROPERTIES
+        FIXTURES_SETUP cna_bearing_statistics_order)
+    add_test(NAME rigorous_channel_network_analysis_lithology_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_channel_network_analysis_bearing_statistics_order/out/cbso"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_channel_network_analysis_lithology_observation/out/cbsobs"
+                 "-DSUFFIXES=_channel_bearing_group_summary.csv;_channel_bearing_comparisons.csv;_channel_bearing_rose.csv;_channel_bearing_group_membership.csv;_junction_angle_group_summary.csv;_junction_angle_comparisons.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_channel_network_analysis_lithology_observation_only PROPERTIES
+        LABELS "rigorous;cli;network"
+        FIXTURES_REQUIRED "cna_lithology_observation;cna_bearing_statistics_order")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_channel_network_analysis_lithology_observation_only)
+endif()
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_lithology_bad_source
+    channel_network_analysis_lithology_bad_source.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "auto, vector_map or code_raster")
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_lithology_key_without_map
+    channel_network_analysis_lithology_key_without_map.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "lithology_fname is required when channel_bearing_group_by or channel_bearing_stratify_by is lithology")
 
 # Spatially varying erodibility (K): kernels, steady state, values, grid modes.
 add_executable(lsdtt-test-lem-erodibility cpp/test_lem_erodibility.cpp)
@@ -8214,7 +8502,7 @@ set(LSDTT_DOMAIN_RULES
     # sections, bankfull width and the water-body centreline are channel /
     # hydrography work; marsh platform and tidal channel extraction is landform
     # extraction, beside feature_finder.
-    "cross_sections|bankfull_width|water_centreline|water_line_repair|slope_area|outlet_matching|bearing_comparison" "network"
+    "cross_sections|bankfull_width|water_centreline|water_line_repair|slope_area|outlet_matching" "network"
     "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
     "junction_graph"         "network"

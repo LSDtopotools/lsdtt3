@@ -5230,23 +5230,115 @@ exact on the UTM grid).
 
 | Test | Labels | What it covers |
 |---|---|---|
-| `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); a known-answer steady state for n = 1 and n = 2; summary and histogram bookkeeping. Driver `tests/cpp/test_lithology_channel_stats.cpp` |
-| `fixture_chi_lithology_cli` | `fixture;chi;lithology` | writes the steady-state DEM, its unit polygons, and a two-unit code raster beside a copy of `tiny_dem.asc` |
-| `smoke_chi_lithology_ksn` | `smoke;cli;chi;lithology` | the CLI on the steady state: all outputs, the code raster holds 1 and 2, the unmapped row is empty, and each unit has no node in the other's histogram peak bin |
+| `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | `compute_weighted_quantile` (lower weighted quantile: fixed vectors at q = 0, 0.25, 0.5, 1; zero weights; empty = NaN; zero total, negative weight, size mismatch and q outside [0, 1] throw; equal weights = `compute_quantile_floor_in_place` at q = 0, 0.5, 1 for n = 1..12); contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); the lithology of a set of nodes (majority, purity with dx and dx sqrt2 weights, tie to the lower code, all unmapped, zero weights, empty); lithologic reaches on a hand-built network (3 reaches, 12 / 18 / 9 nodes, end types contact/outlet, source/contact, source/junction; with a 20 m buffer 4 nodes excluded and the ends become buffer); reach OLS on z = 3 + 7 chi (k_sn 7, R^2 1, SE 0) and `lithology_min_reach_pixels`; segment purity (180/290); summary bookkeeping (rows, sums, `low_sample` below 5 qualifying reaches with a NaN interval); the bootstrap (same seed bitwise, other seed differs, constant values, basin clusters, 0 replicates); the fit result unchanged; the known-answer steady states for n = 1 and n = 2 in two layouts; the `--check-ksn-by-lithology` mode. Driver `tests/cpp/test_lithology_channel_stats.cpp` (103 checks) |
+| `fixture_chi_lithology_cli` | `fixture;chi;lithology` | writes the steady-state DEM, its unit polygons, two crosswalks, and a two-unit code raster beside a copy of `tiny_dem.asc` |
+| `smoke_chi_lithology_ksn` | `smoke;cli;chi;lithology` | the CLI on the steady state: all seven outputs, the code raster holds 1 and 2, the run-local codes 1 and 2 in `_lithology_units.csv`, the unmapped row is empty, the reach columns, and each unit has no node in the other's histogram peak bin |
+| `rigorous_chi_lithology_ksn_ratio` | `rigorous;chi;lithology` | the reach-median ratio sandstone/shale from that run against 4, within 2.42 % |
+| `smoke_chi_lithology_crosswalk` | `smoke;cli;chi;lithology` | codes 10 and 30 and names from a crosswalk's `name` column, a 60 m contact buffer (52 nodes set aside), the bootstrap by basin |
 | `rigorous_chi_lithology_observation_only` | `rigorous;cli;chi;lithology` | the `chi_analysis_smoke` run plus a lithology map keeps the fit-nodes hash that `rigorous_chi_nodes_sha256` pins |
-| `failure_chi_lithology_without_fit` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true` |
+| `failure_chi_lithology_{without_fit,missing_file,bad_field,crosswalk_gap,bad_cluster}` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true`; a map that does not exist; a field the map lacks (the fields are listed); a value missing from the crosswalk (with its pixel count); `lithology_bootstrap_cluster` other than reach or basin |
 
 **Known answer.** A 120 x 160 grid at 30 m (a tilted red-noise surface, seed 11, D8,
-open edges) with K1 = 1e-5 west of a vertical contact and K2 = 4e-5 east of it,
-U = 2e-4, map area, steady state from `compute_d8_fluvial_steady_state` with an
-erodibility field; chi (m/n = theta, A0 = 1) and the fits on the same flow tree. The
-expected medians are (U/K)^(1/n): 20 and 5 for n = 1 (m = 0.45), sqrt(20) and sqrt(5)
-for n = 2 (m = 0.9). Measured 2026-10-17: medians 1.14 % and 1.25 % high for both n
-(the steady state integrates chi at each cell's own area, `lsdtt-chi-analysis`
-trapezoidally), ratio within 0.108 % of 4 and of 2. Tolerances: the ratio 0.25 %
-(twice the measured error), the medians 2 % (the cap; twice the measured would
-exceed it). Through the CLI, which re-routes flow on the steady DEM, the medians were
-20.78 and 5.22 (ratio 3.98).
+open edges, draining north) with K1 = 1e-5 and K2 = 4e-5, U = 2e-4, map area, steady
+state from `compute_d8_fluvial_steady_state` with an erodibility field; chi (m/n =
+theta, A0 = 1) and the fits on the same flow tree. Two layouts: A, the contact a
+vertical line (column 80) parallel to the drainage; B, a horizontal line (row 60)
+across it, so every trunk crosses it. The expected medians are (U/K)^(1/n): 20 and 5
+for n = 1 (m = 0.45), sqrt(20) and sqrt(5) for n = 2 (m = 0.9).
+
+Measured 2026-10-17 (the relative errors are identical for n = 1 and n = 2):
+
+| Statistic | Layout | Unit K1 | Unit K2 | Ratio | Pins |
+|---|---|---|---|---|---|
+| node median (first cut) | A | +1.14 % | +1.25 % | 0.108 % | medians 2 % (cap), ratio 0.25 % |
+| reach median (OLS per reach, 10 nodes, buffer 0) | A | +1.759 % | +1.310 % | 0.443 % | medians 2 % (cap), ratio 0.9 % |
+| reach median | B | +1.192 % | +1.581 % | 0.383 % | medians 2 % (cap), ratio 0.8 % |
+
+The medians sit high because the steady state integrates chi at each cell's own
+area and `lsdtt-chi-analysis` trapezoidally. Twice the measured median error would
+exceed the 2 % cap, so the medians are pinned at the cap; the ratios are pinned at
+about twice the measured error, under the 1 % cap. Reach counts are pinned exactly:
+layout A 46 (K1) and 42 (K2) reaches (16 and 14 qualifying), layout B 57 and 38 (18
+and 20 qualifying); B has 20 contact-ended reaches against 8 for A, and 1 (n = 1) or
+7 (n = 2) of its fitted segments span the contact.
+
+Through the CLI, which re-routes flow on the steady DEM: node medians 20.78 and 5.22;
+reach medians 20.403 and 5.163, ratio 3.9515, 1.212 % from 4, pinned at 2.42 %.
+
+**West Virginia (Allegheny Front, live data, not a CTest).** `wvfront_DEM.tif` (COP30,
+EPSG:32617, 30 m, -79.45/-79.15/38.85/39.05), Macrostrat SGMC units, 105 outlets from
+`lsdtt-basin-extraction`, threshold 200 pixels, `min_channel_pixels` 30, m/n 0.45,
+A0 = 1, 1000 replicates by reach, seed 5489. `lith_primary` with a crosswalk (codes
+10/20/30/40/90): 15847 channel nodes, 0 unmapped; 967 reaches, 531 qualifying.
+Reach median k_sn [95 % interval], buffer 0 / buffer 120 m:
+
+| Unit | Reaches (qualifying), buffer 0 | Median [interval], buffer 0 | Reaches (qualifying), 120 m | Median [interval], 120 m |
+|---|---|---|---|---|
+| sandstone | 358 (190) | 65.34 [60.42, 69.54] | 265 (126) | 64.56 [59.52, 69.48] |
+| siltstone | 68 (44) | 54.09 [45.90, 59.95] | 60 (39) | 55.99 [40.84, 66.77] |
+| shale | 334 (177) | 41.14 [35.56, 48.97] | 277 (134) | 36.23 [30.94, 42.30] |
+| limestone | 196 (113) | 57.84 [51.62, 64.58] | 167 (68) | 44.31 [38.70, 54.71] |
+| alluvium | 11 (7) | 8.63 [4.65, 14.69] | 9 (5) | 7.02 [3.00, 15.55] |
+| all | 967 (531) | 54.58 [51.25, 58.22] | 778 (372) | 48.43 [43.43, 53.08] |
+
+The 120 m buffer sets aside 4677 of 15847 nodes. With `name` (no crosswalk), 28 map
+units are on the grid, 27 with channel nodes, 21 with at least 5 qualifying reaches.
+111 of the 967 reaches (2 qualifying) have |dz| < 0.5 m.
+
+### 8c.4 Channel-network statistics by lithologic unit (`lsdtt-channel-network-analysis` with `lithology_fname`)
+
+Lithology is a grouping key of the bearing and junction-angle statistics
+(`channel_bearing_group_by` / `_stratify_by`, `junction_angle_group_by` /
+`_stratify_by`: `lithology`), so its rows are in the same summary, rose and
+comparison files as every other key. A link takes the length-weighted majority unit
+of the nodes its bearing was fitted on (each node weighted by its D8 step, ties to the
+lower code); links below `lithology_min_majority_fraction` (default 0.8) are excluded
+and counted. A junction takes the unit of its pixel (`group_key` lithology) and, as a
+second selection, only if its three sampled arms are in that unit with purity at or
+above the threshold (`lithology_interior`). Unmapped records are a group of their own.
+Lithology-keyed junction rows carry a 95 % percentile bootstrap interval of the median
+(the junction is the resampling unit, none below 5 junctions); the three interval
+columns are appended to `_junction_angle_group_summary.csv` for every row and are
+`nan` / 0 elsewhere. In `_junction_angle_comparisons.csv`, which has no group-key
+column, lithology rows carry `group_key=lithology` or `group_key=lithology_interior`
+in `note`. With `lithology_fname`, `_channel_link_bearings` and `_junction_angles` gain
+the unit columns after all others; without it every output is unchanged.
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_lithology_channel_network_stats` | `unit;network;lithology` | on the in-memory trellis (2400 junctions, 2396 links): with the contact parallel to the trunks every link takes the unit of its side with purity 1 (1198 / 1198); with it across them the 12 crossing links' unit and purity equal a length-weighted computation in the test, links below 0.8 are excluded, and a 4-node sample at the upstream end makes the 8 crossing links longer than 4 nodes pure (the tag follows the sampled nodes); unmapped links are the group unmapped; 1192 junctions in lithology, 1180 interior, equal to an independent check of the arms; the axial 10-degree rose by unit equals counts made in the test (596 / 602 in the N-S and E-W bins of each unit); the junction median bootstrap (seed-reproducible, fills only lithology rows, brackets the median, refuses rows that do not match the values, none below min_n); the junction summary and record writers (appended columns, unit names with commas quoted); the analysed-area mask against a brute-force walk. Driver `tests/cpp/test_lithology_network_stats.cpp` (17 checks) |
+| `smoke_channel_network_analysis_lithology` | `smoke;cli;network;lithology` | the trellis fixture with its north/south code raster as the map: appended record columns, the interval columns, `lithology_interior` rows and comparison notes, the unit legend (24000 / 23636 pixels in analysed basins), 4 of 2388 links excluded by purity |
+| `smoke_channel_network_analysis_lithology_observation`, `rigorous_channel_network_analysis_lithology_observation_only` | `smoke`/`rigorous`, `cli;network;lithology` | a lithology map that no key uses leaves the six statistics outputs byte-identical to `smoke_channel_network_analysis_bearing_statistics_order` (`tests/cmake/compare_output_sets.cmake`) |
+| `failure_channel_network_analysis_lithology_{bad_source,key_without_map}` | `failure;cli;network;lithology` | `lithology_source: shapefile`; `channel_bearing_group_by: lithology` without `lithology_fname` |
+
+Without lithology, 32 outputs of two full runs (the lake and Allegheny Front DEMs, every
+record, Tokunaga, area-ratio, area-scaling and vector output) were byte-identical to
+the outputs before this change, and the statistics outputs of an order-grouped run
+were identical except for the three columns appended to the junction summary.
+
+**West Virginia (live data, not a CTest).** `wvbig_DEM.tif` (-79.80/-79.05/38.85/39.15),
+Macrostrat SGMC `lith_primary` with the five-class crosswalk (codes 10/20/30/40/90),
+threshold 300 pixels, all complete-basin junctions, full-link sampling with at least
+5 nodes, blocks are order-3 basins, purity 0.8, 1000 replicates, seed 5489. Of 2974
+links, 732 are excluded by purity (by majority unit: sandstone 266, siltstone 40, shale
+250, limestone 159, alluvium 17); no channel node is unmapped. Of 953 junctions, 489 are
+not interior.
+
+| Unit (all orders) | Links | n_blocks | Axial mean / R (count) | Axial mean / R (length) | D8 fraction | One-vs-rest axial W1 (deg) / Kuiper V |
+|---|---|---|---|---|---|---|
+| sandstone | 585 | 66 | 110.6 / 0.047 | 166.3 / 0.018 | 0.056 | 2.7 / 0.069 |
+| siltstone | 318 | 27 | 114.8 / 0.138 | 121.4 / 0.207 | 0.053 | 3.0 / 0.083 |
+| shale | 945 | 82 | 113.4 / 0.124 | 116.4 / 0.149 | 0.048 | 2.5 / 0.065 |
+| limestone | 343 | 46 | 63.7 / 0.023 | 17.2 / 0.044 | 0.076 | 4.5 / 0.118 |
+| alluvium | 51 | 5 | 110.9 / 0.322 | 114.3 / 0.415 | 0.039 | 9.7 / 0.236 |
+
+| Unit | Junction alpha median [interval], lithology (n) | lithology_interior (n) |
+|---|---|---|
+| sandstone | 62.3 [60.3, 68.2] (284) | 64.8 [59.9, 71.7] (126) |
+| siltstone | 66.2 [58.9, 72.4] (113) | 70.7 [61.4, 76.0] (76) |
+| shale | 60.3 [57.0, 65.5] (385) | 58.4 [54.4, 60.9] (206) |
+| limestone | 63.9 [59.3, 69.6] (155) | 66.9 [60.0, 80.9] (53) |
+| alluvium | 43.6 [28.0, 83.1] (16) | 19.8, no interval (3) |
 
 ### 8c.2 Macrostrat lithology fetch (`lsdtt-fetch-lithology`)
 
@@ -7744,6 +7836,168 @@ fill. All were identical. The runs that failed before now complete.
   The per-cell memory of the resolver is described in its header.
 - The per-CLI tests check that each CLI runs the option and prints the report.
   They do not check the routed output of every CLI against a reference.
+
+## 10s. Channel-link bearing and junction-angle statistics (2026-10-17)
+
+`lsdtt-channel-network-analysis` (version 1.1.0) summarises and compares the
+distributions of its channel-link bearings and junction angles by group within
+one run: `write_channel_bearing_statistics` and `write_junction_angle_statistics`,
+grouped by Strahler order, basin or region and optionally stratified by a second
+key. The new keys are marked experimental. `lsdtt-bearing-comparison`, whose only
+real input was this CLI's own `_channel_link_bearings` CSV, was removed in the same
+change; its four analytic smoke tests became native checks (10s.2). The Python
+`lsdtt3.compare_bearings` is unchanged.
+
+### 10s.1 Where the code is
+
+- `src/cpu/lsdtt_channel_bearing_statistics_cpu.{hpp,cpp}`: circular mean, mean
+  resultant length R, circular variance and SD, the axial (doubled-angle) form,
+  Rayleigh (Zar approximation), the D8 fraction, centred rose bins, Holm, the
+  linear junction-angle statistics, the category-keyed summarisers and
+  comparators, the reference-CSV reader and the CSV writers. The two-sample
+  numerics are the unchanged functions of `src/utils/lsdtt_statistical_tests`.
+- `src/cpu/lsdtt_channel_network_grouping_cpu.{hpp,cpp}`: the grouping keys
+  (order with pooling, donor order pair, outlet and order-k basins, region),
+  per-pixel zone labels (polygon field or code raster), majority-with-purity over
+  a pixel list, and the membership CSV.
+- `src/cpu/lsdtt_channel_network_analysis_cpu.hpp`: `lsdtt_channel_link_bearing`
+  carries `sampled_flats`, and `lsdtt_junction_angle_record` carries
+  `donor_1_sampled_flats`, `donor_2_sampled_flats` and `receiver_sampled_flats`:
+  the pixels each bearing was fitted on. They are not written to any output.
+
+### 10s.2 What the tests assert
+
+All driver modes are in `tests/cpp/test_channel_bearing_statistics.cpp`
+(`lsdtt-test-channel-bearing-statistics`), labelled `unit;network`, native.
+
+| test | asserts |
+|---|---|
+| `unit_channel_bearing_statistics_circular` | The eight bearings {10, 50, 100, 170, 200, 260, 300, 345}: against themselves W1 = 0, Kuiper V = 0, p = 1; against +20 W1 = 20; rotation-invariant W1 = 0 with optimal rotation 340; against +180 as axial W1 = 0. Point masses: 10 vs 350 W1 = 20; axial 0 vs 90 W1 = 90; axial 10 vs 170 W1 = 20; disjoint arcs {10, 20} vs {190, 200} V = 1. Tolerance 1e-9. The first four are the cases the removed `smoke_bearing_comparison_*` tests pinned; their CLI outputs at removal were `8,8,0,0,360,0,0,0,1`, `8,8,0,0,360,20,0,0.125,1`, `8,8,0,1,360,0,340,0.125,1` and `8,8,1,0,180,0,0,0,1` (n_x, n_y, axial, rotation_invariant, period, W1, optimal rotation, V, p). Also the rotation-invariant size guard (n_a n_b above the limit gives NaN and a flag, the Kuiper result is still computed). |
+| `..._summaries` | {350, 10} directional: mean 0 (not 180, not 360), R = cos 10°. {170, 10} axial: mean 0, R = cos 20°. {0, 90} axial: R = 0, mean NaN. {0, 90} with weights {1, 3}: mean atan2(3, 1) = 71.565°. Ten identical values: R = 1, Rayleigh p < 1e-4, SD 0. {0, 45, 90, 135} × 25: axial R = 0 (the four-fold D8 pattern cancels on doubled angles), D8 fraction 1. Kish n_eff, axial SD halving. Rose (w = 10): 355 → bin centred 0, 5.0 → bin centred 10, axial 175 → bin centred 0; counts and lengths sum to the totals; a width that does not divide 180 is refused. Category summaries drop excluded records (category -1) and count distinct blocks; a combined key (order × 100000 + code) needs nothing special. |
+| `..._comparisons` | Holm {0.01, 0.04, 0.03} → {0.03, 0.06, 0.06} in input order; NaN is not counted. Four eligible groups: pairwise 6 rows, one_vs_rest 4 rows, a reference adds 4 rows; a group below the minimum size is summarised (`meets_min_group_size` 0) and takes no part. Stratified rows carry each stratum and the pooled `all`. Reference reader: the exact message `Column 'x' not found in <path>`, non-numeric and blank cells skipped, the order filter keeps only matching rows. |
+| `..._junction_angles` | {60, 90} against itself: KS D = 0, linear W1 = 0; {30} vs {90}: W1 = 60; sectors 10 and 350 are 340 apart (linear, not circular); beta_min / beta_max do not change when the donor labels are swapped. |
+| `..._trellis` | The synthetic trellis below: see 10s.3. |
+| `..._grouping` | On the trellis: region halves (north / south) partition the links; a link that crosses the split has purity equal to its majority pixel fraction (12 links cross; 4 of them are below 0.6 and are exactly the ones a 0.6 purity threshold excludes); order-2 axial W1 north vs south 0.6°; order pooling ("2+"), donor order pairs ("1_2"); order-2 basins (below); innermost-wins nesting (299 junctions upslope of an inner trunk junction take it, the other 301 of the valley the outer outlet, all others none). |
+| `..._isotropic_null` | A diamond-square surface (seed 2, 257 × 257 at 30 m, sd 100 m, threshold 20 px): all-link axial R < 0.15 (see 10s.4). |
+| `fixture_channel_bearing_statistics` | Writes the CLI fixture (`--write-fixtures`). |
+
+CLI tests (Python harness, `LSDTT_ENABLE_PYTHON_TESTS=ON`, fixture
+`channel_bearing_statistics`):
+`smoke_channel_network_analysis_bearing_statistics_order` (all six CSVs, the
+summary and comparison headers, the group lines),
+`rigorous_..._bearing_statistics_reference` (the rotated trellis against
+`tests/data/channel_bearing_statistics/ns_trunk_bearings.csv` through the order
+filter: four reference bearings, order-2 axial W1 printed `90.0`),
+`rigorous_..._bearing_statistics_region` (region within order: order-2 axial W1
+between the halves printed `0.0`), and six `failure_..._bearing_*` tests (stratify
+equal to group, region key without a file, unknown key, `donor_order_pair` for
+bearings, an off-grid region raster with no CRS, a missing reference column).
+
+The existing CNA outputs did not change. Before the change, a run of the
+previous binary with every output switch on (two DEMs: a 30 m COP30 crop of the
+Allegheny Front and the 128 × 128 Lakeland crop, threshold 50 px) wrote 32 CSV and
+FlatGeobuf files; after it, the same parameters gave 32 byte-identical files, and
+so did the run with both new switches on. The Tokunaga `--expect-sha256` of
+`rigorous_channel_network_analysis_legacy_threshold` still passes.
+
+### 10s.3 The trellis fixture, and what it measured
+
+10 m cells, 300 rows × 160 columns, z = 0.02 × (distance north of the south edge)
++ h(x), with h made of half-cosine flanks of relief 50 m. Four N-S valleys at
+columns 6, 46, 114 and 154. Each valley has one 6-pixel flank (too short to reach
+the 8-pixel channel threshold) and one 34-pixel flank that sheds one tributary per
+row; the short flank is on the west in the two western valleys and on the east in
+the two eastern ones, so tributaries flow west in half the valleys and east in
+the other half. Boundaries `nnon`. The transposed surface (valleys E-W, draining
+west, `nnno`) is the rotated case.
+
+Two features of the design were forced by D8 and are worth knowing before the
+fixture is changed:
+- With both flanks channelled every trunk pixel takes a tributary from each side
+  and has three donors, and `calculate_junction_angles` analyses only two-donor
+  junctions; one channelled flank per valley gives two-donor junctions.
+- At the open south edge the last row's flank drains along row 299 into the
+  outlet pixel beside the trunk, so the outlet junction is order 3 and each valley
+  has two order-2 basin mouths: the trunk (row 298) and that edge channel. The
+  grouping test counts the trunk basins (4, one per valley) and the edge basins
+  (4) separately.
+
+Measured (full_link sampling, min_nodes 2): 2400 junctions, 2396 links (1204 of
+order 1, 1192 of order 2), 1192 two-donor junctions. Order-1: 1200 E-W
+tributaries and 4 N-S head links; axial mean 89.98°, axial R 0.9923 against
+(n_trib − n_head)/(n_trib + n_head) = 0.9934; directional R 0.026. Order-2:
+axial mean 0, axial R 0.9933, directional mean 180. Junction alpha median
+88.67°. Kuiper V (order 1 vs 2, axial) 0.993. Rotated: order-2 axial mean 90,
+directional mean 270; W1 against the N-S trellis order 2 89.40° axial and 89.70°
+directional. The pinned tolerances (2° on means, 5° on alpha and the order-1
+mean, ±0.05 on R, ±3° on W1) are derived from the geometry: the last one or two
+flank steps are diagonal (the 0.02 down-valley gradient makes the diagonal
+steeper where the cross-valley gradient falls below about 0.05).
+
+### 10s.4 The isotropic null
+
+On a D8 network of an isotropic surface, the all-link axial R measured (257 ×
+257 diamond-square at 30 m, roughness 0.55, sd 100 m, threshold 20 px, full_link)
+for seeds 1-8 was 0.0751, 0.0063, 0.0523, 0.0191, 0.0457, 0.0272, 0.0369 and
+0.0149. Seed 1 is 1.998 times below the 0.15 bound, under the factor of 2 asked
+for, so the test uses seed 2. The directional R on the same surfaces was 0.09 to
+0.36: the directional form is not a usable isotropy statistic on a D8 network,
+which is the reason the axial form is the one bounded.
+
+### 10s.5 First real run: Allegheny Front, West Virginia (2026-10-17)
+
+COP30 (`cop30_aws`, keyless), box −79.80/−79.05/38.85/39.15, EPSG:32617 at 30 m:
+2185 × 1148 cells, tiles N38W080 and N39W080. Parameters: threshold 300 px,
+`analyse_all_junctions`, `only_complete_basins`, full_link sampling,
+`link_sampling_min_nodes` 5, orders ≥ 4 pooled (`channel_bearing_max_order_group`
+4), independence blocks = order-3 basins. 4204 junctions, 3330 kept by the
+complete-basin filter. Means and R are count-weighted unless marked; axial means
+are in [0, 180), grid north of UTM 17N.
+
+| order | n | n_blocks | axial mean | axial R | axial mean (length) | axial R (length) | directional mean | directional R | D8 fraction | median alpha |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1765 | 108 | 108.7 | 0.146 | 112.3 | 0.159 | 85.7 | 0.054 | 0.049 | – |
+| 2 | 791 | 106 | 117.5 | 0.142 | 118.1 | 0.158 | 83.2 | 0.067 | 0.053 | 58.0 (n 611) |
+| 3 | 311 | 83 | 136.6 | 0.091 | 128.1 | 0.168 | 125.2 | 0.166 | 0.029 | 71.7 (n 262) |
+| 4+ | 107 | 0 | 79.8 | 0.230 | 70.5 | 0.192 | 31.3 | 0.083 | 0.093 | 75.0 (n 80) |
+
+Junction alpha is grouped by the order at the confluence pixel, so there is no
+order-1 row. n_blocks is 0 for 4+ because a link of order above the block order
+lies in no order-3 basin.
+
+Pairwise, axial (count-based; p assumes independent links):
+
+| a vs b | n | n_blocks | W1 (deg) | Kuiper V | p_iid | p Holm |
+|---|---|---|---|---|---|---|
+| 1 vs 2 | 1765 / 791 | 108 / 106 | 1.9 | 0.056 | 0.38 | 0.49 |
+| 1 vs 3 | 1765 / 311 | 108 / 83 | 4.7 | 0.107 | 0.046 | 0.14 |
+| 1 vs 4+ | 1765 / 107 | 108 / 0 | 7.3 | 0.227 | 0.00086 | 0.0034 |
+| 2 vs 3 | 791 / 311 | 106 / 83 | 3.9 | 0.094 | 0.24 | 0.49 |
+| 2 vs 4+ | 791 / 107 | 106 / 0 | 8.8 | 0.249 | 0.00025 | 0.0013 |
+| 3 vs 4+ | 311 / 107 | 83 / 0 | 10.6 | 0.309 | 7.9e-06 | 4.7e-05 |
+
+Sensitivity (axial R by order 1 / 2 / 3 / 4+, and n):
+- threshold 150 px: 0.149 / 0.128 / 0.116 / 0.085 (n 3265 / 1560 / 658 / 276);
+  median alpha 55.1 / 69.5 / 77.7 for orders 2 / 3 / 4+.
+- threshold 600 px: 0.164 / 0.148 / 0.038 / 0.251 (n 945 / 376 / 128 / 36);
+  median alpha 61.8 / 76.3 / 77.9.
+- `link_sampling_min_nodes` 2: 0.135 / 0.145 / 0.075 / 0.191 (n 2001 / 860 / 344 / 125);
+  the D8 fraction rose from 0.049 / 0.053 / 0.029 / 0.093 to 0.121 / 0.098 / 0.087 / 0.168.
+
+Grid-isotropy null: a diamond-square surface (`lsdtt-synthetic-surfaces`, seed 1,
+same 2185 × 1148 at 30 m, mean 783.5 m and sd 261.1 m matched to the DEM, default
+synthetic georeference) with the same CNA parameters: axial R 0.063 / 0.056 /
+0.074 / 0.137 for orders 1 / 2 / 3 / 4+ (n 1914 / 887 / 333 / 235); directional R
+0.231 / 0.296 / 0.347 / 0.467 with directional means 229-237°; median alpha 50.9 /
+59.8 / 56.9 for orders 2 / 3 / 4+.
+
+Wall times on a thermally limited WSL2 laptop (8 cores; one run each, includes
+fill, routing and all outputs): 2.3 s (threshold 300), 3.5 s (150), 2.5 s (600),
+3.6 s (min_nodes 2), 2.6 s (null); peak RSS about 217-222 MB. These are laptop
+timings and not a performance claim.
+
+The province run (region within order) has not been run: the province polygon is
+to be drawn by hand on a hillshade.
 
 ## 11. Adding a test
 

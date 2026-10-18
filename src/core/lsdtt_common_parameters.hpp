@@ -374,4 +374,43 @@ void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& 
                                                    lsdtt_help_registry&         help_map,
                                                    const std::string&           prefix = "");
 
+// -----------------------------------------------------------------------------
+// Channel region input (grouping channel statistics by user-drawn regions)
+//
+// declare_channel_region_parameters: channel_region_fname,
+//   channel_region_source, channel_region_layer_name, channel_region_field_name.
+//   Regions are read like a lithology map (polygon vector or integer code
+//   raster). Used by lsdtt-channel-network-analysis to group link bearings and
+//   junction angles by region.
+// -----------------------------------------------------------------------------
+void declare_channel_region_parameters(std::map<std::string, std::string>& string_default_map,
+                                       lsdtt_help_registry&                help_map,
+                                       const std::string&                  prefix = "");
+
+// -----------------------------------------------------------------------------
+// Lithology summaries (per-unit statistics of channel metrics)
+//
+// Split into three so that no CLI advertises a key it does not use.
+//
+// declare_lithology_ksn_summary_parameters: lithology_contact_buffer_metres
+//   (float 0), lithology_min_reach_pixels (int 10), lithology_bootstrap_cluster
+//   (string "reach"). Per-unit k_sn summaries (lsdtt-chi-analysis).
+// declare_lithology_network_summary_parameters: lithology_min_majority_fraction
+//   (float 0.8). Per-unit link / junction statistics
+//   (lsdtt-channel-network-analysis).
+// declare_lithology_bootstrap_parameters: lithology_bootstrap_replicates
+//   (int 1000), lithology_bootstrap_random_seed (int 5489). Shared by both.
+// -----------------------------------------------------------------------------
+void declare_lithology_ksn_summary_parameters(std::map<std::string, float>&       float_default_map,
+                                              std::map<std::string, int>&         int_default_map,
+                                              std::map<std::string, std::string>& string_default_map,
+                                              lsdtt_help_registry&                help_map,
+                                              const std::string&                  prefix = "");
+void declare_lithology_network_summary_parameters(std::map<std::string, float>& float_default_map,
+                                                  lsdtt_help_registry&          help_map,
+                                                  const std::string&            prefix = "");
+void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          prefix = "");
+
 } // namespace lsdtt

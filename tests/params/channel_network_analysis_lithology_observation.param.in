@@ -1,0 +1,16 @@
+# channel_network_analysis_bearing_statistics_order.param.in plus a lithology map
+# that no key uses: lithology is observation only, so every statistics output must
+# equal that run's (cbso_*) byte for byte.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbsobs
+boundary_conditions: nnon
+write_channel_bearing_statistics: true
+write_junction_angle_statistics: true
+channel_bearing_group_by: strahler_order
+channel_bearing_block_order: 2
+lithology_fname: cbs_region_halves.tif

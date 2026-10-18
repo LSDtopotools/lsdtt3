@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -64,7 +65,66 @@ bool in_row(std::int32_t row_code, std::int32_t node_code)
     return row_code == k_code_all || row_code == node_code;
 }
 
+// The lower weighted quantile, NaN when there is no weight to take it from.
+double weighted_quantile_or_nan(const std::vector<double>& v, const std::vector<double>& w, double q)
+{
+    double total = 0.0;
+    for (double x : w) total += x;
+    if (v.empty() || !(total > 0.0)) return k_nan;
+    return compute_weighted_quantile(v, w, q);
+}
+
+struct reach_quantiles
+{
+    double median = k_nan, p25 = k_nan, p75 = k_nan, length_weighted_median = k_nan;
+};
+
+// Unweighted (D2 convention) and length-weighted quantiles of reach k_sn.
+reach_quantiles quantiles_of_reaches(const std::vector<double>& k, const std::vector<double>& length)
+{
+    reach_quantiles q;
+    if (k.empty()) return q;
+    std::vector<double> a = k;
+    q.median = compute_median_in_place(a);
+    a = k;
+    q.p25 = compute_quantile_interpolated_in_place(a, 0.25);
+    a = k;
+    q.p75 = compute_quantile_interpolated_in_place(a, 0.75);
+    q.length_weighted_median = weighted_quantile_or_nan(k, length, 0.5);
+    return q;
+}
+
+double median_or_nan(std::vector<double> v)
+{
+    return v.empty() ? k_nan : compute_median_in_place(v);
+}
+
 } // namespace
+
+lsdtt_lithology_bootstrap_cluster parse_lithology_bootstrap_cluster(const std::string& s)
+{
+    if (s == "reach") return lsdtt_lithology_bootstrap_cluster::reach;
+    if (s == "basin") return lsdtt_lithology_bootstrap_cluster::basin;
+    throw std::invalid_argument("lithology_bootstrap_cluster must be reach or basin, not '" + s + "'");
+}
+
+std::string lithology_bootstrap_cluster_name(lsdtt_lithology_bootstrap_cluster c)
+{
+    return c == lsdtt_lithology_bootstrap_cluster::basin ? "basin" : "reach";
+}
+
+std::string chi_lithology_reach_end_name(lsdtt_chi_lithology_reach_end e)
+{
+    switch (e)
+    {
+        case lsdtt_chi_lithology_reach_end::contact: return "contact";
+        case lsdtt_chi_lithology_reach_end::junction: return "junction";
+        case lsdtt_chi_lithology_reach_end::source: return "source";
+        case lsdtt_chi_lithology_reach_end::outlet: return "outlet";
+        case lsdtt_chi_lithology_reach_end::buffer: return "buffer";
+    }
+    return "unknown";
+}
 
 std::vector<std::int32_t> assign_chi_fit_nodes_to_segments(const lsdtt_chi_network_fit_result& r)
 {
@@ -169,6 +229,7 @@ lsdtt_chi_lithology_node_table build_chi_lithology_node_table(
                 const double dc = static_cast<double>(rec % m.n_cols - row.col);
                 row.flow_length_to_receiver_m = static_cast<float>(std::hypot(dr, dc) * m.cell_size);
             }
+            if (i < r.branch_id_of_node.size()) row.branch_id = r.branch_id_of_node[i];
             const std::size_t f = static_cast<std::size_t>(r.flats[i]);
             row.lith_code = units.code_of_pixel[f];
             row.distance_to_contact_m = contact_distance[f];
@@ -313,6 +374,541 @@ lsdtt_chi_ksn_histogram make_chi_ksn_histogram_by_lithology(
     return h;
 }
 
+lsdtt_lithology_tag summarise_lithology_of_flats(const std::vector<std::int64_t>& flats,
+                                                 const std::vector<double>& weights,
+                                                 const std::vector<std::int32_t>& code_of_pixel)
+{
+    if (flats.size() != weights.size())
+        throw std::invalid_argument("summarise_lithology_of_flats: flats and weights differ in size");
+    lsdtt_lithology_tag tag;
+    if (flats.empty()) return tag;
+    double total = 0.0;
+    for (double w : weights) total += w;
+    const bool count_nodes = !(total > 0.0);
+    std::map<std::int32_t, double> by_code;   // ascending, so ties go to the lower code
+    for (std::size_t i = 0; i < flats.size(); ++i)
+    {
+        const auto f = static_cast<std::size_t>(flats[i]);
+        if (f >= code_of_pixel.size())
+            throw std::invalid_argument("summarise_lithology_of_flats: a node is off the grid");
+        by_code[code_of_pixel[f]] += count_nodes ? 1.0 : weights[i];
+    }
+    if (count_nodes) total = static_cast<double>(flats.size());
+    double best = -1.0;
+    for (const auto& [code, w] : by_code)
+        if (w > best)
+        {
+            best = w;
+            tag.code = code;
+        }
+    tag.majority_fraction = best / total;
+    tag.n_units = static_cast<std::int32_t>(by_code.size());
+    return tag;
+}
+
+lsdtt_chi_lithology_tables build_chi_lithology_tables(
+    const lsdtt_chi_network_fit_collection_result& fits, const lsdtt_raster_meta& m,
+    const lsdtt_lithology_units_on_grid& units, const std::vector<float>& contact_distance,
+    const std::vector<float>& drainage_area_m2, const lsdtt_chi_lithology_options& opts)
+{
+    const std::size_t n_grid = static_cast<std::size_t>(m.n_rows) * m.n_cols;
+    if (!drainage_area_m2.empty() && drainage_area_m2.size() != n_grid)
+        throw std::invalid_argument("build_chi_lithology_tables: drainage area is not on the DEM grid");
+    if (!(opts.contact_buffer_m >= 0.0) || !std::isfinite(opts.contact_buffer_m))
+        throw std::invalid_argument("build_chi_lithology_tables: the contact buffer must be >= 0");
+    if (opts.min_reach_pixels < 1)
+        throw std::invalid_argument("build_chi_lithology_tables: min_reach_pixels must be >= 1");
+
+    lsdtt_chi_lithology_tables t;
+    t.nodes = build_chi_lithology_node_table(fits, m, units, contact_distance);
+    t.contact_buffer_m = opts.contact_buffer_m;
+    t.min_reach_pixels = opts.min_reach_pixels;
+    using end_t = lsdtt_chi_lithology_reach_end;
+
+    std::size_t base = 0;   // first node row of this basin (rows follow r.flats)
+    for (std::size_t b = 0; b < fits.basins.size(); ++b)
+    {
+        const auto& r = fits.basins[b];
+        const std::size_t n = r.flats.size();
+        auto row = [&](std::size_t i) -> lsdtt_chi_lithology_node_row& { return t.nodes.rows[base + i]; };
+
+        std::unordered_map<std::int64_t, std::size_t> idx;
+        idx.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) idx[r.flats[i]] = i;
+
+        std::vector<std::uint8_t> near(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            auto& nr = row(i);
+            if (!drainage_area_m2.empty())
+                nr.drainage_area_m2 = drainage_area_m2[static_cast<std::size_t>(r.flats[i])];
+            nr.near_contact = opts.contact_buffer_m > 0.0 && std::isfinite(nr.distance_to_contact_m) &&
+                              nr.distance_to_contact_m < opts.contact_buffer_m;
+            near[i] = nr.near_contact ? 1 : 0;
+        }
+
+        // Receiver (index in this network, or -1) and the join to it.
+        const std::size_t none = static_cast<std::size_t>(-1);
+        std::vector<std::size_t> rec(n, none), down(n, none), up(n, none);
+        std::vector<std::uint8_t> has_donor(n, 0), donor_near(n, 0), donor_other_code(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::int64_t rf = r.receiver_flats[i];
+            if (rf == k_outlet_receiver || rf < 0) continue;
+            const auto it = idx.find(rf);
+            if (it == idx.end()) continue;
+            const std::size_t j = it->second;
+            rec[i] = j;
+            has_donor[j] = 1;
+            if (near[i]) donor_near[j] = 1;
+            else if (row(i).lith_code != row(j).lith_code) donor_other_code[j] = 1;
+            if (!near[i] && !near[j] && row(i).lith_code == row(j).lith_code &&
+                row(i).branch_id == row(j).branch_id && up[j] == none)
+            {
+                down[i] = j;
+                up[j] = i;
+            }
+        }
+
+        // Reaches, numbered in the order of their downstream ends.
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (near[i] || down[i] != none) continue;
+            std::vector<std::size_t> chain;   // downstream end first
+            for (std::size_t k = i; k != none; k = up[k]) chain.push_back(k);
+            const std::size_t d = chain.front(), u = chain.back();
+
+            lsdtt_chi_lithology_reach_row rr;
+            rr.reach_id = static_cast<std::int32_t>(t.reaches.size());
+            rr.basin_index = static_cast<std::int32_t>(b);
+            rr.branch_id = row(d).branch_id;
+            rr.lith_code = row(d).lith_code;
+            rr.n_nodes = chain.size();
+            rr.upstream_flat = r.flats[u];
+            rr.downstream_flat = r.flats[d];
+            rr.chi_span = static_cast<double>(r.chi[u]) - r.chi[d];
+            rr.dz_m = static_cast<double>(r.observed_elevation[u]) - r.observed_elevation[d];
+
+            if (rec[d] == none) rr.downstream_end = end_t::outlet;
+            else if (near[rec[d]]) rr.downstream_end = end_t::buffer;
+            else if (row(rec[d]).lith_code != rr.lith_code) rr.downstream_end = end_t::contact;
+            else rr.downstream_end = end_t::junction;
+
+            if (!has_donor[u]) rr.upstream_end = end_t::source;
+            else if (donor_near[u]) rr.upstream_end = end_t::buffer;
+            else if (donor_other_code[u]) rr.upstream_end = end_t::contact;
+            else rr.upstream_end = end_t::junction;
+
+            double mx = 0.0, my = 0.0, wk = 0.0, wsum = 0.0;
+            std::vector<double> areas;
+            for (std::size_t k : chain)
+            {
+                auto& nr = row(k);
+                nr.reach_id = rr.reach_id;
+                rr.length_m += nr.flow_length_to_receiver_m;
+                mx += r.chi[k];
+                my += r.observed_elevation[k];
+                if (std::isfinite(nr.drainage_area_m2)) areas.push_back(nr.drainage_area_m2);
+                const double dchi = rec[k] == none ? 0.0 : static_cast<double>(r.chi[k]) - r.chi[rec[k]];
+                if (std::isfinite(nr.k_sn) && dchi > 0.0)
+                {
+                    wk += dchi * nr.k_sn;
+                    wsum += dchi;
+                }
+            }
+            rr.median_drainage_area_m2 = median_or_nan(std::move(areas));
+            if (wsum > 0.0) rr.k_sn_fit_chi_weighted = wk / wsum;
+
+            // Ordinary least squares of elevation on chi, about the means.
+            const double nn = static_cast<double>(chain.size());
+            mx /= nn;
+            my /= nn;
+            double sxx = 0.0, sxy = 0.0, syy = 0.0;
+            for (std::size_t k : chain)
+            {
+                const double dx = r.chi[k] - mx, dy = r.observed_elevation[k] - my;
+                sxx += dx * dx;
+                sxy += dx * dy;
+                syy += dy * dy;
+            }
+            if (sxx > 0.0)
+            {
+                const double slope = sxy / sxx, icpt = my - slope * mx;
+                double ssr = 0.0;
+                for (std::size_t k : chain)
+                {
+                    const double e = r.observed_elevation[k] - (icpt + slope * r.chi[k]);
+                    ssr += e * e;
+                }
+                rr.k_sn_ols = slope;
+                rr.r_squared = syy > 0.0 ? 1.0 - ssr / syy : k_nan;
+                if (chain.size() > 2) rr.k_sn_ols_se = std::sqrt(ssr / (nn - 2.0) / sxx);
+            }
+            rr.qualifies = static_cast<int>(rr.n_nodes) >= opts.min_reach_pixels &&
+                           rr.chi_span > 0.0 && std::isfinite(rr.k_sn_ols);
+            t.reaches.push_back(rr);
+        }
+
+        // Segments: the nodes each owns, length-weighted unit.
+        const std::vector<std::int32_t> seg_of_node = assign_chi_fit_nodes_to_segments(r);
+        std::vector<std::vector<std::int64_t>> seg_flats(r.segments.size());
+        std::vector<std::vector<double>> seg_w(r.segments.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (seg_of_node[i] < 0) continue;
+            const auto sg = static_cast<std::size_t>(seg_of_node[i]);
+            seg_flats[sg].push_back(r.flats[i]);
+            seg_w[sg].push_back(row(i).flow_length_to_receiver_m);
+        }
+        for (std::size_t sg = 0; sg < r.segments.size(); ++sg)
+        {
+            lsdtt_chi_lithology_segment_row sr;
+            sr.basin_index = static_cast<std::int32_t>(b);
+            sr.segment_id = r.segments[sg].segment_id;
+            sr.branch_id = r.segments[sg].branch_id;
+            sr.k_sn = r.segments[sg].k_sn;
+            sr.n_nodes = static_cast<std::int32_t>(seg_flats[sg].size());
+            for (double w : seg_w[sg]) sr.length_m += w;
+            sr.lith = summarise_lithology_of_flats(seg_flats[sg], seg_w[sg], units.code_of_pixel);
+            t.segments.push_back(sr);
+        }
+        base += n;
+    }
+    return t;
+}
+
+lsdtt_lithology_median_ci bootstrap_lithology_median_ci(const std::vector<double>& values,
+                                                        const std::vector<std::int32_t>& cluster_of_value,
+                                                        int n_replicates, std::mt19937_64& rng)
+{
+    lsdtt_lithology_median_ci ci;
+    if (values.empty() || n_replicates <= 0) return ci;
+    if (!cluster_of_value.empty() && cluster_of_value.size() != values.size())
+        throw std::invalid_argument("bootstrap_lithology_median_ci: one cluster per value");
+
+    std::vector<std::vector<double>> clusters;
+    if (cluster_of_value.empty())
+        for (double v : values) clusters.push_back({v});
+    else
+    {
+        std::map<std::int32_t, std::vector<double>> by;   // ascending cluster id
+        for (std::size_t i = 0; i < values.size(); ++i) by[cluster_of_value[i]].push_back(values[i]);
+        for (auto& kv : by) clusters.push_back(std::move(kv.second));
+    }
+
+    std::uniform_int_distribution<std::size_t> pick(0, clusters.size() - 1);
+    std::vector<double> medians;
+    medians.reserve(static_cast<std::size_t>(n_replicates));
+    std::vector<double> pooled;
+    for (int rep = 0; rep < n_replicates; ++rep)
+    {
+        pooled.clear();
+        for (std::size_t c = 0; c < clusters.size(); ++c)
+        {
+            const auto& cl = clusters[pick(rng)];
+            pooled.insert(pooled.end(), cl.begin(), cl.end());
+        }
+        medians.push_back(compute_median_in_place(pooled));
+    }
+    std::vector<double> a = medians;
+    ci.low = compute_quantile_interpolated_in_place(a, 0.025);
+    a = medians;
+    ci.high = compute_quantile_interpolated_in_place(a, 0.975);
+    ci.n_replicates = n_replicates;
+    return ci;
+}
+
+lsdtt_chi_ksn_lithology_summary summarise_chi_ksn_by_lithology(
+    const lsdtt_chi_lithology_tables& t, const lsdtt_lithology_units_on_grid& units,
+    double m_over_n, double A_0, const lsdtt_chi_lithology_options& opts, std::mt19937_64& rng)
+{
+    lsdtt_chi_ksn_lithology_summary s = summarise_chi_ksn_by_lithology(t.nodes, units, m_over_n, A_0);
+    s.contact_buffer_m = t.contact_buffer_m;
+    s.min_reach_pixels = t.min_reach_pixels;
+    s.bootstrap_cluster = opts.bootstrap_cluster;
+
+    for (auto& row : s.rows)
+    {
+        const std::int32_t code = row.lith_code;
+        std::vector<double> nk, nw, area;
+        for (const auto& r : t.nodes.rows)
+        {
+            if (r.segment_id < 0 || !in_row(code, r.lith_code)) continue;
+            if (r.near_contact)
+            {
+                ++row.n_nodes_excluded_near_contact;
+                continue;
+            }
+            if (std::isfinite(r.k_sn))
+            {
+                nk.push_back(r.k_sn);
+                nw.push_back(r.flow_length_to_receiver_m);
+            }
+            if (std::isfinite(r.drainage_area_m2)) area.push_back(r.drainage_area_m2);
+        }
+        row.median_drainage_area_m2 = median_or_nan(std::move(area));
+        row.node_k_sn_length_weighted_median = weighted_quantile_or_nan(nk, nw, 0.5);
+        row.node_k_sn_length_weighted_p25 = weighted_quantile_or_nan(nk, nw, 0.25);
+        row.node_k_sn_length_weighted_p75 = weighted_quantile_or_nan(nk, nw, 0.75);
+
+        std::vector<double> rk, rl;
+        std::vector<std::int32_t> rb;
+        for (const auto& r : t.reaches)
+        {
+            if (!in_row(code, r.lith_code)) continue;
+            ++row.n_reaches;
+            if (!r.qualifies) continue;
+            rk.push_back(r.k_sn_ols);
+            rl.push_back(r.length_m);
+            rb.push_back(r.basin_index);
+        }
+        row.n_reaches_qualifying = rk.size();
+        const reach_quantiles q = quantiles_of_reaches(rk, rl);
+        row.reach_k_sn_median = q.median;
+        row.reach_k_sn_p25 = q.p25;
+        row.reach_k_sn_p75 = q.p75;
+        row.reach_k_sn_length_weighted_median = q.length_weighted_median;
+        row.low_sample = rk.size() < 5;
+        if (!row.low_sample)
+        {
+            const std::vector<std::int32_t> none;
+            const auto ci = bootstrap_lithology_median_ci(
+                rk, opts.bootstrap_cluster == lsdtt_lithology_bootstrap_cluster::basin ? rb : none,
+                opts.bootstrap_replicates, rng);
+            row.reach_k_sn_median_ci_low = ci.low;
+            row.reach_k_sn_median_ci_high = ci.high;
+            row.n_bootstrap = ci.n_replicates;
+        }
+    }
+
+    // Unit x basin: every (unit, basin) with a channel node; units, then unmapped.
+    for (std::int32_t code : row_codes(units))
+    {
+        if (code == k_code_all) continue;
+        std::map<std::int32_t, lsdtt_chi_ksn_lithology_basin_row> by_basin;
+        std::map<std::int32_t, std::vector<double>> k_all, area, rk, rl;
+        for (const auto& r : t.nodes.rows)
+        {
+            if (r.segment_id < 0 || r.lith_code != code) continue;
+            auto& br = by_basin[r.basin_index];
+            ++br.n_nodes;
+            br.channel_length_m += r.flow_length_to_receiver_m;
+            k_all[r.basin_index].push_back(r.k_sn);
+            if (r.near_contact) ++br.n_nodes_excluded_near_contact;
+            else if (std::isfinite(r.drainage_area_m2)) area[r.basin_index].push_back(r.drainage_area_m2);
+        }
+        for (const auto& r : t.reaches)
+        {
+            if (r.lith_code != code) continue;
+            auto it = by_basin.find(r.basin_index);
+            if (it == by_basin.end()) continue;
+            ++it->second.n_reaches;
+            if (!r.qualifies) continue;
+            rk[r.basin_index].push_back(r.k_sn_ols);
+            rl[r.basin_index].push_back(r.length_m);
+        }
+        for (auto& [basin, br] : by_basin)
+        {
+            br.lith_code = code;
+            br.lith_name = unit_name(units, code);
+            br.basin_index = basin;
+            br.k_sn_median = compute_median(k_all[basin]);
+            br.median_drainage_area_m2 = median_or_nan(area[basin]);
+            br.n_reaches_qualifying = rk[basin].size();
+            const reach_quantiles q = quantiles_of_reaches(rk[basin], rl[basin]);
+            br.reach_k_sn_median = q.median;
+            br.reach_k_sn_p25 = q.p25;
+            br.reach_k_sn_p75 = q.p75;
+            br.reach_k_sn_length_weighted_median = q.length_weighted_median;
+            br.low_sample = br.n_reaches_qualifying < 5;
+            s.basin_rows.push_back(br);
+        }
+    }
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// Channel-network records
+// ---------------------------------------------------------------------------
+std::vector<double> lithology_node_step_lengths(const lsdtt_flow_base& flow,
+                                                const std::vector<std::int64_t>& flats)
+{
+    std::vector<double> w(flats.size(), 0.0);
+    const double dx = flow.cell_size();
+    for (std::size_t i = 0; i < flats.size(); ++i)
+    {
+        const std::int64_t f = flats[i];
+        if (!flow.is_valid_cell(f) || flow.is_outlet(f)) continue;
+        const std::int64_t rc = flow.receiver_of(f);
+        if (rc < 0 || rc == f) continue;
+        const int dr = flow.row_from_flat(rc) - flow.row_from_flat(f);
+        const int dc = flow.col_from_flat(rc) - flow.col_from_flat(f);
+        w[i] = (dr != 0 && dc != 0) ? dx * std::sqrt(2.0) : dx;
+    }
+    return w;
+}
+
+lsdtt_lithology_tag lithology_of_channel_nodes(const lsdtt_flow_base& flow,
+                                               const std::vector<std::int64_t>& flats,
+                                               const lsdtt_lithology_units_on_grid& units)
+{
+    return summarise_lithology_of_flats(flats, lithology_node_step_lengths(flow, flats),
+                                        units.code_of_pixel);
+}
+
+std::vector<lsdtt_lithology_tag> tag_channel_link_bearings_with_lithology(
+    const lsdtt_flow_base& flow, const std::vector<lsdtt_channel_link_bearing>& records,
+    const lsdtt_lithology_units_on_grid& units)
+{
+    std::vector<lsdtt_lithology_tag> tags(records.size());
+    for (std::size_t i = 0; i < records.size(); ++i)
+        if (!records[i].empty()) tags[i] = lithology_of_channel_nodes(flow, records[i].sampled_flats, units);
+    return tags;
+}
+
+std::vector<lsdtt_junction_lithology> tag_junction_angles_with_lithology(
+    const lsdtt_flow_base& flow, const lsdtt_junction_network_base& network,
+    const std::vector<lsdtt_junction_angle_record>& records,
+    const lsdtt_lithology_units_on_grid& units, double min_majority_fraction)
+{
+    std::vector<lsdtt_junction_lithology> tags(records.size());
+    for (std::size_t i = 0; i < records.size(); ++i)
+    {
+        const auto& rec = records[i];
+        if (rec.empty()) continue;
+        auto& t = tags[i];
+        t.valid = true;
+        const std::int64_t f = network.flat_of_junction(rec.junction);
+        t.junction_code = (f >= 0 && static_cast<std::size_t>(f) < units.code_of_pixel.size())
+                              ? units.code_of_pixel[static_cast<std::size_t>(f)] : -1;
+        t.donor_1 = lithology_of_channel_nodes(flow, rec.donor_1_sampled_flats, units);
+        t.donor_2 = lithology_of_channel_nodes(flow, rec.donor_2_sampled_flats, units);
+        t.receiver = lithology_of_channel_nodes(flow, rec.receiver_sampled_flats, units);
+        bool agree = true;
+        for (const lsdtt_lithology_tag* a : {&t.donor_1, &t.donor_2, &t.receiver})
+            agree = agree && a->n_units > 0 && a->code == t.junction_code &&
+                    a->majority_fraction >= min_majority_fraction;
+        t.all_arms_agree = agree;
+    }
+    return tags;
+}
+
+namespace
+{
+
+std::int32_t category_of_code(std::int32_t code)
+{
+    return code == k_code_unmapped ? k_lithology_category_unmapped : code;
+}
+
+std::map<int, std::string> category_names(const lsdtt_lithology_units_on_grid& units)
+{
+    std::map<int, std::string> names;
+    for (const auto& u : units.units) names[u.code] = u.name;
+    names[k_lithology_category_unmapped] = "unmapped";
+    return names;
+}
+
+} // namespace
+
+channel_record_categories lithology_categories_of_links(const std::vector<lsdtt_lithology_tag>& tags,
+                                                        const lsdtt_lithology_units_on_grid& units,
+                                                        double min_majority_fraction,
+                                                        const std::string& key)
+{
+    channel_record_categories c;
+    c.key = key;
+    c.names = category_names(units);
+    c.category.assign(tags.size(), -1);
+    for (std::size_t i = 0; i < tags.size(); ++i)
+        if (tags[i].n_units > 0 && tags[i].majority_fraction >= min_majority_fraction)
+            c.category[i] = category_of_code(tags[i].code);
+    return c;
+}
+
+channel_record_categories lithology_categories_of_junctions(
+    const std::vector<lsdtt_junction_lithology>& tags, const lsdtt_lithology_units_on_grid& units,
+    bool interior_only, const std::string& key)
+{
+    channel_record_categories c;
+    c.key = key;
+    c.names = category_names(units);
+    c.category.assign(tags.size(), -1);
+    for (std::size_t i = 0; i < tags.size(); ++i)
+        if (tags[i].valid && (!interior_only || tags[i].all_arms_agree))
+            c.category[i] = category_of_code(tags[i].junction_code);
+    return c;
+}
+
+lsdtt_channel_record_extra_columns lithology_columns_of_links(const std::vector<lsdtt_lithology_tag>& tags,
+                                                             const lsdtt_lithology_units_on_grid& units)
+{
+    lsdtt_channel_record_extra_columns x;
+    x.names = {"lith_code", "lith_name", "lith_majority_fraction"};
+    x.vector_names = {"lith_code", "lith_name", "lith_frac"};
+    x.types = {lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::string_type,
+               lsdtt_vector_field_type::double_type};
+    for (const auto& t : tags)
+        x.values.push_back({static_cast<std::int64_t>(t.code),
+                            t.n_units > 0 ? unit_name(units, t.code) : std::string(),
+                            t.majority_fraction});
+    return x;
+}
+
+lsdtt_channel_record_extra_columns lithology_columns_of_junctions(
+    const std::vector<lsdtt_junction_lithology>& tags, const lsdtt_lithology_units_on_grid& units)
+{
+    using ft = lsdtt_vector_field_type;
+    lsdtt_channel_record_extra_columns x;
+    x.names = {"junction_lith_code", "junction_lith_name", "donor_1_lith_code", "donor_1_lith_fraction",
+               "donor_2_lith_code", "donor_2_lith_fraction", "receiver_lith_code",
+               "receiver_lith_fraction", "lith_all_arms_agree"};
+    x.vector_names = {"j_lith", "j_lithname", "d1_lith", "d1_frac", "d2_lith", "d2_frac",
+                      "r_lith", "r_frac", "lith_agree"};
+    x.types = {ft::int64_type, ft::string_type, ft::int64_type, ft::double_type, ft::int64_type,
+               ft::double_type, ft::int64_type, ft::double_type, ft::int64_type};
+    for (const auto& t : tags)
+        x.values.push_back({static_cast<std::int64_t>(t.junction_code),
+                            t.valid ? unit_name(units, t.junction_code) : std::string(),
+                            static_cast<std::int64_t>(t.donor_1.code), t.donor_1.majority_fraction,
+                            static_cast<std::int64_t>(t.donor_2.code), t.donor_2.majority_fraction,
+                            static_cast<std::int64_t>(t.receiver.code), t.receiver.majority_fraction,
+                            static_cast<std::int64_t>(t.all_arms_agree ? 1 : 0)});
+    return x;
+}
+
+std::vector<std::uint8_t> pixels_draining_through(const lsdtt_flow_base& flow,
+                                                  const std::vector<std::int64_t>& seed_flats)
+{
+    const std::size_t n = flow.full_grid_size();
+    // 0 unknown, 1 drains through a seed, 2 does not.
+    std::vector<std::uint8_t> state(n, 0);
+    for (const std::int64_t f : seed_flats)
+        if (f >= 0 && static_cast<std::size_t>(f) < n) state[static_cast<std::size_t>(f)] = 1;
+    std::vector<std::int64_t> path;
+    for (std::size_t p = 0; p < n; ++p)
+    {
+        if (state[p] != 0) continue;
+        path.clear();
+        std::int64_t cur = static_cast<std::int64_t>(p);
+        std::uint8_t result = 2;
+        while (true)
+        {
+            const auto c = static_cast<std::size_t>(cur);
+            if (state[c] != 0) { result = state[c]; break; }
+            path.push_back(cur);
+            if (!flow.is_valid_cell(cur) || flow.is_outlet(cur)) break;
+            const std::int64_t rc = flow.receiver_of(cur);
+            if (rc < 0 || rc == cur || static_cast<std::size_t>(rc) >= n) break;
+            cur = rc;
+        }
+        for (const std::int64_t q : path) state[static_cast<std::size_t>(q)] = result;
+    }
+    std::vector<std::uint8_t> out(n, 0);
+    for (std::size_t p = 0; p < n; ++p) out[p] = state[p] == 1 && flow.is_valid_cell(static_cast<std::int64_t>(p)) ? 1 : 0;
+    return out;
+}
+
 void write_chi_lithology_nodes_csv(const std::string& path,
                                    const lsdtt_chi_lithology_node_table& nodes,
                                    const lsdtt_lithology_units_on_grid& units)
@@ -323,13 +919,16 @@ void write_chi_lithology_nodes_csv(const std::string& path,
     for (const auto& u : units.units) names[u.code] = csv_text(u.name);
     names[k_code_unmapped] = "unmapped";
     out << "basin_index,node_flat,row,col,x,y,chi,elevation,segment_id,k_sn,"
-           "flow_length_to_receiver_m,lith_code,lith_name,distance_to_contact_m\n";
+           "flow_length_to_receiver_m,lith_code,lith_name,distance_to_contact_m,"
+           "latitude,longitude,drainage_area_m2,branch_id,near_contact,reach_id\n";
     out << std::setprecision(10);
     for (const auto& r : nodes.rows)
         out << r.basin_index << "," << r.node_flat << "," << r.row << "," << r.col << ","
             << r.x << "," << r.y << "," << r.chi << "," << r.elevation << "," << r.segment_id
             << "," << r.k_sn << "," << r.flow_length_to_receiver_m << "," << r.lith_code << ","
-            << names[r.lith_code] << "," << r.distance_to_contact_m << "\n";
+            << names[r.lith_code] << "," << r.distance_to_contact_m << "," << r.latitude << ","
+            << r.longitude << "," << r.drainage_area_m2 << "," << r.branch_id << ","
+            << (r.near_contact ? 1 : 0) << "," << r.reach_id << "\n";
 }
 
 void write_chi_ksn_lithology_summary_csv(const std::string& path,
@@ -339,14 +938,28 @@ void write_chi_ksn_lithology_summary_csv(const std::string& path,
     if (!out) throw std::runtime_error("cannot write " + path);
     out << "lith_code,lith_name,n_nodes,n_segments,n_basins,channel_length_m,k_sn_median,"
            "k_sn_q25,k_sn_q75,k_sn_mean,k_sn_min,k_sn_max,k_sn_length_weighted_mean,low_sample,"
-           "m_over_n,A_0\n";
+           "m_over_n,A_0,contact_buffer_metres,min_reach_pixels,n_nodes_excluded_near_contact,"
+           "n_reaches,n_reaches_qualifying,median_drainage_area_m2,reach_k_sn_median,"
+           "reach_k_sn_p25,reach_k_sn_p75,reach_k_sn_length_weighted_median,"
+           "reach_k_sn_median_ci_low,reach_k_sn_median_ci_high,n_bootstrap,bootstrap_cluster,"
+           "node_k_sn_length_weighted_median,node_k_sn_length_weighted_p25,"
+           "node_k_sn_length_weighted_p75\n";
     out << std::setprecision(10);
+    const std::string cluster = lithology_bootstrap_cluster_name(s.bootstrap_cluster);
     for (const auto& r : s.rows)
         out << r.lith_code << "," << csv_text(r.lith_name) << "," << r.n_nodes << ","
             << r.n_segments << "," << r.n_basins << "," << r.channel_length_m << ","
             << r.k_sn_median << "," << r.k_sn_q25 << "," << r.k_sn_q75 << "," << r.k_sn_mean
             << "," << r.k_sn_min << "," << r.k_sn_max << "," << r.k_sn_length_weighted_mean << ","
-            << (r.low_sample ? 1 : 0) << "," << s.m_over_n << "," << s.A_0 << "\n";
+            << (r.low_sample ? 1 : 0) << "," << s.m_over_n << "," << s.A_0 << ","
+            << s.contact_buffer_m << "," << s.min_reach_pixels << ","
+            << r.n_nodes_excluded_near_contact << "," << r.n_reaches << ","
+            << r.n_reaches_qualifying << "," << r.median_drainage_area_m2 << ","
+            << r.reach_k_sn_median << "," << r.reach_k_sn_p25 << "," << r.reach_k_sn_p75 << ","
+            << r.reach_k_sn_length_weighted_median << "," << r.reach_k_sn_median_ci_low << ","
+            << r.reach_k_sn_median_ci_high << "," << r.n_bootstrap << "," << cluster << ","
+            << r.node_k_sn_length_weighted_median << "," << r.node_k_sn_length_weighted_p25 << ","
+            << r.node_k_sn_length_weighted_p75 << "\n";
 }
 
 void write_chi_ksn_histogram_csv(const std::string& path, const lsdtt_chi_ksn_histogram& h)
@@ -360,6 +973,61 @@ void write_chi_ksn_histogram_csv(const std::string& path, const lsdtt_chi_ksn_hi
         out << r.lith_code << "," << csv_text(r.lith_name) << "," << r.bin_index << ","
             << r.bin_lower << "," << r.bin_upper << "," << r.n_nodes << "," << r.channel_length_m
             << "," << h.m_over_n << "," << h.A_0 << "\n";
+}
+
+void write_chi_lithology_reaches_csv(const std::string& path, const lsdtt_chi_lithology_tables& t,
+                                     const lsdtt_lithology_units_on_grid& units)
+{
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write " + path);
+    out << "reach_id,basin_index,branch_id,lith_code,lith_name,n_nodes,length_metres,chi_span,"
+           "dz_metres,median_drainage_area_m2,k_sn_ols,k_sn_ols_se,r_squared,"
+           "k_sn_fit_chi_weighted,upstream_flat,downstream_flat,upstream_end,downstream_end,"
+           "qualifies\n";
+    out << std::setprecision(10);
+    for (const auto& r : t.reaches)
+        out << r.reach_id << "," << r.basin_index << "," << r.branch_id << "," << r.lith_code
+            << "," << csv_text(unit_name(units, r.lith_code)) << "," << r.n_nodes << ","
+            << r.length_m << "," << r.chi_span << "," << r.dz_m << "," << r.median_drainage_area_m2
+            << "," << r.k_sn_ols << "," << r.k_sn_ols_se << "," << r.r_squared << ","
+            << r.k_sn_fit_chi_weighted << "," << r.upstream_flat << "," << r.downstream_flat << ","
+            << chi_lithology_reach_end_name(r.upstream_end) << ","
+            << chi_lithology_reach_end_name(r.downstream_end) << "," << (r.qualifies ? 1 : 0)
+            << "\n";
+}
+
+void write_chi_lithology_segments_csv(const std::string& path, const lsdtt_chi_lithology_tables& t,
+                                      const lsdtt_lithology_units_on_grid& units)
+{
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write " + path);
+    out << "basin_index,segment_id,branch_id,k_sn,length_metres,lith_code,lith_name,"
+           "lith_majority_fraction,n_lith_units,n_nodes\n";
+    out << std::setprecision(10);
+    for (const auto& r : t.segments)
+        out << r.basin_index << "," << r.segment_id << "," << r.branch_id << "," << r.k_sn << ","
+            << r.length_m << "," << r.lith.code << "," << csv_text(unit_name(units, r.lith.code))
+            << "," << r.lith.majority_fraction << "," << r.lith.n_units << "," << r.n_nodes << "\n";
+}
+
+void write_chi_ksn_lithology_by_basin_csv(const std::string& path,
+                                          const lsdtt_chi_ksn_lithology_summary& s)
+{
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write " + path);
+    out << "lith_code,lith_name,basin_index,n_nodes,n_nodes_excluded_near_contact,channel_length_m,"
+           "k_sn_median,n_reaches,n_reaches_qualifying,median_drainage_area_m2,reach_k_sn_median,"
+           "reach_k_sn_p25,reach_k_sn_p75,reach_k_sn_length_weighted_median,low_sample,m_over_n,"
+           "A_0,contact_buffer_metres,min_reach_pixels\n";
+    out << std::setprecision(10);
+    for (const auto& r : s.basin_rows)
+        out << r.lith_code << "," << csv_text(r.lith_name) << "," << r.basin_index << ","
+            << r.n_nodes << "," << r.n_nodes_excluded_near_contact << "," << r.channel_length_m
+            << "," << r.k_sn_median << "," << r.n_reaches << "," << r.n_reaches_qualifying << ","
+            << r.median_drainage_area_m2 << "," << r.reach_k_sn_median << "," << r.reach_k_sn_p25
+            << "," << r.reach_k_sn_p75 << "," << r.reach_k_sn_length_weighted_median << ","
+            << (r.low_sample ? 1 : 0) << "," << s.m_over_n << "," << s.A_0 << ","
+            << s.contact_buffer_m << "," << s.min_reach_pixels << "\n";
 }
 
 } // namespace lsdtt

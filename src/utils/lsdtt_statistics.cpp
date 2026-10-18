@@ -428,4 +428,41 @@ double compute_quantile_floor_in_place(std::vector<float>& values, double q_0_to
     return static_cast<double>(values[idx]);
 }
 
+double compute_weighted_quantile(const std::vector<double>& values,
+                                 const std::vector<double>& weights, double q_0_to_1)
+{
+    if (values.size() != weights.size())
+        throw std::invalid_argument("compute_weighted_quantile: values and weights differ in size");
+    if (!(q_0_to_1 >= 0.0 && q_0_to_1 <= 1.0))
+        throw std::invalid_argument("compute_weighted_quantile: q must be in [0, 1]");
+    if (values.empty()) return nan_value();
+
+    std::vector<std::size_t> order(values.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t a, std::size_t b) { return values[a] < values[b]; });
+
+    // Total accumulated in the sorted order, so the last cumulative sum equals
+    // it exactly and q = 1 always finds an element.
+    double total = 0.0;
+    for (std::size_t i : order)
+    {
+        const double w = weights[i];
+        if (!(w >= 0.0) || !std::isfinite(w))
+            throw std::invalid_argument("compute_weighted_quantile: weights must be finite and >= 0");
+        total += w;
+    }
+    if (!(total > 0.0))
+        throw std::invalid_argument("compute_weighted_quantile: total weight is zero");
+
+    const double target = q_0_to_1 * total;
+    double cum = 0.0;
+    for (std::size_t i : order)
+    {
+        cum += weights[i];
+        if (cum >= target) return values[i];
+    }
+    return values[order.back()];
+}
+
 } // namespace lsdtt

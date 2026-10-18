@@ -33,7 +33,7 @@ _DRIVERS = frozenset(
         "lsdtt-water-centreline", "lsdtt-cosmo-tool",
         "lsdtt-cosmo-prediction", "lsdtt-cosmo-landslides",
         "lsdtt-cosmo-column-tool", "lsdtt-marsh-topography",
-        "lsdtt-linear-stats", "lsdtt-bearing-comparison",
+        "lsdtt-linear-stats",
         "lsdtt-swath-profile", "lsdtt-lem", "lsdtt-lithology-erodibility",
         "lsdtt-advection-diffusion",
         "lsdtt-sediment-routing",

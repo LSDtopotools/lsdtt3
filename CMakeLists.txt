@@ -431,6 +431,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_disorder_cpu.cpp
     src/cpu/lsdtt_chi_data_maps_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp
+    src/cpu/lsdtt_channel_bearing_statistics_cpu.cpp
+    src/cpu/lsdtt_channel_network_grouping_cpu.cpp
     src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
     src/cpu/lsdtt_raster_skeleton_graph_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
@@ -652,7 +654,6 @@ lsdtt_cli(lsdtt-cosmo-landslides       cli/lsdtt-cosmo-landslides.cpp)
 lsdtt_cli(lsdtt-cosmo-column-tool      cli/lsdtt-cosmo-column-tool.cpp)
 lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
 lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
-lsdtt_cli(lsdtt-bearing-comparison     cli/lsdtt-bearing-comparison.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
 lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
 lsdtt_cli(lsdtt-fetch-lithology        cli/lsdtt-fetch-lithology.cpp)

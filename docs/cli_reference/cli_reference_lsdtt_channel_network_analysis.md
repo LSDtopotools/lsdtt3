@@ -386,6 +386,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Format for record-oriented network outputs. | Allowed values: csv, gpkg, flatgeobuf or fgb. Line-based QA layers use qa_write_vector_format. |
+| `write_lithology_code_raster` | `bool` | `false` | `switch` | - | Write the lithologic unit code of every pixel. | Output: &lt;write_fname&gt;_lithology_code.tif. |
 
 ### Junction-angle outputs
 
@@ -434,5 +435,61 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `only_complete_basins` | `bool` | `true` | `param` | - | Restrict junction/bearing/angle analyses to complete basins. | A basin is complete if no pixel in its upslope area is influenced by nodata or the DEM edge. Incomplete (edge-truncated) basins are dropped before computing channel-link bearings, junction angles, and centre-of-mass bearings. Needed for stream-order-based statistics. |
 | `min_basin_pixels` | `int` | `0` | `param` | - | Drop junctions whose upslope basin has fewer than this many pixels. | 0 disables the size filter. Applied alongside only_complete_basins. |
+
+### Channel-link bearing statistics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_channel_bearing_statistics` | `bool` | `false` | `switch` | - | (experimental) Summarise and compare channel-link bearing distributions by group. | Groups the analysed links by channel_bearing_group_by (optionally within each level of channel_bearing_stratify_by) and writes &lt;write_fname&gt;_channel_bearing_group_summary.csv (circular mean, mean resultant length, count- and length-weighted), _channel_bearing_comparisons.csv (circular Wasserstein and Kuiper between groups), _channel_bearing_rose.csv and _channel_bearing_group_membership.csv. Bearings are directional (downstream, period 360) and axial (period 180). p-values assume independent links, which links in one valley are not: read n_blocks. |
+| `channel_bearing_group_by` | `string` | `strahler_order` | `param` | `write_channel_bearing_statistics` | (experimental) The key whose groups are compared. | strahler_order (the link's own order), basin (see channel_bearing_basin_order), region (channel_region_fname) or lithology (lithology_fname: the length-weighted majority unit of the nodes the bearing was fitted on; links below lithology_min_majority_fraction are excluded and counted). |
+| `channel_bearing_stratify_by` | `string` | `none` | `param` | `write_channel_bearing_statistics` | (experimental) A key whose levels are analysed separately. | none, strahler_order, basin, region or lithology; must differ from channel_bearing_group_by. Groups are compared only within a level; a pooled level 'all' is always written. |
+| `channel_bearing_angular_type` | `string` | `both` | `param` | `write_channel_bearing_statistics` | (experimental) directional, axial or both. | Directional uses the downstream bearing (period 360). Axial folds theta and theta + 180 (period 180); a four-fold D8 artefact cancels in the axial mean resultant length, so axial is the more robust to D8 quantisation. |
+| `channel_bearing_comparison_mode` | `string` | `pairwise` | `param` | `write_channel_bearing_statistics` | (experimental) pairwise, one_vs_rest or none. | pairwise compares every pair of groups in a stratum; one_vs_rest each group against the other records of its stratum. Also used for junction angles. Holm-adjusted p-values are given per family (stratum, angular type); comparisons against the reference file are a family of their own. |
+| `channel_bearing_min_group_size` | `int` | `30` | `param` | `write_channel_bearing_statistics` | (experimental) Groups smaller than this are summarised but not compared. | Flagged meets_min_group_size = 0. Also used for junction angles. |
+| `channel_bearing_max_order_group` | `int` | `0` | `param` | `write_channel_bearing_statistics` | (experimental) Pool Strahler orders &gt;= this into one group labelled '&lt;k&gt;+'. | 0 = no pooling. High-order groups are small, so pooling is usually needed. |
+| `channel_bearing_basin_order` | `int` | `0` | `param` | `write_channel_bearing_statistics` | (experimental) Which basins the basin key uses. | 0 = the analysis-selection outlets (the outlet file's outlets, or the network outlets), nested outlets resolved so the innermost wins. k &gt; 0 = the Strahler order-k basin holding the record; records of order &gt; k have none and are excluded (counted). |
+| `channel_bearing_block_order` | `int` | `3` | `param` | `write_channel_bearing_statistics` | (experimental) Strahler order of the basins counted as independence blocks. | n_blocks is the number of distinct order-k basins contributing records to a group: an honest count of quasi-independent units beside n. |
+| `channel_bearing_rose_bin_width_degrees` | `float` | `10.0` | `param` | `write_channel_bearing_statistics` | (experimental) Rose-histogram bin width in degrees. | Bins are centred on 0 so D8 directions sit on bin centres. 180 divided by the width must be an integer. |
+| `channel_bearing_rotation_invariant` | `bool` | `false` | `param` | `write_channel_bearing_statistics` | (experimental) Also allow one global rotation in the Wasserstein distance. | Cost grows as n_a * n_b; comparisons with n_a * n_b &gt; 250000 are skipped (nan, with a note). |
+| `channel_bearing_reference_fname` | `string` | `NULL` | `param` | `write_channel_bearing_statistics` | (experimental) _channel_link_bearings.csv of another channel-network-analysis run. | Each group is also compared against these bearings (comparison_mode 'reference'), e.g. to compare two sites. Relative to read_path. |
+| `channel_bearing_reference_column` | `string` | `bearing_deg` | `param` | `channel_bearing_reference_fname` | (experimental) Column of the reference file holding the bearings. | - |
+| `channel_bearing_reference_order_filter` | `int` | `-1` | `param` | `channel_bearing_reference_fname` | (experimental) If &gt; 0, use only reference rows of this order. | Read from channel_bearing_reference_order_column. -1 uses all rows. |
+| `channel_bearing_reference_order_column` | `string` | `stream_order` | `param` | `channel_bearing_reference_fname` | (experimental) Column used by channel_bearing_reference_order_filter. | - |
+
+### Junction-angle statistics
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_junction_angle_statistics` | `bool` | `false` | `switch` | - | (experimental) Summarise and compare junction angles by group. | Linear statistics (the angles are sector magnitudes, not directions) of alpha (donor_opening_angle_deg) and beta_min / beta_max (the smaller and larger donor-receiver angle, which do not depend on the arbitrary donor labels). Writes &lt;write_fname&gt;_junction_angle_group_summary.csv and _junction_angle_comparisons.csv (Kolmogorov-Smirnov, linear Wasserstein). Uses the channel_bearing_* comparison settings. |
+| `junction_angle_group_by` | `string` | `strahler_order` | `param` | `write_junction_angle_statistics` | (experimental) The key whose junction groups are compared. | strahler_order (the order at the confluence pixel), donor_order_pair ('i_j' from the two donor orders), basin, region (the region of the junction pixel) or lithology (lithology_fname). Lithology writes two selections: group_key lithology (every junction, by the unit of its pixel) and lithology_interior (only junctions whose three sampled arms are in the junction's unit, each with purity &gt;= lithology_min_majority_fraction). Lithology-keyed rows also get a bootstrap interval of the median (the junction is the resampling unit; lithology_bootstrap_replicates, _random_seed; none below 5 junctions). |
+| `junction_angle_stratify_by` | `string` | `none` | `param` | `write_junction_angle_statistics` | (experimental) A key whose levels are analysed separately. | none or one of the junction_angle_group_by keys; must differ from it. |
+
+### Channel region input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `channel_region_fname` | `string` | - | `param` | - | Region map (in read_path): a polygon vector file or an integer code raster. | User-drawn regions such as physiographic provinces, used to group channel statistics by region. Vectors: any OGR polygon layer, reprojected to the DEM's CRS. Rasters: integer region codes, warped onto the DEM grid with nearest neighbour if not on it already. Empty (default) = no region grouping. |
+| `channel_region_source` | `string` | `auto` | `param` | `channel_region_fname` | auto, vector_map or code_raster. | auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc are rasters). |
+| `channel_region_layer_name` | `string` | - | `param` | `channel_region_fname` | Vector layer to read. Empty (default) = the first layer. | - |
+| `channel_region_field_name` | `string` | - | `param` | `channel_region_fname` | Attribute of the vector layer whose values name the regions. | Required for a vector map; each distinct value is one region. Ignored for a code raster. |
+| `channel_region_min_purity` | `float` | `0.0` | `param` | `channel_region_fname` | (experimental) Minimum fraction of a link's pixels in its majority region. | A link takes the majority region of its traced pixels; links below this purity are excluded from region groups (counted). 0 keeps all; the purity is written to the membership CSV either way. |
+
+### Lithology input
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `lithology_fname` | `string` | - | `param` | - | Lithology map (in read_path) for the grouping key lithology: a polygon vector file or a categorical code raster. Empty (default) = off. | With it, _channel_link_bearings gains lith_code, lith_name, lith_majority_fraction and _junction_angles gains the junction and arm units, and &lt;write_fname&gt;_lithology_units.csv is written. Unmapped records form a group named unmapped; they are never dropped. Vectors: any OGR polygon layer (GeoPackage, FlatGeobuf, GeoJSON, Shapefile), e.g. lsdtt-fetch-lithology output; it is reprojected to the DEM's CRS. Rasters: integer lithology codes, warped onto the DEM grid with nearest neighbour if not on it already. |
+| `lithology_source` | `string` | `auto` | `param` | - | auto, vector_map or code_raster. | auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc are rasters). |
+| `lithology_layer_name` | `string` | - | `param` | `lithology_fname` | Vector layer to read. Empty (default) = the first layer. | - |
+| `lithology_field_name` | `string` | `lith_primary` | `param` | `lithology_fname` | Attribute of the vector layer that holds the lithology. | Each distinct value is a lithologic unit unless lithology_crosswalk_fname groups them. lith_primary is the first lithology of each unit in lsdtt-fetch-lithology output; name (the map unit) or lith_class group more finely or more coarsely. Units are numbered within a run; compare runs by unit name. |
+| `lithology_crosswalk_fname` | `string` | - | `param` | `lithology_fname` | Optional CSV (in read_path) with columns value,code[,name] mapping map values to units. | When given, every map value present must be in it. Use it to group many map values into a few units; the optional name column names each code (else the values joined with '; '). |
+
+### Lithology summaries
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `lithology_min_majority_fraction` | `float` | `0.8` | `param` | `lithology_fname` | Minimum fraction of a channel link or junction arm in its majority lithologic unit for it to be assigned to that unit. | The fraction is length-weighted over the sampled nodes. Links and arms below it are left out of the per-unit statistics. |
+| `lithology_bootstrap_replicates` | `int` | `1000` | `param` | `lithology_fname` | Number of bootstrap replicates for the per-unit confidence intervals. | 0 = no bootstrap; the interval columns are written as NaN. |
+| `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | Seeds one std::mt19937_64 once per run, so a fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
 
 <!-- END GENERATED CLI PARAMETERS -->

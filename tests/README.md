@@ -262,13 +262,21 @@ lithology), a code raster, a 20 m DEM, property tables (valid, K = 0, no m), a
 crosswalk, and the expected K rasters. `smoke_lem_lithology_erodibility_chain`
 then runs `lsdtt-lem` on the K raster the own-grid test wrote.
 
+### k_sn by lithologic unit" in tests/README.md with this. -->
 ### k_sn by lithologic unit
 
 `fixture_chi_lithology_cli` (`lsdtt-test-lithology-channel-stats --write-fixtures`)
 writes `build/tests/chi_lithology_cli_fixture/`: a steady-state DEM with two units
-(k_sn about 20 west, 5 east), the unit polygons, and a two-unit code raster beside a
-copy of `tiny_dem.asc`. `rigorous_chi_lithology_observation_only` reuses the hash
-of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, re-pin both.
+(k_sn about 20 west, 5 east), the unit polygons, a crosswalk naming the units
+(`lithks_crosswalk.csv`) and one missing a value (`lithks_crosswalk_gap.csv`), and a
+two-unit code raster beside a copy of `tiny_dem.asc`. `rigorous_chi_lithology_observation_only`
+reuses the hash of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, re-pin both.
+
+`rigorous_chi_lithology_ksn_ratio` is not a CLI run: it runs the driver's
+`--check-ksn-by-lithology` mode on the summary that `smoke_chi_lithology_ksn` wrote
+(FIXTURES_REQUIRED on that test), and checks the sandstone/shale ratio of the reach
+median k_sn against 4. The same check mode is exercised inside
+`unit_chi_lithology_channel_stats` on a summary written in process.
 
 ### Macrostrat lithology fetch
 
@@ -278,6 +286,37 @@ synthetic Mapbox Vector Tile, `data/macrostrat_tiles/10/540/364.pbf`, through
 lists its units and the `ogr2ogr` command that regenerates it from
 `units_source.geojson`. `network_fetch_lithology_cli` downloads from Macrostrat
 and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`.
+
+### Channel-link bearing and junction-angle statistics
+
+`lsdtt-test-channel-bearing-statistics` (`tests/cpp/test_channel_bearing_statistics.cpp`)
+runs one mode per test, all labelled `unit;network` and native (no Python):
+`unit_channel_bearing_statistics_circular` (the analytic circular Wasserstein and
+Kuiper cases, including the four the retired `lsdtt-bearing-comparison` smoke tests
+pinned), `_summaries`, `_comparisons`, `_junction_angles`, `_trellis` (a synthetic
+trellis network built in memory: N-S trunks, E-W tributaries, known bearings and
+junction angles), `_grouping` (region purity, order pooling, order-k and nested
+outlet basins) and `_isotropic_null` (a seeded diamond-square surface; the seed and
+the measured value are recorded in the source).
+
+`fixture_channel_bearing_statistics` (`--write-fixtures`) writes
+`build/tests/channel_bearing_statistics_fixture/`: the trellis DEM and its
+transpose, a north/south region code raster on the trellis grid, an off-grid region
+raster with no CRS, and a copy of `data/channel_bearing_statistics/ns_trunk_bearings.csv`.
+The `*_channel_network_analysis_bearing_*` CLI tests (Python harness) read it.
+
+### Channel-network statistics by lithologic unit
+
+`unit_lithology_channel_network_stats` (`tests/cpp/test_lithology_network_stats.cpp`,
+`unit;network;lithology`, native) builds its own copy of the trellis in memory and
+gives it lithologic units on the grid in process: a contact parallel to the trunks
+(no channel crosses it), one across them, and one with an unmapped strip. The
+`*_channel_network_analysis_lithology*` CLI tests read
+`build/tests/channel_bearing_statistics_fixture/` and use its north/south code
+raster as the lithology map. `rigorous_channel_network_analysis_lithology_observation_only`
+compares the statistics outputs of a run with an unused lithology map against
+`smoke_channel_network_analysis_bearing_statistics_order` byte for byte, with
+`tests/cmake/compare_output_sets.cmake`.
 
 ## Cosmogenic nuclide tests
 

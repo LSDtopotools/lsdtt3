@@ -110,7 +110,6 @@ nav:
       - Bankfull width: cli_reference/cli_reference_lsdtt_bankfull_width.md
       - Ridgeline analysis: cli_reference/cli_reference_lsdtt_ridgeline_analysis.md
       - Divide migration: cli_reference/cli_reference_lsdtt_divide_migration.md
-      - Bearing comparison: cli_reference/cli_reference_lsdtt_bearing_comparison.md
     - Tidal / marsh:
       - Marsh topography: cli_reference/cli_reference_lsdtt_marsh_topography.md
     - Cosmogenic nuclides:

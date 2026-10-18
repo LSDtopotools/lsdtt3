@@ -17,6 +17,7 @@
 #include <vector>
 #include <limits>
 #include <sstream>
+#include <variant>
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "../utils/lsdtt_polygon_geometry.hpp"
@@ -187,6 +188,51 @@ std::string precise_string(double value)
     ss.precision(17);
     ss << value;
     return ss.str();
+}
+
+// Extra per-record columns (lsdtt_channel_record_extra_columns), appended
+// after the standard ones. No-ops when extra is null.
+void check_extra_columns(const lsdtt_channel_record_extra_columns* extra, std::size_t n_records,
+                         const char* who)
+{
+    if (!extra) return;
+    const std::size_t nc = extra->names.size();
+    bool ok = extra->vector_names.size() == nc && extra->types.size() == nc &&
+              extra->values.size() == n_records;
+    for (std::size_t i = 0; ok && i < extra->values.size(); ++i) ok = extra->values[i].size() == nc;
+    if (!ok)
+        throw std::invalid_argument(std::string(who) +
+                                    ": extra columns do not match the records");
+}
+
+std::string extra_value_text(const lsdtt_vector_field_value& v)
+{
+    if (std::holds_alternative<std::int64_t>(v)) return std::to_string(std::get<std::int64_t>(v));
+    if (std::holds_alternative<double>(v)) return precise_string(std::get<double>(v));
+    if (std::holds_alternative<std::string>(v)) return std::get<std::string>(v);
+    return "";
+}
+
+void append_extra_csv(std::vector<std::string>& row, const lsdtt_channel_record_extra_columns* extra,
+                      std::size_t record_index)
+{
+    if (!extra) return;
+    for (const auto& v : extra->values[record_index]) row.push_back(extra_value_text(v));
+}
+
+void append_extra_schema(lsdtt_vector_schema& schema, const lsdtt_channel_record_extra_columns* extra)
+{
+    if (!extra) return;
+    schema.field_names.insert(schema.field_names.end(), extra->vector_names.begin(),
+                              extra->vector_names.end());
+    schema.field_types.insert(schema.field_types.end(), extra->types.begin(), extra->types.end());
+}
+
+void append_extra_values(std::vector<lsdtt_vector_field_value>& values,
+                         const lsdtt_channel_record_extra_columns* extra, std::size_t record_index)
+{
+    if (!extra) return;
+    values.insert(values.end(), extra->values[record_index].begin(), extra->values[record_index].end());
 }
 
 lsdtt_lonlat flat_to_lonlat(
@@ -1025,6 +1071,8 @@ std::vector<lsdtt_channel_link_bearing> calculate_channel_link_bearings(
                 sampled_link.xy[mid].y;
         }
 
+        record.sampled_flats = sampled_link.flats;
+
         records.push_back(std::move(record));
     }
 
@@ -1398,6 +1446,10 @@ std::vector<lsdtt_junction_angle_record> calculate_junction_angles(
         record.donor_2_sampled_length_metres = donor_2_fit.sampled_length_metres;
         record.receiver_sampled_length_metres = receiver_fit.sampled_length_metres;
 
+        record.donor_1_sampled_flats  = donor_1_sampled.flats;
+        record.donor_2_sampled_flats  = donor_2_sampled.flats;
+        record.receiver_sampled_flats = receiver_sampled.flats;
+
         records.push_back(std::move(record));
     }
 
@@ -1414,9 +1466,11 @@ void write_channel_link_bearings(
     const std::string&                             out_path,
     point_output_format                            format,
     const std::string&                             layer_name,
-    bool                                           spatial_index
+    bool                                           spatial_index,
+    const lsdtt_channel_record_extra_columns*      extra
 )
 {
+    check_extra_columns(extra, records.size(), "write_channel_link_bearings");
     if (flow.empty())
     {
         throw std::runtime_error(
@@ -1472,6 +1526,7 @@ void write_channel_link_bearings(
             "downstream_latitude",
             "downstream_longitude"
         };
+        if (extra) headers.insert(headers.end(), extra->names.begin(), extra->names.end());
 
         std::vector<std::vector<std::string>> rows;
         rows.reserve(records.size());
@@ -1508,6 +1563,7 @@ void write_channel_link_bearings(
                 precise_string(ll_down.latitude),
                 precise_string(ll_down.longitude)
             });
+            append_extra_csv(rows.back(), extra, static_cast<std::size_t>(&record - records.data()));
         }
 
         loader.write_csv(out_path, headers, rows);
@@ -1553,6 +1609,8 @@ void write_channel_link_bearings(
         lsdtt_vector_field_type::double_type
     };
 
+    append_extra_schema(schema, extra);
+
     loader.begin_vector_write(
         out_path,
         layer_name,
@@ -1576,8 +1634,7 @@ void write_channel_link_bearings(
                 record.upstream_junction
             );
 
-        loader.write_line(
-            traced.xy,
+        std::vector<lsdtt_vector_field_value> values =
             {
                 static_cast<std::int64_t>(record.upstream_junction),
                 static_cast<std::int64_t>(record.downstream_junction),
@@ -1592,8 +1649,9 @@ void write_channel_link_bearings(
                 record.bearing_rad,
                 record.bearing_deg,
                 record.fit_linearity
-            }
-        );
+            };
+        append_extra_values(values, extra, static_cast<std::size_t>(&record - records.data()));
+        loader.write_line(traced.xy, values);
     }
 
     loader.finish_vector_write();
@@ -1610,9 +1668,11 @@ void write_junction_angle_data(
     const std::string&                              out_path,
     point_output_format                             format,
     const std::string&                              layer_name,
-    bool                                            spatial_index
+    bool                                            spatial_index,
+    const lsdtt_channel_record_extra_columns*       extra
 )
 {
+    check_extra_columns(extra, records.size(), "write_junction_angle_data");
     if (flow.empty())
     {
         throw std::runtime_error(
@@ -1710,6 +1770,7 @@ void write_junction_angle_data(
             "latitude",
             "longitude"
         };
+        if (extra) headers.insert(headers.end(), extra->names.begin(), extra->names.end());
 
         std::vector<std::vector<std::string>> rows;
         rows.reserve(records.size());
@@ -1792,6 +1853,7 @@ void write_junction_angle_data(
                 precise_string(ll.latitude),
                 precise_string(ll.longitude)
             });
+            append_extra_csv(rows.back(), extra, static_cast<std::size_t>(&record - records.data()));
         }
 
         loader.write_csv(out_path, headers, rows);
@@ -1872,6 +1934,8 @@ void write_junction_angle_data(
         lsdtt_vector_field_type::double_type
     };
 
+    append_extra_schema(schema, extra);
+
     loader.begin_vector_write(
         out_path,
         layer_name,
@@ -1894,9 +1958,7 @@ void write_junction_angle_data(
                 network.flat_of_junction(record.junction)
             );
 
-        loader.write_point(
-            xy.x,
-            xy.y,
+        std::vector<lsdtt_vector_field_value> values =
             {
                 static_cast<std::int64_t>(record.junction),
                 static_cast<std::int64_t>(record.donor_1),
@@ -1929,8 +1991,9 @@ void write_junction_angle_data(
                 record.donor_1_linearity,
                 record.donor_2_linearity,
                 record.receiver_linearity
-            }
-        );
+            };
+        append_extra_values(values, extra, static_cast<std::size_t>(&record - records.data()));
+        loader.write_point(xy.x, xy.y, values);
     }
 
     loader.finish_vector_write();

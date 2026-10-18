@@ -33,7 +33,6 @@ lsdtt3/
 │   ├── lsdtt-basin-extraction.cpp
 │   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-basin-surface-metrics.cpp
-│   ├── lsdtt-bearing-comparison.cpp
 │   ├── lsdtt-channel-extraction.cpp
 │   ├── lsdtt-channel-network-analysis.cpp
 │   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
@@ -1033,13 +1032,6 @@ Current CLI programs are:
 - **`lsdtt-marsh-topography.cpp`**  
   Marsh and tidal platform analysis. Identifies marsh platforms and intertidal zones, 
   computes platform statistics, and extracts edges.
-
-- **`lsdtt-bearing-comparison.cpp`**  
-  Compares two angular (bearing / orientation) distributions read from CSV
-  columns and writes a distribution-comparison report: the circular
-  1-Wasserstein distance and the two-sample Kuiper test. Handles directional
-  (period 360°) and axial (period 180°) data. It reads bearings; it does not
-  compute them from a DEM, and makes no plots.
 
 - **`lsdtt-slope-area.cpp`**  
   Slope-area statistics. Builds D-infinity (default) or D8 drainage area,

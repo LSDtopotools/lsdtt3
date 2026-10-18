@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -697,6 +698,44 @@ lsdtt_raster_cpu lithology_unit_code_raster(const lsdtt_raster_cpu& grid,
             mask[i] = 1;
         }
     return lsdtt_raster_cpu(std::move(data), std::move(mask), meta);
+}
+
+void write_lithology_units_csv(const std::string& path, const lsdtt_lithology_units_on_grid& units,
+                               double cell_size_m, const std::vector<std::uint8_t>& analysed_mask)
+{
+    const bool have_mask = !analysed_mask.empty();
+    if (have_mask && analysed_mask.size() != units.code_of_pixel.size())
+        throw std::invalid_argument("write_lithology_units_csv: the analysed mask is not on the grid");
+    std::map<std::int32_t, std::size_t> in_basins;
+    if (have_mask)
+        for (std::size_t i = 0; i < analysed_mask.size(); ++i)
+            if (analysed_mask[i]) ++in_basins[units.code_of_pixel[i]];
+
+    auto text = [](const std::string& v) {
+        if (v.find_first_of(",\"\n") == std::string::npos) return v;
+        std::string q = "\"";
+        for (char c : v) { if (c == '"') q += "\"\""; else q += c; }
+        return q + "\"";
+    };
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write " + path);
+    out << "code,name,map_values,n_pixels,area_km2,n_pixels_in_analysed_basins\n";
+    out << std::setprecision(10);
+    const double km2_per_pixel = cell_size_m * cell_size_m * 1e-6;
+    auto line = [&](int code, const std::string& name, const std::string& values, std::size_t n) {
+        out << code << "," << text(name) << "," << text(values) << "," << n << ","
+            << static_cast<double>(n) * km2_per_pixel << ",";
+        if (have_mask) out << in_basins[code];
+        out << "\n";
+    };
+    for (const auto& u : units.units)
+    {
+        std::string joined;
+        for (std::size_t k = 0; k < u.map_values.size(); ++k)
+            joined += (k ? "; " : "") + u.map_values[k];
+        line(u.code, u.name, joined, u.n_pixels);
+    }
+    line(-1, "unmapped", "", units.n_unmapped_valid);
 }
 
 } // namespace lsdtt

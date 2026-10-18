@@ -227,6 +227,27 @@ double compute_quantile_floor_in_place(
 );
 
 // -----------------------------------------------------------------------------
+// Weighted quantile (lower weighted quantile)
+//
+// After a stable sort by value, the smallest value whose cumulative weight is
+// >= q * total weight. No interpolation, so the result is always one of the
+// input values; tied values keep their input order. q = 0 gives the smallest
+// value, q = 1 the largest value with a positive weight.
+// With equal weights the element is ceil(q * n) - 1 (0-based; 0 for q = 0),
+// which equals compute_quantile_floor_in_place's floor(q * (n - 1)) at q = 0,
+// q = 1 and q = 0.5 for any n.
+//
+// NaN for empty input. Throws std::invalid_argument when the sizes differ, q
+// is outside [0, 1], a weight is negative or not finite, or the total weight
+// is zero.
+// -----------------------------------------------------------------------------
+double compute_weighted_quantile(
+    const std::vector<double>& values,
+    const std::vector<double>& weights,
+    double q_0_to_1
+);
+
+// -----------------------------------------------------------------------------
 // Vector wrappers for float / int / other arithmetic types.
 //
 // These wrappers promote input values to double and then call the compiled

@@ -123,12 +123,6 @@ The physics, the scaling schemes and the CRONUS/OCTOPUS comparisons are in
 [Choosing a synthetic landscape tool](../design_and_algorithms/synthetic_cli_cluster.md)
 explains which of the three to reach for.
 
-## Comparing results
-
-| Tool | What it does |
-|---|---|
-| `lsdtt-bearing-comparison` | Compares two angular (bearing or orientation) distributions read from CSV. |
-
 ---
 
 ## Other ways to drive lsdtt3

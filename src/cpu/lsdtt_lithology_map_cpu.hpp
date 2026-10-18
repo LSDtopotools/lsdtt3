@@ -215,4 +215,15 @@ lsdtt_lithology_units_on_grid read_lithology_units_on_grid(
 [[nodiscard]] lsdtt_raster_cpu lithology_unit_code_raster(
     const lsdtt_raster_cpu& grid, const lsdtt_lithology_units_on_grid& units);
 
+// The unit legend of a run (<write_fname>_lithology_units.csv): one row per
+// unit (codes ascending), then `unmapped` (code -1, the valid pixels with no
+// unit). Columns code, name, map_values ("; "-joined), n_pixels, area_km2
+// (n_pixels * cell_size^2) and n_pixels_in_analysed_basins: the pixels of that
+// unit where analysed_mask (one byte per grid pixel) is non-zero; the column
+// is left blank when analysed_mask is empty.
+void write_lithology_units_csv(const std::string& path,
+                               const lsdtt_lithology_units_on_grid& units,
+                               double cell_size_m,
+                               const std::vector<std::uint8_t>& analysed_mask);
+
 } // namespace lsdtt

@@ -39,6 +39,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -50,6 +51,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_chi_data_maps_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_disorder_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
@@ -481,12 +483,22 @@ int main(int argc, char* argv[])
     bool_default_map["write_ksn_lithology_summary"] = true;
     help_map["write_ksn_lithology_summary"] = {"bool","true",
         "With lithology_fname: write k_sn by lithologic unit.",
-        "Per m/n: <write_fname>_chi_ksn_by_lithology_mn_*.csv (per unit: node, segment and "
-        "basin counts, channel length, median, quartiles, mean, range and length-weighted mean "
-        "k_sn; plus unmapped and all), <write_fname>_chi_ksn_histogram_by_lithology_mn_*.csv "
-        "(common bins for every unit) and <write_fname>_chi_ksn_lithology_nodes_mn_*.csv (every "
-        "channel node with its segment k_sn, unit and distance to the nearest contact). k_sn per "
-        "node is its fitted segment's k_sn; segments are not split at contacts.",
+        "Per m/n: <write_fname>_chi_ksn_by_lithology_mn_*.csv (per unit, plus unmapped and "
+        "all: node, segment, basin and reach counts, node k_sn statistics, the median and "
+        "quartiles of lithologic-reach k_sn with a bootstrap interval of the median, and "
+        "length-weighted node k_sn quantiles), _chi_ksn_by_lithology_and_basin_mn_*.csv (the "
+        "reach statistics per unit and basin, no interval), "
+        "_chi_ksn_histogram_by_lithology_mn_*.csv (common bins for every unit), "
+        "_chi_ksn_lithology_nodes_mn_*.csv (every channel node with its segment k_sn, unit, "
+        "distance to the nearest contact and reach), _chi_lithology_reaches_mn_*.csv (every "
+        "lithologic reach: OLS k_sn of elevation on chi, its standard error and R^2, end types) "
+        "and _chi_lithology_segments_mn_*.csv (every fitted segment with its length-weighted "
+        "majority unit and purity). Once per run: <write_fname>_lithology_units.csv (the unit "
+        "legend with pixel counts). A lithologic reach is a run of channel nodes in one unit on "
+        "one branch; reaches are the sampling unit of the per-unit k_sn statistics. Node k_sn "
+        "is its fitted segment's k_sn; segments are not split at contacts. Nodes are not "
+        "independent samples and the interval does not account for correlation between "
+        "reaches on one channel.",
         "Outputs", "switch", "lithology_fname"};
 
     int_default_map["lithology_ksn_histogram_n_bins"] = 30;
@@ -495,6 +507,10 @@ int main(int argc, char* argv[])
         "The bins span the 1st-99th percentile of all nodes' k_sn; nodes outside are counted "
         "in a row below (bin_index -1) and above (bin_index = n_bins).",
         "Outputs", "param", "write_ksn_lithology_summary"};
+
+    lsdtt::declare_lithology_ksn_summary_parameters(
+        float_default_map, int_default_map, string_default_map, help_map);
+    lsdtt::declare_lithology_bootstrap_parameters(int_default_map, help_map);
 
     bool_default_map["lithology_ksn_histogram_log_bins"] = false;
     help_map["lithology_ksn_histogram_log_bins"] = {"bool","false",
@@ -621,6 +637,39 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: lithology_ksn_histogram_n_bins must be >= 1.\n";
         return 1;
+    }
+    lsdtt::lsdtt_chi_lithology_options lith_opts;
+    if (lithology_on)
+    {
+        try
+        {
+            lith_opts.bootstrap_cluster =
+                lsdtt::parse_lithology_bootstrap_cluster(sf["lithology_bootstrap_cluster"]);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "FATAL: " << e.what() << ".\n";
+            return 1;
+        }
+        lith_opts.contact_buffer_m = static_cast<double>(ff["lithology_contact_buffer_metres"]);
+        lith_opts.min_reach_pixels = ifs["lithology_min_reach_pixels"];
+        lith_opts.bootstrap_replicates = ifs["lithology_bootstrap_replicates"];
+        if (!(lith_opts.contact_buffer_m >= 0.0) || !std::isfinite(lith_opts.contact_buffer_m))
+        {
+            std::cerr << "FATAL: lithology_contact_buffer_metres must be >= 0.\n";
+            return 1;
+        }
+        if (lith_opts.min_reach_pixels < 2)
+        {
+            std::cerr << "FATAL: lithology_min_reach_pixels must be >= 2 (a reach k_sn is a "
+                         "regression slope).\n";
+            return 1;
+        }
+        if (lith_opts.bootstrap_replicates < 0)
+        {
+            std::cerr << "FATAL: lithology_bootstrap_replicates must be >= 0 (0 = no interval).\n";
+            return 1;
+        }
     }
 
     if (snapping_method != "none" &&
@@ -751,6 +800,21 @@ int main(int argc, char* argv[])
                           << u.n_pixels << " pixels)\n";
             lith_contact_distance = lsdtt::compute_lithology_contact_distance(
                 dem, lith_units, ifs["n_threads"]);
+            std::cout << "  Contact buffer " << lith_opts.contact_buffer_m << " m, reaches of at "
+                      << "least " << lith_opts.min_reach_pixels << " nodes, "
+                      << lith_opts.bootstrap_replicates << " bootstrap replicates by "
+                      << lsdtt::lithology_bootstrap_cluster_name(lith_opts.bootstrap_cluster)
+                      << " (seed " << ifs["lithology_bootstrap_random_seed"] << ").\n"
+                      << "  Reading k_sn by lithologic unit:\n"
+                      << "    * k_sn contrasts reflect lithology only if uplift and base level are "
+                         "uniform and the landscape is near steady state.\n"
+                      << "    * A transient knickzone puts a high or low k_sn on whichever unit "
+                         "it is crossing.\n"
+                      << "    * Strike-parallel drainage puts some units mostly at channel heads "
+                         "or water gaps; median_drainage_area_m2 per unit shows this.\n"
+                      << "    * Reaches on one channel are correlated, so the bootstrap interval "
+                         "is a lower bound on the uncertainty; the per-basin table shows the "
+                         "spread between basins.\n";
             if (bf["write_lithology_code_raster"])
             {
                 const std::string f = pp.make_output_path("_lithology_code", ".tif");
@@ -843,6 +907,29 @@ int main(int argc, char* argv[])
     {
         std::cerr << "FATAL: flow routing failed: " << e.what() << "\n";
         return 1;
+    }
+
+    // Lithology: drainage area per pixel, a latitude/longitude transform built
+    // once (never per node) and one random engine for every bootstrap of the run.
+    std::vector<float> lith_drainage_area;
+    std::unique_ptr<lsdtt::lsdtt_coordinate_transform> lith_to_wgs84;
+    std::mt19937_64 lith_rng(
+        static_cast<std::uint64_t>(ifs["lithology_bootstrap_random_seed"]));
+    bool lith_units_written = false;
+    if (lithology_on)
+    {
+        lith_drainage_area = flow->get_drainage_area_raster().data;
+        try
+        {
+            lith_to_wgs84 = std::make_unique<lsdtt::lsdtt_coordinate_transform>(
+                lsdtt::lsdtt_coordinate_transform::from_epsg(routed_dem.get_meta().crs_wkt, 4326));
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: no latitude/longitude for the lithology node table: "
+                      << e.what() << "\n";
+            lith_to_wgs84.reset();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1345,12 +1432,21 @@ int main(int argc, char* argv[])
             {
                 try
                 {
-                    const lsdtt::lsdtt_chi_lithology_node_table lnodes =
-                        lsdtt::build_chi_lithology_node_table(
-                            fit_results, dem.get_meta(), lith_units, lith_contact_distance);
+                    lsdtt::lsdtt_chi_lithology_tables ltables =
+                        lsdtt::build_chi_lithology_tables(
+                            fit_results, dem.get_meta(), lith_units, lith_contact_distance,
+                            lith_drainage_area, lith_opts);
+                    if (lith_to_wgs84)
+                        for (auto& r : ltables.nodes.rows)
+                        {
+                            const lsdtt::lsdtt_lonlat ll = lsdtt::xy_to_lonlat(r.x, r.y, *lith_to_wgs84);
+                            r.latitude = ll.latitude;
+                            r.longitude = ll.longitude;
+                        }
+                    const lsdtt::lsdtt_chi_lithology_node_table& lnodes = ltables.nodes;
                     const lsdtt::lsdtt_chi_ksn_lithology_summary lsum =
                         lsdtt::summarise_chi_ksn_by_lithology(
-                            lnodes, lith_units, mn, chi_opts.A_0);
+                            ltables, lith_units, mn, chi_opts.A_0, lith_opts, lith_rng);
                     lsdtt::lsdtt_chi_ksn_histogram_options hopts;
                     hopts.n_bins = ifs["lithology_ksn_histogram_n_bins"];
                     hopts.log_bins = bf["lithology_ksn_histogram_log_bins"];
@@ -1364,25 +1460,62 @@ int main(int argc, char* argv[])
                         "_chi_ksn_histogram_by_lithology_mn_" + mn_suffix(mn), ".csv");
                     const std::string nfile = pp.make_output_path(
                         "_chi_ksn_lithology_nodes_mn_" + mn_suffix(mn), ".csv");
+                    const std::string rfile = pp.make_output_path(
+                        "_chi_lithology_reaches_mn_" + mn_suffix(mn), ".csv");
+                    const std::string gfile = pp.make_output_path(
+                        "_chi_lithology_segments_mn_" + mn_suffix(mn), ".csv");
+                    const std::string bfile = pp.make_output_path(
+                        "_chi_ksn_by_lithology_and_basin_mn_" + mn_suffix(mn), ".csv");
                     lsdtt::write_chi_ksn_lithology_summary_csv(sfile, lsum);
                     lsdtt::write_chi_ksn_histogram_csv(hfile, lhist);
                     lsdtt::write_chi_lithology_nodes_csv(nfile, lnodes, lith_units);
+                    lsdtt::write_chi_lithology_reaches_csv(rfile, ltables, lith_units);
+                    lsdtt::write_chi_lithology_segments_csv(gfile, ltables, lith_units);
+                    lsdtt::write_chi_ksn_lithology_by_basin_csv(bfile, lsum);
 
-                    std::cout << "  k_sn by lithologic unit (median over nodes; n nodes / "
-                                 "segments / basins):\n";
+                    if (!lith_units_written)
+                    {
+                        // Pixels of the analysed basins (the basins of this m/n,
+                        // which do not depend on m/n).
+                        std::vector<std::uint8_t> analysed(lith_units.code_of_pixel.size(), 0);
+                        for (const auto& b : fit_results.basins)
+                            for (const std::int64_t f : flow->upslope_nodes(b.outlet_flat))
+                                analysed[static_cast<std::size_t>(f)] = 1;
+                        const std::string ufile = pp.make_output_path("_lithology_units", ".csv");
+                        lsdtt::write_lithology_units_csv(
+                            ufile, lith_units, dem.get_meta().cell_size, analysed);
+                        std::cout << "  Wrote " << ufile << "\n";
+                        lith_units_written = true;
+                    }
+
+                    std::cout << "  k_sn by lithologic unit (m/n = " << mn << ", A0 = "
+                              << chi_opts.A_0 << "): reach median k_sn and its "
+                              << lsdtt::lithology_bootstrap_cluster_name(lith_opts.bootstrap_cluster)
+                              << "-bootstrap interval; n reaches (qualifying); node median k_sn; "
+                                 "n nodes / segments / basins\n";
                     for (const auto& r : lsum.rows)
-                        std::cout << "    " << std::left << std::setw(32) << r.lith_name
-                                  << std::right << std::setw(12) << r.k_sn_median << "   "
-                                  << r.n_nodes << " / " << r.n_segments << " / " << r.n_basins
-                                  << (r.low_sample && r.n_nodes > 0 ? "   (fewer than 5 segments)" : "")
-                                  << "\n";
+                    {
+                        std::ostringstream ci;
+                        if (r.n_bootstrap > 0)
+                            ci << "[" << r.reach_k_sn_median_ci_low << ", "
+                               << r.reach_k_sn_median_ci_high << "]";
+                        else
+                            ci << (r.low_sample ? "(fewer than 5 qualifying reaches)" : "(no interval)");
+                        std::cout << "    " << std::left << std::setw(28) << r.lith_name
+                                  << std::right << std::setw(10) << r.reach_k_sn_median << "  "
+                                  << std::left << std::setw(34) << ci.str() << std::right
+                                  << r.n_reaches << " (" << r.n_reaches_qualifying << ")   "
+                                  << r.k_sn_median << "   " << r.n_nodes << " / "
+                                  << r.n_segments << " / " << r.n_basins << "\n";
+                    }
                     if (lsum.n_nodes_total > 0 &&
                         lsum.n_nodes_unmapped * 10 > lsum.n_nodes_total)
                         std::cerr << "WARNING: " << (100.0 * lsum.n_nodes_unmapped / lsum.n_nodes_total)
                                   << " % of channel nodes have no lithologic unit (the map does "
                                      "not cover them)\n";
-                    std::cout << "  Wrote " << sfile << "\n  Wrote " << hfile << "\n  Wrote "
-                              << nfile << "\n";
+                    std::cout << "  Wrote " << sfile << "\n  Wrote " << bfile << "\n  Wrote "
+                              << hfile << "\n  Wrote " << nfile << "\n  Wrote " << rfile
+                              << "\n  Wrote " << gfile << "\n";
                     std::cout.flush();
                 }
                 catch (const std::exception& e)

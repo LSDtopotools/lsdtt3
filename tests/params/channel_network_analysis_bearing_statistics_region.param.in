@@ -1,0 +1,16 @@
+# lsdtt-channel-network-analysis: bearings grouped by region (north half = 1, south half = 2, a
+# code raster on the DEM grid) within each Strahler order. The trunks are N-S in both halves, so
+# the order-2 axial W1 between regions is 0.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbsg
+boundary_conditions: nnon
+write_channel_bearing_statistics: true
+channel_bearing_group_by: region
+channel_bearing_stratify_by: strahler_order
+channel_bearing_block_order: 2
+channel_region_fname: cbs_region_halves.tif
