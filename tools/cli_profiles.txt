@@ -60,6 +60,7 @@ core lsdtt-distributed-hydrology
 core lsdtt-divide-migration
 core lsdtt-drainage-analysis
 core lsdtt-feature-finder
+core lsdtt-fetch-erosion-rates
 core lsdtt-fetch-lithology
 core lsdtt-fetch-raster
 core lsdtt-flat-surface-finder

@@ -37,6 +37,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <random>
@@ -62,6 +63,7 @@
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_lithology_channel_stats_cpu.hpp"
 #include "../src/cpu/lsdtt_lithology_map_cpu.hpp"
+#include "../src/cpu/lsdtt_lithology_relative_erodibility_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
@@ -182,6 +184,7 @@ int main(int argc, char* argv[])
     std::map<std::string, float>                    float_default_map;
     std::map<std::string, int>                      int_default_map;
     std::map<std::string, std::string>              string_default_map;
+    std::map<std::string, double>                   double_default_map;
     lsdtt::lsdtt_help_registry help_map;
 
     // --- Threading / routing ---
@@ -518,6 +521,60 @@ int main(int argc, char* argv[])
         "k_sn <= 0 then falls in the row below the range.",
         "Outputs", "param", "write_ksn_lithology_summary"};
 
+    // --- Relative erodibility from k_sn by lithologic unit ---
+    bool_default_map["write_relative_erodibility"] = false;
+    help_map["write_relative_erodibility"] = {"bool","false",
+        "Write the erodibility of each lithologic unit relative to a reference unit, from the "
+        "units' reach-median k_sn.",
+        "Needs lithology_fname and write_ksn_lithology_summary: true. Under uniform erosion at "
+        "steady state with the stream power law E = K A^m S^n (m = (m/n) n), K_i / K_ref = "
+        "(k_sn,ref / k_sn,i)^n, from each unit's reach-median k_sn (reach_k_sn_median of "
+        "_chi_ksn_by_lithology_mn_*.csv). The 95 % interval resamples the ratio: each bootstrap "
+        "replicate resamples the reaches of the unit and of the reference "
+        "(lithology_bootstrap_cluster: reach draws each unit's reaches independently; basin draws "
+        "whole basins, bringing both units' reaches together) and forms the ratio in that "
+        "replicate; the interval is the 2.5 and 97.5 % quantiles of the replicate ratios. "
+        "lithology_bootstrap_replicates and lithology_bootstrap_random_seed apply; the stream is "
+        "per m/n and separate from the k_sn summary's. Units with fewer than 5 qualifying reaches "
+        "get low_sample = 1 and NaN intervals. Unmapped and all get no row. Output per m/n: "
+        "<write_fname>_chi_relative_erodibility_by_lithology_mn_*.csv, one row per unit and n: "
+        "lith_code, lith_name, m_over_n, A_0, n, m, reference_unit, n_reaches_qualifying, "
+        "reach_k_sn_median, k_ratio (K_i / K_ref), k_ratio_ci_low, k_ratio_ci_high, n_bootstrap, "
+        "bootstrap_cluster, low_sample, and with an erosion rate erosion_rate_m_per_yr, K_abs, "
+        "K_abs_ci_low, K_abs_ci_high, K_units. The ratios hold only where the erosion rate is "
+        "uniform and the channels are at steady state; reaches near a contact mix the k_sn of two "
+        "units, and a transient knickzone puts its k_sn on whichever unit it crosses.",
+        "Relative erodibility", "switch", "write_ksn_lithology_summary"};
+
+    string_default_map["relative_erodibility_reference_unit"] = "";
+    help_map["relative_erodibility_reference_unit"] = {"string","",
+        "Name of the reference lithologic unit (K_ref) for write_relative_erodibility.",
+        "Empty (default): the unit with the most qualifying reaches; ties go to the larger channel "
+        "length, then the lower code. Give the unit name as in lith_name (the crosswalk name, or "
+        "the map value). A name that is not a unit of the map stops the run, listing the units. "
+        "unmapped and all are never a reference.",
+        "Relative erodibility", "param", "write_relative_erodibility"};
+
+    string_default_map["relative_erodibility_n_values"] = "1";
+    help_map["relative_erodibility_n_values"] = {"string","1",
+        "Slope exponent(s) n of the stream power law for write_relative_erodibility, a comma list.",
+        "Each n gives its own rows, with m = (m/n) n for the m/n of the chi run (e.g. 1,2). Every "
+        "value must be > 0.",
+        "Relative erodibility", "param", "write_relative_erodibility"};
+
+    double_default_map["relative_erodibility_erosion_rate_m_per_yr"] = 0.0;
+    help_map["relative_erodibility_erosion_rate_m_per_yr"] = {"double","0.0",
+        "Uniform erosion rate E (m/yr) for absolute erodibility; 0 = not given.",
+        "When > 0, also K_i = E / (A0^m k_sn,i^n) for every unit (map-area convention, units "
+        "m^(1 - 2m) yr^-1, written in K_units), with its interval from the same replicates, and "
+        "one draft property table per n, "
+        "<write_fname>_chi_relative_erodibility_property_table_mn_*_n_*.txt, in the format "
+        "lsdtt-lithology-erodibility reads (erodibility_convention map_area, m_exponent, "
+        "n_exponent, and a provenance line). Use it there with the same lithology map, field and "
+        "crosswalk to make a K raster. Units with no qualifying reach have no row and are listed "
+        "in a # not_estimated line.",
+        "Relative erodibility", "param", "write_relative_erodibility"};
+
     bool_default_map["write_chi_fit_segment_lines"] = false;
     help_map["write_chi_fit_segment_lines"] = {"bool","false",
         "Write fitted chi segments as a vector polyline file.",
@@ -589,12 +646,14 @@ int main(int argc, char* argv[])
         {"chi_fit_segment_lines_output_format",
          {"legacy_chi_fit_segment_lines_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
-        float_default_map, int_default_map, bool_default_map, string_default_map);
+        float_default_map, int_default_map, bool_default_map, string_default_map,
+        double_default_map);
 
     auto bf  = pp.get_bool_parameters();
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
+    auto df  = pp.get_double_parameters();
 
     const std::string snapping_method =
         lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
@@ -670,6 +729,52 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: lithology_bootstrap_replicates must be >= 0 (0 = no interval).\n";
             return 1;
         }
+    }
+
+    // Relative erodibility from k_sn by lithologic unit: checked here, run per
+    // m/n after the k_sn summary.
+    const bool relative_k_on = bf["write_relative_erodibility"];
+    lsdtt::lsdtt_relative_erodibility_options relk_opts;
+    if (relative_k_on)
+    {
+        if (!lithology_on)
+        {
+            std::cerr << "FATAL: write_relative_erodibility needs lithology_fname (relative "
+                         "erodibility comes from k_sn by lithologic unit).\n";
+            return 1;
+        }
+        if (!bf["write_ksn_lithology_summary"])
+        {
+            std::cerr << "FATAL: write_relative_erodibility needs write_ksn_lithology_summary: true "
+                         "(it uses the per-unit reach-median k_sn).\n";
+            return 1;
+        }
+        try
+        {
+            relk_opts.n_values = pp.parse_double_vector("relative_erodibility_n_values");
+        }
+        catch (const std::exception&)
+        {
+            relk_opts.n_values.clear();
+        }
+        bool n_ok = !relk_opts.n_values.empty();
+        for (double n : relk_opts.n_values) n_ok = n_ok && std::isfinite(n) && n > 0.0;
+        if (!n_ok)
+        {
+            std::cerr << "FATAL: relative_erodibility_n_values must be a comma list of numbers > 0, "
+                         "not '" << sf["relative_erodibility_n_values"] << "'.\n";
+            return 1;
+        }
+        relk_opts.erosion_rate_m_per_yr = df["relative_erodibility_erosion_rate_m_per_yr"];
+        if (!std::isfinite(relk_opts.erosion_rate_m_per_yr) || relk_opts.erosion_rate_m_per_yr < 0.0)
+        {
+            std::cerr << "FATAL: relative_erodibility_erosion_rate_m_per_yr must be >= 0 (0 = not "
+                         "given).\n";
+            return 1;
+        }
+        relk_opts.reference_unit = sf["relative_erodibility_reference_unit"];
+        relk_opts.bootstrap_replicates = lith_opts.bootstrap_replicates;
+        relk_opts.bootstrap_cluster = lith_opts.bootstrap_cluster;
     }
 
     if (snapping_method != "none" &&
@@ -815,6 +920,30 @@ int main(int argc, char* argv[])
                       << "    * Reaches on one channel are correlated, so the bootstrap interval "
                          "is a lower bound on the uncertainty; the per-basin table shows the "
                          "spread between basins.\n";
+            if (relative_k_on)
+            {
+                // A reference that is not a unit stops the run here (listing the units).
+                lsdtt::check_relative_erodibility_reference_name(lith_units, relk_opts.reference_unit);
+                std::cout << "  Relative erodibility K_i / K_ref = (k_sn,ref / k_sn,i)^n for n = "
+                          << sf["relative_erodibility_n_values"] << ", reference "
+                          << (relk_opts.reference_unit.empty()
+                                  ? std::string("by default (most qualifying reaches)")
+                                  : "'" + relk_opts.reference_unit + "'");
+                if (relk_opts.erosion_rate_m_per_yr > 0.0)
+                    std::cout << "; K_i = E / (A0^m k_sn,i^n) with E = "
+                              << relk_opts.erosion_rate_m_per_yr << " m/yr";
+                std::cout << ".\n"
+                          << "  These values hold only under these conditions:\n"
+                          << "    * the erosion rate is the same everywhere (uniform uplift and "
+                             "base-level fall);\n"
+                          << "    * the channels are at steady state (no transient knickzone "
+                             "crossing a unit);\n"
+                          << "    * each unit's k_sn is its own: reaches next to a contact can "
+                             "carry the k_sn of the unit across it (see "
+                             "lithology_contact_buffer_metres);\n"
+                          << "    * the unit has enough qualifying reaches (fewer than 5: "
+                             "low_sample = 1, no interval).\n";
+            }
             if (bf["write_lithology_code_raster"])
             {
                 const std::string f = pp.make_output_path("_lithology_code", ".tif");
@@ -1518,6 +1647,87 @@ int main(int argc, char* argv[])
                               << hfile << "\n  Wrote " << nfile << "\n  Wrote " << rfile
                               << "\n  Wrote " << gfile << "\n";
                     std::cout.flush();
+
+                    // Relative erodibility from the reach-median k_sn: its own
+                    // stream per m/n, so the k_sn summary above is unchanged.
+                    if (relative_k_on)
+                    {
+                        try
+                        {
+                            std::mt19937_64 relk_rng =
+                                lsdtt::lithology_relative_erodibility_bootstrap_engine(
+                                    ifs["lithology_bootstrap_random_seed"], mn);
+                            const lsdtt::lsdtt_relative_erodibility_result relk =
+                                lsdtt::compute_lithology_relative_erodibility(
+                                    ltables, lsum, relk_opts, relk_rng);
+                            const std::string kfile = pp.make_output_path(
+                                "_chi_relative_erodibility_by_lithology_mn_" + mn_suffix(mn), ".csv");
+                            lsdtt::write_lithology_relative_erodibility_csv(kfile, relk);
+                            const bool with_E = relk.erosion_rate_m_per_yr > 0.0;
+                            std::cout << "  Relative erodibility (m/n = " << mn << ", A0 = "
+                                      << chi_opts.A_0 << "): reference '" << relk.reference.name
+                                      << "' (" << relk.reference.reason << ")\n"
+                                      << "    unit, n: K_i/K_ref and its "
+                                      << lsdtt::lithology_bootstrap_cluster_name(relk.bootstrap_cluster)
+                                      << "-bootstrap interval"
+                                      << (with_E ? "; K_i and its interval" : "") << "\n";
+                            for (const auto& r : relk.rows)
+                            {
+                                std::ostringstream line;
+                                line << "    " << std::left << std::setw(28) << r.lith_name
+                                     << std::right << " n = " << r.n << ": " << r.k_ratio << " ";
+                                if (r.n_bootstrap > 0)
+                                    line << "[" << r.k_ratio_ci_low << ", " << r.k_ratio_ci_high << "]";
+                                else
+                                    line << (r.low_sample ? "(fewer than 5 qualifying reaches)"
+                                                          : "(no interval)");
+                                if (with_E)
+                                {
+                                    line << "; K = " << r.K_abs;
+                                    if (std::isfinite(r.K_abs_ci_low))
+                                        line << " [" << r.K_abs_ci_low << ", " << r.K_abs_ci_high << "]";
+                                    line << " " << lsdtt::lithology_erodibility_units_string(r.m);
+                                }
+                                std::cout << line.str() << "\n";
+                            }
+                            std::cout << "  Wrote " << kfile << "\n";
+                            if (with_E)
+                            {
+                                lsdtt::lsdtt_relative_erodibility_provenance prov;
+                                prov.dem = std::filesystem::path(input_path).filename().string();
+                                prov.lithology_map = sf["lithology_fname"];
+                                if (lsdtt::lithology_source_from_path(sf["lithology_fname"],
+                                                                      sf["lithology_source"]) == "vector_map")
+                                    prov.field = sf["lithology_field_name"];
+                                prov.crosswalk = sf["lithology_crosswalk_fname"];
+                                for (double n : relk.n_values)
+                                {
+                                    const std::string tfile = pp.make_output_path(
+                                        "_chi_relative_erodibility_property_table_mn_" + mn_suffix(mn) +
+                                            "_n_" + lsdtt::relative_erodibility_n_suffix(n),
+                                        ".txt");
+                                    const std::size_t n_rows =
+                                        lsdtt::write_lithology_relative_erodibility_property_table(
+                                            tfile, relk, n, prov);
+                                    std::cout << "  Wrote " << tfile << " (" << n_rows
+                                              << " unit(s); a draft for lsdtt-lithology-erodibility "
+                                                 "with the same map, field and crosswalk)\n";
+                                    if (n_rows < lith_units.units.size())
+                                        std::cout << "  Note: " << lith_units.units.size() - n_rows
+                                                  << " unit(s) have no K and are listed in its "
+                                                     "# not_estimated line; lsdtt-lithology-erodibility "
+                                                     "refuses a map containing them until rows are "
+                                                     "added.\n";
+                                }
+                            }
+                            std::cout.flush();
+                        }
+                        catch (const std::exception& e)
+                        {
+                            std::cerr << "Warning: relative erodibility failed for m/n = " << mn
+                                      << ": " << e.what() << "\n";
+                        }
+                    }
                 }
                 catch (const std::exception& e)
                 {

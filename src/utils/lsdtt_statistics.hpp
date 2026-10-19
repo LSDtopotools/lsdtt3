@@ -248,6 +248,56 @@ double compute_weighted_quantile(
 );
 
 // -----------------------------------------------------------------------------
+// Straight line with errors in both variables: York regression
+//
+// York, D., Evensen, N. M., Lopez Martinez, M. and De Basabe Delgado, J.
+// (2004), Unified equations for the slope, intercept, and standard errors of
+// the best straight line, Am. J. Phys. 72, 367-375, doi:10.1119/1.1632486,
+// with uncorrelated x and y errors (r_i = 0). y = intercept + slope x is the
+// line that minimises S = sum W_i (y_i - a - b x_i)^2 with
+// W_i = 1 / (sigma_y,i^2 + b^2 sigma_x,i^2); sigma_x = 0 everywhere gives
+// weighted least squares in y.
+//
+// The slope is iterated from the OLS slope until it changes by no more than
+// 1e-15 relative (at most 1000 iterations). Then, with the adjusted points
+// x_i + beta_i and their weighted mean xbar:
+//   se_slope^2     = 1 / sum W_i u_i^2      (u_i = x_i + beta_i - xbar)
+//   se_intercept^2 = 1 / sum W_i + xbar^2 se_slope^2
+//   cov(a, b)      = -xbar se_slope^2
+//   mswd           = S / (n - 2)
+// The analytic errors assume the stated sigmas are complete; the *_scaled
+// errors multiply them by sqrt(mswd), the convention of the published values
+// for Pearson's data with York's weights (Cantrell 2008, ACP 8, 5477, Table 2:
+// slope -0.48053 +- 0.0706, intercept 5.4799 +- 0.359).
+//
+// converged = false, with no exception and NaN results, for fewer than 3
+// points, a zero x range, or no convergence. Throws std::invalid_argument
+// for unequal lengths, a non-finite value, sigma_y <= 0 or sigma_x < 0.
+// -----------------------------------------------------------------------------
+struct lsdtt_york_fit
+{
+    double slope = std::numeric_limits<double>::quiet_NaN();
+    double intercept = std::numeric_limits<double>::quiet_NaN();
+    double se_slope = std::numeric_limits<double>::quiet_NaN();
+    double se_intercept = std::numeric_limits<double>::quiet_NaN();
+    double se_slope_scaled = std::numeric_limits<double>::quiet_NaN();       // x sqrt(mswd)
+    double se_intercept_scaled = std::numeric_limits<double>::quiet_NaN();   // x sqrt(mswd)
+    double corr_slope_intercept = std::numeric_limits<double>::quiet_NaN();
+    double mswd = std::numeric_limits<double>::quiet_NaN();
+    double x_bar = std::numeric_limits<double>::quiet_NaN();   // weighted mean of the adjusted x
+    int    n_points = 0;
+    int    n_iter = 0;
+    bool   converged = false;
+};
+
+[[nodiscard]] lsdtt_york_fit fit_york_line(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    const std::vector<double>& sigma_x,
+    const std::vector<double>& sigma_y
+);
+
+// -----------------------------------------------------------------------------
 // Vector wrappers for float / int / other arithmetic types.
 //
 // These wrappers promote input values to double and then call the compiled

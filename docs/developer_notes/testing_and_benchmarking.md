@@ -5230,7 +5230,7 @@ exact on the UTM grid).
 
 | Test | Labels | What it covers |
 |---|---|---|
-| `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | `compute_weighted_quantile` (lower weighted quantile: fixed vectors at q = 0, 0.25, 0.5, 1; zero weights; empty = NaN; zero total, negative weight, size mismatch and q outside [0, 1] throw; equal weights = `compute_quantile_floor_in_place` at q = 0, 0.5, 1 for n = 1..12); contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); the lithology of a set of nodes (majority, purity with dx and dx sqrt2 weights, tie to the lower code, all unmapped, zero weights, empty); lithologic reaches on a hand-built network (3 reaches, 12 / 18 / 9 nodes, end types contact/outlet, source/contact, source/junction; with a 20 m buffer 4 nodes excluded and the ends become buffer); reach OLS on z = 3 + 7 chi (k_sn 7, R^2 1, SE 0) and `lithology_min_reach_pixels`; segment purity (180/290); summary bookkeeping (rows, sums, `low_sample` below 5 qualifying reaches with a NaN interval); the bootstrap (same seed bitwise, other seed differs, constant values, basin clusters, 0 replicates); the fit result unchanged; the known-answer steady states for n = 1 and n = 2 in two layouts; the `--check-ksn-by-lithology` mode. Driver `tests/cpp/test_lithology_channel_stats.cpp` (103 checks) |
+| `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | `compute_weighted_quantile` (lower weighted quantile: fixed vectors at q = 0, 0.25, 0.5, 1; zero weights; empty = NaN; zero total, negative weight, size mismatch and q outside [0, 1] throw; equal weights = `compute_quantile_floor_in_place` at q = 0, 0.5, 1 for n = 1..12); contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); the lithology of a set of nodes (majority, purity with dx and dx sqrt2 weights, tie to the lower code, all unmapped, zero weights, empty); lithologic reaches on a hand-built network (3 reaches, 12 / 18 / 9 nodes, end types contact/outlet, source/contact, source/junction; with a 20 m buffer 4 nodes excluded and the ends become buffer); reach OLS on z = 3 + 7 chi (k_sn 7, R^2 1, SE 0) and `lithology_min_reach_pixels`; segment purity (180/290); summary bookkeeping (rows, sums, `low_sample` below 5 qualifying reaches with a NaN interval); the bootstrap (same seed bitwise, other seed differs, constant values, basin clusters, 0 replicates); the fit result unchanged; the known-answer steady states for n = 1 and n = 2 in two layouts; the `--check-ksn-by-lithology` mode; relative erodibility (R1-R4, below). Driver `tests/cpp/test_lithology_channel_stats.cpp` (156 checks) |
 | `fixture_chi_lithology_cli` | `fixture;chi;lithology` | writes the steady-state DEM, its unit polygons, two crosswalks, and a two-unit code raster beside a copy of `tiny_dem.asc` |
 | `smoke_chi_lithology_ksn` | `smoke;cli;chi;lithology` | the CLI on the steady state: all seven outputs, the code raster holds 1 and 2, the run-local codes 1 and 2 in `_lithology_units.csv`, the unmapped row is empty, the reach columns, and each unit has no node in the other's histogram peak bin |
 | `rigorous_chi_lithology_ksn_ratio` | `rigorous;chi;lithology` | the reach-median ratio sandstone/shale from that run against 4, within 2.42 % |
@@ -5239,6 +5239,12 @@ exact on the UTM grid).
 | `failure_chi_lithology_{without_fit,missing_file,bad_field,crosswalk_gap,bad_cluster}` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true`; a map that does not exist; a field the map lacks (the fields are listed); a value missing from the crosswalk (with its pixel count); `lithology_bootstrap_cluster` other than reach or basin |
 | `failure_chi_lithology_no_overlap_{raster,vector}` | `failure;cli;chi;lithology` | a code raster and a polygon map 200 km east of the DEM (same CRS) label no valid DEM pixel: refused, the message giving both extents and CRSs |
 | `smoke_chi_lithology_multi_mn`, `rigorous_chi_lithology_bootstrap_per_mn` | `smoke`/`rigorous`, `cli;chi;lithology` | the bootstrap stream is per m/n (`std::seed_seq{seed, round(m/n * 10000)}`): with m/n 0.4 and 0.45 the 0.45 summary, unit x basin and reach tables equal those of the single-m/n run byte for byte |
+| `smoke_chi_lithology_relative_erodibility` | `smoke;cli;chi;lithology` | `write_relative_erodibility` on the steady state (n = 1 and 2, E = 2e-4 m/yr): the relative-erodibility CSV header and rows, K units strings, no unmapped row, both draft property tables with their header lines and provenance, the default reference and the conditions printed |
+| `rigorous_chi_lithology_relative_erodibility_observation_only` | `rigorous;cli;chi;lithology` | the seven k_sn-by-lithology outputs of that run equal those of `smoke_chi_lithology_ksn` byte for byte (the relative-erodibility stream is separate) |
+| `rigorous_chi_lithology_relative_erodibility_{ratio,reference}` | `rigorous;chi;lithology` | `--check-relative-erodibility` on that CSV: shale K/K_ref against 4 within 2.42 % and K against 4e-5 within 6.4 %; sandstone (the reference) 1 and K against 1e-5 within 4 % |
+| `smoke_chi_lithology_relative_erodibility_k_raster` | `smoke;cli;chi;lithology` | `lsdtt-lithology-erodibility` reads the n = 1 draft table unchanged and, with the fixture DEM and map, writes a 160 x 120 K raster holding the table's two K values |
+| `smoke_chi_lithology_relative_erodibility_multi_mn`, `rigorous_chi_lithology_relative_erodibility_per_mn` | `smoke`/`rigorous`, `cli;chi;lithology` | with m/n 0.4 and 0.45 the 0.45 relative-erodibility CSV and both property tables equal those of the single-m/n run byte for byte |
+| `failure_chi_lithology_relative_erodibility_{no_map,bad_reference}` | `failure;cli;chi;lithology` | `write_relative_erodibility` without `lithology_fname`; a reference name that is not a unit (the units are listed) |
 
 **Known answer.** A 120 x 160 grid at 30 m (a tilted red-noise surface, seed 11, D8,
 open edges, draining north) with K1 = 1e-5 and K2 = 4e-5, U = 2e-4, map area, steady
@@ -5289,6 +5295,77 @@ on the seed.)
 The 120 m buffer sets aside 4677 of 15847 nodes. With `name` (no crosswalk), 28 map
 units are on the grid, 27 with channel nodes, 21 with at least 5 qualifying reaches.
 111 of the 967 reaches (2 qualifying) have |dz| < 0.5 m.
+
+**Relative erodibility from k_sn (`write_relative_erodibility`).** K_i / K_ref =
+(k_ref / k_i)^n from the units' reach-median k_sn, and with an erosion rate E,
+K_i = E / (A0^m k_i^n) (m = (m/n) n, map area, units m^(1 - 2m) yr^-1). The interval
+resamples the ratio inside each bootstrap replicate (reaches drawn per unit, or basins
+drawn once for every unit), from `std::seed_seq{seed, round(m/n * 10000), 1}`, a
+stream separate from the k_sn summary's. Driver checks (`unit_chi_lithology_channel_stats`):
+
+* R1 (exact): the default reference is the unit with the most qualifying reaches, then
+  the larger channel length, then the lower code; unmapped and all are never chosen and
+  are refused by name; an unknown name throws listing the units; a named unit with no
+  qualifying reach, and no unit with one, throw; the units string (m^(0.1), m^(-0.8),
+  m^(0) yr^-1) and the n file suffix.
+* R2 (exact, hand-built reaches): the point ratio (k_ref/k_i)^n for n = 1 and 2; same
+  seed, bitwise-identical intervals; the interval brackets the point ratio; the n = 2
+  interval is the n = 1 replicates squared (ends at or above the squared n = 1 ends,
+  within 0.1 %); the reference row 1 [1, 1]; K = E/k^n with an interval bracketing it;
+  the stream differs from the k_sn summary's and from m/n 0.4, and the 0.45 interval is
+  unchanged by running 0.4 first; constant reaches give [4, 4] and K [E/5, E/5]; basin
+  clusters with the second unit in one of four basins use 672 of 1000 replicates for
+  it (expected about 684) with the interval [4, 4]; fewer than 5 reaches gives
+  low_sample with NaN intervals; a low_sample reference gives NaN ratio intervals and
+  K intervals; n <= 0 throws.
+* R3: the draft table loads with `load_lithology_property_table` (map_area, m 0.9,
+  n 2, K equal to the CSV as float, the provenance text); a unit with no reach has no
+  row and is listed in `# not_estimated`, and the table still loads; two names equal
+  ignoring case and E = 0 are refused.
+* R4: K2/K1 and K with E = U on the T10/T11 steady states, both layouts, default
+  reference (west in A, east in B, by qualifying reaches 16 / 14 and 18 / 20).
+
+Measured 2026-10-19 (relative errors; K/K_ref is 4 against west, 0.25 against east):
+
+| n | Layout | K/K_ref | K west (K1) | K east (K2) | Pins: ratio, K |
+|---|---|---|---|---|---|
+| 1 | A | 4.0177 (0.443 %) | 9.827e-06 (1.728 %) | 3.948e-05 (1.293 %) | 0.9 %, 2 % |
+| 1 | B | 0.25096 (0.384 %) | 9.882e-06 (1.178 %) | 3.938e-05 (1.556 %) | 0.8 %, 2 % |
+| 2 | A | 4.0355 (0.887 %) | 9.657e-06 (3.426 %) | 3.897e-05 (2.570 %) | 1.8 %, 4 % |
+| 2 | B | 0.25192 (0.770 %) | 9.766e-06 (2.342 %) | 3.876e-05 (3.088 %) | 1.6 %, 4 % |
+
+K and K/K_ref are powers -n of the reach medians, so the median errors (above) are
+multiplied by n. The pins are twice the measured error, capped at n times the median
+caps (1 % on a ratio, 2 % absolute): K for n = 1 sits at the 2 % cap, K for n = 2 at
+4 %, and the n = 2 ratios at 1.8 % and 1.6 %, above the 1 % median-ratio cap. The
+K intervals (1000 replicates by reach) do not contain the generating K: for n = 1,
+layout A, K west [9.760e-06, 9.877e-06] against 1e-5; the reach medians are biased
+high by the rectangle-versus-trapezoid chi difference above, and the bootstrap
+does not see a bias.
+
+Through the CLI (n = 1, E = U, reference sandstone by 15 against 11 qualifying
+reaches): shale K/K_ref 3.951501 (1.212 %), K shale 3.8734e-05 (3.165 %), K sandstone
+9.8024e-06 (1.976 %); pinned at twice: 2.42 %, 6.4 %, 4 %.
+
+West Virginia, the same runs as above with relative erodibility on (`wvrk_*` in the
+data directory): the k_sn-by-lithology outputs, fit nodes and fit segments are byte-identical
+to the runs without it. `lith_primary`, reference sandstone (190 qualifying reaches,
+the most), 1000 replicates by reach; with an illustrative uniform E = 3e-5 m/yr
+(30 m/Myr; not a measurement):
+
+| Unit | Qualifying reaches | K/K_ref, n = 1 | K/K_ref, n = 2 | K (n = 1), m^(0.1) yr^-1 | K (n = 2), m^(-0.8) yr^-1 |
+|---|---|---|---|---|---|
+| sandstone | 190 | 1 [1, 1] | 1 [1, 1] | 4.591e-07 [4.309e-07, 4.966e-07] | 7.026e-09 [6.188e-09, 8.219e-09] |
+| siltstone | 44 | 1.208 [1.032, 1.488] | 1.459 [1.065, 2.214] | 5.546e-07 [4.965e-07, 6.536e-07] | 1.025e-08 [8.217e-09, 1.424e-08] |
+| shale | 177 | 1.588 [1.303, 1.864] | 2.523 [1.698, 3.476] | 7.292e-07 [6.126e-07, 8.370e-07] | 1.772e-08 [1.251e-08, 2.335e-08] |
+| limestone | 113 | 1.130 [0.9755, 1.281] | 1.276 [0.9516, 1.642] | 5.186e-07 [4.646e-07, 5.850e-07] | 8.966e-09 [7.195e-09, 1.141e-08] |
+| alluvium | 7 | 7.573 [4.196, 14.65] | 57.35 [17.61, 214.5] | 3.477e-06 [2.043e-06, 6.445e-06] | 4.030e-07 [1.391e-07, 1.384e-06] |
+
+The ratio columns of the E run equal those of the run without E byte for byte.
+`lsdtt-lithology-erodibility` read the n = 1 table with the same map and crosswalk and
+wrote the K raster (legend: the five K values above). With `name` (n = 1), the default
+reference is Greenbrier Group (51 qualifying reaches); 27 of 28 units have a
+qualifying reach, 21 have at least 5.
 
 ### 8c.4 Channel-network statistics by lithologic unit (`lsdtt-channel-network-analysis` with `lithology_fname`)
 
@@ -5378,6 +5455,91 @@ generated with `ogr2ogr -f MVT` from `units_source.geojson` beside it (the
 command is in that directory's README). Its vertices are quantised to 1/4096 of
 the tile (9.6 m), which sets the area tolerance. MVT and OpenFileGDB are in the
 vector drivers `unit_format_support` requires.
+
+### 8c.5 OCTOPUS erosion rates and the first pieces of the erodibility calibration (2026-10-19)
+
+Calibrating the stream-power K from basin-averaged erosion rates is being built in
+steps. Built and tested so far: the OCTOPUS fetch (`lsdtt-fetch-erosion-rates`,
+`lsdtt_octopus_fetch`), area-matched snapping, the York regression, the erosion-rate
+sample reader with explicit units, the parameter groups (declared, not yet used by a
+CLI), and the K formula and property-table writer shared with relative K. Every test
+below also carries the label `erodibility_calibration`.
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_fetch_erosion_rates` | `unit;fetch` | 42 checks, no HTTP. The endpoint and layer constants; the latitude-first bbox string; the hits, page and outlets-by-id URLs as exact strings, none with `maxFeatures`, all on `http://geoserver.octopusdata.org`; the paging plan (28 at page 10: startIndex 0, 10, 20); `numberMatched` from the canned hits XML (28) and from GeoJSON; the ExceptionText; the sentinel predicate (true for -9999, -9999.99, -99.99, -99.999, -9.999, -9.99999, -999; false for -9998.9, 0, -9.9, -99, -9, data, NaN); the rate-field map for all four schemes × two nuclides. Offline reads of the large box: 28 basins, 23 outlets and rows, 94 fields (93 attributes + `id`), 896 values nulled in 32 fields (28 each, including every Al-26 field, `GLA_PCNT`, `SMP_*`; none in `EBE_MMKYR`); the S186WTS046 row (38.88961897, -79.40200545, 12.88 ± 2.62 mm/kyr, 20.14 km²) and its internal uncertainty `ERRBE_AMS × EBE_MMKYR / EBE_GCMYR`; S186WTS001 left out (outlet outside); S046WTS009-012 four rows of 9.45 km²; the CSV header, no sentinel in the CSV; the polygons (28 in EPSG:32617, 97 fields, Al-26 rates null); the DEM box (21 basins: -79.719167, 38.270833, -78.51, 39.729167 with a 0.02° pad); the attribution (every DOI, both study lines, DBVERNO v2.3(4)); lsdn (EBEL 12.8 ± 0.83); al26 (all 23 dropped, no rate); the small box (5 basins, 1 row); `max_features` 5 against the hits fixture and an ExceptionReport body both fail. Driver `tests/cpp/test_octopus_fetch.cpp` |
+| `smoke_fetch_erosion_rates_offline` | `smoke;cli;fetch` | the CLI on `wv_large_box`: the four outputs, 28 polygons, the exact CSV header and S186WTS046 row, no S186WTS001 and no `-9999` in the CSV, the gchron DOI and the S186 study line, `Read 28 OCTOPUS basins (23 with an outlet in the box)`, `samples written: 23`, EPSG:32617 |
+| `smoke_fetch_erosion_rates_offline_lsdn` | `smoke;cli;fetch` | `octopus_rate_scheme: lsdn`: the S186WTS046 row with EBEL 12.8, EBEL_EXT 0.83, EBEL_INT 0.29 |
+| `smoke_fetch_erosion_rates_offline_empty` | `smoke;cli;fetch` | an empty FeatureCollection: header-only CSV, the attribution, the warning, exit 0 |
+| `smoke_fetch_erosion_rates_{raster,vector}_bounds` | `smoke;cli;fetch` | `bounds_fname` as a GeoTIFF (`raster, EPSG:32632`) and as a polygon FlatGeobuf (`polygon, EPSG:4326`) |
+| `failure_fetch_erosion_rates_{no_bbox,too_many,bad_scheme,web_mercator,exception}` | `failure;cli;fetch` | no box; `max_features: 5` against the canned hits (28); `octopus_rate_scheme: cronus`; `output_epsg: 3857`; an ExceptionReport body |
+| `smoke_fetch_erosion_rates_help` | `smoke;cli;fetch` | `-h` lists `octopus_rate_scheme` |
+| `network_fetch_erosion_rates_cli` | `network;cli;fetch` | a live fetch of the wvbig box: S186WTS046 in the CSV, at least 5 polygons, the attribution; only with `LSDTT_ENABLE_NETWORK_TESTS` |
+| `unit_chi_erodibility_calibration` | `unit;chi` | 32 checks. York (below); the sample reader (unit factors exact, `m_per_myr` = `mm_per_kyr`, unknown and empty units listed, mass fluxes refused; a units column that agrees reads, one that disagrees throws naming row 2; missing rate / uncertainty columns throw listing the columns; no id column gives `row_<n>`; `bad_rate` and `missing_uncertainty` rows kept; km² to m²; a UTM GeoPackage point layer reads the same pixels and statuses as the CSV); `stream_power_erodibility_from_erosion_rate` (value, NaN cases, A0 = 1 vs 1e6 equal to 1e-10 relative for n = 1, 1.5, 2); the K units strings for m = 0.45 and 0.9; the shared property-table writer byte for byte and its case-insensitive name check; the two parameter groups (29 keys, defaults, groups, no n-list key); basin completeness at a grid edge (below). Driver `tests/cpp/test_erodibility_calibration.cpp` |
+| `unit_flow_snapping` | `unit;flow;snapping` | 13 new checks of `snap_pixel_to_reported_drainage_area_expanding_square` on a synthetic junction (below) |
+| `unit_raster_fetch` | `unit;fetch` | 2 new checks: `bounds_fname` pointing at `tests/data/bounds/bounds_raster_utm.tif` returns its WGS84 footprint |
+
+**York regression.** `fit_york_line` (York et al. 2004, r = 0) on Pearson's data with
+York's weights, transcribed from Cantrell (2008, ACP 8, 5477, Table 1): slope
+-0.480533407446, intercept 5.479910224033, analytic errors 0.057985009 /
+0.294970735, MSWD 1.483294149, corr(slope, intercept) -0.963088, 10 iterations. The
+published values (Cantrell 2008, Table 2, as printed to 5 significant figures) are
+slope -0.48053 ± 0.0706 and intercept 5.4799 ± 0.359; the printed errors equal the
+analytic ones times sqrt(MSWD) (0.0706203, 0.3592465), which `fit_york_line` returns
+as `se_*_scaled`. The test asserts the published values to their printed precision
+and the analytic results against scipy.odr (ODRPACK, scipy 1.18.0: slope
+-0.480533392649, intercept 5.479910153327, errors 0.0579850066 / 0.2949707257,
+reduced chi-square 1.4832941493) within 5e-8 (slope; ODRPACK's own convergence leaves
+1.5e-8), 2e-7 (intercept) and 1e-8 (errors, MSWD). York et al. (2004) itself
+(doi:10.1119/1.1632486) could not be read (HTTP 403), so its tabulated values are not
+asserted. Also: an exact line y = 2 + 1.5x gives the slope and intercept to 1e-12
+and MSWD < 1e-20; sigma_x = 0 equals weighted least squares to 1e-10; fewer than 3
+points or a zero x range give `converged = false` without an exception.
+
+**Area-matched snapping** (`unit_flow_snapping`). A 30 × 21 grid at 10 m, "oooo":
+a trunk running south down column 10 and a tributary running east along row 12.
+Measured contributing areas: tributary (12, 9) 80 px, trunk (13, 10) below the
+confluence 310 px, trunk (11, 10) above it 207 px, (12, 10) 218 px. From (13, 9) with a
+20 px channel threshold and R = 3: expanding-square snapping takes the trunk (13, 10);
+`reported_area` with the tributary's area takes (12, 9). A reported area of 50 × the
+trunk's takes the cell closest in area, (16, 10), still with success and a ratio
+outside the tolerance. No channel cell within R gives
+`threshold_not_found_in_search_window`; off the grid, `input_out_of_bounds`; equally
+near in-tolerance cells go to the smaller |ln ratio| (from (11, 9): 150 px picks the
+trunk (11, 10), 110 px the tributary (12, 9)); a tolerance <= 1, a non-positive or NaN
+area and a zero threshold throw; the dispatcher overload passes `reported_area`
+through, and the old overload refuses it.
+
+**Basin completeness at a grid edge.** A 12 × 9 plane falling south, "oooo": the basin
+of (8, 4) is 9 pixels including the north-edge cell (0, 4), and
+`check_basin_completeness()` is false; the basin of (8, 6) below a 2-pixel nodata block
+(5 pixels) is false too.
+
+**The seams shared with relative K.** `stream_power_erodibility_from_erosion_rate`,
+`write_lithology_erodibility_property_table` (the relative-K table is a wrapper over
+it) and the bootstrap stream registry (k_sn summary: `seed_seq{seed, round(m/n·1e4)}`;
+relative K: tag 1; calibration: tag 2) moved into
+`lsdtt_lithology_relative_erodibility_cpu`. Every output of the 6 `smoke_chi_lithology_*`
+runs (76 files) and of the three West Virginia relative-K runs (`wvrk_lithprimary`,
+`wvrk_lithprimary_E`, `wvrk_name`: 44 files, two property tables) is byte-identical
+before and after, and so is their stdout.
+
+**`bounds_fname` as a raster.** `bounds_from_vector_file` falls back to a raster when
+the file opens as no vector layer: the WGS84 envelope of its footprint, every edge
+densified (64 steps). The fixture GeoTIFF's corners transformed by `gdaltransform`
+(PROJ, GDAL 3.4.1) give west 10.3352468907, south 46.4553477705, east 10.4649546110,
+north 46.5446520523; the test asserts them to 1e-6. The helper now registers the GDAL
+drivers itself: before, `bounds_fname` failed with "could not open ... as a vector
+dataset" in `lsdtt-fetch-lithology` (which resolves its bounds before any other GDAL
+call) even for a vector file.
+
+**Live fetches (2026-10-19, laptop, WSL2; wall times are dominated by the server and the network, and laptop timings are thermally limited, so they are not benchmarks).** wvbig box (-79.80/-79.05/38.85/39.15): 5
+basins, 1 with its outlet in the box (S186WTS046, 12.88 ± 2.62 mm/kyr, 20.14 km²), 4
+requests, 825,209 bytes, 3.6 s wall. Large box (-80.5/-78.5/38.3/39.7): 28 basins, 23
+rows (`EBE_MMKYR` 3.74 to 24.08 mm/kyr, `AREA` 1.06 to 3310.36 km²), 4 requests,
+1,028,013 bytes, 3.3 s; its CSV holds the same rows as the offline read of the
+committed fixture. The `network_fetch_erosion_rates_cli` command run by hand against
+the build: pass, 3.3 s.
 
 ## 9. Credentials in tests
 
@@ -8117,6 +8279,26 @@ p 0.34 / 0.032; all orders V 0.082 / 0.121, p_iid 0.003 / < 0.0001, permutation 
 junction pixel): plateau 63.4 [60.9, 67.7] (n 451), Valley and Ridge 60.8 [58.8, 65.3]
 (n 502); order 3: 77.4 [71.4, 80.9] (124) and 66.9 [59.5, 73.1] (138), KS D 0.178,
 p_iid 0.027, permutation p 0.060.
+
+### 10s.6 Angles on half-open domains in the CSVs (2026-10-19)
+
+The writers print 10 significant digits. A link bearing of 359.99999999999579 (in
+[0, 360), as `_channel_link_bearings.csv` carries it) printed as `360` in
+`_channel_bearing_group_membership.csv`, and its axial value as `180`, outside the
+documented [0, 360) and [0, 180). `format_channel_bearing_angle(angle, period)`
+(`lsdtt_channel_bearing_statistics_cpu`) now writes a value that rounds to the period
+as `0`; it is used for the membership bearing and axial bearing, the summary circular
+means (count and length) and the comparison `optimal_rotation_deg`. Rose bin edges
+are unchanged (an upper edge of 360 is correct there).
+`unit_channel_bearing_statistics_summaries` checks the formatter (359.99999999999579
+and 179.99999999999579 give `0`; 359.9999, 179.99999, 0 and NaN unchanged) and the
+membership writer row for row.
+
+Measured: re-running `wvbig_cna_order` and `wvnull_cna_order` (the parameter files of
+10s.5) changed only `_channel_bearing_group_membership.csv`: 2 rows on wvbig_order
+(links 1962-1910 and 1986-1962) and 3 on wvnull_order (113-51, 3619-3575, 4206-4163),
+each `360,180` to `0,0`. Every other output of both runs, the summaries and comparisons
+included, is byte-identical.
 
 ## 11. Adding a test
 

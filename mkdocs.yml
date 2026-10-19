@@ -78,6 +78,7 @@ nav:
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
+      - Fetch erosion rates (OCTOPUS): cli_reference/cli_reference_lsdtt_fetch_erosion_rates.md
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md

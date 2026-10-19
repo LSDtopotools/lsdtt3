@@ -636,7 +636,7 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
 {
     string_default_map["bounds_fname"] = "";
     help_map["bounds_fname"] = {"string","",
-        "Vector file defining the area, instead of west/south/east/north.",
+        "Vector file (or raster) defining the area, instead of west/south/east/north.",
         "FlatGeobuf (.fgb), GeoPackage (.gpkg) or any other OGR-readable "
         "format. The layer must contain either one or more polygons (the "
         "envelope of all of them is used), or exactly two points marking "
@@ -644,8 +644,10 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
         "lower-left/upper-right and lower-right/upper-left give the same box, "
         "so the orientation is worked out automatically. If the layer is in a "
         "projected CRS such as UTM it is reprojected to WGS84 for you, so a "
-        "box drawn in a GIS can be used directly. Set this or the four edge "
-        "parameters, not both.",
+        "box drawn in a GIS can be used directly. A raster with a "
+        "georeference (e.g. an existing DEM GeoTIFF) works too: its footprint "
+        "is reprojected to WGS84. Set this or the four edge parameters, not "
+        "both.",
         "Bounding box", "param", ""};
 
     string_default_map["bounds_path"] = "";
@@ -863,6 +865,161 @@ void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_defa
         "values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A "
         "fixed seed reproduces the intervals. Same default as bootstrap_random_seed.",
         group, "param", "lithology_fname"};
+}
+
+void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
+                                           std::map<std::string, std::string>& string_default_map,
+                                           lsdtt_help_registry&                help_map,
+                                           const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Erosion-rate samples");
+    const std::string dep = "erosion_rate_fname";
+    auto str = [&](const char* key, const char* def, const char* text, const char* guidance,
+                   const char* depends) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        string_default_map[k] = def;
+        help_map[k] = {"string", def, text, guidance, group, "param", depends};
+    };
+    auto flt = [&](const char* key, float def, const char* def_text, const char* text,
+                   const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        float_default_map[k] = def;
+        help_map[k] = {"float", def_text, text, guidance, group, "param", dep};
+    };
+
+    str("erosion_rate_fname", "",
+        "Basin-averaged erosion-rate samples: a CSV with latitude/longitude (EPSG:4326) or an "
+        "OGR point layer in any CRS. Empty = off.",
+        "One row per sample: the basin outlet, the erosion rate and its 1-sigma uncertainty, "
+        "optionally the reported drainage area. lsdtt-fetch-erosion-rates writes this format "
+        "from OCTOPUS.",
+        "");
+    str("erosion_rate_layer_name", "", "Layer of a vector erosion-rate file.",
+        "Empty takes the only (or first) layer. Not used for CSV.", dep.c_str());
+    str("erosion_rate_sample_id_column", "sample_id", "Column holding the sample identifier.",
+        "When the column is missing or a value is blank the sample is called row_<n> (n counts "
+        "data rows from 1).", dep.c_str());
+    str("erosion_rate_latitude_column", "latitude", "CSV column holding the outlet latitude.",
+        "WGS84 decimal degrees. Not used for vector input.", dep.c_str());
+    str("erosion_rate_longitude_column", "longitude", "CSV column holding the outlet longitude.",
+        "WGS84 decimal degrees. Not used for vector input.", dep.c_str());
+    str("erosion_rate_column", "erosion_rate", "Column holding the basin-averaged erosion rate.",
+        "In the units of erosion_rate_units. A missing column is an error.", dep.c_str());
+    str("erosion_rate_uncertainty_column", "erosion_rate_uncertainty",
+        "Column holding the 1-sigma uncertainty of the erosion rate.",
+        "Same units as the rate. A missing column is an error; a blank or non-positive value "
+        "marks that sample missing_uncertainty.", dep.c_str());
+    str("erosion_rate_units", "",
+        "Units of the erosion rate and its uncertainty (required, no default): mm_per_kyr, "
+        "m_per_myr, cm_per_kyr, mm_per_yr or m_per_yr.",
+        "mm_per_kyr equals m_per_myr (1e-6 m/yr). Mass fluxes (g cm^-2 yr^-1) are refused: "
+        "divide by the rock density first. When the file has an erosion_rate_units column every "
+        "row must agree with this parameter.", dep.c_str());
+    str("erosion_rate_reported_area_column", "reported_area_km2",
+        "Column holding each sample's reported drainage area in km^2.",
+        "Used for area-matched snapping and the DEM-vs-reported area check. Empty, or a column "
+        "not in the file, skips both.", dep.c_str());
+    str("erosion_rate_snapping_method", "reported_area",
+        "How a sample is snapped to the channel network: reported_area, expanding_square, "
+        "downstream or none.",
+        "reported_area takes the nearest channel cell whose drainage area is within "
+        "erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in "
+        "area. Without a reported area it falls back to expanding_square (nearest channel "
+        "cell).", dep.c_str());
+    flt("erosion_rate_snap_max_distance_metres", 300.0f, "300",
+        "Search radius for snapping a sample, in metres.",
+        "Converted to pixels with the cell size and rounded up, so a parameter file stays valid "
+        "across resolutions.");
+    flt("erosion_rate_area_mismatch_tolerance", 1.25f, "1.25",
+        "Ratio tolerance (> 1) between the DEM drainage area and the reported area.",
+        "A basin with A_dem / A_reported outside [1/tol, tol] is area_mismatch. Also the "
+        "matching tolerance of reported_area snapping.");
+    str("erosion_rate_area_mismatch_action", "exclude",
+        "What an area_mismatch basin does: exclude (written, kept out of every fit) or flag "
+        "(kept in the fits and flagged).", "", dep.c_str());
+    str("erosion_rate_nested_basins", "keep",
+        "Nested sample basins: keep, outermost or innermost.",
+        "keep uses all basins and resamples nesting groups in the bootstrap; outermost keeps "
+        "only basins nested in no other sample; innermost only basins containing no other "
+        "sample.", dep.c_str());
+}
+
+void declare_erodibility_calibration_parameters(std::map<std::string, bool>&        bool_default_map,
+                                                std::map<std::string, int>&         int_default_map,
+                                                std::map<std::string, float>&       float_default_map,
+                                                std::map<std::string, std::string>& string_default_map,
+                                                lsdtt_help_registry&                help_map,
+                                                const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Erodibility calibration");
+    const std::string dep = "erosion_rate_fname";
+    auto str = [&](const char* key, const char* def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        string_default_map[k] = def;
+        help_map[k] = {"string", def, text, guidance, group, "param", dep};
+    };
+    auto integer = [&](const char* key, int def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        int_default_map[k] = def;
+        help_map[k] = {"int", std::to_string(def), text, guidance, group, "param", dep};
+    };
+    auto flt = [&](const char* key, float def, const char* def_text, const char* text,
+                   const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        float_default_map[k] = def;
+        help_map[k] = {"float", def_text, text, guidance, group, "param", dep};
+    };
+    auto flag = [&](const char* key, bool def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        bool_default_map[k] = def;
+        help_map[k] = {"bool", def ? "true" : "false", text, guidance, group, "param", dep};
+    };
+
+    str("erosion_rate_ksn_statistic", "reach_median",
+        "Basin k_sn that drives the calibration: reach_median, chi_z_slope or segment_median.",
+        "reach_median is the median k_sn of the basin's qualifying reaches (split at "
+        "confluences only), with a bootstrap interval. The others are written as diagnostics "
+        "either way.");
+    integer("erosion_rate_min_reach_pixels", 10,
+            "Minimum channel nodes for a basin reach to qualify.",
+            "Reaches run between confluences, sources and the outlet.");
+    integer("erosion_rate_min_reaches_per_basin", 5,
+            "Minimum qualifying reaches for a basin to enter the calibration.",
+            "Basins with fewer are written with status too_few_reaches and enter no fit.");
+    flag("erosion_rate_fit_n", true, "Fit n and K together (York regression of ln E on ln k_sn).",
+         "Attempted only with enough independent basin groups and a wide enough k_sn range; "
+         "K at each fixed n is always written.");
+    integer("erosion_rate_min_groups_for_n_fit", 8,
+            "Minimum independent basin groups for fitting n.",
+            "Nested basins form one group. Below this only K at fixed n is reported.");
+    flt("erosion_rate_min_ksn_range_ratio", 2.0f, "2.0",
+        "Minimum max/min k_sn ratio over the used basins for fitting n.", "");
+    flt("erosion_rate_mono_lithology_min_area_fraction", 0.8f, "0.8",
+        "Minimum area fraction of a basin's dominant unit for the basin to count as "
+        "mono-lithologic.", "Needs lithology_fname.");
+    integer("erosion_rate_min_unit_reaches_per_basin", 3,
+            "Minimum qualifying lithologic reaches of a unit in a basin for the unit-in-basin "
+            "estimate.", "Needs lithology_fname.");
+    str("erosion_rate_unit_k_methods", "mono,unit_in_basin",
+        "Per-unit K estimators, comma separated: mono, unit_in_basin.", "Needs lithology_fname.");
+    str("erosion_rate_property_table_method", "unit_in_basin",
+        "Per-unit estimator written to the draft lithology property table.",
+        "Needs lithology_fname.");
+    flt("erosion_rate_systematic_relative_uncertainty", 0.0f, "0",
+        "Relative systematic uncertainty of every erosion rate (e.g. the production-rate "
+        "term), added to the K interval in quadrature.", "0 adds nothing.");
+    integer("erosion_rate_bootstrap_replicates", 1000,
+            "Bootstrap replicates of the calibration intervals.", "0 = no intervals.");
+    integer("erosion_rate_bootstrap_random_seed", 5489,
+            "Seed of the calibration bootstrap.",
+            "One stream per m/n, separate from the k_sn summary and relative-erodibility "
+            "streams.");
+    flag("write_erodibility_calibration_basin_polygons", true,
+         "Write the sample basins as polygons (write_vector_format).",
+         "For checking the snapping against the published basins in a GIS.");
+    flag("write_erodibility_calibration_property_table", true,
+         "Write a draft lithology property table from the per-unit K.",
+         "Needs lithology_fname.");
 }
 
 } // namespace lsdtt

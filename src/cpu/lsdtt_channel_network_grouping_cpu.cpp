@@ -567,7 +567,8 @@ void write_channel_bearing_group_membership_csv(
 
         os << r.upstream_junction << ',' << r.downstream_junction << ','
            << r.stream_order << ',' << format_double(r.total_length_metres) << ','
-           << format_double(r.bearing_deg) << ',' << format_double(axial_of(r.bearing_deg)) << ','
+           << format_channel_bearing_angle(r.bearing_deg, 360.0) << ','
+           << format_channel_bearing_angle(axial_of(r.bearing_deg), 180.0) << ','
            << csv_field(g >= 0 ? groups.name_of(g) : std::string()) << ',' << csv_field(stratum) << ','
            << basin_of_record[i] << ',' << block_of_record[i] << ','
            << csv_field(region_value) << ',' << format_double(purity) << '\n';

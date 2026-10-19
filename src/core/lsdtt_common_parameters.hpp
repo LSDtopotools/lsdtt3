@@ -413,4 +413,41 @@ void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_defa
                                             lsdtt_help_registry&        help_map,
                                             const std::string&          prefix = "");
 
+// -----------------------------------------------------------------------------
+// Erosion-rate samples and erodibility calibration (stream-power K from
+// basin-averaged erosion rates; lsdtt_erodibility_calibration_cpu)
+//
+// declare_erosion_rate_input_parameters (group "Erosion-rate samples"):
+//   erosion_rate_fname, erosion_rate_layer_name,
+//   erosion_rate_sample_id_column, erosion_rate_latitude_column,
+//   erosion_rate_longitude_column, erosion_rate_column,
+//   erosion_rate_uncertainty_column, erosion_rate_units (required, no
+//   default), erosion_rate_reported_area_column, erosion_rate_snapping_method,
+//   erosion_rate_snap_max_distance_metres, erosion_rate_area_mismatch_tolerance,
+//   erosion_rate_area_mismatch_action, erosion_rate_nested_basins.
+// declare_erodibility_calibration_parameters (group "Erodibility calibration"):
+//   erosion_rate_ksn_statistic, erosion_rate_min_reach_pixels,
+//   erosion_rate_min_reaches_per_basin, erosion_rate_fit_n,
+//   erosion_rate_min_groups_for_n_fit, erosion_rate_min_ksn_range_ratio,
+//   erosion_rate_mono_lithology_min_area_fraction,
+//   erosion_rate_min_unit_reaches_per_basin, erosion_rate_unit_k_methods,
+//   erosion_rate_property_table_method,
+//   erosion_rate_systematic_relative_uncertainty,
+//   erosion_rate_bootstrap_replicates, erosion_rate_bootstrap_random_seed,
+//   write_erodibility_calibration_basin_polygons,
+//   write_erodibility_calibration_property_table.
+// Every key is effective only with erosion_rate_fname. The list of n values
+// is not declared here.
+// -----------------------------------------------------------------------------
+void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
+                                           std::map<std::string, std::string>& string_default_map,
+                                           lsdtt_help_registry&                help_map,
+                                           const std::string&                  prefix = "");
+void declare_erodibility_calibration_parameters(std::map<std::string, bool>&        bool_default_map,
+                                                std::map<std::string, int>&         int_default_map,
+                                                std::map<std::string, float>&       float_default_map,
+                                                std::map<std::string, std::string>& string_default_map,
+                                                lsdtt_help_registry&                help_map,
+                                                const std::string&                  prefix = "");
+
 } // namespace lsdtt

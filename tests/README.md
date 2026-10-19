@@ -283,6 +283,23 @@ median k_sn against 4. The same check mode is exercised inside
 `smoke_chi_lithology_ksn` and `smoke_chi_lithology_multi_mn` (m/n 0.4 and 0.45) byte
 for byte, with `tests/cmake/compare_output_sets.cmake`.
 
+Relative erodibility (`write_relative_erodibility`) runs on the same fixture.
+`smoke_chi_lithology_relative_erodibility` is `chi_lithology_ksn.param.in` with relative
+erodibility on (n = 1 and 2, E = U = 2e-4 m/yr); its n = 2 rows apply n = 2 to the
+n = 1 landscape and are checked for format only (the n = 2 known answer is in the
+driver). `rigorous_chi_lithology_relative_erodibility_observation_only` compares every
+k_sn-by-lithology output of that run with `smoke_chi_lithology_ksn` byte for byte.
+`rigorous_chi_lithology_relative_erodibility_{ratio,reference}` run the driver's
+`--check-relative-erodibility` mode on its CSV (shale K/K_ref against 4 and K against
+4e-5; sandstone, the reference, against 1 and 1e-5).
+`smoke_chi_lithology_relative_erodibility_k_raster` runs `lsdtt-lithology-erodibility`
+on the n = 1 draft property table that run wrote (its parameter file reaches it through
+`../smoke_chi_lithology_relative_erodibility/out/` relative to the fixture directory),
+with the fixture's DEM and map, and checks the two K values in the raster.
+`rigorous_chi_lithology_relative_erodibility_per_mn` compares the 0.45 relative-erodibility
+outputs of the single-m/n run and `smoke_chi_lithology_relative_erodibility_multi_mn`
+(m/n 0.4 and 0.45) byte for byte.
+
 ### Macrostrat lithology fetch
 
 `unit_fetch_lithology` and `smoke_fetch_lithology_offline` read one committed,
@@ -291,6 +308,24 @@ synthetic Mapbox Vector Tile, `data/macrostrat_tiles/10/540/364.pbf`, through
 lists its units and the `ogr2ogr` command that regenerates it from
 `units_source.geojson`. `network_fetch_lithology_cli` downloads from Macrostrat
 and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`.
+
+### OCTOPUS erosion-rate fetch and the erodibility calibration
+
+`unit_fetch_erosion_rates` (driver `tests/cpp/test_octopus_fetch.cpp`) and the
+`smoke_` / `failure_fetch_erosion_rates_*` tests read committed WFS responses
+from `data/octopus_erosion_rates/` through `octopus_response_dir`, so they need
+no network; that directory's README gives the queries, the date and the
+CC BY 4.0 citations (the basin geometries are bounding rectangles, not the real
+polygons). `network_fetch_erosion_rates_cli` downloads the wvbig box from OCTOPUS
+and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`; it asserts minima,
+because OCTOPUS grows. `unit_chi_erodibility_calibration`
+(`tests/cpp/test_erodibility_calibration.cpp`) covers the York regression, the
+erosion-rate sample reader and its units, the K formula and property-table
+writer shared with relative K, and the declared parameter groups. All of these
+also carry the label `erodibility_calibration`, so `ctest -L
+erodibility_calibration -LE heavy` runs the thread. `data/bounds/bounds_raster_utm.tif`
+is a 10 x 10 GeoTIFF in UTM 32N for `bounds_fname` given as a raster
+(`unit_raster_fetch`, `smoke_fetch_erosion_rates_raster_bounds`).
 
 ### Channel-link bearing and junction-angle statistics
 

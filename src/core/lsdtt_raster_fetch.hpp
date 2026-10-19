@@ -249,7 +249,7 @@ struct lsdtt_bounds_from_vector_result
     double north = 0.0;
 
     std::string layer_name;      // layer actually used
-    std::string geometry_kind;   // "polygon" or "points"
+    std::string geometry_kind;   // "polygon", "points" or "raster"
     int         n_features = 0;
     std::string source_crs;      // description of the input CRS, for reporting
 
@@ -266,6 +266,11 @@ struct lsdtt_bounds_from_vector_result
 //
 //   - one or more polygons  -> the envelope of all of them
 //   - exactly two points    -> the box they span
+//
+//   - a raster (e.g. the DEM itself, a GeoTIFF) -> the WGS84 envelope of its
+//     footprint, every edge densified before reprojection; geometry_kind is
+//     "raster". Tried only when the file opens as no vector layer, so every
+//     vector input behaves as before.
 //
 // Two points define a rectangle by its diagonal. Note that it does not matter
 // which diagonal: lower-left/upper-right and lower-right/upper-left produce the

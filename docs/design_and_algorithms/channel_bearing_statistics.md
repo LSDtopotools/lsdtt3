@@ -18,6 +18,11 @@ A bearing is an angle theta in degrees with a period of 360 (directional) or 180
 (axial). Each value becomes a unit vector, and the summaries are taken on those
 vectors.
 
+Every periodic angle the CSVs carry (link bearings and axial bearings, circular means,
+the optimal rotation) lies on the half-open domain [0, 360) or [0, 180). The writers
+print 10 significant digits, at which a value just below the period (for example
+359.99999999999579) would round to the period; such a value is written as 0.
+
 - **Axial doubling.** For the axial form, each angle is doubled before the vectors are
   formed, so theta and theta + 180 map to the same point. The mean direction is then
   halved, which puts it in [0, 180). A four-fold D8 pattern (0, 45, 90, 135 degrees)

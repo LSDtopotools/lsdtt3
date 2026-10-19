@@ -24,6 +24,7 @@ list, and the same content is on this site under
 | Tool | What it does |
 |---|---|
 | `lsdtt-fetch-raster` | Fetch a DEM for a bounding box and write it as a raster. Keyless COP30 and Planetary Computer sources; OpenTopography needs a key. |
+| `lsdtt-fetch-erosion-rates` | Fetch basin-averaged cosmogenic erosion rates from OCTOPUS (keyless) for a bounding box: an erosion-rate sample CSV, the basin polygons, a suggested DEM box and the CC BY 4.0 attribution. |
 | `lsdtt-raster-preprocessing` | The preparation pipeline: projection enforcement and reprojection, masking, nodata filling, breaching, pit filling, hillshade. |
 | `lsdtt-raster-calculator` | Two-raster algebra. |
 | `lsdtt-stream-burning` | Conditions a DEM using a supplied vector channel network. |

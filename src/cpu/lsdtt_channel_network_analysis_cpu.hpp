@@ -300,8 +300,10 @@ struct lsdtt_junction_angle_record
     double donor_1_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
     double donor_2_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
 
-    // Bending angle: signed and absolute angular offset between the inward
-    // receiver direction and the bisector of the donor opening angle.
+    // Bending angle (NOT Strong & Mudd's beta): the direction of the midpoint
+    // of the donor opening sector, measured from the inward receiver direction,
+    // bending_angle_signed = wrap(180 + (beta_1 - beta_2) / 2). A symmetric
+    // junction (beta_1 = beta_2) therefore reads +/-180. abs is |signed|.
     double bending_angle_signed_rad = std::numeric_limits<double>::quiet_NaN();
     double bending_angle_abs_rad    = std::numeric_limits<double>::quiet_NaN();
 
@@ -377,8 +379,12 @@ struct lsdtt_junction_angle_record
 //   bending_angle_abs
 //
 // These are NEW derived diagnostics and are not part of the original
-// alpha / beta_1 / beta_2 set. They describe the offset between the inward
-// receiver direction and the bisector of the donor opening angle.
+// alpha / beta_1 / beta_2 set, and bending_angle is NOT Strong & Mudd's beta.
+// It is the direction of the midpoint of the donor opening sector, measured
+// from the inward receiver direction:
+//   bending_angle_signed = wrap(180 + (beta_1 - beta_2) / 2)
+// so a symmetric junction (beta_1 = beta_2) reads +/-180. The columns are
+// written unchanged and are kept out of the statistics.
 //
 // donor_1 and donor_2 are stable implementation labels only; they should not
 // be interpreted as left/right tributaries unless an additional geometric

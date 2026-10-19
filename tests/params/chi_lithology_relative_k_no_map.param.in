@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: lithks_steady_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lithkrknomap
+
+# Relative erodibility comes from k_sn by lithologic unit: refused without a map.
+raster_is_filled: true
+boundary_conditions: oooo
+threshold_contributing_pixels: 50
+m_over_n: 0.45
+fit_chi_networks: true
+write_relative_erodibility: true

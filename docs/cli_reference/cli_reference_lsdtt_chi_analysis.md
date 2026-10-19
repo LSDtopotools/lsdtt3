@@ -416,6 +416,139 @@ siltstone 55.99, shale 36.23, limestone 44.31 and alluvium 7.02 (the buffer
 changes limestone most). The basin table, the histogram and the node table are
 in the same output set.
 
+## Relative erodibility from k_sn by lithologic unit
+
+With `write_relative_erodibility: true` (it needs `lithology_fname` and
+`write_ksn_lithology_summary: true`) the CLI turns each unit's reach-median k_sn into
+an erodibility relative to a reference unit, and, given an erosion rate, into an
+absolute erodibility and a property table for `lsdtt-lithology-erodibility`.
+
+### The relation
+
+With the stream power law E = K A^m S^n, uniform erosion (E the same everywhere) and
+steady state, the channel steepness of unit i is k_sn,i = (E / K_i)^(1/n), with
+theta = m/n the m/n of the chi run. So
+
+    K_i / K_ref = (k_sn,ref / k_sn,i)^n
+
+for any reference unit, and with a known E (m/yr)
+
+    K_i = E / (A0^m k_sn,i^n),   m = (m/n) n,
+
+which is E / k_sn,i^n with `chi_A0: 1`. k_sn,i is the unit's `reach_k_sn_median`
+(the median of `k_sn_ols` over its qualifying lithologic reaches). K is in the
+map-area convention: E [m/yr] = K A^m S^n with A in m^2 and S dimensionless gives K
+in m^(1 - 2m) yr^-1, for any n. The CSV writes this as text in `K_units`, for example
+`m^(0.1) yr^-1` for m = 0.45 and `m^(-0.8) yr^-1` for m = 0.9.
+
+`relative_erodibility_n_values` takes a list (default `1`). Each n gets its own rows,
+with m = (m/n) n.
+
+### The reference unit
+
+`relative_erodibility_reference_unit` names the reference by its `lith_name`. Left
+empty, the reference is the unit with the most qualifying reaches; ties go to the
+larger channel length, then to the lower code. The run prints which unit was chosen
+and why. `unmapped` and `all` are never a reference and get no row. A name that is
+not a unit of the map stops the run, and the message lists the units.
+
+### The interval
+
+The ratio is resampled; it is never formed from the ends of two separate intervals.
+Each bootstrap replicate resamples the qualifying reaches of every unit and of the
+reference, takes each one's replicate median, and forms the ratio (and K) inside that
+replicate. The 95 % interval is the 2.5 and 97.5 % quantiles of the replicate values.
+Every n uses the same replicates.
+
+- `lithology_bootstrap_cluster: reach` draws each unit's reaches independently (a
+  reach belongs to one unit, so there is nothing to draw jointly). The reference row
+  is 1 with the interval [1, 1].
+- `lithology_bootstrap_cluster: basin` draws basins once per replicate, from the basins
+  that hold a qualifying reach of any unit, and each unit pools its reaches from the
+  drawn basins: a basin draw brings the reference's and unit i's reaches together. A
+  replicate in which a unit drew no reach is left out for that unit, and `n_bootstrap`
+  gives the number of replicates used.
+- `lithology_bootstrap_replicates` and `lithology_bootstrap_random_seed` apply. The
+  random stream is per m/n (so an interval does not depend on the other m/n values of
+  the run) and separate from the k_sn summary's (so switching relative erodibility on
+  leaves every k_sn output unchanged).
+- A unit with fewer than 5 qualifying reaches has `low_sample = 1`, its point values
+  and NaN intervals. If the reference has fewer than 5, every ratio interval is NaN.
+
+The intervals carry only the sampling spread of the reaches. They do not include the
+uncertainty of the assumptions below, or of n itself.
+
+### Outputs
+
+| File | Contents |
+|---|---|
+| `<write_fname>_chi_relative_erodibility_by_lithology_mn_*.csv` | One row per unit and n: `lith_code, lith_name, m_over_n, A_0, n, m, reference_unit, n_reaches_qualifying, reach_k_sn_median, k_ratio, k_ratio_ci_low, k_ratio_ci_high, n_bootstrap, bootstrap_cluster, low_sample`, and with an erosion rate `erosion_rate_m_per_yr, K_abs, K_abs_ci_low, K_abs_ci_high, K_units`. `k_ratio` is K_i / K_ref. |
+| `<write_fname>_chi_relative_erodibility_property_table_mn_*_n_*.txt` | With `relative_erodibility_erosion_rate_m_per_yr` > 0: one draft property table per n (`n_1`, `n_2`, `n_1p5`). |
+
+The property table is in the format `lsdtt-lithology-erodibility` reads. For the
+West Virginia run below (n = 1):
+
+```
+# lsdtt lithology property table v1
+# erodibility_convention: map_area
+# m_exponent: 0.45
+# n_exponent: 1
+# provenance: draft from lsdtt-chi-analysis relative erodibility; DEM wvfront_DEM.tif; lithology map wvfront_macrostrat_units.fgb (field lith_primary) with crosswalk wvks_crosswalk_lith_primary.csv; m/n 0.45, A0 1 m^2, n 1, m 0.45; erosion rate 3e-05 m/yr (given, applied everywhere); reference unit sandstone; K = E / (A0^m k_sn^n) from each unit's reach-median k_sn; assumes uniform erosion and steady state
+# K units: m^(0.1) yr^-1 (map area in m^2)
+# bootstrap: reach clusters; the interval in each reference column is the 95 % percentile interval of K
+code,name,erodibility,reference
+10,sandstone,4.59121057e-07,"reach median k_sn 65.342244 from 190 qualifying reaches; K/K_ref 1; K 95 % interval [4.3085158e-07, 4.9655754e-07]"
+...
+```
+
+Give it to `lsdtt-lithology-erodibility` as `lithology_property_table_fname`, with the
+same `lithology_fname`, `lithology_field_name` and `lithology_crosswalk_fname` as the
+chi run, so the codes and names match. A unit with no qualifying reach gets no row; it
+is listed in a `# not_estimated` line, and `lsdtt-lithology-erodibility` refuses a map
+that contains it until a row is added by hand.
+
+### Conditions
+
+The CLI prints these once per run. The values hold only when:
+
+- the erosion rate is the same everywhere (uniform uplift and base-level fall);
+- the channels are at steady state: a transient knickzone puts its k_sn on whichever
+  unit it is crossing;
+- each unit's k_sn is its own: reaches next to a contact can carry the k_sn of the unit
+  across it (`lithology_contact_buffer_metres` sets nodes near contacts aside);
+- the unit has enough qualifying reaches (`low_sample`).
+
+A ratio raised to the power n also raises the relative error of the medians by about
+n: on the two-unit known-answer test the ratio is within 0.44 % for n = 1 and 0.89 %
+for n = 2 (developer testing notes).
+
+### Example: West Virginia
+
+The run above with these lines added (an E of 3e-5 m/yr, 30 m/Myr, is an
+illustrative uniform rate, not a measurement; basin-average erosion rates of order
+10-30 m/Myr are reported for the Appalachians):
+
+```
+write_relative_erodibility: true
+relative_erodibility_n_values: 1,2
+relative_erodibility_erosion_rate_m_per_yr: 3e-5
+```
+
+Reference sandstone (190 qualifying reaches, the most), 1000 replicates by reach,
+seed 5489:
+
+| Unit | Qualifying reaches | K/K_ref, n = 1 | K/K_ref, n = 2 | K (n = 1), m^(0.1) yr^-1 |
+|---|---|---|---|---|
+| sandstone | 190 | 1 [1, 1] | 1 [1, 1] | 4.591e-07 [4.309e-07, 4.966e-07] |
+| siltstone | 44 | 1.208 [1.032, 1.488] | 1.459 [1.065, 2.214] | 5.546e-07 [4.965e-07, 6.536e-07] |
+| shale | 177 | 1.588 [1.303, 1.864] | 2.523 [1.698, 3.476] | 7.292e-07 [6.126e-07, 8.370e-07] |
+| limestone | 113 | 1.130 [0.9755, 1.281] | 1.276 [0.9516, 1.642] | 5.186e-07 [4.646e-07, 5.850e-07] |
+| alluvium | 7 | 7.573 [4.196, 14.65] | 57.35 [17.61, 214.5] | 3.477e-06 [2.043e-06, 6.445e-06] |
+
+All the k_sn-by-lithology outputs of this run are byte-identical to the run without
+relative erodibility. The K values scale with E: halving E halves every K and leaves
+every ratio unchanged.
+
 ## Outputs
 
 | Parameter | Type | Default | Description |
@@ -616,5 +749,14 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `lithology_bootstrap_cluster` | `string` | `reach` | `param` | `lithology_fname` | Resampling unit of the bootstrap interval of the per-unit median k_sn: reach or basin. | reach resamples lithologic reaches within a unit; basin resamples whole basins. Reaches on one trunk channel are correlated, so the reach interval is a lower bound on the uncertainty. |
 | `lithology_bootstrap_replicates` | `int` | `1000` | `param` | `lithology_fname` | Number of bootstrap replicates for the per-unit confidence intervals. | 0 = no bootstrap; the interval columns are written as NaN. |
 | `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
+
+### Relative erodibility
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_relative_erodibility` | `bool` | `false` | `switch` | `write_ksn_lithology_summary` | Write the erodibility of each lithologic unit relative to a reference unit, from the units' reach-median k_sn. | Needs lithology_fname and write_ksn_lithology_summary: true. Under uniform erosion at steady state with the stream power law E = K A^m S^n (m = (m/n) n), K_i / K_ref = (k_sn,ref / k_sn,i)^n, from each unit's reach-median k_sn (reach_k_sn_median of _chi_ksn_by_lithology_mn_*.csv). The 95 % interval resamples the ratio: each bootstrap replicate resamples the reaches of the unit and of the reference (lithology_bootstrap_cluster: reach draws each unit's reaches independently; basin draws whole basins, bringing both units' reaches together) and forms the ratio in that replicate; the interval is the 2.5 and 97.5 % quantiles of the replicate ratios. lithology_bootstrap_replicates and lithology_bootstrap_random_seed apply; the stream is per m/n and separate from the k_sn summary's. Units with fewer than 5 qualifying reaches get low_sample = 1 and NaN intervals. Unmapped and all get no row. Output per m/n: &lt;write_fname&gt;_chi_relative_erodibility_by_lithology_mn_*.csv, one row per unit and n: lith_code, lith_name, m_over_n, A_0, n, m, reference_unit, n_reaches_qualifying, reach_k_sn_median, k_ratio (K_i / K_ref), k_ratio_ci_low, k_ratio_ci_high, n_bootstrap, bootstrap_cluster, low_sample, and with an erosion rate erosion_rate_m_per_yr, K_abs, K_abs_ci_low, K_abs_ci_high, K_units. The ratios hold only where the erosion rate is uniform and the channels are at steady state; reaches near a contact mix the k_sn of two units, and a transient knickzone puts its k_sn on whichever unit it crosses. |
+| `relative_erodibility_reference_unit` | `string` | - | `param` | `write_relative_erodibility` | Name of the reference lithologic unit (K_ref) for write_relative_erodibility. | Empty (default): the unit with the most qualifying reaches; ties go to the larger channel length, then the lower code. Give the unit name as in lith_name (the crosswalk name, or the map value). A name that is not a unit of the map stops the run, listing the units. unmapped and all are never a reference. |
+| `relative_erodibility_n_values` | `string` | `1` | `param` | `write_relative_erodibility` | Slope exponent(s) n of the stream power law for write_relative_erodibility, a comma list. | Each n gives its own rows, with m = (m/n) n for the m/n of the chi run (e.g. 1,2). Every value must be &gt; 0. |
+| `relative_erodibility_erosion_rate_m_per_yr` | `double` | `0.0` | `param` | `write_relative_erodibility` | Uniform erosion rate E (m/yr) for absolute erodibility; 0 = not given. | When &gt; 0, also K_i = E / (A0^m k_sn,i^n) for every unit (map-area convention, units m^(1 - 2m) yr^-1, written in K_units), with its interval from the same replicates, and one draft property table per n, &lt;write_fname&gt;_chi_relative_erodibility_property_table_mn_*_n_*.txt, in the format lsdtt-lithology-erodibility reads (erodibility_convention map_area, m_exponent, n_exponent, and a provenance line). Use it there with the same lithology map, field and crosswalk to make a K raster. Units with no qualifying reach have no row and are listed in a # not_estimated line. |
 
 <!-- END GENERATED CLI PARAMETERS -->

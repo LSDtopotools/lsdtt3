@@ -271,6 +271,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_raster_fetch.cpp
     src/core/lsdtt_http_fetch.cpp
     src/core/lsdtt_macrostrat_fetch.cpp
+    src/core/lsdtt_octopus_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
     src/core/lsdtt_outlet_bounds_discovery.cpp
@@ -478,6 +479,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_lem_input_grid_cpu.cpp
     src/cpu/lsdtt_lithology_map_cpu.cpp
     src/cpu/lsdtt_lithology_channel_stats_cpu.cpp
+    src/cpu/lsdtt_lithology_relative_erodibility_cpu.cpp
+    src/cpu/lsdtt_erodibility_calibration_cpu.cpp
     src/cpu/lsdtt_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp
@@ -657,6 +660,7 @@ lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
 lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
 lsdtt_cli(lsdtt-fetch-lithology        cli/lsdtt-fetch-lithology.cpp)
+lsdtt_cli(lsdtt-fetch-erosion-rates    cli/lsdtt-fetch-erosion-rates.cpp)
 lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-advection-diffusion    cli/lsdtt-advection-diffusion.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)

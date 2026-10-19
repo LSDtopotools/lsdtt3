@@ -5259,6 +5259,17 @@ add_test(NAME unit_chi_lithology_channel_stats
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
 lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "unit;chi")
 
+# Erodibility calibration from basin erosion rates: the York regression
+# (Pearson's data with York's weights), the erosion-rate sample reader and its
+# units, the K formula and property-table seams shared with relative K, the
+# declared parameter groups, and basin completeness at an open grid edge.
+add_executable(lsdtt-test-erodibility-calibration cpp/test_erodibility_calibration.cpp)
+target_link_libraries(lsdtt-test-erodibility-calibration PRIVATE lsdtt3_cpu)
+add_test(NAME unit_chi_erodibility_calibration
+         COMMAND lsdtt-test-erodibility-calibration
+                 "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_work")
+lsdtt_set_tests_properties(unit_chi_erodibility_calibration PROPERTIES LABELS "unit;chi")
+
 # lsdtt-chi-analysis with a lithology map. The fixture writer produces the
 # steady-state landscape (two units, k_sn about 20 and 5) with its unit polygons,
 # and a two-unit code raster beside a copy of tiny_dem.asc.
@@ -5460,6 +5471,154 @@ if(TEST smoke_chi_lithology_multi_mn)
 else()
     lsdtt_mark_test_unregistered(python rigorous_chi_lithology_bootstrap_per_mn)
 endif()
+
+# Relative erodibility from k_sn by lithologic unit (write_relative_erodibility):
+# K_i / K_ref = (k_ref / k_i)^n and, with E, K_i = E / k_i^n, on the n = 1 steady
+# state (K1 = 1e-5 sandstone, K2 = 4e-5 shale, U = 2e-4) with E = U. The n = 2
+# rows of this run apply n = 2 to an n = 1 landscape; the n = 2 known answer is
+# in the driver (R4).
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility
+    lsdtt-chi-analysis
+    chi_lithology_relative_k.param.in
+    lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt
+    --expect lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_2.txt
+    --expect lithkrk_chi_ksn_by_lithology_mn_0p450.csv
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:lith_code,lith_name,m_over_n,A_0,n,m,reference_unit,n_reaches_qualifying,reach_k_sn_median,k_ratio,k_ratio_ci_low,k_ratio_ci_high,n_bootstrap,bootstrap_cluster,low_sample,erosion_rate_m_per_yr,K_abs,K_abs_ci_low,K_abs_ci_high,K_units"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:1,sandstone,0.45,1,1,0.45,sandstone,15,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:2,shale,0.45,1,2,0.9,sandstone,11,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:,1000,reach,0,0.0002,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:m^(0.1) yr^-1"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:m^(-0.8) yr^-1"
+    --expect-file-not-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:unmapped"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# erodibility_convention: map_area"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# m_exponent: 0.45"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# n_exponent: 1"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:DEM lithks_steady_dem.tif"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:lithology map lithks_units.gpkg (field lith_primary)"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:assumes uniform erosion and steady state"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:code,name,erodibility,reference"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_2.txt:# m_exponent: 0.9"
+    --stdout-contains "reference 'sandstone' (default: the most qualifying reaches (15))"
+    --stdout-contains "These values hold only under these conditions:"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli
+    FIXTURES_SETUP smoke_chi_lithology_relative_erodibility)
+
+if(TEST smoke_chi_lithology_relative_erodibility)
+    # Switching relative erodibility on leaves every k_sn-by-lithology output
+    # of the same run byte-identical (its bootstrap stream is separate).
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk"
+                 "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_ksn_histogram_by_lithology_mn_0p450.csv;_chi_ksn_lithology_nodes_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv;_chi_lithology_segments_mn_0p450.csv;_lithology_units.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_observation_only PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_relative_erodibility")
+
+    # The CLI known answer (n = 1, E = U). The CLI re-routes the steady-state
+    # DEM. Measured 2026-10-19: shale K/K_ref 3.951501037 (rel err 1.212 %, the
+    # same reach medians as rigorous_chi_lithology_ksn_ratio), K shale
+    # 3.87340104e-05 (rel err 3.165 %), K sandstone 9.802353596e-06 (rel err
+    # 1.976 %). Pins at twice the measured error: ratio 2.42 %, K shale 6.4 %,
+    # K sandstone 4 %.
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_ratio
+             COMMAND lsdtt-test-lithology-channel-stats --check-relative-erodibility
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
+                     shale 1 4 0.0242 4e-5 0.064)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_ratio PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_reference
+             COMMAND lsdtt-test-lithology-channel-stats --check-relative-erodibility
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
+                     sandstone 1 1 1e-12 1e-5 0.04)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_reference PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_observation_only)
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_ratio)
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_reference)
+endif()
+
+# The loop closes: lsdtt-lithology-erodibility reads the n = 1 draft table
+# unchanged and, with the same DEM and map, writes the K raster (the two K
+# values of the table, min sandstone and max shale).
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility_k_raster
+    lsdtt-lithology-erodibility
+    chi_lithology_relative_k_raster.param.in
+    lithkrkk_erodibility.tif
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrkk_lithology_legend.csv
+    --expect-raster-size lithkrkk_erodibility.tif:160x120
+    --expect-raster-stat lithkrkk_erodibility.tif:min:9.80235e-06:9.80236e-06
+    --expect-raster-stat lithkrkk_erodibility.tif:max:3.87340e-05:3.87341e-05
+    --expect-file-contains "lithkrkk_lem_erodibility_parameters.txt:erodibility_raster_m_exponent: 0.45"
+    --expect-file-contains "lithkrkk_lem_erodibility_parameters.txt:erodibility_raster_area_convention: map_area"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility_k_raster PROPERTIES
+    FIXTURES_REQUIRED "chi_lithology_cli;smoke_chi_lithology_relative_erodibility")
+
+# Per m/n stream: with m/n 0.4 and 0.45 the 0.45 relative-erodibility outputs
+# equal those of the single-m/n run byte for byte.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility_multi_mn
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_multi_mn.param.in
+    lithkrkmn_chi_relative_erodibility_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrkmn_chi_relative_erodibility_by_lithology_mn_0p400.csv
+)
+if(TEST smoke_chi_lithology_relative_erodibility_multi_mn)
+    lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility_multi_mn PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli
+        FIXTURES_SETUP smoke_chi_lithology_relative_erodibility_multi_mn)
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_per_mn
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility_multi_mn/out/lithkrkmn"
+                 "-DSUFFIXES=_chi_relative_erodibility_by_lithology_mn_0p450.csv;_chi_relative_erodibility_property_table_mn_0p450_n_1.txt;_chi_relative_erodibility_property_table_mn_0p450_n_2.txt"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_per_mn PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_relative_erodibility;smoke_chi_lithology_relative_erodibility_multi_mn")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_per_mn)
+endif()
+
+# Refusals: relative erodibility without a lithology map; a reference that is
+# not a unit of the map (the units are listed).
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_relative_erodibility_no_map
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_no_map.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: write_relative_erodibility needs lithology_fname"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_relative_erodibility_no_map PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_relative_erodibility_bad_reference
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_bad_reference.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "relative_erodibility_reference_unit 'granite' is not a unit of the lithology map"
+    --stderr-contains "the units are: sandstone, shale"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_relative_erodibility_bad_reference PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
 
 # Channel-link bearings and junction angles by lithologic unit (T12, T13): link
 # and junction tags on the synthetic trellis with in-process unit grids, the
@@ -6808,6 +6967,134 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
     lsdtt_set_tests_properties(network_fetch_lithology_cli PROPERTIES LABELS "network;cli;fetch")
 endif()
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-erosion-rates CLI (OCTOPUS). The offline tests read the committed
+# WV responses (tests/data/octopus_erosion_rates); the network test is opt-in
+# like the other fetch ones and asserts minima only, because OCTOPUS grows.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline.param.in
+    wvoff_erosion_rates.csv
+    --expect wvoff_octopus_basins.fgb
+    --expect wvoff_octopus_dem_bounds.fgb
+    --expect wvoff_ATTRIBUTION.txt
+    --expect-vector-feature-min wvoff_octopus_basins.fgb:28
+    --expect-file-contains "wvoff_erosion_rates.csv:sample_id,latitude,longitude,erosion_rate,erosion_rate_uncertainty,erosion_rate_units,erosion_rate_uncertainty_kind,erosion_rate_internal_uncertainty,reported_area_km2,rate_scheme,rate_field,nuclide,obsid2,study_id,author,pub_year,ref_doi,mean_elevation_m,outlet_in_bbox"
+    --expect-file-contains "wvoff_erosion_rates.csv:S186WTS046,38.88961897,-79.40200545,12.88,2.62,mm_per_kyr,total_1sigma,"
+    --expect-file-not-contains "wvoff_erosion_rates.csv:S186WTS001"
+    --expect-file-not-contains "wvoff_erosion_rates.csv:-9999"
+    --expect-file-contains "wvoff_ATTRIBUTION.txt:10.5194/gchron-7-113-2025"
+    --expect-file-contains "wvoff_ATTRIBUTION.txt:S186, Portenga, 2019, 10.1130/b31840.1, 17"
+    --stdout-contains "Read 28 OCTOPUS basins (23 with an outlet in the box)"
+    --stdout-contains "samples written: 23"
+    --stdout-contains "(EPSG:32617)"
+    --stdout-contains "erosion_rate_units: mm_per_kyr"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline_lsdn
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline_lsdn.param.in
+    wvofflsdn_erosion_rates.csv
+    --expect-file-contains "wvofflsdn_erosion_rates.csv:S186WTS046,38.88961897,-79.40200545,12.8,0.83,mm_per_kyr,external_1sigma,0.29,20.14,lsdn,EBEL,be10,"
+    --stdout-contains "scheme lsdn (EBEL, mm/kyr)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline_empty
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline_empty.param.in
+    wvempty_erosion_rates.csv
+    --expect wvempty_ATTRIBUTION.txt
+    --stderr-contains "no OCTOPUS basins intersect the box"
+    --stdout-contains "(header only)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_raster_bounds
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_raster_bounds.param.in
+    wvrast_erosion_rates.csv
+    --stdout-contains "(raster, EPSG:32632)"
+    --stdout-contains "samples written: 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_vector_bounds
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_vector_bounds.param.in
+    wvvec_erosion_rates.csv
+    --stdout-contains "(polygon, EPSG:4326)"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_no_bbox
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_no_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: give a bounding box"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_too_many
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_too_many.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_features"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_bad_scheme
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_bad_scheme.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "st, lsdn, lsdn_no_topo_shielding, published"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_web_mercator
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_web_mercator.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: output_epsg: Web Mercator"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_exception
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_exception.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "OCTOPUS WFS error:"
+)
+
+add_test(NAME smoke_fetch_erosion_rates_help
+         COMMAND lsdtt-fetch-erosion-rates -h)
+lsdtt_set_tests_properties(smoke_fetch_erosion_rates_help PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "octopus_rate_scheme")
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_lsdtt_cli_smoke_test(
+        network_fetch_erosion_rates_cli
+        lsdtt-fetch-erosion-rates
+        fetch_erosion_rates_network.param.in
+        wvlive_erosion_rates.csv
+        --expect wvlive_octopus_basins.fgb
+        --expect-file-contains "wvlive_erosion_rates.csv:S186WTS046"
+        --expect-vector-feature-min wvlive_octopus_basins.fgb:5
+        --expect-file-contains "wvlive_ATTRIBUTION.txt:10.5194/gchron-7-113-2025"
+        --stdout-contains "with an outlet in the box)"
+    )
+    lsdtt_set_tests_properties(network_fetch_erosion_rates_cli PROPERTIES LABELS "network;cli;fetch")
+endif()
+
 # Native DEM fetching (docs/developer_notes/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
@@ -6839,6 +7126,18 @@ add_test(NAME unit_fetch_lithology
          COMMAND lsdtt-test-macrostrat-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/macrostrat_tiles"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_lithology_work")
 lsdtt_set_tests_properties(unit_fetch_lithology PROPERTIES LABELS "unit;fetch" SKIP_RETURN_CODE 77)
+
+# OCTOPUS erosion-rate fetch (lsdtt-fetch-erosion-rates), offline: the WFS
+# request recipe (latitude-first bbox, hits then paging, never maxFeatures), the
+# sentinel predicate, the rate-field map, and reads of the committed WV
+# responses (tests/data/octopus_erosion_rates). No HTTP request is made.
+add_executable(lsdtt-test-octopus-fetch cpp/test_octopus_fetch.cpp)
+target_link_libraries(lsdtt-test-octopus-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-octopus-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_erosion_rates
+         COMMAND lsdtt-test-octopus-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/octopus_erosion_rates"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_erosion_rates_work")
+lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "unit;fetch")
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)
@@ -8663,6 +8962,13 @@ foreach(_test IN LISTS _lsdtt_tests)
     # chi and network. `ctest -L lithology` reaches all of them.
     if(_test MATCHES "lithology")
         list(APPEND _domains "lithology")
+    endif()
+
+    # The erodibility calibration from basin erosion rates spans chi (the
+    # calibration maths and the sample reader) and fetch (the OCTOPUS rates).
+    # `ctest -L erodibility_calibration` runs the whole thread.
+    if(_test MATCHES "erodibility_calibration|erosion_rates")
+        list(APPEND _domains "erodibility_calibration")
     endif()
 
     if("${_test}" IN_LIST LSDTT_HEAVY_TESTS)

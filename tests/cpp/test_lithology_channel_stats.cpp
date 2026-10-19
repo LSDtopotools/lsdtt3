@@ -24,6 +24,10 @@
 //       vertical contact and K2 = 4e-5 east of it, U = 2e-4, map area, A0 = 1:
 //       k_sn = (U/K)^(1/n) = 20 and 5, ratio 4
 //   T11 the same with m = 0.9, n = 2: k_sn = sqrt(20) and sqrt(5), ratio 2
+//   R1-R4 relative erodibility (lsdtt_lithology_relative_erodibility_cpu):
+//       the reference unit rule, the bootstrap of the ratio, the draft
+//       property table read back, and K2/K1 = 4 and K = E / k_sn^n with E = U
+//       on the T10/T11 steady states (pins in main())
 //
 // The steady state integrates chi with the area of each cell (left end), the
 // chi of lsdtt-chi-analysis is trapezoidal, so the fitted k_sn sits slightly
@@ -39,11 +43,15 @@
 //   lsdtt-test-lithology-channel-stats --write-fixtures <dir> <tiny_dem.asc>
 //   lsdtt-test-lithology-channel-stats --check-ksn-by-lithology <summary.csv>
 //       <unit_a> <unit_b> <expected_ratio> <relative_tolerance>
+//   lsdtt-test-lithology-channel-stats --check-relative-erodibility <csv> <unit> <n>
+//       <expected_ratio> <tol_ratio> [<expected_K> <tol_K>]
 // -----------------------------------------------------------------------------
 
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <iterator>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -66,6 +74,7 @@
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../../src/cpu/lsdtt_lithology_channel_stats_cpu.hpp"
 #include "../../src/cpu/lsdtt_lithology_map_cpu.hpp"
+#include "../../src/cpu/lsdtt_lithology_relative_erodibility_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
@@ -723,6 +732,428 @@ void test_known_answer(float m_exp, float n_exp, double tol_rel, double tol_rati
 }
 
 // ---------------------------------------------------------------------------
+// Relative erodibility (lsdtt_lithology_relative_erodibility_cpu)
+//
+// R1 reference unit: the default rule (most qualifying reaches, then channel
+//    length, then the lower code), never unmapped / all; unknown and group
+//    names throw, listing the units (exact)
+// R2 bootstrap of the ratio on hand-built reaches: same seed bitwise, the
+//    interval brackets the point ratio, constant reaches give a degenerate
+//    interval, low_sample units and a low_sample reference, basin clusters
+//    drawn jointly, the per-m/n stream (exact)
+// R3 the draft property table read back by load_lithology_property_table
+// R4 known answer on the two-K steady states (T10/T11 fixtures)
+// ---------------------------------------------------------------------------
+
+// A summary row for hand-built fixtures (only what the relative-K code reads).
+lsdtt_chi_ksn_lithology_summary_row relk_row(std::int32_t code, const std::string& name,
+                                             std::size_t n_qual, double median, double length)
+{
+    lsdtt_chi_ksn_lithology_summary_row r;
+    r.lith_code = code;
+    r.lith_name = name;
+    r.n_reaches_qualifying = n_qual;
+    r.reach_k_sn_median = median;
+    r.channel_length_m = length;
+    return r;
+}
+
+bool throws_containing(const std::function<void()>& f, const std::string& what)
+{
+    try { f(); }
+    catch (const std::invalid_argument& e) { return std::string(e.what()).find(what) != std::string::npos; }
+    return false;
+}
+
+void test_relative_reference()
+{
+    std::cout << "-- R1 relative erodibility: reference unit --\n";
+    lsdtt_chi_ksn_lithology_summary s;
+    s.rows = {relk_row(1, "sandstone", 7, 20, 1000), relk_row(2, "shale", 9, 5, 900),
+              relk_row(-1, "unmapped", 50, 3, 9000), relk_row(-2, "all", 66, 4, 10900)};
+    auto ref = choose_relative_erodibility_reference_unit(s, "");
+    check("R1 default: most qualifying reaches (shale, 9); unmapped (50) and all (66) never chosen",
+          ref.code == 2 && ref.name == "shale", ref.name + ": " + ref.reason);
+    s.rows[0].n_reaches_qualifying = 9;
+    ref = choose_relative_erodibility_reference_unit(s, "");
+    check("R1 tie in reaches: the larger channel length (sandstone, 1000 m)",
+          ref.code == 1 && ref.reason.find("larger channel length") != std::string::npos, ref.reason);
+    s.rows[1].channel_length_m = 1000;
+    ref = choose_relative_erodibility_reference_unit(s, "");
+    check("R1 tie in reaches and length: the lower code (1)",
+          ref.code == 1 && ref.reason.find("lower code") != std::string::npos, ref.reason);
+    ref = choose_relative_erodibility_reference_unit(s, "shale");
+    check("R1 a named reference is used", ref.code == 2 && ref.reason.find("named") != std::string::npos);
+    check("R1 an unknown name throws, listing the units",
+          throws_containing([&] { (void)choose_relative_erodibility_reference_unit(s, "basalt"); },
+                            "is not a unit of the lithology map; the units are: sandstone, shale"));
+    check("R1 unmapped and all are refused as a reference",
+          throws_containing([&] { (void)choose_relative_erodibility_reference_unit(s, "unmapped"); },
+                            "is not a lithologic unit") &&
+              throws_containing([&] { (void)choose_relative_erodibility_reference_unit(s, "all"); },
+                                "is not a lithologic unit"));
+    lsdtt_chi_ksn_lithology_summary z = s;
+    z.rows[1].n_reaches_qualifying = 0;
+    check("R1 a named unit with no qualifying reach throws",
+          throws_containing([&] { (void)choose_relative_erodibility_reference_unit(z, "shale"); },
+                            "no qualifying lithologic reach"));
+    z.rows[0].n_reaches_qualifying = 0;
+    check("R1 no unit with a qualifying reach throws (unmapped does not count)",
+          throws_containing([&] { (void)choose_relative_erodibility_reference_unit(z, ""); },
+                            "no lithologic unit has a qualifying reach"));
+    lsdtt_lithology_units_on_grid u;
+    u.units = {{1, "sandstone", {"sandstone"}, 0}, {2, "shale", {"shale"}, 0}};
+    bool ok = true;
+    try { check_relative_erodibility_reference_name(u, ""); check_relative_erodibility_reference_name(u, "shale"); }
+    catch (...) { ok = false; }
+    check("R1 early name check: empty and a unit name pass", ok);
+    check("R1 early name check: an unknown name throws, listing the units",
+          throws_containing([&] { check_relative_erodibility_reference_name(u, "Shale"); },
+                            "the units are: sandstone, shale"));
+    check("R1 units string: m = 0.45 -> m^(0.1) yr^-1, m = 0.9 -> m^(-0.8) yr^-1, m = 0.5 -> m^(0) yr^-1",
+          lithology_erodibility_units_string(0.45) == "m^(0.1) yr^-1" &&
+              lithology_erodibility_units_string(0.9) == "m^(-0.8) yr^-1" &&
+              lithology_erodibility_units_string(0.5) == "m^(0) yr^-1",
+          lithology_erodibility_units_string(0.45) + " " + lithology_erodibility_units_string(0.9));
+    check("R1 n in file names: 1, 2, 1p5", relative_erodibility_n_suffix(1.0) == "1" &&
+                                            relative_erodibility_n_suffix(2.0) == "2" &&
+                                            relative_erodibility_n_suffix(1.5) == "1p5");
+}
+
+// Hand-built reaches: unit 1 (code 1) and unit 2 (code 2) with the given k,
+// basin b_of(i) for reach i; summary medians from the same values.
+struct relk_hand
+{
+    lsdtt_chi_lithology_tables tables;
+    lsdtt_chi_ksn_lithology_summary summary;
+};
+
+relk_hand make_relk_hand(const std::vector<double>& k1, const std::vector<double>& k2,
+                         const std::vector<std::int32_t>& b1, const std::vector<std::int32_t>& b2)
+{
+    relk_hand h;
+    h.summary.m_over_n = 0.45;
+    h.summary.A_0 = 1.0;
+    auto add = [&](std::int32_t code, const std::vector<double>& k, const std::vector<std::int32_t>& b) {
+        for (std::size_t i = 0; i < k.size(); ++i)
+        {
+            lsdtt_chi_lithology_reach_row r;
+            r.reach_id = static_cast<std::int32_t>(h.tables.reaches.size());
+            r.lith_code = code;
+            r.basin_index = b.empty() ? 0 : b[i];
+            r.k_sn_ols = k[i];
+            r.qualifies = true;
+            h.tables.reaches.push_back(r);
+        }
+        std::vector<double> c = k;
+        h.summary.rows.push_back(relk_row(code, code == 1 ? "sandstone" : "shale", k.size(),
+                                          c.empty() ? k_nan_d : compute_median_in_place(c), 100.0 * k.size()));
+    };
+    add(1, k1, b1);
+    add(2, k2, b2);
+    h.summary.rows.push_back(relk_row(-1, "unmapped", 0, k_nan_d, 0));
+    h.summary.rows.push_back(relk_row(-2, "all", k1.size() + k2.size(), k_nan_d, 0));
+    return h;
+}
+
+const lsdtt_relative_erodibility_row* relk_row_for(const lsdtt_relative_erodibility_result& r, int code, double n)
+{
+    for (const auto& w : r.rows)
+        if (w.lith_code == code && w.n == n) return &w;
+    return nullptr;
+}
+
+void test_relative_bootstrap(const std::string& dir)
+{
+    std::cout << "-- R2 relative erodibility: bootstrap of the ratio --\n";
+    std::mt19937_64 g(3);
+    std::normal_distribution<double> d1(20.0, 3.0), d2(5.0, 1.0);
+    std::vector<double> k1(30), k2(25);
+    for (auto& x : k1) x = d1(g);
+    for (auto& x : k2) x = d2(g);
+    std::vector<std::int32_t> b1(30), b2(25);
+    for (std::size_t i = 0; i < b1.size(); ++i) b1[i] = static_cast<std::int32_t>(i % 6);
+    for (std::size_t i = 0; i < b2.size(); ++i) b2[i] = static_cast<std::int32_t>(i % 5);
+    const relk_hand h = make_relk_hand(k1, k2, b1, b2);
+    lsdtt_relative_erodibility_options o;
+    o.reference_unit = "sandstone";
+    o.n_values = {1.0, 2.0};
+    o.erosion_rate_m_per_yr = 2e-4;
+    std::mt19937_64 ra = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    std::mt19937_64 rb = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto a = compute_lithology_relative_erodibility(h.tables, h.summary, o, ra);
+    const auto b = compute_lithology_relative_erodibility(h.tables, h.summary, o, rb);
+    const auto* a1 = relk_row_for(a, 2, 1.0);
+    const auto* a2 = relk_row_for(a, 2, 2.0);
+    const auto* b1r = relk_row_for(b, 2, 1.0);
+    const auto* ar = relk_row_for(a, 1, 1.0);
+    if (!a1 || !a2 || !b1r || !ar)
+    {
+        check("R2 rows for both units and both n", false);
+        return;
+    }
+    check("R2 rows: 2 units x 2 n, n-major, m = (m/n) n", a.rows.size() == 4 && a.rows[0].n == 1.0 &&
+                                                               a.rows[2].n == 2.0 && a2->m == 0.9);
+    const double k1m = h.summary.rows[0].reach_k_sn_median, k2m = h.summary.rows[1].reach_k_sn_median;
+    check("R2 point ratio (k_ref / k_i)^n for n = 1 and 2",
+          a1->k_ratio == k1m / k2m && a2->k_ratio == std::pow(k1m / k2m, 2.0), fmt(a1->k_ratio));
+    check("R2 same seed: bitwise-identical intervals",
+          same_bits(a1->k_ratio_ci_low, b1r->k_ratio_ci_low) && same_bits(a1->k_ratio_ci_high, b1r->k_ratio_ci_high) &&
+              same_bits(a1->K_abs_ci_low, b1r->K_abs_ci_low));
+    check("R2 the interval brackets the point ratio (n = 1 and 2)",
+          a1->k_ratio_ci_low <= a1->k_ratio && a1->k_ratio <= a1->k_ratio_ci_high &&
+              a2->k_ratio_ci_low <= a2->k_ratio && a2->k_ratio <= a2->k_ratio_ci_high &&
+              a1->k_ratio_ci_low < a1->k_ratio_ci_high,
+          "[" + fmt(a1->k_ratio_ci_low) + ", " + fmt(a1->k_ratio_ci_high) + "]");
+    // The same replicates squared: the interpolated quantiles of the squares
+    // differ from the squared quantiles only by the interpolation (convexity,
+    // so never below them), here by well under 0.1 %.
+    const double sq_lo = a1->k_ratio_ci_low * a1->k_ratio_ci_low, sq_hi = a1->k_ratio_ci_high * a1->k_ratio_ci_high;
+    check("R2 the n = 2 interval is the n = 1 replicates squared (ends >= the squared n = 1 ends and "
+          "within 0.1 % of them)",
+          a2->k_ratio_ci_low >= sq_lo * (1 - 1e-12) && a2->k_ratio_ci_high >= sq_hi * (1 - 1e-12) &&
+              a2->k_ratio_ci_low / sq_lo - 1.0 < 1e-3 && a2->k_ratio_ci_high / sq_hi - 1.0 < 1e-3,
+          fmt(a2->k_ratio_ci_low) + " vs " + fmt(sq_lo) + ", " + fmt(a2->k_ratio_ci_high) + " vs " + fmt(sq_hi));
+    check("R2 1000 replicates by reach, all used", a1->n_bootstrap == 1000);
+    check("R2 the reference row: ratio 1, interval [1, 1]",
+          ar->is_reference && ar->k_ratio == 1.0 && ar->k_ratio_ci_low == 1.0 && ar->k_ratio_ci_high == 1.0);
+    check("R2 K_abs = E / k^n and its interval brackets it",
+          a1->K_abs == 2e-4 / k2m && a2->K_abs == 2e-4 / (k2m * k2m) && a1->K_abs_ci_low <= a1->K_abs &&
+              a1->K_abs <= a1->K_abs_ci_high);
+    // Not the k_sn summary's stream, and the same whatever other m/n ran.
+    std::mt19937_64 e1 = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    std::mt19937_64 e2 = lithology_bootstrap_engine(5489, 0.45);
+    std::mt19937_64 e3 = lithology_relative_erodibility_bootstrap_engine(5489, 0.4);
+    check("R2 per-m/n stream: differs from the k_sn summary's engine and from m/n 0.4", e1() != e2() && e1() != e3());
+    {
+        std::mt19937_64 first = lithology_relative_erodibility_bootstrap_engine(5489, 0.4);
+        o.reference_unit = "sandstone";
+        (void)compute_lithology_relative_erodibility(h.tables, h.summary, o, first);   // m/n 0.4 run first
+        std::mt19937_64 again = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+        const auto c = compute_lithology_relative_erodibility(h.tables, h.summary, o, again);
+        const auto* c1 = relk_row_for(c, 2, 1.0);
+        check("R2 the 0.45 interval is unchanged by running 0.4 before it",
+              c1 && same_bits(c1->k_ratio_ci_low, a1->k_ratio_ci_low) && same_bits(c1->k_ratio_ci_high, a1->k_ratio_ci_high));
+    }
+
+    // Constant reach values: a degenerate interval.
+    const relk_hand cst = make_relk_hand(std::vector<double>(8, 20.0), std::vector<double>(6, 5.0), {}, {});
+    std::mt19937_64 rc = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    o.n_values = {1.0};
+    const auto cr = compute_lithology_relative_erodibility(cst.tables, cst.summary, o, rc);
+    const auto* c2 = relk_row_for(cr, 2, 1.0);
+    check("R2 constant reaches: ratio 4 with interval [4, 4], K [E/5, E/5]",
+          c2 && c2->k_ratio == 4.0 && c2->k_ratio_ci_low == 4.0 && c2->k_ratio_ci_high == 4.0 &&
+              c2->K_abs_ci_low == 2e-4 / 5.0 && c2->K_abs_ci_high == 2e-4 / 5.0);
+
+    // Basin clusters, drawn jointly: unit 2 only in basin 3 of basins 0..3.
+    std::vector<std::int32_t> bb1 = {0, 0, 1, 1, 2, 2, 3, 3}, bb2 = {3, 3, 3, 3, 3, 3};
+    const relk_hand jb = make_relk_hand(std::vector<double>(8, 20.0), std::vector<double>(6, 5.0), bb1, bb2);
+    o.bootstrap_cluster = lsdtt_lithology_bootstrap_cluster::basin;
+    std::mt19937_64 rj = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto jr = compute_lithology_relative_erodibility(jb.tables, jb.summary, o, rj);
+    const auto* j2 = relk_row_for(jr, 2, 1.0);
+    const auto* j1 = relk_row_for(jr, 1, 1.0);
+    // P(basin 3 not drawn in 4 draws) = (3/4)^4 = 0.316: about 684 of 1000 replicates have shale.
+    check("R2 basin clusters: replicates without the unit are left out (n_bootstrap 600..760 of 1000), "
+          "the interval [4, 4], the reference uses all 1000",
+          j2 && j1 && j2->n_bootstrap > 600 && j2->n_bootstrap < 760 && j2->k_ratio_ci_low == 4.0 &&
+              j2->k_ratio_ci_high == 4.0 && j1->n_bootstrap == 1000,
+          j2 ? std::to_string(j2->n_bootstrap) : "");
+
+    // low_sample: a unit with 4 reaches, then a reference with 4 reaches.
+    o.bootstrap_cluster = lsdtt_lithology_bootstrap_cluster::reach;
+    const relk_hand ls = make_relk_hand(k1, {5.0, 6.0, 4.0, 5.5}, {}, {});
+    std::mt19937_64 rl = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto lr = compute_lithology_relative_erodibility(ls.tables, ls.summary, o, rl);
+    const auto* l2 = relk_row_for(lr, 2, 1.0);
+    check("R2 fewer than 5 reaches: low_sample, point ratio, NaN intervals, n_bootstrap 0",
+          l2 && l2->low_sample && std::isfinite(l2->k_ratio) && std::isnan(l2->k_ratio_ci_low) &&
+              std::isnan(l2->K_abs_ci_high) && l2->n_bootstrap == 0);
+    o.reference_unit = "shale";
+    std::mt19937_64 rl2 = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto lr2 = compute_lithology_relative_erodibility(ls.tables, ls.summary, o, rl2);
+    const auto* l1 = relk_row_for(lr2, 1, 1.0);
+    check("R2 a low_sample reference: every ratio interval NaN, K interval still given",
+          l1 && std::isnan(l1->k_ratio_ci_low) && l1->n_bootstrap == 0 && std::isfinite(l1->K_abs_ci_low));
+    o.reference_unit = "sandstone";
+
+    bool bad_n = throws_containing([&] {
+        lsdtt_relative_erodibility_options q = o;
+        q.n_values = {1.0, -1.0};
+        std::mt19937_64 r0(1);
+        (void)compute_lithology_relative_erodibility(h.tables, h.summary, q, r0);
+    }, "n_values");
+    check("R2 n <= 0 throws", bad_n);
+
+    // R3 the draft property table, read back by the lsdtt-lithology-erodibility reader.
+    std::cout << "-- R3 draft property table --\n";
+    o.n_values = {1.0, 2.0};
+    std::mt19937_64 rt = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto t = compute_lithology_relative_erodibility(h.tables, h.summary, o, rt);
+    lsdtt_relative_erodibility_provenance prov{"dem.tif", "units.gpkg", "lith_primary", ""};
+    const std::string path = dir + "/relk_table_n_2.txt";
+    const std::size_t n_rows = write_lithology_relative_erodibility_property_table(path, t, 2.0, prov);
+    try
+    {
+        const lsdtt_lithology_property_table pt = load_lithology_property_table(path);
+        const auto* t1 = relk_row_for(t, 1, 2.0);
+        const auto* t2 = relk_row_for(t, 2, 2.0);
+        check("R3 the table loads: map_area, m 0.9, n 2, two units",
+              n_rows == 2 && pt.calibration.area_convention == erodibility_area_convention::map_area &&
+                  std::fabs(pt.calibration.m_exponent - 0.9f) < 1e-6f && pt.calibration.n_exponent == 2.0f &&
+                  pt.units.size() == 2);
+        check("R3 K read back = K_abs (as float) and names kept",
+              pt.units.count(1) && pt.units.count(2) && pt.units.at(1).name == "sandstone" &&
+                  pt.units.at(1).erodibility == static_cast<float>(t1->K_abs) &&
+                  pt.units.at(2).erodibility == static_cast<float>(t2->K_abs));
+        check("R3 provenance states DEM, map, E, reference and the assumptions",
+              pt.provenance.find("DEM dem.tif") != std::string::npos &&
+                  pt.provenance.find("units.gpkg (field lith_primary)") != std::string::npos &&
+                  pt.provenance.find("erosion rate 0.0002 m/yr") != std::string::npos &&
+                  pt.provenance.find("reference unit sandstone") != std::string::npos &&
+                  pt.provenance.find("assumes uniform erosion and steady state") != std::string::npos,
+              pt.provenance);
+    }
+    catch (const std::exception& e)
+    {
+        check("R3 the table loads", false, e.what());
+    }
+    // A unit with no reach is listed as not estimated; equal names are refused.
+    relk_hand nk = make_relk_hand(k1, {}, {}, {});
+    std::mt19937_64 rn = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto nr = compute_lithology_relative_erodibility(nk.tables, nk.summary, o, rn);
+    const std::string p2 = dir + "/relk_table_missing.txt";
+    const std::size_t n2 = write_lithology_relative_erodibility_property_table(p2, nr, 1.0, prov);
+    std::ifstream in(p2);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    bool loads = true;
+    try { (void)load_lithology_property_table(p2); } catch (...) { loads = false; }
+    check("R3 a unit with no reach: no row, listed in # not_estimated, the table still loads",
+          n2 == 1 && text.find("# not_estimated: 2 shale") != std::string::npos && loads);
+    relk_hand same = make_relk_hand(k1, k2, {}, {});
+    same.summary.rows[1].lith_name = "Sandstone";
+    std::mt19937_64 rs = lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto sr = compute_lithology_relative_erodibility(same.tables, same.summary, o, rs);
+    check("R3 two units named alike ignoring case are refused",
+          throws_containing([&] { (void)write_lithology_relative_erodibility_property_table(dir + "/relk_same.txt", sr, 1.0, prov); },
+                            "same name ignoring case"));
+    lsdtt_relative_erodibility_result noE = sr;
+    noE.erosion_rate_m_per_yr = 0.0;
+    check("R3 no erosion rate: no table",
+          throws_containing([&] { (void)write_lithology_relative_erodibility_property_table(dir + "/relk_noE.txt", noE, 1.0, prov); },
+                            "needs an erosion rate"));
+}
+
+struct relk_pins
+{
+    double tol_ratio = 0.0, tol_K = 0.0;
+};
+
+// R4: on a steady state, K_east / K_ref and the absolute K of both units with
+// E = U. Returns nothing; prints the measured errors.
+void check_relative_answer(const std::string& tag, const steady_fixture& f, double mn, double n_exp,
+                           const relk_pins& pins)
+{
+    const auto fits = fit_on(f.surface, f.elevation, mn);
+    const std::vector<float> cd = compute_lithology_contact_distance(f.surface, f.units, 1);
+    lsdtt_chi_lithology_options lo;
+    const auto t = build_chi_lithology_tables(fits, f.surface.get_meta(), f.units, cd, {}, lo);
+    std::mt19937_64 rng(5489);
+    const auto s = summarise_chi_ksn_by_lithology(t, f.units, mn, 1.0, lo, rng);
+    lsdtt_relative_erodibility_options o;
+    o.n_values = {n_exp};
+    o.erosion_rate_m_per_yr = k_U;
+    std::mt19937_64 rr = lithology_relative_erodibility_bootstrap_engine(5489, mn);
+    const auto r = compute_lithology_relative_erodibility(t, s, o, rr);
+    const auto* w = relk_row_for(r, 1, n_exp);
+    const auto* e = relk_row_for(r, 2, n_exp);
+    if (!w || !e)
+    {
+        check(tag + "rows for both units", false);
+        return;
+    }
+    const double K_of[3] = {0.0, k_K1, k_K2};
+    const double K_ref = K_of[r.reference.code];
+    const auto* other = r.reference.code == 1 ? e : w;
+    const double want_ratio = K_of[other->lith_code] / K_ref;
+    const double err_ratio = std::fabs(other->k_ratio / want_ratio - 1.0);
+    const double err_w = std::fabs(w->K_abs / k_K1 - 1.0), err_e = std::fabs(e->K_abs / k_K2 - 1.0);
+    std::cout << "   measured: reference " << r.reference.name << " (" << r.reference.reason << "); "
+              << other->lith_name << " K/K_ref " << std::setprecision(8) << other->k_ratio << " [" << other->k_ratio_ci_low
+              << ", " << other->k_ratio_ci_high << "] (want " << want_ratio << ", rel err " << err_ratio
+              << "); K west " << w->K_abs << " [" << w->K_abs_ci_low << ", " << w->K_abs_ci_high << "] (want "
+              << k_K1 << ", rel err " << err_w << "); K east " << e->K_abs << " [" << e->K_abs_ci_low << ", "
+              << e->K_abs_ci_high << "] (want " << k_K2 << ", rel err " << err_e << ") "
+              << lithology_erodibility_units_string(w->m) << std::setprecision(6) << "\n";
+    check(tag + "K_i/K_ref = " + fmt(want_ratio), err_ratio <= pins.tol_ratio,
+          fmt(other->k_ratio) + ", rel err " + fmt(err_ratio) + ", tolerance " + fmt(pins.tol_ratio));
+    check(tag + "K west = K1 with E = U", err_w <= pins.tol_K,
+          "rel err " + fmt(err_w) + ", tolerance " + fmt(pins.tol_K));
+    check(tag + "K east = K2 with E = U", err_e <= pins.tol_K,
+          "rel err " + fmt(err_e) + ", tolerance " + fmt(pins.tol_K));
+    check(tag + "the ratio interval brackets the ratio",
+          other->k_ratio_ci_low <= other->k_ratio && other->k_ratio <= other->k_ratio_ci_high);
+    check(tag + "the reference is the unit with more qualifying reaches",
+          r.reference.code == (row_for(s, 1)->n_reaches_qualifying >= row_for(s, 2)->n_reaches_qualifying ? 1 : 2));
+}
+
+void test_relative_known_answer(float m_exp, float n_exp, const relk_pins& pa, const relk_pins& pb)
+{
+    const std::string tag = "R4 n = " + fmt(n_exp) + ": ";
+    std::cout << "-- R4 relative erodibility on the steady state, m = " << m_exp << ", n = " << n_exp << " --\n";
+    const double mn = static_cast<double>(m_exp) / n_exp;
+    check_relative_answer(tag + "layout A: ", make_steady(m_exp, n_exp), mn, n_exp, pa);
+    check_relative_answer(tag + "layout B: ", make_steady(m_exp, n_exp, contact_layout::cross_strike), mn, n_exp, pb);
+}
+
+// --check-relative-erodibility <csv> <unit> <n> <expected_ratio> <tol_ratio>
+//     [<expected_K> <tol_K>]: a written _chi_relative_erodibility_ CSV, read by
+// header, against expected values (relative tolerances).
+int check_relative_erodibility(int argc, char* argv[])
+{
+    if (argc != 7 && argc != 9)
+    {
+        std::cerr << "usage: --check-relative-erodibility <csv> <unit> <n> <expected_ratio> <tol_ratio> "
+                     "[<expected_K> <tol_K>]\n";
+        return 2;
+    }
+    try
+    {
+        const std::string csv = argv[2], unit = argv[3];
+        const double n = std::stod(argv[4]), want = std::stod(argv[5]), tol = std::stod(argv[6]);
+        const lsdtt_csv_table t = load_csv_table(csv);
+        for (std::size_t i = 0; i < t.rows.size(); ++i)
+        {
+            const auto& r = t.rows[i];
+            const int line = static_cast<int>(i) + 2;
+            if (csv_row_string(r, "lith_name") != unit || csv_row_double_required(r, "n", csv, line) != n) continue;
+            const double ratio = csv_row_double_required(r, "k_ratio", csv, line);
+            const double err = std::fabs(ratio / want - 1.0);
+            std::cout << unit << " n = " << n << ": k_ratio " << std::setprecision(10) << ratio << " (expected "
+                      << want << "), rel err " << err << ", reference " << csv_row_string(r, "reference_unit") << "\n";
+            bool ok = err <= tol;
+            if (argc == 9)
+            {
+                const double K = csv_row_double_required(r, "K_abs", csv, line);
+                const double errK = std::fabs(K / std::stod(argv[7]) - 1.0);
+                std::cout << unit << " K_abs " << K << " (expected " << argv[7] << "), rel err " << errK << "\n";
+                ok = ok && errK <= std::stod(argv[8]);
+            }
+            std::cout << (ok ? "PASS" : "FAIL") << "\n";
+            return ok ? 0 : 1;
+        }
+        std::cerr << "FAIL: no row for unit " << unit << " and n " << n << " in " << csv << "\n";
+        return 1;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FAIL: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // --check-ksn-by-lithology: the ratio of two units' reach_k_sn_median in a
 // written _chi_ksn_by_lithology_ CSV (read by header) against an expected
 // ratio. Both units must have enough reaches (low_sample = 0). Returns the
@@ -899,6 +1330,8 @@ int main(int argc, char* argv[])
 {
     if (argc > 3 && std::string(argv[1]) == "--write-fixtures") return write_fixtures(argv[2], argv[3]);
     if (argc > 1 && std::string(argv[1]) == "--check-ksn-by-lithology") return check_ksn_by_lithology(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--check-relative-erodibility")
+        return check_relative_erodibility(argc, argv);
     const std::string dir = argc > 1 ? argv[1] : ".";
     std::filesystem::create_directories(dir);
     gdal_init();
@@ -919,6 +1352,20 @@ int main(int argc, char* argv[])
     test_known_answer(0.45f, 1.0f, 0.02, 0.0025, pa, pb);
     test_known_answer(0.9f, 2.0f, 0.02, 0.0025, pa, pb);
     test_check_mode(dir);
+    test_relative_reference();
+    test_relative_bootstrap(dir);
+    // Relative-K pins, measured 2026-10-19 on the same fixtures (default
+    // reference: west in layout A, east in layout B). Relative errors:
+    //   n = 1, A: ratio 0.443 %, K west 1.728 %, K east 1.293 %
+    //   n = 1, B: ratio 0.384 %, K west 1.178 %, K east 1.556 %
+    //   n = 2, A: ratio 0.887 %, K west 3.426 %, K east 2.570 %
+    //   n = 2, B: ratio 0.770 %, K west 2.342 %, K east 3.088 %
+    // K and K/K_ref are k_sn^-n, so the reach-median error is multiplied by n.
+    // Pins: twice the measured error, capped at n times the median caps (1 %
+    // on a ratio, 2 % absolute): n = 1 ratio 0.9 % (A) / 0.8 % (B), K 2 % (the
+    // cap); n = 2 ratio 1.8 % / 1.6 %, K 4 % (the n-scaled cap).
+    test_relative_known_answer(0.45f, 1.0f, {0.009, 0.02}, {0.008, 0.02});
+    test_relative_known_answer(0.9f, 2.0f, {0.018, 0.04}, {0.016, 0.04});
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;
 }

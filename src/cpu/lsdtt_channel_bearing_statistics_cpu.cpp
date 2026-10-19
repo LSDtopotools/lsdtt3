@@ -113,6 +113,18 @@ std::string format_double(double v)
     return os.str();
 }
 
+} // namespace
+
+std::string format_channel_bearing_angle(double angle_deg, double period_deg)
+{
+    const std::string text = format_double(angle_deg);
+    if (!std::isfinite(angle_deg)) return text;
+    return std::stod(text) >= period_deg ? "0" : text;
+}
+
+namespace
+{
+
 std::size_t count_distinct_blocks(const std::vector<std::int64_t>& block_id,
                                   const std::vector<std::size_t>&  record_indices)
 {
@@ -1287,11 +1299,13 @@ void write_channel_bearing_group_summary_csv(
            << channel_bearing_angular_type_name(r.angular_type) << ','
            << format_double(channel_bearing_period_deg(r.angular_type)) << ','
            << s.n << ',' << r.n_blocks << ',' << format_double(s.total_length_m) << ','
-           << format_double(s.circular_mean_deg_count) << ','
+           << format_channel_bearing_angle(s.circular_mean_deg_count,
+                                           channel_bearing_period_deg(r.angular_type)) << ','
            << format_double(s.mean_resultant_length_count) << ','
            << format_double(s.circular_variance_count) << ','
            << format_double(s.circular_sd_deg_count) << ','
-           << format_double(s.circular_mean_deg_length) << ','
+           << format_channel_bearing_angle(s.circular_mean_deg_length,
+                                           channel_bearing_period_deg(r.angular_type)) << ','
            << format_double(s.mean_resultant_length_length) << ','
            << format_double(s.n_eff_length) << ','
            << format_double(s.rayleigh_z) << ','
@@ -1322,7 +1336,8 @@ void write_channel_bearing_comparisons_csv(
            << blocks_text(r.n_blocks_a) << ',' << blocks_text(r.n_blocks_b) << ','
            << format_double(r.result.circular_wasserstein_deg) << ','
            << (r.result.rotation_invariant ? 1 : 0) << ','
-           << format_double(r.result.optimal_rotation_deg) << ','
+           << format_channel_bearing_angle(r.result.optimal_rotation_deg,
+                                           channel_bearing_period_deg(r.angular_type)) << ','
            << format_double(r.result.kuiper_V) << ','
            << format_double(r.result.kuiper_p_iid_approx) << ','
            << format_double(r.kuiper_p_holm) << ','

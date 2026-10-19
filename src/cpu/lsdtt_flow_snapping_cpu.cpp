@@ -39,7 +39,10 @@
 
 #include "lsdtt_flow_snapping_cpu.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -844,9 +847,143 @@ lsdtt_snap_result snap_pixel_by_method(
         return out;
     }
 
+    if (method == "reported_area")
+    {
+        throw std::invalid_argument(
+            "snap_pixel_by_method: method 'reported_area' needs a reported "
+            "drainage area; call the overload that takes reported_area_m2.");
+    }
+
     throw std::invalid_argument(
         "snap_pixel_by_method: unknown snapping method '" + method +
         "'. Expected one of: none, expanding_square, downstream.");
+}
+
+lsdtt_snap_result snap_pixel_by_method(
+    const lsdtt_flow_base&                  flow,
+    const int                               row,
+    const int                               col,
+    const std::string&                      method,
+    const lsdtt_square_snap_options&        square_options,
+    const lsdtt_downstream_snap_options&    downstream_options,
+    const double                            reported_area_m2,
+    const lsdtt_reported_area_snap_options& area_options
+)
+{
+    if (method == "reported_area")
+    {
+        return snap_pixel_to_reported_drainage_area_expanding_square(
+            flow, row, col, reported_area_m2, area_options);
+    }
+    if (method == "expanding_square" || method == "downstream" || method == "none")
+    {
+        return snap_pixel_by_method(
+            flow, row, col, method, square_options, downstream_options);
+    }
+    throw std::invalid_argument(
+        "snap_pixel_by_method: unknown snapping method '" + method +
+        "'. Expected one of: none, expanding_square, downstream, reported_area.");
+}
+
+lsdtt_snap_result snap_pixel_to_reported_drainage_area_expanding_square(
+    const lsdtt_flow_base&                  flow,
+    const int                               row,
+    const int                               col,
+    const double                            reported_area_m2,
+    const lsdtt_reported_area_snap_options& options)
+{
+    const std::string fn = "snap_pixel_to_reported_drainage_area_expanding_square";
+    validate_common_preconditions(flow, fn);
+    if (options.contributing_pixels_threshold == 0)
+    {
+        throw std::invalid_argument(fn + ": contributing_pixels_threshold must be > 0");
+    }
+    if (options.max_search_radius_pixels < 0)
+    {
+        throw std::invalid_argument(fn + ": max_search_radius_pixels must be >= 0");
+    }
+    if (!std::isfinite(options.area_ratio_tolerance) || !(options.area_ratio_tolerance > 1.0))
+    {
+        throw std::invalid_argument(fn + ": area_ratio_tolerance must be > 1");
+    }
+    if (!std::isfinite(reported_area_m2) || !(reported_area_m2 > 0.0))
+    {
+        throw std::invalid_argument(fn + ": the reported drainage area must be > 0");
+    }
+
+    lsdtt_snap_result result = initialise_snap_result_from_row_col(flow, row, col);
+    if (result.status == lsdtt_snap_status::input_out_of_bounds)
+    {
+        return result;
+    }
+
+    const double cell_area = flow.cell_size() * flow.cell_size();
+    const double ln_tol = std::log(options.area_ratio_tolerance);
+    const double ln_rep = std::log(reported_area_m2);
+
+    struct candidate
+    {
+        bool          found = false;
+        std::int64_t  flat = -1;
+        std::uint64_t contributing_pixels = 0;
+        std::int64_t  distance_squared = 0;
+        double        abs_ln_ratio = 0.0;
+        int           ring = -1;
+    };
+    candidate best_in;    // nearest within the tolerance
+    candidate best_out;   // closest in area overall
+
+    const int r_max = options.max_search_radius_pixels;
+    for (int r = row - r_max; r <= row + r_max; ++r)
+    {
+        for (int c = col - r_max; c <= col + r_max; ++c)
+        {
+            if (!flow.in_bounds(r, c)) continue;
+            const std::int64_t flat = flow.flat_index_unchecked(r, c);
+            if (!flow.is_valid_cell(flat)) continue;
+            const std::uint64_t n_pix = flow.s_vector_size_unchecked(flat);
+            if (n_pix < options.contributing_pixels_threshold) continue;
+
+            candidate k;
+            k.found = true;
+            k.flat = flat;
+            k.contributing_pixels = n_pix;
+            const std::int64_t dr = static_cast<std::int64_t>(r) - row;
+            const std::int64_t dc = static_cast<std::int64_t>(c) - col;
+            k.distance_squared = dr * dr + dc * dc;
+            k.abs_ln_ratio = std::fabs(std::log(static_cast<double>(n_pix) * cell_area) - ln_rep);
+            k.ring = static_cast<int>(std::max(std::llabs(dr), std::llabs(dc)));
+
+            if (k.abs_ln_ratio <= ln_tol)
+            {
+                const bool better =
+                    !best_in.found ||
+                    k.distance_squared < best_in.distance_squared ||
+                    (k.distance_squared == best_in.distance_squared &&
+                     (k.abs_ln_ratio < best_in.abs_ln_ratio ||
+                      (k.abs_ln_ratio == best_in.abs_ln_ratio && k.flat < best_in.flat)));
+                if (better) best_in = k;
+            }
+            const bool better_out =
+                !best_out.found ||
+                k.abs_ln_ratio < best_out.abs_ln_ratio ||
+                (k.abs_ln_ratio == best_out.abs_ln_ratio &&
+                 (k.distance_squared < best_out.distance_squared ||
+                  (k.distance_squared == best_out.distance_squared && k.flat < best_out.flat)));
+            if (better_out) best_out = k;
+        }
+    }
+
+    const candidate& chosen = best_in.found ? best_in : best_out;
+    if (!chosen.found)
+    {
+        result.status = lsdtt_snap_status::threshold_not_found_in_search_window;
+        return result;
+    }
+    write_successful_snap_to_result(flow, chosen.flat, chosen.contributing_pixels, result);
+    result.search_radius_pixels = chosen.ring;
+    result.downstream_steps     = -1;
+    return result;
 }
 
 } // namespace lsdtt

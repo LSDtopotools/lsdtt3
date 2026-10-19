@@ -58,6 +58,7 @@
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -202,6 +203,57 @@ void run_circular_two_sample_checks()
 // =============================================================================
 // --group-summaries
 // =============================================================================
+// Angles on the half-open domains [0, 360) and [0, 180): a value just below
+// the period (359.99999999999579, measured on a WV link) rounds to the period at
+// the writers' 10 significant digits and must be written 0, never 360 / 180.
+void run_angle_format_checks()
+{
+    using lsdtt::format_channel_bearing_angle;
+    check("angle format: 359.99999999999579 -> 0 on [0, 360)",
+          format_channel_bearing_angle(359.99999999999579, 360.0) == "0");
+    check("angle format: 179.99999999999579 -> 0 on [0, 180)",
+          format_channel_bearing_angle(179.99999999999579, 180.0) == "0");
+    check("angle format: ordinary values unchanged",
+          format_channel_bearing_angle(359.9999, 360.0) == "359.9999" &&
+          format_channel_bearing_angle(207.3826203, 360.0) == num(207.3826203) &&
+          format_channel_bearing_angle(0.0, 360.0) == "0" &&
+          format_channel_bearing_angle(179.99999, 180.0) == "179.99999" &&
+          format_channel_bearing_angle(std::nan(""), 360.0) == "nan");
+
+    // The membership writer: the two links of wvbig_order that printed 360 / 180.
+    std::vector<lsdtt::lsdtt_channel_link_bearing> recs(3);
+    const double b[3] = {359.99999999999579, 359.99999999999721, 270.0};
+    for (int i = 0; i < 3; ++i)
+    {
+        recs[i].upstream_junction = 10 + i;
+        recs[i].downstream_junction = 20 + i;
+        recs[i].stream_order = 1;
+        recs[i].total_length_metres = 100.0;
+        recs[i].bearing_deg = b[i];
+    }
+    lsdtt::channel_record_categories groups;
+    groups.key = "strahler_order";
+    groups.category = {1, 1, 1};
+    groups.names[1] = "1";
+    const std::string path = (std::filesystem::temp_directory_path() /
+                              ("lsdtt_cbs_angle_format_" +
+                               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                               ".csv")).string();
+    lsdtt::write_channel_bearing_group_membership_csv(recs, groups, nullptr, {0, 0, 0}, {-1, -1, -1},
+                                                      nullptr, nullptr, path);
+    std::ifstream in(path);
+    std::string header, l1, l2, l3;
+    std::getline(in, header);
+    std::getline(in, l1);
+    std::getline(in, l2);
+    std::getline(in, l3);
+    in.close();
+    std::filesystem::remove(path);
+    check("membership writer: bearings just below 360 are written 0, axial 0",
+          l1 == "10,20,1,100,0,0,1,all,0,-1,,nan" && l2 == "11,21,1,100,0,0,1,all,0,-1,,nan", l1 + " | " + l2);
+    check("membership writer: other rows unchanged", l3 == "12,22,1,100,270,90,1,all,0,-1,,nan", l3);
+}
+
 void run_group_summary_checks()
 {
     constexpr double tol = 1e-9;
@@ -1069,7 +1121,7 @@ int main(int argc, char* argv[])
             return 2;
         }
         if (mode == "--circular-two-sample")       run_circular_two_sample_checks();
-        else if (mode == "--group-summaries")      run_group_summary_checks();
+        else if (mode == "--group-summaries")      { run_group_summary_checks(); run_angle_format_checks(); }
         else if (mode == "--comparisons")          run_comparison_checks();
         else if (mode == "--junction-angle-stats") run_junction_angle_checks();
         else if (mode == "--trellis-network")      run_trellis_checks();

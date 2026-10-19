@@ -62,6 +62,12 @@ enum class channel_bearing_angular_type
 
 [[nodiscard]] double channel_bearing_period_deg(channel_bearing_angular_type type);
 
+// An angle on [0, period) as the CSV writers print it (10 significant digits).
+// A value just below the period, e.g. 359.99999999999579, rounds to the period
+// ("360") at that precision and would leave the half-open domain, so it is
+// written "0". Every other value prints as before; NaN prints "nan".
+[[nodiscard]] std::string format_channel_bearing_angle(double angle_deg, double period_deg);
+
 // R-bar below this is treated as exactly zero: the mean direction is then
 // undefined and written as NaN. (Four D8 directions cancel to ~1e-17, not 0.)
 inline constexpr double k_channel_bearing_undefined_resultant = 1e-10;
