@@ -25,10 +25,18 @@
 //   D     the two declare_* parameter groups.
 //   C0    basin completeness at a grid edge under open boundaries.
 //
+//   F1    known answer: n and K from basins with per-basin uplift;
+//   F2    known answer: K per lithologic unit (mono and unit_in_basin), and
+//         its agreement with relative K at equal uplift.
+//
 // Usage: lsdtt-test-erodibility-calibration <work_dir>
+//        lsdtt-test-erodibility-calibration --write-fixtures <dir>
+//        lsdtt-test-erodibility-calibration --check-erodibility-calibration-fit ...
+//        lsdtt-test-erodibility-calibration --check-erodibility-calibration-unit ...
 // -----------------------------------------------------------------------------
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -44,13 +52,19 @@
 #include <ogrsf_frmts.h>
 
 #include "../../src/core/lsdtt_common_parameters.hpp"
+#include "../../src/core/lsdtt_csv_table.hpp"
+#include "../../src/core/lsdtt_data_loader.hpp"
 #include "../../src/core/lsdtt_gdal_init.hpp"
 #include "../../src/core/lsdtt_param_parser.hpp"
 #include "../../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../../src/cpu/lsdtt_erodibility_calibration_cpu.hpp"
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../../src/cpu/lsdtt_lithology_relative_erodibility_cpu.hpp"
+#include "../../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../../src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp"
+#include "../../src/cpu/lsdtt_steady_state_cpu.hpp"
 #include "../../src/utils/lsdtt_statistics.hpp"
 
 namespace
@@ -482,6 +496,644 @@ void test_edge_completeness()
     check("C0: a basin cut by a nodata block is reported incomplete", !cut.check_basin_completeness());
 }
 
+// ---------------------------------------------------------------------------
+// Known answers F1 (n and K) and F2 (K per unit) on steady-state surfaces
+//
+// A red-noise surface (320 x 480 at 30 m, UTM 32N, sd 3 m, 6 blur passes)
+// with a tent tilt of 0.02 dx per row towards the north and south edges
+// (divide at mid-height), routed "oooo". The basins are the 10 largest
+// interior, complete, non-overlapping sub-basins of 4000-10000 px at least
+// 8 px from the grid edge (14 qualify), so no basin reaches the open edge.
+// Channels start at 50 px. Basin b gets its own uplift U_b
+// through an exactly equivalent erodibility field: K_eff = K_unit U_ref / U_b
+// on its pixels, U_ref everywhere, so k_sn,b = (U_b / K_unit)^(1/n) exactly
+// at steady state and E_b = U_b.
+// ---------------------------------------------------------------------------
+const int k_ka_nr = 320, k_ka_nc = 480, k_ka_split = 240;
+const double k_ka_sd = 3.0;
+const int k_ka_blur = 6;
+const double k_ka_dx = 30.0, k_ka_Uref = 2e-4, k_ka_K = 1e-5, k_ka_K1 = 1e-5, k_ka_K2 = 4e-5;
+const int k_ka_min_px = 4000, k_ka_max_px = 10000, k_ka_n_basins = 10, k_ka_channel_px = 50;
+const int k_ka_nested_min_px = 400;
+const int k_ka_margin = 8;
+const double k_ka_tilt = 0.02;
+const int k_ka_order[10] = {3, 7, 0, 9, 5, 1, 8, 2, 6, 4};   // U ranks, so U is not ordered by position
+
+const std::string k_ka_bc = "oooo";
+
+lsdtt::lsdtt_flowinfo ka_flow(const lsdtt::lsdtt_raster_cpu& dem)
+{
+    lsdtt::lsdtt_flowinfo_options fo;
+    fo.boundary_conditions = k_ka_bc;
+    fo.n_threads = 1;
+    fo.build_topological_order = true;
+    fo.build_s_vector = true;
+    return lsdtt::lsdtt_flowinfo(dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), fo);
+}
+
+lsdtt::lsdtt_raster_cpu ka_surface()
+{
+    lsdtt::lsdtt_raster_cpu z = lsdtt::generate_red_noise_surface(k_ka_nr, k_ka_nc, k_ka_dx, 11, 0.0, k_ka_sd, k_ka_blur, 1);
+    std::vector<float> d = z.get_data();
+    for (int r = 0; r < k_ka_nr; ++r)
+        for (int c = 0; c < k_ka_nc; ++c)
+            d[static_cast<std::size_t>(r) * k_ka_nc + c] +=
+                static_cast<float>(k_ka_tilt * k_ka_dx * std::min(r, k_ka_nr - 1 - r));
+    lsdtt::lsdtt_raster_meta m = z.get_meta();
+    m.x_min = 500000.0;
+    m.y_min = 5000000.0;
+    m.set_crs_from_epsg(32632);
+    return lsdtt::fill_pits(lsdtt::lsdtt_raster_cpu(std::move(d), std::vector<std::uint8_t>(z.get_mask()), m),
+                            1e-4f, k_ka_bc, 1);
+}
+
+struct ka_fixture
+{
+    lsdtt::lsdtt_raster_cpu surface, elevation;
+    std::vector<std::int64_t> outlets;     // the basins, flat order
+    std::vector<double> U;                 // per basin
+    std::size_t n_edge_outlets = 0;        // sub-basins that qualify (all of them)
+    lsdtt::lsdtt_lithology_units_on_grid units;   // F2: west / east
+};
+
+// The basins: interior, complete, non-overlapping sub-basins of
+// k_ka_min_px - k_ka_max_px px with every pixel at least k_ka_margin px from
+// the grid edge, largest first (ties to the lower flat), at most k_ka_n_basins,
+// in flat order. The margin keeps them complete when the CLI re-routes the
+// steady state (its own D8 moves a few divide pixels; measured: the routed
+// basins share 83-100 % of their pixels with the surface-routed ones).
+std::vector<std::int64_t> ka_select_basins(const lsdtt::lsdtt_flowinfo& flow, std::size_t& n_qualifying)
+{
+    std::vector<std::int64_t> cand, chosen;
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(flow.full_grid_size()); ++i)
+    {
+        if (!flow.is_valid_cell(i) || flow.is_outlet(i)) continue;
+        const std::uint64_t a = flow.s_vector_size(i);
+        if (a >= static_cast<std::uint64_t>(k_ka_min_px) && a <= static_cast<std::uint64_t>(k_ka_max_px))
+            cand.push_back(i);
+    }
+    std::stable_sort(cand.begin(), cand.end(), [&](std::int64_t a, std::int64_t b) {
+        return flow.s_vector_size(a) > flow.s_vector_size(b);
+    });
+    std::vector<std::uint8_t> taken(flow.full_grid_size(), 0);
+    n_qualifying = 0;
+    for (const std::int64_t c : cand)
+    {
+        if (taken[static_cast<std::size_t>(c)]) continue;
+        bool clash = false;
+        for (const std::int64_t p : flow.upslope_nodes(c))
+            if (taken[static_cast<std::size_t>(p)]) { clash = true; break; }
+        if (clash || !lsdtt::lsdtt_basin_cpu(c, flow).check_basin_completeness()) continue;
+        bool near_edge = false;
+        for (const std::int64_t p : flow.upslope_nodes(c))
+        {
+            const int r = flow.row_from_flat(p), cc = flow.col_from_flat(p);
+            if (r < k_ka_margin || cc < k_ka_margin || r >= k_ka_nr - k_ka_margin || cc >= k_ka_nc - k_ka_margin)
+            { near_edge = true; break; }
+        }
+        if (near_edge) continue;
+        ++n_qualifying;
+        for (const std::int64_t p : flow.upslope_nodes(c)) taken[static_cast<std::size_t>(p)] = 1;
+        if (static_cast<int>(chosen.size()) < k_ka_n_basins) chosen.push_back(c);
+    }
+    std::sort(chosen.begin(), chosen.end());
+    return chosen;
+}
+
+// two_units: K1 west of the middle column, K2 east (F2); equal_U: every U_b
+// = U_ref. The steady state is built on the routing of the noisy surface;
+// f.surface is that surface.
+ka_fixture make_ka_fixture(double n_exp, bool two_units, bool equal_U)
+{
+    ka_fixture f;
+    f.surface = ka_surface();
+    const lsdtt::lsdtt_flowinfo flow = ka_flow(f.surface);
+    f.outlets = ka_select_basins(flow, f.n_edge_outlets);
+    const std::size_t npix = static_cast<std::size_t>(k_ka_nr) * k_ka_nc;
+    auto k_unit = [&](std::size_t p) {
+        if (!two_units) return k_ka_K;
+        return static_cast<int>(p % k_ka_nc) < k_ka_split ? k_ka_K1 : k_ka_K2;
+    };
+    const std::size_t nb = f.outlets.size();
+    f.U.assign(nb, k_ka_Uref);
+    for (std::size_t b = 0; b < nb; ++b)
+        if (!equal_U) f.U[b] = 5e-5 * std::pow(16.0, k_ka_order[b % 10] / 9.0);
+    std::vector<float> field(npix);
+    for (std::size_t p = 0; p < npix; ++p) field[p] = static_cast<float>(k_unit(p));
+    for (std::size_t b = 0; b < nb; ++b)
+        for (const std::int64_t p : flow.upslope_nodes(f.outlets[b]))
+            field[static_cast<std::size_t>(p)] =
+                static_cast<float>(k_unit(static_cast<std::size_t>(p)) * k_ka_Uref / f.U[b]);
+    lsdtt::lsdtt_fluvial_steady_state_options o;
+    o.U = static_cast<float>(k_ka_Uref);
+    o.K = static_cast<float>(two_units ? k_ka_K1 : k_ka_K);
+    o.n = static_cast<float>(n_exp);
+    o.m = static_cast<float>(0.45 * n_exp);
+    o.divide_area_by_dx = false;
+    o.erodibility_field = field;
+    f.elevation = lsdtt::compute_d8_fluvial_steady_state(flow, o).elevation;
+    if (two_units)
+    {
+        f.units.code_of_pixel.resize(npix);
+        for (std::size_t p = 0; p < npix; ++p)
+            f.units.code_of_pixel[p] = static_cast<int>(p % k_ka_nc) < k_ka_split ? 1 : 2;
+        f.units.units = {{1, "west", {"west"}, 0}, {2, "east", {"east"}, 0}};
+    }
+    // Diagnostic: the same outlets on the routing of the steady state itself.
+    return f;
+}
+
+struct ka_run
+{
+    std::vector<lsdtt::lsdtt_erosion_rate_sample> samples;
+    lsdtt::lsdtt_erosion_rate_basins_result basins;
+    lsdtt::lsdtt_chi_network_fit_collection_result fits;
+    std::vector<lsdtt::lsdtt_erosion_rate_basin_ksn> ksn;
+    lsdtt::lsdtt_erodibility_calibration_result cal;
+    std::vector<std::size_t> sample_basin;   // basin of each sample row (-1 none)
+};
+
+lsdtt::lsdtt_erosion_rate_sample ka_sample(const lsdtt::lsdtt_flowinfo& flow, std::int64_t flat,
+                                           double U, double area_factor, const std::string& id)
+{
+    lsdtt::lsdtt_erosion_rate_sample s;
+    s.sample_id = id;
+    const auto& m = flow.meta();
+    if (flat >= 0)
+    {
+        s.point.status = lsdtt::lsdtt_point_input_status::success;
+        s.point.row = flow.row_from_flat(flat);
+        s.point.col = flow.col_from_flat(flat);
+        s.point.flat = flat;
+        s.point.x = m.x_min + (s.point.col + 0.5) * m.cell_size;
+        s.point.y = m.y_min + (m.n_rows - s.point.row - 0.5) * m.cell_size;
+        s.reported_area_m2 = area_factor * static_cast<double>(flow.s_vector_size(flat)) * m.cell_size * m.cell_size;
+    }
+    else
+        s.point.status = lsdtt::lsdtt_point_input_status::outside_raster_extent;
+    s.rate_input = U * 1e6;            // mm/kyr
+    s.uncertainty_input = 0.1 * U * 1e6;
+    s.E_m_per_yr = s.rate_input * 1e-6;
+    s.sigma_E_m_per_yr = s.uncertainty_input * 1e-6;
+    return s;
+}
+
+// The samples of the plan: the basin outlets, a nested sample in basin 3, a
+// duplicate of basin 5, basin 8's outlet with twice its area, a point off the
+// grid. Then the whole pipeline with snapping "none".
+ka_run run_ka(const ka_fixture& f, const std::vector<double>& n_values, bool with_units,
+              bool extras = true)
+{
+    ka_run run;
+    const lsdtt::lsdtt_flowinfo flow = ka_flow(f.surface);
+    for (std::size_t b = 0; b < f.outlets.size(); ++b)
+    {
+        run.samples.push_back(ka_sample(flow, f.outlets[b], f.U[b], 1.0, "B" + std::to_string(b)));
+        run.sample_basin.push_back(b);
+    }
+    if (extras && f.outlets.size() > 8)
+    {
+        // Nested: the largest cell of basin 3 with 400 px <= A <= 0.6 A_outlet.
+        const std::uint64_t a3 = flow.s_vector_size(f.outlets[3]);
+        std::int64_t best = -1;
+        std::uint64_t best_a = 0;
+        for (const std::int64_t p : flow.upslope_nodes(f.outlets[3]))
+        {
+            const std::uint64_t a = flow.s_vector_size(p);
+            if (a >= static_cast<std::uint64_t>(k_ka_nested_min_px) && 10 * a <= 6 * a3 && a > best_a)
+            {
+                best = p;
+                best_a = a;
+            }
+        }
+        run.samples.push_back(ka_sample(flow, best, f.U[3], 1.0, "N3"));
+        run.sample_basin.push_back(3);
+        run.samples.push_back(ka_sample(flow, f.outlets[5], f.U[5], 1.0, "D5"));
+        run.sample_basin.push_back(5);
+        run.samples.push_back(ka_sample(flow, f.outlets[8], f.U[8], 2.0, "A8"));
+        run.sample_basin.push_back(8);
+        run.samples.push_back(ka_sample(flow, -1, 1e-4, 1.0, "OUT"));
+        run.sample_basin.push_back(static_cast<std::size_t>(-1));
+    }
+    lsdtt::lsdtt_erosion_rate_basin_options bo;
+    bo.snapping_method = "none";
+    bo.channel_threshold_pixels = k_ka_channel_px;
+    run.basins = lsdtt::delineate_erosion_rate_basins(flow, run.samples, bo, with_units ? &f.units : nullptr);
+
+    lsdtt::lsdtt_chi_options co;
+    co.m_over_n = 0.45;
+    co.A_0 = 1.0;
+    const lsdtt::lsdtt_chi_collection_result chi =
+        lsdtt::get_chi_from_outlets_zero_base_threshold(flow, run.basins.outlets, k_ka_channel_px, co);
+    for (const auto& b : chi.basins) run.fits.basins.push_back(lsdtt::fit_chi_network(b, f.elevation, {}));
+
+    lsdtt::lsdtt_erodibility_calibration_options opts;
+    opts.n_values = n_values;
+    std::mt19937_64 rng = lsdtt::erodibility_calibration_bootstrap_engine(5489, 0.45);
+    run.ksn = lsdtt::compute_erosion_rate_basin_ksn(run.fits, f.surface.get_meta(), {}, opts, rng);
+    lsdtt::lsdtt_chi_lithology_tables tables;
+    if (with_units)
+    {
+        const std::vector<float> cd = lsdtt::compute_lithology_contact_distance(f.surface, f.units, 1);
+        lsdtt::lsdtt_chi_lithology_options lo;
+        tables = lsdtt::build_chi_lithology_tables(run.fits, f.surface.get_meta(), f.units, cd, {}, lo);
+    }
+    run.cal = lsdtt::calibrate_erodibility_from_erosion_rates(
+        run.samples, run.basins, run.ksn, run.fits, with_units ? &tables : nullptr,
+        with_units ? &f.units : nullptr, 0.45, 1.0, opts, rng);
+    return run;
+}
+
+const lsdtt::lsdtt_erosion_rate_basin_ksn* ka_ksn_of(const ka_run& run, std::size_t sample)
+{
+    for (const auto& k : run.ksn)
+        if (k.outlet_flat == run.basins.basins[sample].outlet_flat) return &k;
+    return nullptr;
+}
+
+const lsdtt::lsdtt_erodibility_fit_row* ka_fit(const ka_run& run, const std::string& type, double n)
+{
+    for (const auto& f : run.cal.fits)
+        if (f.fit_type == type && (type == "fitted_n" || f.n == n)) return &f;
+    return nullptr;
+}
+
+void test_known_answer_f1(double n_true)
+{
+    const std::string tag = "F1 (n = " + fmt(n_true) + "): ";
+    const ka_fixture f = make_ka_fixture(n_true, false, false);
+    const double wrong_n = n_true == 1.0 ? 2.0 : 1.0;
+    const ka_run run = run_ka(f, {n_true, wrong_n}, false);
+    std::cout << tag << f.n_edge_outlets << " complete non-overlapping sub-basins of " << k_ka_min_px
+              << "-" << k_ka_max_px << " px; using "
+              << f.outlets.size() << "\n";
+
+    // F1-a, F1-b per basin.
+    double max_k_err = 0.0, max_K_err = 0.0;
+    bool all_basins = true;
+    for (std::size_t i = 0; i < run.samples.size(); ++i)
+    {
+        if (run.samples[i].status != "used") continue;
+        const auto* k = ka_ksn_of(run, i);
+        const std::size_t b = run.sample_basin[i];
+        const double want = std::pow(f.U[b] / k_ka_K, 1.0 / n_true);
+        const double err = std::fabs(k->k_sn / want - 1.0);
+        max_k_err = std::max(max_k_err, err);
+        std::cout << "   " << run.samples[i].sample_id << ": U " << f.U[b] << " k_sn " << k->k_sn
+                  << " (want " << want << ", rel err " << err << ") [" << k->ci_low << ", " << k->ci_high
+                  << "] reaches " << k->n_reaches_qualifying << "/" << k->n_reaches << "\n";
+        for (const auto& r : run.cal.basin_K)
+            if (r.sample == static_cast<int>(i) && r.n == n_true)
+                max_K_err = std::max(max_K_err, std::fabs(r.K / k_ka_K - 1.0));
+    }
+    for (std::size_t b = 0; b < f.outlets.size(); ++b)
+        all_basins = all_basins && run.samples[b].status == "used";
+    const auto* fx = ka_fit(run, "fixed_n", n_true);
+    const auto* fw = ka_fit(run, "fixed_n", wrong_n);
+    const auto* fn = ka_fit(run, "fitted_n", 0.0);
+    const double K_fixed_err = fx ? std::fabs(fx->K / k_ka_K - 1.0) : 1.0;
+    const double n_err = fn && fn->status == "ok" ? std::fabs(fn->n - n_true) : 1.0;
+    const double K_fit_err = fn && fn->status == "ok" ? std::fabs(fn->K / k_ka_K - 1.0) : 1.0;
+    std::cout << std::setprecision(8) << tag << "MEASURED max |k_sn err| " << max_k_err
+              << ", max |K_b err| " << max_K_err << ", fixed-n K " << (fx ? fx->K : 0.0) << " (err "
+              << K_fixed_err << ", corr_lnK_lnk " << (fx ? fx->corr_lnK_lnk : 0.0) << ", dispersion "
+              << (fx ? fx->ln_K_dispersion : 0.0) << ") [" << (fx ? fx->K_ci_low : 0.0) << ", "
+              << (fx ? fx->K_ci_high : 0.0) << "]; wrong n = " << wrong_n << ": dispersion "
+              << (fw ? fw->ln_K_dispersion : 0.0) << ", corr " << (fw ? fw->corr_lnK_lnk : 0.0)
+              << "; fitted n " << (fn ? fn->n : 0.0) << " [" << (fn ? fn->n_ci_low : 0.0) << ", "
+              << (fn ? fn->n_ci_high : 0.0) << "] (err " << n_err << ", York SE " << (fn ? fn->n_se_york : 0.0)
+              << ", MSWD " << (fn ? fn->mswd : 0.0) << "), K " << (fn ? fn->K : 0.0) << " (err "
+              << K_fit_err << ") [" << (fn ? fn->K_ci_low : 0.0) << ", " << (fn ? fn->K_ci_high : 0.0)
+              << "], N_groups " << run.cal.n_groups << std::setprecision(6) << "\n";
+
+    // Pins: 2 x the measured error, capped at the plan's caps (k_sn 2 %, K
+    // n x 2 %, n 0.03 n, K at the fitted n 6 % / 12 %). Measured 2026-10-19:
+    //   n = 1: k_sn 1.853 %, K_b 1.819 %, fixed-n K 1.484 % (corr_lnK_lnk
+    //          0.495), n 0.00123, K at fitted n 1.852 %; wrong n = 2:
+    //          dispersion 0.951, corr -0.99999765
+    //   n = 2: k_sn 1.853 %, K_b 3.605 %, fixed-n K 2.946 % (corr 0.493),
+    //          n 0.0049, K at fitted n 3.671 %; wrong n = 1: dispersion 0.478,
+    //          corr 0.99996276
+    // Every basin k_sn is HIGH by +1.1 to +1.9 %: the steady state integrates
+    // chi with a left rectangle rule, chi extraction with the trapezoid rule.
+    const bool n1 = n_true == 1.0;
+    const double pin_k = 0.02, pin_Kb = n1 ? 0.02 : 0.04, pin_Kfixed = n1 ? 0.02 : 0.04;
+    const double pin_n = n1 ? 0.0025 : 0.0099, pin_Kfit = n1 ? 0.037 : 0.074;
+    check(tag + "F1-a every basin k_sn = (U_b/K)^(1/n) within " + fmt(pin_k), all_basins && max_k_err <= pin_k,
+          fmt(max_k_err));
+    check(tag + "F1-b every basin K = K_true within " + fmt(pin_Kb), max_K_err <= pin_Kb, fmt(max_K_err));
+    check(tag + "F1-c fixed n = n_true: K within " + fmt(pin_Kfixed), K_fixed_err <= pin_Kfixed, fmt(K_fixed_err));
+    check(tag + "F1-c wrong n: |corr_lnK_lnk| > 0.9", fw && std::fabs(fw->corr_lnK_lnk) > 0.9);
+    if (n1)
+        check(tag + "F1-c wrong n = 2 on the n = 1 surface: ln_K_dispersion > 0.5",
+              fw && fw->ln_K_dispersion > 0.5);
+    check(tag + "F1-d fitted n within " + fmt(pin_n) + ", interval brackets n",
+          fn && fn->status == "ok" && n_err <= pin_n && fn->n_ci_low <= n_true && n_true <= fn->n_ci_high,
+          fmt(n_err));
+    check(tag + "F1-e K at the fitted n within " + fmt(pin_Kfit), K_fit_err <= pin_Kfit, fmt(K_fit_err));
+    check(tag + "fit rows: one fixed_n per n and one fitted_n; MSWD and both York SEs written",
+          run.cal.fits.size() == 3 && fn && std::isfinite(fn->mswd) && fn->n_se_york > 0.0 &&
+              fn->n_se_york_mswd_scaled > 0.0);
+
+    // Determinism: the same seed gives the same intervals bitwise.
+    const ka_run again = run_ka(f, {n_true, wrong_n}, false);
+    const auto* fn2 = ka_fit(again, "fitted_n", 0.0);
+    check(tag + "same seed, same intervals (bitwise)",
+          fn2 && std::memcmp(&fn2->n_ci_low, &fn->n_ci_low, sizeof(double)) == 0 &&
+              std::memcmp(&fn2->K_ci_high, &fn->K_ci_high, sizeof(double)) == 0 &&
+              again.cal.basin_K.size() == run.cal.basin_K.size() &&
+              std::memcmp(&again.cal.basin_K[0].K_ci_low, &run.cal.basin_K[0].K_ci_low, sizeof(double)) == 0);
+
+    // F1-f bookkeeping.
+    const auto count = [&](const char* st) { return lsdtt::count_erosion_rate_samples_with_status(run.samples, st); };
+    std::cout << tag << "statuses: used " << count("used") << ", area_mismatch " << count("area_mismatch")
+              << ", outside_dem " << count("outside_dem") << ", too_few_reaches " << count("too_few_reaches")
+              << "\n";
+    check(tag + "F1-f status counts: 12 used, 1 area_mismatch, 1 outside_dem",
+          count("used") == 12 && count("area_mismatch") == 1 && count("outside_dem") == 1);
+    check(tag + "F1-f N_groups = 10", run.cal.n_groups == 10);
+    const auto* kn = ka_ksn_of(run, 10);
+    const double want3 = std::pow(f.U[3] / k_ka_K, 1.0 / n_true);
+    check(tag + "F1-f the nested sample shares basin 3's E and group, k_sn within the cap",
+          run.samples.size() > 10 && run.samples[10].E_m_per_yr == run.samples[3].E_m_per_yr &&
+              run.basins.basins[10].nesting_group == run.basins.basins[3].nesting_group && kn &&
+              std::fabs(kn->k_sn / want3 - 1.0) <= pin_k);
+    check(tag + "F1-f the duplicate shares basin 5's outlet and group",
+          run.basins.basins[11].outlet_flat == run.basins.basins[5].outlet_flat &&
+              run.basins.basins[11].duplicates == std::vector<int>{5});
+}
+
+void test_known_answer_f2()
+{
+    const std::string tag = "F2: ";
+    const ka_fixture f = make_ka_fixture(1.0, true, false);
+    const ka_run run = run_ka(f, {1.0}, true, false);
+    std::size_t n_mono_w = 0, n_mono_e = 0;
+    for (std::size_t i = 0; i < run.samples.size(); ++i)
+    {
+        const auto& b = run.basins.basins[i];
+        std::cout << "   " << run.samples[i].sample_id << " status " << run.samples[i].status << " dominant "
+                  << b.dominant_code << " " << b.dominant_area_fraction << "\n";
+        if (run.samples[i].status == "used" && b.dominant_area_fraction >= 0.8)
+            (b.dominant_code == 1 ? n_mono_w : n_mono_e)++;
+    }
+    double errs[2][2] = {{1.0, 1.0}, {1.0, 1.0}};   // [method mono/uib][unit]
+    for (const auto& r : run.cal.units)
+    {
+        const double want = r.lith_code == 1 ? k_ka_K1 : k_ka_K2;
+        const int mi = r.method == "mono" ? 0 : 1;
+        const double e = r.status == "ok" ? std::fabs(r.K / want - 1.0) : 1.0;
+        errs[mi][r.lith_code - 1] = e;
+        std::cout << "   " << r.method << " " << r.lith_name << ": K " << r.K << " [" << r.K_ci_low << ", "
+                  << r.K_ci_high << "] (want " << want << ", rel err " << e << ") basins " << r.N_basins
+                  << " groups " << r.N_groups << "\n";
+    }
+    const auto* fn = ka_fit(run, "fitted_n", 0.0);
+    std::cout << std::setprecision(8) << tag << "MEASURED unit_in_basin err west " << errs[1][0] << " east "
+              << errs[1][1] << "; mono err west " << errs[0][0] << " east " << errs[0][1] << "; mono basins "
+              << n_mono_w << " / " << n_mono_e << "; bulk fitted n " << (fn ? fn->n : 0.0) << " ("
+              << (fn ? fn->status : "") << ", MSWD " << (fn ? fn->mswd : 0.0) << ")" << std::setprecision(6)
+              << "\n";
+    // Pins: 2 x measured, capped at n x 2 %. Measured 2026-10-19:
+    // unit_in_basin west 1.594 %, east 1.558 %; mono west 1.503 %, east 1.543 %;
+    // mono basins 3 / 5; unit_in_basin entries 5 / 7; bulk fitted n 0.6779
+    // (MSWD 36.7: the lithology confound, F2-e, not asserted). F2-c: 0.116 %
+    // west, 0.030 % east.
+    check(tag + "F2-a unit_in_basin recovers K1 and K2 within 0.02", errs[1][0] <= 0.02 && errs[1][1] <= 0.02);
+    check(tag + "F2-b mono recovers K1 and K2 within 0.02", errs[0][0] <= 0.02 && errs[0][1] <= 0.02);
+    std::size_t uib_w = 0, uib_e = 0;
+    for (const auto& r : run.cal.units)
+        if (r.method == "unit_in_basin") (r.lith_code == 1 ? uib_w : uib_e) = r.N_basins;
+    check(tag + "F2-b mono basins 3 west / 5 east; unit_in_basin entries 5 / 7 (exact)",
+          n_mono_w == 3 && n_mono_e == 5 && uib_w == 5 && uib_e == 7);
+
+    // F2-c: with every U_b equal, unit_in_basin agrees with relative K's
+    // absolute K (E = U) on the same fits, to the sum of their pins (2 % + 2 %).
+    const ka_fixture fe = make_ka_fixture(1.0, true, true);
+    const ka_run re = run_ka(fe, {1.0}, true, false);
+    const std::vector<float> cd = lsdtt::compute_lithology_contact_distance(fe.surface, fe.units, 1);
+    lsdtt::lsdtt_chi_lithology_options lo;
+    const auto t = lsdtt::build_chi_lithology_tables(re.fits, fe.surface.get_meta(), fe.units, cd, {}, lo);
+    std::mt19937_64 srng(5489);
+    const auto sum = lsdtt::summarise_chi_ksn_by_lithology(t, fe.units, 0.45, 1.0, lo, srng);
+    lsdtt::lsdtt_relative_erodibility_options ro;
+    ro.n_values = {1.0};
+    ro.erosion_rate_m_per_yr = k_ka_Uref;
+    std::mt19937_64 rrng = lsdtt::lithology_relative_erodibility_bootstrap_engine(5489, 0.45);
+    const auto rel = lsdtt::compute_lithology_relative_erodibility(t, sum, ro, rrng);
+    double diff[3] = {1.0, 1.0, 1.0};
+    for (const auto& u : re.cal.units)
+        if (u.method == "unit_in_basin")
+            for (const auto& r : rel.rows)
+                if (r.lith_code == u.lith_code) diff[u.lith_code] = std::fabs(u.K / r.K_abs - 1.0);
+    std::cout << std::setprecision(8) << tag << "MEASURED F2-c |K_unit_in_basin / K_relative - 1| west "
+              << diff[1] << " east " << diff[2] << std::setprecision(6) << "\n";
+    check(tag + "F2-c equal U: unit_in_basin K = relative-K absolute K within 0.04",
+          diff[1] <= 0.04 && diff[2] <= 0.04);
+}
+
+// ---------------------------------------------------------------------------
+// CLI fixtures (--write-fixtures <dir>)
+//
+// f1_dem.tif / f2_dem.tif: the F1 (n = 1) and F2 steady states, routed by the
+// CLI as given (raster_is_filled: true, "oooo"). f1_samples.csv /
+// f2_samples.csv: the samples of run_ka (outlets as WGS84 latitude/longitude
+// of their pixel centres; E in mm/kyr with 10 % sigma; reported areas from
+// routing the DEM exactly as the CLI does; the off-grid point 1 degree east).
+// f1_samples_m_per_yr.csv: f1 in m/yr. f2_units.gpkg: west / east polygons
+// (lith_primary). The CSV with a units column is checked by the reader.
+// ---------------------------------------------------------------------------
+std::vector<pt> ka_lonlat(const std::vector<pt>& xy)
+{
+    OGRSpatialReference utm, wgs;
+    utm.importFromEPSG(32632);
+    wgs.importFromEPSG(4326);
+    utm.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    wgs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    std::unique_ptr<OGRCoordinateTransformation> t(OGRCreateCoordinateTransformation(&utm, &wgs));
+    std::vector<pt> out = xy;
+    for (auto& p : out) t->Transform(1, &p.x, &p.y);
+    return out;
+}
+
+void write_ka_samples(const std::string& path, const ka_fixture& f, const lsdtt::lsdtt_flowinfo& cli_flow,
+                      bool m_per_yr)
+{
+    const lsdtt::lsdtt_flowinfo flow = ka_flow(f.surface);
+    struct row { std::string id; std::int64_t flat; double U, area_factor; };
+    std::vector<row> rows;
+    for (std::size_t b = 0; b < f.outlets.size(); ++b) rows.push_back({"B" + std::to_string(b), f.outlets[b], f.U[b], 1.0});
+    // The extras as run_ka builds them.
+    const std::uint64_t a3 = flow.s_vector_size(f.outlets[3]);
+    std::int64_t best = -1;
+    std::uint64_t best_a = 0;
+    for (const std::int64_t p : flow.upslope_nodes(f.outlets[3]))
+    {
+        const std::uint64_t a = flow.s_vector_size(p);
+        if (a >= static_cast<std::uint64_t>(k_ka_nested_min_px) && 10 * a <= 6 * a3 && a > best_a) { best = p; best_a = a; }
+    }
+    rows.push_back({"N3", best, f.U[3], 1.0});
+    rows.push_back({"D5", f.outlets[5], f.U[5], 1.0});
+    rows.push_back({"A8", f.outlets[8], f.U[8], 2.0});
+    const auto& m = f.surface.get_meta();
+    std::vector<pt> xy;
+    for (const auto& r : rows)
+        xy.push_back({m.x_min + (flow.col_from_flat(r.flat) + 0.5) * m.cell_size,
+                      m.y_min + (m.n_rows - flow.row_from_flat(r.flat) - 0.5) * m.cell_size});
+    xy.push_back({m.x_min + m.n_cols * m.cell_size + 80000.0, m.y_min + 100.0});
+    const std::vector<pt> ll = ka_lonlat(xy);
+    std::ofstream out(path);
+    out << std::setprecision(15);
+    out << "sample_id,latitude,longitude,erosion_rate,erosion_rate_uncertainty,erosion_rate_units,reported_area_km2\n";
+    const double scale = m_per_yr ? 1.0 : 1e6;
+    const std::string units = m_per_yr ? "m_per_yr" : "mm_per_kyr";
+    for (std::size_t i = 0; i < rows.size(); ++i)
+    {
+        const double area_km2 = rows[i].area_factor * static_cast<double>(cli_flow.s_vector_size(rows[i].flat)) *
+                                m.cell_size * m.cell_size / 1e6;
+        out << rows[i].id << "," << ll[i].y << "," << ll[i].x << "," << rows[i].U * scale << ","
+            << 0.1 * rows[i].U * scale << "," << units << "," << area_km2 << "\n";
+    }
+    out << "OUT," << ll.back().y << "," << ll.back().x << "," << 1e-4 * scale << "," << 1e-5 * scale << ","
+        << units << ",5\n";
+}
+
+void write_ka_units(const std::string& path, const lsdtt::lsdtt_raster_meta& m)
+{
+    std::filesystem::remove(path);
+    GDALDataset* ds = GetGDALDriverManager()->GetDriverByName("GPKG")->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    OGRSpatialReference srs;
+    srs.importFromEPSG(32632);
+    srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    OGRLayer* layer = ds->CreateLayer("units", &srs, wkbPolygon, nullptr);
+    OGRFieldDefn fd("lith_primary", OFTString);
+    (void)layer->CreateField(&fd);
+    const double xs = m.x_min + k_ka_split * m.cell_size, x1 = m.x_min + m.n_cols * m.cell_size;
+    const double y0 = m.y_min, y1 = m.y_min + m.n_rows * m.cell_size;
+    for (int k = 0; k < 2; ++k)
+    {
+        OGRFeature* f = OGRFeature::CreateFeature(layer->GetLayerDefn());
+        f->SetField("lith_primary", k == 0 ? "west" : "east");
+        const double a = k == 0 ? m.x_min : xs, b = k == 0 ? xs : x1;
+        OGRLinearRing ring;
+        ring.addPoint(a, y0); ring.addPoint(b, y0); ring.addPoint(b, y1); ring.addPoint(a, y1); ring.addPoint(a, y0);
+        OGRPolygon poly;
+        poly.addRing(&ring);
+        f->SetGeometry(&poly);
+        if (layer->CreateFeature(f) != OGRERR_NONE) std::cerr << "could not write a unit polygon\n";
+        OGRFeature::DestroyFeature(f);
+    }
+    GDALClose(ds);
+}
+
+int write_fixtures(const std::string& dir)
+{
+    std::filesystem::create_directories(dir);
+    lsdtt::lsdtt_data_loader w;
+    const ka_fixture f1 = make_ka_fixture(1.0, false, false);
+    w.write_full(f1.elevation.get_data(), f1.elevation.get_meta(), dir + "/f1_dem.tif",
+                 lsdtt::raster_output_format::gtiff);
+    const lsdtt::lsdtt_flowinfo cli1 = ka_flow(f1.elevation);
+    write_ka_samples(dir + "/f1_samples.csv", f1, cli1, false);
+    write_ka_samples(dir + "/f1_samples_m_per_yr.csv", f1, cli1, true);
+    const ka_fixture f2 = make_ka_fixture(1.0, true, false);
+    w.write_full(f2.elevation.get_data(), f2.elevation.get_meta(), dir + "/f2_dem.tif",
+                 lsdtt::raster_output_format::gtiff);
+    const lsdtt::lsdtt_flowinfo cli2 = ka_flow(f2.elevation);
+    write_ka_samples(dir + "/f2_samples.csv", f2, cli2, false);
+    write_ka_units(dir + "/f2_units.gpkg", f2.surface.get_meta());
+    std::cout << "wrote the erodibility calibration CLI fixtures to " << dir << "\n";
+    return 0;
+}
+
+// --check-erodibility-calibration-fit <fit.csv> <fit_type> <n> <expected_n> <tol_n>
+//     <expected_K> <tol_K>: a written _erodibility_calibration_fit_ CSV against
+// expected values (n absolute, K relative). For fixed_n the row with that n is
+// read and expected_n is ignored; status must be ok.
+int check_fit(int argc, char* argv[])
+{
+    if (argc != 9)
+    {
+        std::cerr << "usage: --check-erodibility-calibration-fit <csv> <fixed_n|fitted_n> <n> <expected_n> "
+                     "<tol_n> <expected_K> <tol_K>\n";
+        return 2;
+    }
+    try
+    {
+        const std::string csv = argv[2], type = argv[3];
+        const double n_sel = std::stod(argv[4]), want_n = std::stod(argv[5]), tol_n = std::stod(argv[6]);
+        const double want_K = std::stod(argv[7]), tol_K = std::stod(argv[8]);
+        const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(csv);
+        for (std::size_t i = 0; i < t.rows.size(); ++i)
+        {
+            const auto& r = t.rows[i];
+            const int line = static_cast<int>(i) + 2;
+            if (lsdtt::csv_row_string(r, "fit_type") != type) continue;
+            if (type == "fixed_n" && lsdtt::csv_row_double_required(r, "n", csv, line) != n_sel) continue;
+            const std::string status = lsdtt::csv_row_string(r, "status");
+            const double n = lsdtt::csv_row_double_required(r, "n", csv, line);
+            const double K = lsdtt::csv_row_double_required(r, "K", csv, line);
+            const double errK = std::fabs(K / want_K - 1.0);
+            const double errn = type == "fitted_n" ? std::fabs(n - want_n) : 0.0;
+            std::cout << std::setprecision(10) << type << " (" << status << "): n " << n << " (abs err " << errn
+                      << "), K " << K << " (rel err " << errK << "), interval [" << lsdtt::csv_row_string(r, "K_ci_low")
+                      << ", " << lsdtt::csv_row_string(r, "K_ci_high") << "], n interval ["
+                      << lsdtt::csv_row_string(r, "n_ci_low") << ", " << lsdtt::csv_row_string(r, "n_ci_high")
+                      << "], MSWD " << lsdtt::csv_row_string(r, "mswd") << ", N_groups "
+                      << lsdtt::csv_row_string(r, "N_groups") << "\n";
+            const bool ok = status == "ok" && errK <= tol_K && errn <= tol_n;
+            std::cout << (ok ? "PASS" : "FAIL") << "\n";
+            return ok ? 0 : 1;
+        }
+        std::cerr << "FAIL: no " << type << " row in " << csv << "\n";
+        return 1;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FAIL: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+// --check-erodibility-calibration-unit <by_lithology.csv> <method> <n> <unit> <expected_K> <tol_K>
+int check_unit(int argc, char* argv[])
+{
+    if (argc != 8)
+    {
+        std::cerr << "usage: --check-erodibility-calibration-unit <csv> <method> <n> <unit> <expected_K> <tol_K>\n";
+        return 2;
+    }
+    try
+    {
+        const std::string csv = argv[2], method = argv[3], unit = argv[5];
+        const double n = std::stod(argv[4]), want = std::stod(argv[6]), tol = std::stod(argv[7]);
+        const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(csv);
+        for (std::size_t i = 0; i < t.rows.size(); ++i)
+        {
+            const auto& r = t.rows[i];
+            const int line = static_cast<int>(i) + 2;
+            if (lsdtt::csv_row_string(r, "method") != method || lsdtt::csv_row_string(r, "lith_name") != unit ||
+                lsdtt::csv_row_double_required(r, "n", csv, line) != n)
+                continue;
+            const double K = lsdtt::csv_row_double_required(r, "K", csv, line);
+            const double err = std::fabs(K / want - 1.0);
+            std::cout << std::setprecision(10) << method << " " << unit << " n = " << n << ": K " << K
+                      << " (expected " << want << ", rel err " << err << "), basins "
+                      << lsdtt::csv_row_string(r, "N_basins") << ", status " << lsdtt::csv_row_string(r, "status") << "\n";
+            const bool ok = lsdtt::csv_row_string(r, "status") == "ok" && err <= tol;
+            std::cout << (ok ? "PASS" : "FAIL") << "\n";
+            return ok ? 0 : 1;
+        }
+        std::cerr << "FAIL: no " << method << " row for " << unit << " in " << csv << "\n";
+        return 1;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FAIL: " << e.what() << "\n";
+        return 1;
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -492,6 +1144,10 @@ int main(int argc, char* argv[])
         return 2;
     }
     lsdtt::gdal_init();
+    const std::string mode = argv[1];
+    if (mode == "--write-fixtures" && argc == 3) return write_fixtures(argv[2]);
+    if (mode == "--check-erodibility-calibration-fit") return check_fit(argc, argv);
+    if (mode == "--check-erodibility-calibration-unit") return check_unit(argc, argv);
     const std::string work = argv[1];
     std::cout << "lsdtt3 erodibility calibration tests (York, reader, seams, parameters)\n";
     test_york();
@@ -500,6 +1156,9 @@ int main(int argc, char* argv[])
     catch (const std::exception& e) { check("reader tests ran without an exception", false, e.what()); }
     test_parameters();
     test_edge_completeness();
+    test_known_answer_f1(1.0);
+    test_known_answer_f1(2.0);
+    test_known_answer_f2();
     std::cout << g_n_checks - g_n_failed << " / " << g_n_checks << " checks passed\n"
               << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
     return g_n_failed == 0 ? 0 : 1;

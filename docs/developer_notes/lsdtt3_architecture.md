@@ -3301,23 +3301,32 @@ Files: `src/core/lsdtt_octopus_fetch.hpp/.cpp`. GDAL-free header; never prints.
 file opens as no vector layer, the WGS84 envelope of its densified footprint is
 the box (`geometry_kind` `raster`).
 
-### lsdtt_erodibility_calibration_cpu (erosion-rate samples)
+### lsdtt_erodibility_calibration_cpu (stream-power K from basin erosion rates)
 
-Files: `src/cpu/lsdtt_erodibility_calibration_cpu.hpp/.cpp`. GDAL-free; never
-prints. So far the sample input of the stream-power K calibration from basin
-erosion rates: `canonical_erosion_rate_units` / `erosion_rate_units_to_m_per_yr`
-(`mm_per_kyr` = `m_per_myr` 1e-6, `cm_per_kyr` 1e-5, `mm_per_yr` 1e-3,
-`m_per_yr` 1; no default, mass fluxes refused) and `read_erosion_rate_samples`
-(any point input through `load_point_layer_with_attributes`; every row kept in
-input order with its point status; a per-row `erosion_rate_units` column must
-agree with the parameter). The parameter groups are
-`declare_erosion_rate_input_parameters` and
-`declare_erodibility_calibration_parameters` (`lsdtt_common_parameters`); no CLI
-calls them yet. Related shared pieces: `fit_york_line` (`lsdtt_statistics`),
-`snap_pixel_to_reported_drainage_area_expanding_square`
-(`lsdtt_flow_snapping_cpu`), and `stream_power_erodibility_from_erosion_rate` and
-`write_lithology_erodibility_property_table`
-(`lsdtt_lithology_relative_erodibility_cpu`).
+Files: `src/cpu/lsdtt_erodibility_calibration_cpu.hpp/.cpp`. Never prints; takes
+`const lsdtt_flow_base&`. Used by `lsdtt-chi-analysis` (`erosion_rate_fname`).
+
+- Input: `canonical_erosion_rate_units` / `erosion_rate_units_to_m_per_yr` (`mm_per_kyr`
+  = `m_per_myr` 1e-6, `cm_per_kyr` 1e-5, `mm_per_yr` 1e-3, `m_per_yr` 1; no default,
+  mass fluxes refused) and `read_erosion_rate_samples` (any point input through
+  `load_point_layer_with_attributes`; a per-row `erosion_rate_units` column must agree).
+- `delineate_erosion_rate_basins` (m/n independent): snapping
+  (`snap_pixel_by_method`, `reported_area` by default), basin completeness, DEM vs
+  reported area, nested and duplicate samples, nesting groups (union-find), the
+  nested-basin policy, lithologic composition.
+- `compute_erosion_rate_basin_ksn` (per m/n): the reach median of each sample basin's
+  own fitted chi network on a single-unit grid (reaches split at confluences only), its
+  reach bootstrap, and the diagnostic statistics.
+- `calibrate_erodibility_from_erosion_rates` (per m/n): K per sample (Monte Carlo over
+  E and the k_sn replicates), K at fixed n (weighted log mean), a fitted (n, K)
+  (`fit_york_line`), K per unit (`mono`, `unit_in_basin`); intervals by a bootstrap
+  over nesting groups from `erodibility_calibration_bootstrap_engine` (stream tag 2).
+- Writers: the samples, basin K, fit, by-lithology and basin-lithology CSVs, the basin
+  polygons, and the draft property table (`write_lithology_erodibility_property_table`).
+- Parameter groups: `declare_erosion_rate_input_parameters`,
+  `declare_erodibility_calibration_parameters`, `declare_stream_power_n_values_parameter`
+  (`lsdtt_common_parameters`). Shared: `stream_power_erodibility_from_erosion_rate`
+  (`lsdtt_lithology_relative_erodibility_cpu`).
 
 ### lsdtt_stream_power_cpu (transient incision)
 

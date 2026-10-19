@@ -321,7 +321,13 @@ and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`; it asserts minima
 because OCTOPUS grows. `unit_chi_erodibility_calibration`
 (`tests/cpp/test_erodibility_calibration.cpp`) covers the York regression, the
 erosion-rate sample reader and its units, the K formula and property-table
-writer shared with relative K, and the declared parameter groups. All of these
+writer shared with relative K, the parameter groups, and the known answers: F1
+(n and K from basins with their own uplift on a steady state) and F2 (K per
+lithologic unit). The same driver writes the CLI fixtures
+(`fixture_chi_erodibility_calibration_cli`: the F1 and F2 steady states, sample CSVs
+in mm/kyr and m/yr, unit polygons) and reads the CLI's fit and per-unit CSVs back for
+the `rigorous_chi_erodibility_calibration_*` checks
+(`--check-erodibility-calibration-fit`, `--check-erodibility-calibration-unit`). All of these
 also carry the label `erodibility_calibration`, so `ctest -L
 erodibility_calibration -LE heavy` runs the thread. `data/bounds/bounds_raster_utm.tif`
 is a 10 x 10 GeoTIFF in UTM 32N for `bounds_fname` given as a raster

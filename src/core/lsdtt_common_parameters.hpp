@@ -439,6 +439,13 @@ void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_defa
 // Every key is effective only with erosion_rate_fname. The list of n values
 // is not declared here.
 // -----------------------------------------------------------------------------
+// declare_stream_power_n_values_parameter: stream_power_n_values (string "1"),
+// the slope exponent(s) n shared by relative erodibility and the erodibility
+// calibration in lsdtt-chi-analysis (relative_erodibility_n_values is its
+// deprecated alias there).
+void declare_stream_power_n_values_parameter(std::map<std::string, std::string>& string_default_map,
+                                             lsdtt_help_registry&                help_map,
+                                             const std::string&                  prefix = "");
 void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
                                            std::map<std::string, std::string>& string_default_map,
                                            lsdtt_help_registry&                help_map,

@@ -43,7 +43,7 @@ octopus_source) are complete and correct as written.
 
 SECOND MODE -- ``--point-reference`` (test L12)
 ---------------------------------------------------------------------------------
-OCTOPUS does **not** compute LSDn from the DEM. Per Saktura et al. (2025, GChron
+OCTOPUS does **not** compute LSDn from the DEM. Per Codilean & Munack (2025, GChron
 7:113) CAIRN reduces each basin to two scalars -- ``CENTR_LAT`` (centroid
 latitude) and ``ATM_PRESS`` (the effective basin-averaged pressure, itself
 iterated to match the spatially averaged **Stone--Lal** production) -- and feeds
@@ -119,7 +119,7 @@ OUTLETS_TYPE = "be10-denude:crn_int_outlets"
 
 # --scaling: which OCTOPUS 10Be rate fields populate published_erate_*.
 #   St     -- EBE_*, OCTOPUS's own CAIRN recalculation with time-independent
-#             Stone/Lal. The ONLY scheme CAIRN implements (Saktura et al. 2025,
+#             Stone/Lal. The ONLY scheme CAIRN implements (Codilean & Munack 2025,
 #             GChron 7:113); the default, so the tracked St artefacts never move.
 #   LSDn   -- EBEL, the Balco v3 point result at (CENTR_LAT, ATM_PRESS) obtained
 #             through RIVERSAND, WITH topographic shielding.
@@ -165,7 +165,7 @@ POINT_REFERENCE_FIELDS = [
     # AREA's own 0.01 km2 quantisation does not dominate.
     # LEADING HYPOTHESIS, UNCONFIRMED: CENTR_LAT is an EFFECTIVE latitude,
     # iterated against the spatially averaged Stone-Lal production exactly as
-    # ATM_PRESS is (Saktura et al. 2025, GChron 7:113, describes ATM_PRESS that
+    # ATM_PRESS is (Codilean & Munack 2025, GChron 7:113, describes ATM_PRESS that
     # way), rather than a geometric centroid. A separate research task is running
     # to settle it; until it does, this stays a recorded discrepancy.
     "CENTR_LAT_DERIVED",
@@ -494,8 +494,8 @@ def harvest(args) -> int:
                 if args.scaling == "St" else
                 f"OCTOPUS {db_version} {scheme['mmkyr']}: Balco et al. (2008) v3 "
                 "POINT calculator via RIVERSAND, evaluated at the CAIRN-reduced "
-                "(CENTR_LAT, ATM_PRESS) scalars -- NOT a CAIRN scheme (Saktura et "
-                "al. 2025, GChron 7:113)."
+                "(CENTR_LAT, ATM_PRESS) scalars -- NOT a CAIRN scheme (Codilean & "
+                "Munack 2025, GChron 7:113)."
             ),
         },
         "octopus_source": {
@@ -776,7 +776,7 @@ def harvest_point_reference(args) -> int:
         f.write("#\n")
         f.write("# This file validates the LSDn SCALING KERNEL, not lsdtt3's "
                 "product. OCTOPUS does\n"
-                "# not compute LSDn from a DEM: per Saktura et al. (2025, GChron "
+                "# not compute LSDn from a DEM: per Codilean & Munack (2025, GChron "
                 "7:113) CAIRN\n"
                 "# implements only time-independent Stone-Lal, and for LSDn it "
                 "reduces each basin\n"

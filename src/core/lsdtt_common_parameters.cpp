@@ -867,6 +867,20 @@ void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_defa
         group, "param", "lithology_fname"};
 }
 
+void declare_stream_power_n_values_parameter(std::map<std::string, std::string>& string_default_map,
+                                             lsdtt_help_registry&                help_map,
+                                             const std::string&                  prefix)
+{
+    const std::string k = prefixed_parameter_key(prefix, "stream_power_n_values");
+    string_default_map[k] = "1";
+    help_map[k] = {"string", "1",
+        "Slope exponent(s) n of the stream power law E = K A^m S^n, a comma list (e.g. 1,2).",
+        "Used by write_relative_erodibility and the erodibility calibration (erosion_rate_fname): "
+        "each n gives its own rows, with m = (m/n) n for the m/n of the chi run. Every value must "
+        "be > 0. Replaces relative_erodibility_n_values (still accepted, with a warning).",
+        prefixed_group_label(prefix, "Stream power"), "param", ""};
+}
+
 void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
                                            std::map<std::string, std::string>& string_default_map,
                                            lsdtt_help_registry&                help_map,

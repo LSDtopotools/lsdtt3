@@ -441,8 +441,9 @@ map-area convention: E [m/yr] = K A^m S^n with A in m^2 and S dimensionless give
 in m^(1 - 2m) yr^-1, for any n. The CSV writes this as text in `K_units`, for example
 `m^(0.1) yr^-1` for m = 0.45 and `m^(-0.8) yr^-1` for m = 0.9.
 
-`relative_erodibility_n_values` takes a list (default `1`). Each n gets its own rows,
-with m = (m/n) n.
+`stream_power_n_values` takes a list (default `1`). Each n gets its own rows,
+with m = (m/n) n. The same key sets n for the erodibility calibration below;
+`relative_erodibility_n_values` is its old name and still works, with a warning.
 
 ### The reference unit
 
@@ -530,7 +531,7 @@ illustrative uniform rate, not a measurement; basin-average erosion rates of ord
 
 ```
 write_relative_erodibility: true
-relative_erodibility_n_values: 1,2
+stream_power_n_values: 1,2
 relative_erodibility_erosion_rate_m_per_yr: 3e-5
 ```
 
@@ -548,6 +549,190 @@ seed 5489:
 All the k_sn-by-lithology outputs of this run are byte-identical to the run without
 relative erodibility. The K values scale with E: halving E halves every K and leaves
 every ratio unchanged.
+
+## Erodibility calibration from basin erosion rates
+
+With `erosion_rate_fname`, the CLI calibrates the stream-power erodibility K from
+basin-averaged erosion rates E (for example cosmogenic Be-10 rates), basin by basin,
+across basins, and per lithologic unit. `lsdtt-fetch-erosion-rates` writes the
+OCTOPUS rates in this format. It needs `fit_chi_networks: true`. Every other output of
+the run is unchanged: the chi fit tables, the k_sn summaries and the relative
+erodibility are byte-identical with and without it.
+
+### Inputs and units
+
+The sample file is a CSV with `latitude` and `longitude` (EPSG:4326), or any OGR point
+layer in any CRS. One row per sample: the outlet, the rate (`erosion_rate_column`),
+its 1-sigma uncertainty (`erosion_rate_uncertainty_column`, same units) and,
+optionally, the reported drainage area in km² (`erosion_rate_reported_area_column`).
+
+`erosion_rate_units` is required and has no default: `mm_per_kyr` (= `m_per_myr`,
+1e-6 m/yr), `cm_per_kyr` (1e-5), `mm_per_yr` (1e-3) or `m_per_yr`. Mass fluxes
+(g cm⁻² yr⁻¹) are refused; divide them by the rock density first. When the file has
+an `erosion_rate_units` column, every row must agree with the parameter, or the run
+stops naming the first row that disagrees.
+
+### Snapping, basins and nesting
+
+Each sample is snapped to a channel cell (at least `threshold_contributing_pixels`)
+within `erosion_rate_snap_max_distance_metres` (rounded up to whole pixels). With a
+reported area, `reported_area` snapping takes the nearest channel cell whose drainage
+area is within `erosion_rate_area_mismatch_tolerance` of it (a ratio, default 1.25),
+otherwise the cell closest in area. Without one it falls back to the nearest channel
+cell, and the run says that mis-snapping onto a neighbouring channel cannot then be
+detected. `expanding_square`, `downstream` and `none` are also accepted.
+
+The basin of each snapped outlet must be complete (it may not reach the DEM edge or
+nodata). The DEM area is compared with the reported area; a ratio outside 1/tol..tol
+is `area_mismatch`, and the sample is excluded (`erosion_rate_area_mismatch_action:
+exclude`) or kept and flagged (`flag`).
+
+A sample whose outlet lies upslope of another sample's outlet is nested in it;
+samples on one outlet are duplicates. Nesting groups are the connected components of
+these relations. They are the bootstrap clusters, and the number of groups is the
+effective number of independent basins. `erosion_rate_nested_basins` keeps all
+samples (`keep`), only those nested in no other (`outermost`), or only those holding
+no other (`innermost`).
+
+### Basin k_sn
+
+Each basin is extracted and fitted on its own chi network (the m/n and A0 of the run,
+`fit_critical_divergence_metres`), with no `n_largest_basins` or `min_channel_pixels`
+filter. Its k_sn is the median `k_sn_ols` of its qualifying reaches, where reaches end
+only at confluences, sources and the outlet: the value does not depend on a lithology
+map. A reach qualifies with at least `erosion_rate_min_reach_pixels` nodes. A basin
+needs `erosion_rate_min_reaches_per_basin` qualifying reaches (default 5); fewer gives
+`too_few_reaches`. The 95 % interval is a percentile bootstrap of the reach median,
+and sigma_ln_k = (ln high - ln low) / 3.92. The chi-z slope through the origin (with
+its R²), the segment median, the chi-weighted mean and the reach IQR / median are
+written alongside as diagnostics; `erosion_rate_ksn_statistic` can choose the chi-z
+slope or the segment median instead.
+
+### K
+
+E = K A0^m k_sn^n and K = E / (A0^m k_sn^n), with m = (m/n) n. K is in the map-area
+convention, m^(1 - 2m) yr^-1 (written in `K_units`), and does not depend on A0. For
+each n of `stream_power_n_values`:
+
+- **Per basin**: K of each sample. The interval is a Monte Carlo over the bootstrap
+  replicates. In each replicate, k_sn is the basin's replicate median and E is drawn
+  from N(E, sigma_E), redrawn while it is <= 0. A sample without sigma_E
+  (`missing_uncertainty`) gets the point value only and enters no fit.
+- **Fixed n, across basins**: the weighted mean of ln K_i, with weights
+  1 / (sigma_lnE² + n² sigma_lnk²). The fit file also gives `ln_K_dispersion` (the
+  weighted SD of ln K_i) and `corr_lnK_lnk`. At the wrong n, K_i trends with k_sn, and
+  both grow.
+- **Fitted n**: a York regression of ln E on ln k_sn with errors in both, only with at
+  least `erosion_rate_min_groups_for_n_fit` nesting groups (default 8) and a k_sn range
+  (max / min) of at least `erosion_rate_min_ksn_range_ratio` (default 2). Otherwise
+  the row says why (`not_fitted_too_few_groups`, `not_fitted_narrow_ksn_range`) and
+  stdout gives a first-order SE(n) for the basins at hand. Both York errors are
+  written: `n_se_york` and `ln_K_se` assume the stated sigmas are complete;
+  `*_mswd_scaled` multiply them by sqrt(MSWD). n and ln K are strongly correlated
+  (`corr_n_lnK`); `E_at_median_ksn_m_per_yr` is the better-constrained pivot.
+
+The 95 % intervals of the fixed-n and fitted rows are percentile bootstraps over
+nesting groups. A York replicate with fewer than 3 distinct groups, a zero k_sn range
+or no convergence is skipped, and `n_bootstrap` counts the replicates used.
+`erosion_rate_systematic_relative_uncertainty` (default 0) adds a common relative
+error of E, such as the production-rate term, to every K interval in quadrature.
+
+### K per lithologic unit
+
+With `lithology_fname`, for `erosion_rate_unit_k_methods`:
+
+- `mono`: samples whose dominant unit covers at least
+  `erosion_rate_mono_lithology_min_area_fraction` (default 0.8) of the basin area. The
+  fixed-n estimator is applied per unit.
+- `unit_in_basin`: for each unit and used basin with at least
+  `erosion_rate_min_unit_reaches_per_basin` (default 3) qualifying lithologic reaches
+  (the map's reaches, as for relative erodibility), the unit's reach-median k_sn in
+  that basin with the basin's E. The fixed-n estimator is applied per unit. This
+  assumes E is uniform across the units of a basin.
+
+`low_sample` is 1 below 3 nesting groups. `N_basins` counts sample entries, so
+duplicates on one outlet count once each but form one group.
+`erosion_rate_property_table_method` (default `unit_in_basin`) writes one draft
+property table per n for `lsdtt-lithology-erodibility`. Units without K are listed in
+its `# not_estimated` line. A mixing model over area fractions is not available.
+
+### Outputs
+
+Per m/n (`<w>` = `write_fname`):
+
+| File | Columns |
+|---|---|
+| `<w>_erodibility_calibration_samples_mn_*.csv` | one row per input sample, in input order: `sample_id, input_row, input_latitude, input_longitude, snapped_latitude, snapped_longitude, snapping_method, snap_distance_m, outlet_flat, status, status_detail, reported_area_km2, dem_area_km2, area_ratio, area_check, nesting_group, nested_in, n_samples_inside, duplicate_outlet_of, erosion_rate_input, erosion_rate_uncertainty_input, erosion_rate_input_units, erosion_rate_m_per_yr, erosion_rate_uncertainty_m_per_yr, m_over_n, A_0, k_sn_statistic, k_sn, k_sn_ci_low, k_sn_ci_high, n_reaches, n_reaches_qualifying, k_sn_reach_iqr_over_median, k_sn_chi_z_slope, chi_z_r_squared, k_sn_segment_median, k_sn_chi_weighted_mean, dominant_lith_code, dominant_lith_name, dominant_area_fraction, dominant_channel_length_fraction, unmapped_area_fraction` |
+| `<w>_erodibility_calibration_basin_K_mn_*.csv` | per sample with a K and per n: `sample_id, status, nesting_group, m_over_n, A_0, n, m, erosion_rate_m_per_yr, erosion_rate_uncertainty_m_per_yr, k_sn, k_sn_ci_low, k_sn_ci_high, K, K_ci_low, K_ci_high, n_bootstrap, K_units` |
+| `<w>_erodibility_calibration_fit_mn_*.csv` | one `fixed_n` row per n and one `fitted_n` row: `fit_type, method, status, N_basins, N_groups, ksn_range_ratio, m_over_n, A_0, n, n_ci_low, n_ci_high, n_se_york, n_se_york_mswd_scaled, m, K, K_ci_low, K_ci_high, ln_K_se, ln_K_se_mswd_scaled, corr_n_lnK, E_at_median_ksn_m_per_yr, mswd, ln_K_dispersion, corr_lnK_lnk, n_bootstrap, bootstrap_cluster, K_units` |
+| `<w>_erodibility_calibration_by_lithology_mn_*.csv` | with a map, one row per method, n and unit: `lith_code, lith_name, method, m_over_n, A_0, n, m, N_basins, N_groups, K, K_ci_low, K_ci_high, n_bootstrap, low_sample, status, purity_threshold, K_units` |
+| `<w>_erodibility_calibration_property_table_mn_*_n_*.txt` | with a map: the draft property table |
+
+Once per run: `<w>_erodibility_calibration_basins.fgb` (or `.gpkg`: the polygons of
+every complete sample basin in the DEM CRS, with `sample_id, status, nesting_group,
+dem_area_km2, reported_area_km2, area_ratio`; the status is the one known before k_sn,
+`kept` for a basin that goes on to the k_sn step, whose final status is in the samples
+file). With a map, also
+`<w>_erodibility_calibration_basin_lithology.csv` (`sample_id, lith_code, lith_name,
+area_km2, area_fraction, channel_length_m, channel_length_fraction`).
+
+`status` is one of `outside_dem`, `snap_failed`, `incomplete_basin`, `bad_rate`,
+`area_mismatch`, `nested_excluded`, `too_few_reaches`, `missing_uncertainty` or `used`
+(the first that applies). `area_check` (`ok`, `mismatch`, `no_reported_area`) is
+reported separately.
+
+### Conditions
+
+The calibration assumes steady state and an erosion rate that is uniform within each
+basin. CRN rates are weighted by quartz flux, and this is not corrected (units poor in
+quartz are under-represented). A basin above a migrating knickpoint carries a relict
+k_sn on top of a recent E; MSWD well above 1 shows scatter beyond the stated sigmas.
+Prefer K at a fixed n where possible. These conditions are printed with every run.
+
+### Example: West Virginia
+
+The OCTOPUS rates of the box -80.5/-78.5/38.3/39.7 (`lsdtt-fetch-erosion-rates`,
+scheme `st`; 23 samples with outlets in the box), a COP30 DEM fetched with that run's
+`_octopus_dem_bounds.fgb` (3602 x 5469 pixels at 30 m, EPSG:32617) and Macrostrat
+units (`lith_primary`, every value its own unit):
+
+```
+read_fname: wvcal_DEM.tif
+write_fname: wvcal_chi
+raster_is_filled: false
+threshold_contributing_pixels: 200
+basin_outlet_fname: wvoct_large_erosion_rates.csv
+basin_outlet_snapping_method: downstream
+basin_outlet_contributing_pixels_threshold: 200
+n_largest_basins: 0
+m_over_n: 0.45
+chi_A0: 1
+fit_chi_networks: true
+lithology_fname: wvcal_lith_macrostrat_units.fgb
+lithology_field_name: lith_primary
+lithology_crosswalk_fname: wvcal_crosswalk_lith_primary.csv
+write_relative_erodibility: true
+erosion_rate_fname: wvoct_large_erosion_rates.csv
+erosion_rate_units: mm_per_kyr
+stream_power_n_values: 1,2
+```
+
+Measured on 2026-10-19 (m/n 0.45, A0 1 m²):
+
+- **Samples:** 23 read. 17 used in 14 nesting groups. Excluded: 2 `incomplete_basin`
+  (the two basins larger than 1000 km², left out of the DEM box), 1 `area_mismatch`
+  (S046WTS032, ratio 0.455) and 3 `too_few_reaches` (S046WTS044, 045 and 054, 0.9 to
+  2.0 km²). S046WTS009 to 012 share one outlet (one group).
+- **Fixed n:** n = 1 gives K = 3.081e-07 [2.372e-07, 4.153e-07] m^(0.1) yr^-1, with
+  `ln_K_dispersion` 0.520 and `corr_lnK_lnk` -0.404. n = 2 gives K = 8.581e-09
+  [5.253e-09, 1.436e-08] m^(-0.8) yr^-1, with `ln_K_dispersion` 0.893 and
+  `corr_lnK_lnk` -0.805.
+- **Fitted n:** the fit ran with 14 groups and a k_sn range of 5.12x. n = 0.658
+  [0.130, 2.025] (York SE 0.124, x sqrt(MSWD) 0.260, MSWD 4.39) and K = 1.005e-06
+  [9.14e-09, 7.75e-06] m^(0.408) yr^-1, with `corr_n_lnK` -0.991.
+
+The run took 20.9 s wall time with a peak RSS of 1.67 GB, on a laptop (WSL2); laptop
+timings are thermally limited.
 
 ## Outputs
 
@@ -756,7 +941,51 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_relative_erodibility` | `bool` | `false` | `switch` | `write_ksn_lithology_summary` | Write the erodibility of each lithologic unit relative to a reference unit, from the units' reach-median k_sn. | Needs lithology_fname and write_ksn_lithology_summary: true. Under uniform erosion at steady state with the stream power law E = K A^m S^n (m = (m/n) n), K_i / K_ref = (k_sn,ref / k_sn,i)^n, from each unit's reach-median k_sn (reach_k_sn_median of _chi_ksn_by_lithology_mn_*.csv). The 95 % interval resamples the ratio: each bootstrap replicate resamples the reaches of the unit and of the reference (lithology_bootstrap_cluster: reach draws each unit's reaches independently; basin draws whole basins, bringing both units' reaches together) and forms the ratio in that replicate; the interval is the 2.5 and 97.5 % quantiles of the replicate ratios. lithology_bootstrap_replicates and lithology_bootstrap_random_seed apply; the stream is per m/n and separate from the k_sn summary's. Units with fewer than 5 qualifying reaches get low_sample = 1 and NaN intervals. Unmapped and all get no row. Output per m/n: &lt;write_fname&gt;_chi_relative_erodibility_by_lithology_mn_*.csv, one row per unit and n: lith_code, lith_name, m_over_n, A_0, n, m, reference_unit, n_reaches_qualifying, reach_k_sn_median, k_ratio (K_i / K_ref), k_ratio_ci_low, k_ratio_ci_high, n_bootstrap, bootstrap_cluster, low_sample, and with an erosion rate erosion_rate_m_per_yr, K_abs, K_abs_ci_low, K_abs_ci_high, K_units. The ratios hold only where the erosion rate is uniform and the channels are at steady state; reaches near a contact mix the k_sn of two units, and a transient knickzone puts its k_sn on whichever unit it crosses. |
 | `relative_erodibility_reference_unit` | `string` | - | `param` | `write_relative_erodibility` | Name of the reference lithologic unit (K_ref) for write_relative_erodibility. | Empty (default): the unit with the most qualifying reaches; ties go to the larger channel length, then the lower code. Give the unit name as in lith_name (the crosswalk name, or the map value). A name that is not a unit of the map stops the run, listing the units. unmapped and all are never a reference. |
-| `relative_erodibility_n_values` | `string` | `1` | `param` | `write_relative_erodibility` | Slope exponent(s) n of the stream power law for write_relative_erodibility, a comma list. | Each n gives its own rows, with m = (m/n) n for the m/n of the chi run (e.g. 1,2). Every value must be &gt; 0. |
 | `relative_erodibility_erosion_rate_m_per_yr` | `double` | `0.0` | `param` | `write_relative_erodibility` | Uniform erosion rate E (m/yr) for absolute erodibility; 0 = not given. | When &gt; 0, also K_i = E / (A0^m k_sn,i^n) for every unit (map-area convention, units m^(1 - 2m) yr^-1, written in K_units), with its interval from the same replicates, and one draft property table per n, &lt;write_fname&gt;_chi_relative_erodibility_property_table_mn_*_n_*.txt, in the format lsdtt-lithology-erodibility reads (erodibility_convention map_area, m_exponent, n_exponent, and a provenance line). Use it there with the same lithology map, field and crosswalk to make a K raster. Units with no qualifying reach have no row and are listed in a # not_estimated line. |
+
+### Stream power
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `stream_power_n_values` | `string` | `1` | `param` | - | Slope exponent(s) n of the stream power law E = K A^m S^n, a comma list (e.g. 1,2). | Used by write_relative_erodibility and the erodibility calibration (erosion_rate_fname): each n gives its own rows, with m = (m/n) n for the m/n of the chi run. Every value must be &gt; 0. Replaces relative_erodibility_n_values (still accepted, with a warning). |
+
+### Erosion-rate samples
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `erosion_rate_fname` | `string` | - | `param` | - | Basin-averaged erosion-rate samples: a CSV with latitude/longitude (EPSG:4326) or an OGR point layer in any CRS. Empty = off. | One row per sample: the basin outlet, the erosion rate and its 1-sigma uncertainty, optionally the reported drainage area (lsdtt-fetch-erosion-rates writes this format from OCTOPUS). Needs fit_chi_networks: true. Each sample is snapped to the channel network (threshold_contributing_pixels), its basin delineated and its k_sn measured on its own fitted chi network; K is calibrated per basin, at each stream_power_n_values n across basins, as a fitted (n, K), and per lithologic unit with lithology_fname. Outputs per m/n: &lt;write_fname&gt;_erodibility_calibration_samples_mn_*.csv, _basin_K_mn_*.csv, _fit_mn_*.csv and, with a map, _by_lithology_mn_*.csv and _property_table_mn_*_n_*.txt; once: _erodibility_calibration_basins.&lt;fgb\|gpkg&gt; and, with a map, _erodibility_calibration_basin_lithology.csv. The main chi outputs do not change. |
+| `erosion_rate_layer_name` | `string` | - | `param` | `erosion_rate_fname` | Layer of a vector erosion-rate file. | Empty takes the only (or first) layer. Not used for CSV. |
+| `erosion_rate_sample_id_column` | `string` | `sample_id` | `param` | `erosion_rate_fname` | Column holding the sample identifier. | When the column is missing or a value is blank the sample is called row_&lt;n&gt; (n counts data rows from 1). |
+| `erosion_rate_latitude_column` | `string` | `latitude` | `param` | `erosion_rate_fname` | CSV column holding the outlet latitude. | WGS84 decimal degrees. Not used for vector input. |
+| `erosion_rate_longitude_column` | `string` | `longitude` | `param` | `erosion_rate_fname` | CSV column holding the outlet longitude. | WGS84 decimal degrees. Not used for vector input. |
+| `erosion_rate_column` | `string` | `erosion_rate` | `param` | `erosion_rate_fname` | Column holding the basin-averaged erosion rate. | In the units of erosion_rate_units. A missing column is an error. |
+| `erosion_rate_uncertainty_column` | `string` | `erosion_rate_uncertainty` | `param` | `erosion_rate_fname` | Column holding the 1-sigma uncertainty of the erosion rate. | Same units as the rate. A missing column is an error; a blank or non-positive value marks that sample missing_uncertainty. |
+| `erosion_rate_units` | `string` | - | `param` | `erosion_rate_fname` | Units of the erosion rate and its uncertainty (required, no default): mm_per_kyr, m_per_myr, cm_per_kyr, mm_per_yr or m_per_yr. | mm_per_kyr equals m_per_myr (1e-6 m/yr). Mass fluxes (g cm^-2 yr^-1) are refused: divide by the rock density first. When the file has an erosion_rate_units column every row must agree with this parameter. |
+| `erosion_rate_reported_area_column` | `string` | `reported_area_km2` | `param` | `erosion_rate_fname` | Column holding each sample's reported drainage area in km^2. | Used for area-matched snapping and the DEM-vs-reported area check. Empty, or a column not in the file, skips both. |
+| `erosion_rate_snapping_method` | `string` | `reported_area` | `param` | `erosion_rate_fname` | How a sample is snapped to the channel network: reported_area, expanding_square, downstream or none. | reported_area takes the nearest channel cell whose drainage area is within erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in area. Without a reported area it falls back to expanding_square (nearest channel cell). |
+| `erosion_rate_snap_max_distance_metres` | `float` | `300` | `param` | `erosion_rate_fname` | Search radius for snapping a sample, in metres. | Converted to pixels with the cell size and rounded up, so a parameter file stays valid across resolutions. |
+| `erosion_rate_area_mismatch_tolerance` | `float` | `1.25` | `param` | `erosion_rate_fname` | Ratio tolerance (&gt; 1) between the DEM drainage area and the reported area. | A basin with A_dem / A_reported outside [1/tol, tol] is area_mismatch. Also the matching tolerance of reported_area snapping. |
+| `erosion_rate_area_mismatch_action` | `string` | `exclude` | `param` | `erosion_rate_fname` | What an area_mismatch basin does: exclude (written, kept out of every fit) or flag (kept in the fits and flagged). | - |
+| `erosion_rate_nested_basins` | `string` | `keep` | `param` | `erosion_rate_fname` | Nested sample basins: keep, outermost or innermost. | keep uses all basins and resamples nesting groups in the bootstrap; outermost keeps only basins nested in no other sample; innermost only basins containing no other sample. |
+
+### Erodibility calibration
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `erosion_rate_ksn_statistic` | `string` | `reach_median` | `param` | `erosion_rate_fname` | Basin k_sn that drives the calibration: reach_median, chi_z_slope or segment_median. | reach_median is the median k_sn of the basin's qualifying reaches (split at confluences only), with a bootstrap interval. The others are written as diagnostics either way. |
+| `erosion_rate_min_reach_pixels` | `int` | `10` | `param` | `erosion_rate_fname` | Minimum channel nodes for a basin reach to qualify. | Reaches run between confluences, sources and the outlet. |
+| `erosion_rate_min_reaches_per_basin` | `int` | `5` | `param` | `erosion_rate_fname` | Minimum qualifying reaches for a basin to enter the calibration. | Basins with fewer are written with status too_few_reaches and enter no fit. |
+| `erosion_rate_fit_n` | `bool` | `true` | `param` | `erosion_rate_fname` | Fit n and K together (York regression of ln E on ln k_sn). | Attempted only with enough independent basin groups and a wide enough k_sn range; K at each fixed n is always written. |
+| `erosion_rate_min_groups_for_n_fit` | `int` | `8` | `param` | `erosion_rate_fname` | Minimum independent basin groups for fitting n. | Nested basins form one group. Below this only K at fixed n is reported. |
+| `erosion_rate_min_ksn_range_ratio` | `float` | `2.0` | `param` | `erosion_rate_fname` | Minimum max/min k_sn ratio over the used basins for fitting n. | - |
+| `erosion_rate_mono_lithology_min_area_fraction` | `float` | `0.8` | `param` | `erosion_rate_fname` | Minimum area fraction of a basin's dominant unit for the basin to count as mono-lithologic. | Needs lithology_fname. |
+| `erosion_rate_min_unit_reaches_per_basin` | `int` | `3` | `param` | `erosion_rate_fname` | Minimum qualifying lithologic reaches of a unit in a basin for the unit-in-basin estimate. | Needs lithology_fname. |
+| `erosion_rate_unit_k_methods` | `string` | `mono,unit_in_basin` | `param` | `erosion_rate_fname` | Per-unit K estimators, comma separated: mono, unit_in_basin. | Needs lithology_fname. |
+| `erosion_rate_property_table_method` | `string` | `unit_in_basin` | `param` | `erosion_rate_fname` | Per-unit estimator written to the draft lithology property table. | Needs lithology_fname. |
+| `erosion_rate_systematic_relative_uncertainty` | `float` | `0` | `param` | `erosion_rate_fname` | Relative systematic uncertainty of every erosion rate (e.g. the production-rate term), added to the K interval in quadrature. | 0 adds nothing. |
+| `erosion_rate_bootstrap_replicates` | `int` | `1000` | `param` | `erosion_rate_fname` | Bootstrap replicates of the calibration intervals. | 0 = no intervals. |
+| `erosion_rate_bootstrap_random_seed` | `int` | `5489` | `param` | `erosion_rate_fname` | Seed of the calibration bootstrap. | One stream per m/n, separate from the k_sn summary and relative-erodibility streams. |
+| `write_erodibility_calibration_basin_polygons` | `bool` | `true` | `param` | `erosion_rate_fname` | Write the sample basins as polygons (write_vector_format). | For checking the snapping against the published basins in a GIS. |
+| `write_erodibility_calibration_property_table` | `bool` | `true` | `param` | `erosion_rate_fname` | Write a draft lithology property table from the per-unit K. | Needs lithology_fname. |
 
 <!-- END GENERATED CLI PARAMETERS -->

@@ -5270,6 +5270,169 @@ add_test(NAME unit_chi_erodibility_calibration
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_work")
 lsdtt_set_tests_properties(unit_chi_erodibility_calibration PROPERTIES LABELS "unit;chi")
 
+# lsdtt-chi-analysis with erosion-rate samples. The fixture writer produces the
+# F1 (one K, a different uplift per basin) and F2 (two units) steady states, their
+# sample CSVs (mm/kyr and m/yr) and the F2 unit polygons. The CLI routes the
+# steady states itself (raster_is_filled: true), which moves a few divide pixels,
+# so its pins are measured separately from the in-process ones.
+set(LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_cli_fixture")
+add_test(NAME fixture_chi_erodibility_calibration_cli
+         COMMAND lsdtt-test-erodibility-calibration --write-fixtures
+                 "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_chi_erodibility_calibration_cli PROPERTIES
+    LABELS "fixture;chi"
+    FIXTURES_SETUP chi_erodibility_calibration_cli)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration
+    lsdtt-chi-analysis
+    chi_erodibility_calibration.param.in
+    ercal_erodibility_calibration_samples_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect ercal_erodibility_calibration_basin_K_mn_0p450.csv
+    --expect ercal_erodibility_calibration_fit_mn_0p450.csv
+    --expect ercal_erodibility_calibration_basins.fgb
+    --expect-vector-feature-min ercal_erodibility_calibration_basins.fgb:13
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:sample_id,input_row,input_latitude,input_longitude,snapped_latitude,snapped_longitude,snapping_method,snap_distance_m,outlet_flat,status,status_detail,reported_area_km2,dem_area_km2,area_ratio,area_check,nesting_group,nested_in,n_samples_inside,duplicate_outlet_of,erosion_rate_input,erosion_rate_uncertainty_input,erosion_rate_input_units,erosion_rate_m_per_yr,erosion_rate_uncertainty_m_per_yr,m_over_n,A_0,k_sn_statistic,k_sn,k_sn_ci_low,k_sn_ci_high,n_reaches,n_reaches_qualifying,k_sn_reach_iqr_over_median,k_sn_chi_z_slope,chi_z_r_squared,k_sn_segment_median,k_sn_chi_weighted_mean,dominant_lith_code,dominant_lith_name,dominant_area_fraction,dominant_channel_length_fraction,unmapped_area_fraction"
+    --expect-file-contains "ercal_erodibility_calibration_fit_mn_0p450.csv:fit_type,method,status,N_basins,N_groups,ksn_range_ratio,m_over_n,A_0,n,n_ci_low,n_ci_high,n_se_york,n_se_york_mswd_scaled,m,K,K_ci_low,K_ci_high,ln_K_se,ln_K_se_mswd_scaled,corr_n_lnK,E_at_median_ksn_m_per_yr,mswd,ln_K_dispersion,corr_lnK_lnk,n_bootstrap,bootstrap_cluster,K_units"
+    --expect-file-contains "ercal_erodibility_calibration_basin_K_mn_0p450.csv:sample_id,status,nesting_group,m_over_n,A_0,n,m,erosion_rate_m_per_yr,erosion_rate_uncertainty_m_per_yr,k_sn,k_sn_ci_low,k_sn_ci_high,K,K_ci_low,K_ci_high,n_bootstrap,K_units"
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:,area_mismatch,"
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:,outside_dem,"
+    --expect-file-contains "ercal_erodibility_calibration_fit_mn_0p450.csv:fixed_n,weighted_log_mean,ok,12,10,"
+    --expect-file-contains "ercal_erodibility_calibration_basin_K_mn_0p450.csv:m^(-0.8) yr^-1"
+    --stdout-contains "Erodibility calibration (m/n = 0.45, A0 = 1): 12 basin(s) used in 10 independent group(s)"
+    --stdout-contains "area mismatch (outside 1/1.25..1.25 of the reported area): 1 (exclude)"
+    --stdout-contains "fitted: n = "
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_m_per_yr
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_m_per_yr.param.in
+    ercalm_erodibility_calibration_fit_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --stdout-contains "(units m_per_yr -> m/yr x 1)"
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_m_per_yr PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_m_per_yr)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_off
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_off.param.in
+    ercaloff_chi_fit_nodes_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect-absent ercaloff_erodibility_calibration_samples_mn_0p450.csv
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_off PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_off)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_lithology
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_lithology.param.in
+    ercallith_erodibility_calibration_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt
+    --expect ercallith_erodibility_calibration_basin_lithology.csv
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:lith_code,lith_name,method,m_over_n,A_0,n,m,N_basins,N_groups,K,K_ci_low,K_ci_high,n_bootstrap,low_sample,status,purity_threshold,K_units"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,west,mono,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,east,mono,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,west,unit_in_basin,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,east,unit_in_basin,"
+    --expect-file-contains "ercallith_erodibility_calibration_basin_lithology.csv:sample_id,lith_code,lith_name,area_km2,area_fraction,channel_length_m,channel_length_fraction"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:# erodibility_convention: map_area"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:# m_exponent: 0.45"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:code,name,erodibility,reference"
+    --stdout-contains "by lithology (unit_in_basin"
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_lithology PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_lithology)
+
+if(TEST smoke_chi_analysis_erodibility_calibration)
+    set(_ercal_out "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration/out")
+    # The CLI known answer (F1, n = 1, K = 1e-5). Measured 2026-10-19: fitted
+    # n 1.04242 (abs err 0.0424; K at that n 8.342e-6), fixed-n K 9.53205e-6
+    # (rel err 4.68 %). Twice the measured error exceeds the plan's CLI caps,
+    # so the pins are the caps: 0.05 on n, 6.4 % on K.
+    add_test(NAME rigorous_chi_erodibility_calibration_n
+             COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-fit
+                     "${_ercal_out}/ercal_erodibility_calibration_fit_mn_0p450.csv" fitted_n 0 1 0.05 1e-5 1e9)
+    add_test(NAME rigorous_chi_erodibility_calibration_fixed_n_K
+             COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-fit
+                     "${_ercal_out}/ercal_erodibility_calibration_fit_mn_0p450.csv" fixed_n 1 1 0 1e-5 0.064)
+    foreach(_t rigorous_chi_erodibility_calibration_n rigorous_chi_erodibility_calibration_fixed_n_K)
+        lsdtt_set_tests_properties(${_t} PROPERTIES
+            LABELS "rigorous;chi"
+            FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration)
+    endforeach()
+    # The same samples in m/yr give the same basin K and fit files, byte for byte.
+    add_test(NAME rigorous_chi_erodibility_calibration_units_invariant
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${_ercal_out}/ercal"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_m_per_yr/out/ercalm"
+                 "-DSUFFIXES=_erodibility_calibration_basin_K_mn_0p450.csv;_erodibility_calibration_fit_mn_0p450.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_units_invariant PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_m_per_yr")
+    # The calibration only observes: the chi fit tables, k_sn basin summary and
+    # disorder sweep are the same with and without erosion_rate_fname.
+    add_test(NAME rigorous_chi_erodibility_calibration_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${_ercal_out}/ercal"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_off/out/ercaloff"
+                 "-DSUFFIXES=_chi_fit_nodes_mn_0p450.csv;_chi_fit_segments_mn_0p450.csv;_chi_ksn_basin_summary_mn_0p450.csv;_chi_disorder_sweep.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_observation_only PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_off")
+    # The CLI known answer per unit (F2, unit_in_basin). Measured 2026-10-19:
+    # west 9.46848e-6 (rel err 5.32 %), east 3.86206e-5 (rel err 3.45 %); twice
+    # those exceed the plan's 6.4 % cap, so the pin is the cap. (mono, measured
+    # west 7.05 %, east 3.58 %, is not asserted: west exceeds the cap.)
+    foreach(_u "west;1e-5" "east;4e-5")
+        list(GET _u 0 _name)
+        list(GET _u 1 _K)
+        add_test(NAME rigorous_chi_erodibility_calibration_lithology_units_${_name}
+                 COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-unit
+                         "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_lithology/out/ercallith_erodibility_calibration_by_lithology_mn_0p450.csv"
+                         unit_in_basin 1 ${_name} ${_K} 0.064)
+        lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_lithology_units_${_name} PROPERTIES
+            LABELS "rigorous;chi"
+            FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration_lithology)
+    endforeach()
+else()
+    foreach(_t n fixed_n_K units_invariant observation_only lithology_units_west lithology_units_east)
+        lsdtt_mark_test_unregistered(python rigorous_chi_erodibility_calibration_${_t})
+    endforeach()
+endif()
+
+foreach(_f "no_units;erosion_rate_units must be one of"
+           "units_conflict;disagrees with erosion_rate_units"
+           "without_fit;erosion_rate_fname needs fit_chi_networks: true"
+           "missing_column;erosion_rate_column 'rate' is not a column"
+           "missing_file;erosion_rate_fname does not exist")
+    list(GET _f 0 _name)
+    list(GET _f 1 _msg)
+    add_lsdtt_cli_smoke_test(
+        failure_chi_analysis_erodibility_calibration_${_name}
+        lsdtt-chi-analysis
+        chi_erodibility_calibration_${_name}.param.in
+        unused_expected_output
+        --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "${_msg}")
+    lsdtt_set_tests_properties(failure_chi_analysis_erodibility_calibration_${_name} PROPERTIES
+        FIXTURES_REQUIRED chi_erodibility_calibration_cli)
+endforeach()
+
 # lsdtt-chi-analysis with a lithology map. The fixture writer produces the
 # steady-state landscape (two units, k_sn about 20 and 5) with its unit polygons,
 # and a two-unit code raster beside a copy of tiny_dem.asc.

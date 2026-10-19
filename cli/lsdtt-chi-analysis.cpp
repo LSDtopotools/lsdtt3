@@ -60,6 +60,7 @@
 #include "../src/cpu/lsdtt_chi_ksn_inversion_cpu.hpp"
 #endif
 #include "../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
+#include "../src/cpu/lsdtt_erodibility_calibration_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_lithology_channel_stats_cpu.hpp"
 #include "../src/cpu/lsdtt_lithology_map_cpu.hpp"
@@ -555,12 +556,7 @@ int main(int argc, char* argv[])
         "unmapped and all are never a reference.",
         "Relative erodibility", "param", "write_relative_erodibility"};
 
-    string_default_map["relative_erodibility_n_values"] = "1";
-    help_map["relative_erodibility_n_values"] = {"string","1",
-        "Slope exponent(s) n of the stream power law for write_relative_erodibility, a comma list.",
-        "Each n gives its own rows, with m = (m/n) n for the m/n of the chi run (e.g. 1,2). Every "
-        "value must be > 0.",
-        "Relative erodibility", "param", "write_relative_erodibility"};
+    lsdtt::declare_stream_power_n_values_parameter(string_default_map, help_map);
 
     double_default_map["relative_erodibility_erosion_rate_m_per_yr"] = 0.0;
     help_map["relative_erodibility_erosion_rate_m_per_yr"] = {"double","0.0",
@@ -574,6 +570,22 @@ int main(int argc, char* argv[])
         "crosswalk to make a K raster. Units with no qualifying reach have no row and are listed "
         "in a # not_estimated line.",
         "Relative erodibility", "param", "write_relative_erodibility"};
+
+    // --- Erodibility calibration from basin erosion rates ---
+    lsdtt::declare_erosion_rate_input_parameters(float_default_map, string_default_map, help_map);
+    lsdtt::declare_erodibility_calibration_parameters(
+        bool_default_map, int_default_map, float_default_map, string_default_map, help_map);
+    help_map["erosion_rate_fname"][3] =
+        "One row per sample: the basin outlet, the erosion rate and its 1-sigma uncertainty, "
+        "optionally the reported drainage area (lsdtt-fetch-erosion-rates writes this format from "
+        "OCTOPUS). Needs fit_chi_networks: true. Each sample is snapped to the channel network "
+        "(threshold_contributing_pixels), its basin delineated and its k_sn measured on its own "
+        "fitted chi network; K is calibrated per basin, at each stream_power_n_values n across "
+        "basins, as a fitted (n, K), and per lithologic unit with lithology_fname. Outputs per "
+        "m/n: <write_fname>_erodibility_calibration_samples_mn_*.csv, _basin_K_mn_*.csv, "
+        "_fit_mn_*.csv and, with a map, _by_lithology_mn_*.csv and "
+        "_property_table_mn_*_n_*.txt; once: _erodibility_calibration_basins.<fgb|gpkg> and, with "
+        "a map, _erodibility_calibration_basin_lithology.csv. The main chi outputs do not change.";
 
     bool_default_map["write_chi_fit_segment_lines"] = false;
     help_map["write_chi_fit_segment_lines"] = {"bool","false",
@@ -639,7 +651,8 @@ int main(int argc, char* argv[])
         {"source_pixels_threshold", "threshold_contributing_pixels"},
         {"minimum_channel_pixels", "min_channel_pixels"},
         {"fit_critical_divergence_m", "fit_critical_divergence_metres"},
-        {"chi_data_maps_output_format", "chi_data_maps_write_vector_format"} });
+        {"chi_data_maps_output_format", "chi_data_maps_write_vector_format"},
+        {"relative_erodibility_n_values", "stream_power_n_values"} });
     pp.set_deprecated_compatibility_aliases({
         {"chi_data_map_lines_output_format",
          {"legacy_chi_data_map_lines_write_vector_format", "write_vector_format"}},
@@ -751,7 +764,7 @@ int main(int argc, char* argv[])
         }
         try
         {
-            relk_opts.n_values = pp.parse_double_vector("relative_erodibility_n_values");
+            relk_opts.n_values = pp.parse_double_vector("stream_power_n_values");
         }
         catch (const std::exception&)
         {
@@ -761,8 +774,8 @@ int main(int argc, char* argv[])
         for (double n : relk_opts.n_values) n_ok = n_ok && std::isfinite(n) && n > 0.0;
         if (!n_ok)
         {
-            std::cerr << "FATAL: relative_erodibility_n_values must be a comma list of numbers > 0, "
-                         "not '" << sf["relative_erodibility_n_values"] << "'.\n";
+            std::cerr << "FATAL: stream_power_n_values must be a comma list of numbers > 0, "
+                         "not '" << sf["stream_power_n_values"] << "'.\n";
             return 1;
         }
         relk_opts.erosion_rate_m_per_yr = df["relative_erodibility_erosion_rate_m_per_yr"];
@@ -784,6 +797,132 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
                      "none, expanding_square, downstream.\n";
         return 1;
+    }
+
+    // Erodibility calibration from basin erosion rates: checked here, before
+    // any raster work; the samples are read after the DEM is opened.
+    const bool calibration_on = !sf["erosion_rate_fname"].empty();
+    lsdtt::lsdtt_erosion_rate_input_options er_in;
+    lsdtt::lsdtt_erosion_rate_basin_options er_basin;
+    lsdtt::lsdtt_erodibility_calibration_options er_cal;
+    std::vector<std::string> er_methods;
+    if (calibration_on)
+    {
+        try
+        {
+            if (!bf["fit_chi_networks"])
+                throw std::invalid_argument("erosion_rate_fname needs fit_chi_networks: true (basin k_sn "
+                                            "comes from the fitted chi networks)");
+            er_in.path = pp.add_read_path_if_needed(sf["erosion_rate_fname"]);
+            er_in.layer_name = sf["erosion_rate_layer_name"];
+            er_in.sample_id_column = sf["erosion_rate_sample_id_column"];
+            er_in.latitude_column = sf["erosion_rate_latitude_column"];
+            er_in.longitude_column = sf["erosion_rate_longitude_column"];
+            er_in.rate_column = sf["erosion_rate_column"];
+            er_in.uncertainty_column = sf["erosion_rate_uncertainty_column"];
+            er_in.units = sf["erosion_rate_units"];
+            er_in.reported_area_column = sf["erosion_rate_reported_area_column"];
+            (void)lsdtt::canonical_erosion_rate_units(er_in.units);
+            if (!std::filesystem::exists(er_in.path))
+                throw std::invalid_argument("erosion_rate_fname does not exist: " + er_in.path);
+
+            er_basin.snapping_method = lsdtt::to_lower_ascii(sf["erosion_rate_snapping_method"]);
+            er_basin.snap_max_distance_m = ff["erosion_rate_snap_max_distance_metres"];
+            er_basin.channel_threshold_pixels =
+                static_cast<std::uint64_t>(std::max(1, ifs["threshold_contributing_pixels"]));
+            er_basin.area_ratio_tolerance = ff["erosion_rate_area_mismatch_tolerance"];
+            const std::string action = lsdtt::to_lower_ascii(sf["erosion_rate_area_mismatch_action"]);
+            if (action != "exclude" && action != "flag")
+                throw std::invalid_argument("erosion_rate_area_mismatch_action must be exclude or flag "
+                                            "(got '" + action + "')");
+            er_basin.area_mismatch_excludes = action == "exclude";
+            er_basin.nested_policy = lsdtt::to_lower_ascii(sf["erosion_rate_nested_basins"]);
+            const std::string& sm = er_basin.snapping_method;
+            if (sm != "reported_area" && sm != "expanding_square" && sm != "downstream" && sm != "none")
+                throw std::invalid_argument("erosion_rate_snapping_method must be one of reported_area, "
+                                            "expanding_square, downstream, none (got '" + sm + "')");
+            const std::string& np = er_basin.nested_policy;
+            if (np != "keep" && np != "outermost" && np != "innermost")
+                throw std::invalid_argument("erosion_rate_nested_basins must be one of keep, outermost, "
+                                            "innermost (got '" + np + "')");
+            if (!(er_basin.area_ratio_tolerance > 1.0))
+                throw std::invalid_argument("erosion_rate_area_mismatch_tolerance must be > 1");
+            if (!(er_basin.snap_max_distance_m >= 0.0))
+                throw std::invalid_argument("erosion_rate_snap_max_distance_metres must be >= 0");
+
+            er_cal.ksn_statistic = lsdtt::to_lower_ascii(sf["erosion_rate_ksn_statistic"]);
+            const std::string& ks = er_cal.ksn_statistic;
+            if (ks != "reach_median" && ks != "chi_z_slope" && ks != "segment_median")
+                throw std::invalid_argument("erosion_rate_ksn_statistic must be one of reach_median, "
+                                            "chi_z_slope, segment_median (got '" + ks + "')");
+            er_cal.min_reach_pixels = ifs["erosion_rate_min_reach_pixels"];
+            er_cal.min_reaches_per_basin = ifs["erosion_rate_min_reaches_per_basin"];
+            er_cal.fit_n = bf["erosion_rate_fit_n"];
+            er_cal.min_groups_for_n_fit = ifs["erosion_rate_min_groups_for_n_fit"];
+            er_cal.min_ksn_range_ratio = ff["erosion_rate_min_ksn_range_ratio"];
+            er_cal.mono_min_area_fraction = ff["erosion_rate_mono_lithology_min_area_fraction"];
+            er_cal.min_unit_reaches_per_basin = ifs["erosion_rate_min_unit_reaches_per_basin"];
+            er_cal.systematic_relative_uncertainty = ff["erosion_rate_systematic_relative_uncertainty"];
+            er_cal.bootstrap_replicates = ifs["erosion_rate_bootstrap_replicates"];
+            if (er_cal.min_reach_pixels < 2)
+                throw std::invalid_argument("erosion_rate_min_reach_pixels must be >= 2");
+            if (er_cal.min_reaches_per_basin < 1 || er_cal.min_unit_reaches_per_basin < 1)
+                throw std::invalid_argument("erosion_rate_min_reaches_per_basin and "
+                                            "erosion_rate_min_unit_reaches_per_basin must be >= 1");
+            if (er_cal.min_groups_for_n_fit < 3)
+                throw std::invalid_argument("erosion_rate_min_groups_for_n_fit must be >= 3");
+            if (er_cal.bootstrap_replicates < 0)
+                throw std::invalid_argument("erosion_rate_bootstrap_replicates must be >= 0");
+            if (!(er_cal.min_ksn_range_ratio >= 1.0))
+                throw std::invalid_argument("erosion_rate_min_ksn_range_ratio must be >= 1");
+            if (!(er_cal.mono_min_area_fraction > 0.0 && er_cal.mono_min_area_fraction <= 1.0))
+                throw std::invalid_argument("erosion_rate_mono_lithology_min_area_fraction must be in (0, 1]");
+            if (!(er_cal.systematic_relative_uncertainty >= 0.0))
+                throw std::invalid_argument("erosion_rate_systematic_relative_uncertainty must be >= 0");
+            try { er_cal.n_values = pp.parse_double_vector("stream_power_n_values"); }
+            catch (const std::exception&) { er_cal.n_values.clear(); }
+            bool n_ok = !er_cal.n_values.empty();
+            for (double n : er_cal.n_values) n_ok = n_ok && std::isfinite(n) && n > 0.0;
+            if (!n_ok)
+                throw std::invalid_argument("stream_power_n_values must be a comma list of numbers > 0, "
+                                            "not '" + sf["stream_power_n_values"] + "'");
+            std::stringstream ms(lsdtt::to_lower_ascii(sf["erosion_rate_unit_k_methods"]));
+            std::string tok;
+            while (std::getline(ms, tok, ','))
+            {
+                tok.erase(0, tok.find_first_not_of(" \t"));
+                tok.erase(tok.find_last_not_of(" \t") + 1);
+                if (tok.empty()) continue;
+                if (tok == "mixing")
+                    throw std::invalid_argument("erosion_rate_unit_k_methods: mixing (NNLS over area "
+                                                "fractions) is not available in this version; use mono "
+                                                "and/or unit_in_basin");
+                if (tok != "mono" && tok != "unit_in_basin")
+                    throw std::invalid_argument("erosion_rate_unit_k_methods: '" + tok + "' is not one of "
+                                                "mono, unit_in_basin");
+                er_methods.push_back(tok);
+            }
+            const std::string ptm = lsdtt::to_lower_ascii(sf["erosion_rate_property_table_method"]);
+            if (ptm != "mono" && ptm != "unit_in_basin")
+                throw std::invalid_argument("erosion_rate_property_table_method must be mono or "
+                                            "unit_in_basin (got '" + ptm + "')");
+            if (lithology_on && bf["write_erodibility_calibration_property_table"] &&
+                std::find(er_methods.begin(), er_methods.end(), ptm) == er_methods.end())
+                throw std::invalid_argument("erosion_rate_property_table_method '" + ptm +
+                                            "' is not in erosion_rate_unit_k_methods");
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        if (!lithology_on && !er_methods.empty())
+        {
+            std::cerr << "WARNING: erosion_rate_unit_k_methods (" << sf["erosion_rate_unit_k_methods"]
+                      << ") need lithology_fname; no per-unit K is computed.\n";
+            er_methods.clear();
+        }
+        er_cal.unit_k_methods = er_methods;
     }
 
     std::vector<double> tested_mn;
@@ -925,7 +1064,7 @@ int main(int argc, char* argv[])
                 // A reference that is not a unit stops the run here (listing the units).
                 lsdtt::check_relative_erodibility_reference_name(lith_units, relk_opts.reference_unit);
                 std::cout << "  Relative erodibility K_i / K_ref = (k_sn,ref / k_sn,i)^n for n = "
-                          << sf["relative_erodibility_n_values"] << ", reference "
+                          << sf["stream_power_n_values"] << ", reference "
                           << (relk_opts.reference_unit.empty()
                                   ? std::string("by default (most qualifying reaches)")
                                   : "'" + relk_opts.reference_unit + "'");
@@ -955,6 +1094,25 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "\nFATAL: lithology: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Erosion-rate samples (read once, before routing)
+    // -------------------------------------------------------------------------
+    std::vector<lsdtt::lsdtt_erosion_rate_sample> er_samples;
+    lsdtt::lsdtt_erosion_rate_read_result er_read;
+    if (calibration_on)
+    {
+        try
+        {
+            er_read = lsdtt::read_erosion_rate_samples(dem.get_meta(), er_in);
+            er_samples = er_read.samples;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\nFATAL: " << e.what() << "\n";
             return 1;
         }
     }
@@ -1171,6 +1329,105 @@ int main(int argc, char* argv[])
                   << "\n";
     }
     std::cout.flush();
+
+    // -------------------------------------------------------------------------
+    // Erosion-rate sample basins (m/n independent)
+    // -------------------------------------------------------------------------
+    lsdtt::lsdtt_erosion_rate_basins_result er_basins;
+    std::vector<float> er_drainage_area;
+    if (calibration_on)
+    {
+        std::cout << "\n--- Erosion-rate samples ---\n";
+        try
+        {
+            er_basins = lsdtt::delineate_erosion_rate_basins(*flow, er_samples, er_basin,
+                                                             lithology_on ? &lith_units : nullptr);
+            er_drainage_area = flow->get_drainage_area_raster().data;
+            // Latitude / longitude of the input points and the snapped outlets.
+            std::unique_ptr<lsdtt::lsdtt_coordinate_transform> er_to_wgs84;
+            try
+            {
+                er_to_wgs84 = std::make_unique<lsdtt::lsdtt_coordinate_transform>(
+                    lsdtt::lsdtt_coordinate_transform::from_epsg(routed_dem.get_meta().crs_wkt, 4326));
+            }
+            catch (const std::exception&) { er_to_wgs84.reset(); }
+            for (std::size_t i = 0; i < er_samples.size(); ++i)
+            {
+                const auto& pt = er_samples[i].point;
+                auto& b = er_basins.basins[i];
+                if (pt.has_original_coordinates && pt.original_coordinates_are_longitude_latitude)
+                {
+                    b.input_longitude = pt.original_x;
+                    b.input_latitude = pt.original_y;
+                }
+                else if (er_to_wgs84 && pt.status != lsdtt::lsdtt_point_input_status::coordinate_transform_failed)
+                {
+                    const lsdtt::lsdtt_lonlat ll = lsdtt::xy_to_lonlat(pt.x, pt.y, *er_to_wgs84);
+                    b.input_longitude = ll.longitude;
+                    b.input_latitude = ll.latitude;
+                }
+                if (er_to_wgs84 && b.outlet_flat >= 0)
+                {
+                    const lsdtt::lsdtt_lonlat ll = lsdtt::xy_to_lonlat(b.snapped_x, b.snapped_y, *er_to_wgs84);
+                    b.snapped_longitude = ll.longitude;
+                    b.snapped_latitude = ll.latitude;
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: erosion-rate samples: " << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "Erosion-rate samples: " << er_samples.size() << " read from " << er_in.path
+                  << " (units " << er_read.units << " -> m/yr x " << er_read.units_to_m_per_yr << ")\n"
+                  << "  snapping: " << er_basin.snapping_method << ", max "
+                  << er_basin.snap_max_distance_m << " m (" << er_basins.search_radius_pixels
+                  << " px); channel threshold " << er_basin.channel_threshold_pixels << " pixels\n";
+        if (er_basin.snapping_method == "reported_area" && !er_read.has_reported_area)
+            std::cout << "  no reported area: snapping to the nearest channel cell; mis-snapping onto a "
+                         "neighbouring channel cannot be detected\n";
+        std::cout << "  outside the DEM: " << er_basins.n_outside << "; snap failed: "
+                  << er_basins.n_snap_failed << "; incomplete basin (partly outside the DEM): "
+                  << er_basins.n_incomplete << "; bad rate: " << er_basins.n_bad_rate << "\n"
+                  << "  area mismatch (outside 1/" << er_basin.area_ratio_tolerance << ".."
+                  << er_basin.area_ratio_tolerance << " of the reported area): "
+                  << (er_basins.n_area_mismatch + er_basins.n_area_flagged) << " ("
+                  << (er_basin.area_mismatch_excludes ? "exclude" : "flag") << "); no reported area: "
+                  << er_basins.n_no_reported_area << "\n"
+                  << "  nested: " << er_basins.n_nested << " sample(s) in " << er_basins.n_groups
+                  << " nesting group(s); duplicates of one outlet: " << er_basins.n_duplicates
+                  << "; excluded by erosion_rate_nested_basins (" << er_basin.nested_policy << "): "
+                  << er_basins.n_nested_excluded << "\n";
+        try
+        {
+            if (lithology_on)
+            {
+                const std::string f = pp.make_output_path("_erodibility_calibration_basin_lithology", ".csv");
+                lsdtt::write_erodibility_calibration_basin_lithology_csv(
+                    f, er_samples, er_basins, lith_units, routed_dem.get_meta().cell_size);
+                std::cout << "  Wrote " << f << "\n";
+            }
+            if (bf["write_erodibility_calibration_basin_polygons"])
+            {
+                const lsdtt::vector_output_format pf =
+                    lsdtt::resolve_vector_output_format(sf["write_vector_format"]) ==
+                            lsdtt::vector_output_format::gpkg
+                        ? lsdtt::vector_output_format::gpkg
+                        : lsdtt::vector_output_format::flatgeobuf;
+                const std::string f = pp.make_output_path("_erodibility_calibration_basins",
+                                                          lsdtt::output_extension(pf));
+                const std::size_t nw = lsdtt::write_erodibility_calibration_basin_polygons(
+                    f, *flow, er_samples, er_basins, routed_dem.get_meta().crs_wkt, pf);
+                std::cout << "  Wrote " << f << " (" << nw << " basin polygon(s))\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: writing the erosion-rate basin outputs failed: " << e.what() << "\n";
+        }
+        std::cout.flush();
+    }
 
     // -------------------------------------------------------------------------
     // Chi data maps (diagnostic - verify chi extraction before fitting)
@@ -1732,6 +1989,156 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: k_sn by lithology failed for m/n = " << mn << ": "
+                              << e.what() << "\n";
+                }
+            }
+
+            if (calibration_on)
+            {
+                try
+                {
+                    // The sample basins, each extracted and fitted on its own
+                    // (no n_largest_basins, no min_channel_pixels).
+                    lsdtt::lsdtt_chi_network_fit_collection_result er_fits;
+                    // An outlet below the channel threshold (snapping none)
+                    // has no channel network: its samples become too_few_reaches.
+                    std::vector<std::int64_t> er_outlets;
+                    for (const std::int64_t o : er_basins.outlets)
+                        if (flow->s_vector_size(o) >=
+                            static_cast<std::uint64_t>(std::max(1, ifs["threshold_contributing_pixels"])))
+                            er_outlets.push_back(o);
+                    if (!er_outlets.empty())
+                    {
+                        const lsdtt::lsdtt_chi_collection_result er_chi =
+                            lsdtt::get_chi_from_outlets_zero_base_threshold(
+                                *flow, er_outlets, ifs["threshold_contributing_pixels"], chi_opts);
+                        lsdtt::lsdtt_chi_network_fit_options er_fit_opts;
+                        er_fit_opts.critical_divergence_m = ff["fit_critical_divergence_metres"];
+                        er_fit_opts.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
+                        for (const auto& b : er_chi.basins)
+                            er_fits.basins.push_back(lsdtt::fit_chi_network(b, routed_dem, er_fit_opts));
+                    }
+                    std::vector<lsdtt::lsdtt_erosion_rate_sample> mn_samples = er_samples;
+                    std::mt19937_64 er_rng = lsdtt::erodibility_calibration_bootstrap_engine(
+                        ifs["erosion_rate_bootstrap_random_seed"], mn);
+                    const std::vector<lsdtt::lsdtt_erosion_rate_basin_ksn> er_ksn =
+                        lsdtt::compute_erosion_rate_basin_ksn(er_fits, dem.get_meta(), er_drainage_area,
+                                                              er_cal, er_rng);
+                    lsdtt::lsdtt_chi_lithology_tables er_tables;
+                    const bool er_units = lithology_on && !er_cal.unit_k_methods.empty();
+                    if (er_units)
+                        er_tables = lsdtt::build_chi_lithology_tables(
+                            er_fits, dem.get_meta(), lith_units, lith_contact_distance, er_drainage_area,
+                            lith_opts);
+                    const lsdtt::lsdtt_erodibility_calibration_result cal =
+                        lsdtt::calibrate_erodibility_from_erosion_rates(
+                            mn_samples, er_basins, er_ksn, er_fits, er_units ? &er_tables : nullptr,
+                            lithology_on ? &lith_units : nullptr, mn, chi_opts.A_0, er_cal, er_rng);
+
+                    const std::string sfx = mn_suffix(mn);
+                    const std::string f_s = pp.make_output_path("_erodibility_calibration_samples_mn_" + sfx, ".csv");
+                    const std::string f_k = pp.make_output_path("_erodibility_calibration_basin_K_mn_" + sfx, ".csv");
+                    const std::string f_f = pp.make_output_path("_erodibility_calibration_fit_mn_" + sfx, ".csv");
+                    lsdtt::write_erodibility_calibration_samples_csv(
+                        f_s, mn_samples, er_basins, er_ksn, cal, er_read.units,
+                        lithology_on ? &lith_units : nullptr);
+                    lsdtt::write_erodibility_calibration_basin_K_csv(f_k, mn_samples, er_basins, cal);
+                    lsdtt::write_erodibility_calibration_fit_csv(f_f, cal);
+
+                    std::cout << "  Erodibility calibration (m/n = " << mn << ", A0 = " << chi_opts.A_0
+                              << "): " << cal.n_used << " basin(s) used in " << cal.n_groups
+                              << " independent group(s)\n"
+                              << "    too few reaches (< " << er_cal.min_reaches_per_basin
+                              << " qualifying): " << cal.n_too_few_reaches << "; missing uncertainty: "
+                              << lsdtt::count_erosion_rate_samples_with_status(mn_samples, "missing_uncertainty")
+                              << "\n";
+                    for (const auto& r : cal.basin_K)
+                    {
+                        if (r.n != er_cal.n_values.front()) continue;
+                        const auto& smp = mn_samples[static_cast<std::size_t>(r.sample)];
+                        std::cout << "    " << std::left << std::setw(16) << smp.sample_id << std::right
+                                  << " E = " << smp.E_m_per_yr << " m/yr  k_sn = " << r.k_sn << " ["
+                                  << r.k_sn_ci_low << ", " << r.k_sn_ci_high << "]  K(n=" << r.n << ") = "
+                                  << r.K << " " << lsdtt::lithology_erodibility_units_string(r.m) << "\n";
+                    }
+                    for (const auto& fr : cal.fits)
+                    {
+                        if (fr.fit_type == "fixed_n")
+                        {
+                            if (fr.status != "ok") continue;
+                            std::cout << "    fixed n = " << fr.n << ": K = " << fr.K << " [" << fr.K_ci_low
+                                      << ", " << fr.K_ci_high << "] "
+                                      << lsdtt::lithology_erodibility_units_string(fr.m)
+                                      << " (weighted log mean, " << fr.N_basins << " basins, " << fr.N_groups
+                                      << " groups)\n";
+                        }
+                        else if (fr.status == "ok")
+                            std::cout << "    fitted: n = " << fr.n << " [" << fr.n_ci_low << ", "
+                                      << fr.n_ci_high << "] (York SE " << fr.n_se_york << ", x sqrt(MSWD) "
+                                      << fr.n_se_york_mswd_scaled << ", MSWD " << fr.mswd << "), K = " << fr.K
+                                      << " [" << fr.K_ci_low << ", " << fr.K_ci_high << "] "
+                                      << lsdtt::lithology_erodibility_units_string(fr.m) << "\n";
+                        else
+                        {
+                            std::cout << "    fitted: not attempted (" << fr.status;
+                            if (fr.status == "not_fitted_too_few_groups")
+                                std::cout << ": " << fr.N_groups << " groups < " << er_cal.min_groups_for_n_fit;
+                            else if (fr.status == "not_fitted_narrow_ksn_range")
+                                std::cout << ": k_sn range " << fr.ksn_range_ratio << "x < "
+                                          << er_cal.min_ksn_range_ratio << "x";
+                            std::cout << ")";
+                            if (std::isfinite(fr.n_needed_estimate_se))
+                                std::cout << "; first-order SE(n) from these basins ~ " << fr.n_needed_estimate_se;
+                            std::cout << "\n";
+                        }
+                    }
+                    if (!cal.units.empty())
+                    {
+                        const std::string f_u = pp.make_output_path(
+                            "_erodibility_calibration_by_lithology_mn_" + sfx, ".csv");
+                        lsdtt::write_erodibility_calibration_by_lithology_csv(f_u, cal);
+                        for (const auto& u : cal.units)
+                            if (u.status == "ok")
+                                std::cout << "    by lithology (" << u.method << ", n = " << u.n << "): "
+                                          << u.lith_name << "  K = " << u.K << " [" << u.K_ci_low << ", "
+                                          << u.K_ci_high << "] " << lsdtt::lithology_erodibility_units_string(u.m)
+                                          << " (" << u.N_basins << " basins, " << u.N_groups << " groups)\n";
+                        std::cout << "  Wrote " << f_u << "\n";
+                        const std::string ptm = lsdtt::to_lower_ascii(sf["erosion_rate_property_table_method"]);
+                        if (bf["write_erodibility_calibration_property_table"])
+                            for (double n : er_cal.n_values)
+                            {
+                                std::ostringstream prov;
+                                prov << "draft from lsdtt-chi-analysis erodibility calibration; DEM "
+                                     << std::filesystem::path(input_path).filename().string()
+                                     << "; lithology map " << sf["lithology_fname"];
+                                if (lsdtt::lithology_source_from_path(sf["lithology_fname"],
+                                                                      sf["lithology_source"]) == "vector_map")
+                                    prov << " (field " << sf["lithology_field_name"] << ")";
+                                if (!sf["lithology_crosswalk_fname"].empty())
+                                    prov << " with crosswalk " << sf["lithology_crosswalk_fname"];
+                                prov << "; samples " << sf["erosion_rate_fname"] << " (" << er_read.units
+                                     << "); m/n " << mn << ", A0 " << chi_opts.A_0 << " m^2, n " << n << ", m "
+                                     << mn * n << "; method " << ptm << ", " << cal.n_used << " basins in "
+                                     << cal.n_groups << " groups; assumes steady state, E uniform within "
+                                        "each basin, quartz-flux weighting ignored";
+                                const std::string f_t = pp.make_output_path(
+                                    "_erodibility_calibration_property_table_mn_" + sfx + "_n_" +
+                                        lsdtt::relative_erodibility_n_suffix(n), ".txt");
+                                const std::size_t nr = lsdtt::write_erodibility_calibration_property_table(
+                                    f_t, cal, n, ptm, lith_units, prov.str());
+                                std::cout << "  Wrote " << f_t << " (" << nr << " unit(s))\n";
+                            }
+                    }
+                    std::cout << "  Caveats: assumes steady state and uniform E within each basin; CRN rates "
+                                 "are quartz-flux weighted (not corrected); n and K are correlated (see "
+                                 "corr_n_lnK).\n"
+                              << "  Wrote " << f_s << "\n  Wrote " << f_k << "\n  Wrote " << f_f << "\n";
+                    std::cout.flush();
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: erodibility calibration failed for m/n = " << mn << ": "
                               << e.what() << "\n";
                 }
             }

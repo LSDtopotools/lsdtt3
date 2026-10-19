@@ -5337,7 +5337,9 @@ Measured 2026-10-19 (relative errors; K/K_ref is 4 against west, 0.25 against ea
 K and K/K_ref are powers -n of the reach medians, so the median errors (above) are
 multiplied by n. The pins are twice the measured error, capped at n times the median
 caps (1 % on a ratio, 2 % absolute): K for n = 1 sits at the 2 % cap, K for n = 2 at
-4 %, and the n = 2 ratios at 1.8 % and 1.6 %, above the 1 % median-ratio cap. The
+4 %, and the n = 2 ratios at 1.8 % and 1.6 %, above the 1 % median-ratio cap.
+These tolerances were accepted as pinned (2026-10-19): twice the measured error,
+capped at n times the caps. The
 K intervals (1000 replicates by reach) do not contain the generating K: for n = 1,
 layout A, K west [9.760e-06, 9.877e-06] against 1e-5; the reach medians are biased
 high by the rectangle-versus-trapezoid chi difference above, and the bootstrap
@@ -5440,6 +5442,112 @@ siltstone 40, shale 250, limestone 159, alluvium 17); no channel node is unmappe
 | alluvium | 43.6 [28.0, 83.1] (16) | 19.8, no interval (3) |
 | arms disagree | – | 62.0 [60.0, 66.2] (489) |
 
+### 8c.6 Erodibility calibration from basin erosion rates (`lsdtt-chi-analysis` with `erosion_rate_fname`, 2026-10-19)
+
+The calibration of the stream-power K from basin-averaged erosion rates is complete:
+basins (snapping, completeness, area check, nesting groups, composition), basin k_sn
+(reach median on reaches split at confluences only), K per basin, K at fixed n, a
+fitted (n, K) by York regression, and K per lithologic unit (`mono`, `unit_in_basin`).
+Code: `src/cpu/lsdtt_erodibility_calibration_cpu`, wired into `cli/lsdtt-chi-analysis`.
+`stream_power_n_values` is now the n list of both relative erodibility and the
+calibration; `relative_erodibility_n_values` is its deprecated alias (a warning).
+Mixing (NNLS over area fractions) is not built. All the tests below carry the label
+`erodibility_calibration` too.
+
+**Known answers (in process, `unit_chi_erodibility_calibration`, 61 checks).**
+Fixture: a red-noise surface (320 x 480 at 30 m, sd 3 m, 6 blur passes, UTM 32N) with
+a tent tilt of 0.02 dx per row towards the north and south edges, routed "oooo"; the
+10 largest interior, complete, non-overlapping sub-basins of 4000-10000 px at least
+8 px from the grid edge (14 qualify), each given its own uplift U_b (log-uniform
+5e-5 to 8e-4 m/yr in a shuffled order) through an exactly equivalent erodibility
+field K_eff = K U_ref / U_b on its pixels (U_ref = 2e-4 everywhere), so at steady
+state k_sn,b = (U_b / K)^(1/n) and E_b = U_b. Channels start at 50 px; reaches qualify
+with 10 nodes; 5 per basin. Samples: the 10 outlets, a nested sample in basin 3 (the
+largest cell with 400 px <= A <= 0.6 A_outlet), a duplicate of basin 5, basin 8's
+outlet with twice its area, one point off the grid; E in mm/kyr with 10 % sigma;
+snapping `none`; 1000 replicates, seed 5489.
+
+The fixture differs from the first design (160 x 240, the basins of the edge outlets):
+an outlet on an open edge borders cells outside the domain, so
+`check_basin_completeness` is false for every basin draining to the edge, and in
+160 x 240 the interior sub-basins had fewer than 5 qualifying reaches. Measured, with
+the pins (2 x measured, capped at the caps of the design: k_sn 2 %, K n x 2 %, n 0.03 n,
+K at the fitted n 6 % / 12 %):
+
+| | n = 1 | pin | n = 2 | pin |
+|---|---|---|---|---|
+| F1-a max basin k_sn error | 1.853 % | 2 % (cap) | 1.853 % | 2 % (cap) |
+| F1-b max basin K error | 1.819 % | 2 % (cap) | 3.605 % | 4 % (cap) |
+| F1-c fixed-n K | 9.8516e-06 (1.484 %) | 2 % (cap) | 9.7054e-06 (2.946 %) | 4 % (cap) |
+| corr_lnK_lnk at the true n | 0.495 | not asserted | 0.493 | not asserted |
+| wrong n: ln_K_dispersion, corr_lnK_lnk | 0.951, -0.99999765 | > 0.5, > 0.9 | 0.478, 0.99996276 | > 0.9 (corr only) |
+| F1-d fitted n | 1.00123 [0.99894, 1.00308] | 0.0025 | 2.00492 [1.99572, 2.01236] | 0.0099 |
+| F1-e K at the fitted n | 9.8148e-06 (1.852 %) | 3.7 % | 9.6329e-06 (3.671 %) | 7.4 % |
+| York MSWD | 0.00051 | | 0.0020 | |
+
+F1-f (exact): 12 used (10 outlets, the nested sample, the duplicate), 1 area_mismatch,
+1 outside_dem, N_groups 10; the nested sample shares basin 3's E and group, the
+duplicate basin 5's outlet and group. Every basin k_sn is high by +1.1 to +1.9 %: the
+steady state integrates chi with a left rectangle rule and chi extraction with the
+trapezoid rule (the same bias as the relative-K known answers). The wrong-n dispersion
+criterion (> 0.5) is the design's for n = 2 on the n = 1 surface; the reverse case
+(n = 1 on the n = 2 surface) has half the ln k range and measured 0.478, so only its
+correlation is asserted. Same seed, same intervals (bitwise).
+
+F2 (layout A of the two-K fixture, K1 = 1e-5 west of the middle column, K2 = 4e-5
+east, n = 1, the same per-basin uplift factors): `unit_in_basin` west 9.8406e-06
+(1.594 %), east 3.9377e-05 (1.558 %); `mono` west 9.8497e-06 (1.503 %), east
+3.9383e-05 (1.543 %); pins 2 % (cap). Mono basins 3 west / 5 east and unit_in_basin
+entries 5 / 7, exact. F2-c: with every U_b equal, `unit_in_basin` K and relative
+erodibility's absolute K (E = U) on the same fits differ by 0.116 % (west) and
+0.030 % (east); pin 4 % (the sum of the two 2 % pins). F2-e (not asserted): the bulk
+fitted n on F2 is 0.678 with MSWD 36.7.
+
+The same driver also checks York (above), the reader, the parameter groups, the A0
+cancellation of the K formula, and the shared property-table writer.
+
+**CLI (fixture `fixture_chi_erodibility_calibration_cli`, the F1 and F2 steady states
+as GeoTIFFs with `raster_is_filled: true`).** The CLI routes the steady state itself:
+D8 steepest descent on it moves divide pixels (the routed basins share 83-100 % of
+their pixels with the surface-routed ones; the 8 px edge margin keeps them complete).
+Iterating "basins, steady state, re-route" towards a self-consistent routing did not
+converge (72,893 receivers changed in the first round, still 5,689 after 30). So the
+CLI pins are measured separately.
+
+| Test | Labels | What it pins |
+|---|---|---|
+| `smoke_chi_analysis_erodibility_calibration` | `smoke;cli;chi` | F1, n 1,2: the three CSVs (exact headers) and 13 basin polygons; 12 used in 10 groups; one area_mismatch and one outside_dem; a fitted n |
+| `rigorous_chi_erodibility_calibration_n` | `rigorous;chi` | fitted n 1.04242 (abs err 0.0424; K at that n 8.342e-06); pin 0.05 (the cap; 2 x measured is above it) |
+| `rigorous_chi_erodibility_calibration_fixed_n_K` | `rigorous;chi` | fixed n = 1 K 9.53205e-06 (4.68 %); pin 6.4 % (the cap) |
+| `rigorous_chi_erodibility_calibration_units_invariant` | `rigorous;cli;chi` | the samples in m/yr give byte-identical basin K and fit files |
+| `rigorous_chi_erodibility_calibration_observation_only` | `rigorous;cli;chi` | fit nodes, fit segments, k_sn basin summary and disorder sweep byte-identical with and without `erosion_rate_fname` |
+| `smoke_chi_analysis_erodibility_calibration_lithology` | `smoke;cli;chi;lithology` | F2: mono and unit_in_basin rows for both units, the property table, the basin-lithology CSV |
+| `rigorous_chi_erodibility_calibration_lithology_units_{west,east}` | `rigorous;chi;lithology` | unit_in_basin west 9.46848e-06 (5.32 %), east 3.86206e-05 (3.45 %); pin 6.4 % (the cap) |
+| `failure_chi_analysis_erodibility_calibration_{no_units,units_conflict,without_fit,missing_column,missing_file}` | `failure;cli;chi` | the FATAL messages |
+
+Not asserted, because it exceeds the 6.4 % cap: through the CLI, F2 `mono` west
+measured 9.2954e-06 (7.05 %); east 3.8566e-05 (3.58 %).
+
+**Byte identity.** With `erosion_rate_fname` empty, the 70 output files of the 6
+`smoke_chi_lithology_*` runs are byte-identical to the round-4 baseline (their
+`_ingested_params.param` echoes add the new keys and show `stream_power_n_values`
+instead of `relative_erodibility_n_values`). So are the 66 output files and the stdout
+of the West Virginia runs `wvrk_lithprimary`, `wvrk_lithprimary_E`, `wvrk_name`,
+`wvbig_cna_order` and `wvnull_cna_order`.
+
+**West Virginia (2026-10-19; laptop, WSL2, thermally limited).** The OCTOPUS large box
+(`wvoct_large_erosion_rates.csv`, 23 samples, `st`); COP30 for its suggested DEM box,
+3602 x 5469 pixels at 30 m, EPSG:32617 (4 tiles, 62 s); Macrostrat at zoom 10 (28
+tiles, 1851 polygons, 39 s); `lith_primary` with a crosswalk keeping every value
+(`wvcal_crosswalk_lith_primary.csv`); m/n 0.45, A0 1, threshold 200 px, n 1,2.
+`lsdtt-chi-analysis` took 20.9 s with a peak RSS of 1.67 GB. Of the 23 samples, 17
+were used in 14 nesting groups. Excluded: 2 incomplete_basin (the two basins over
+1000 km²), 1 area_mismatch (ratio 0.455), 3 too_few_reaches (0.9-2.0 km²).
+- Fixed n = 1: K 3.081e-07 [2.372e-07, 4.153e-07] m^(0.1) yr^-1.
+- Fixed n = 2: K 8.581e-09 [5.253e-09, 1.436e-08] m^(-0.8) yr^-1.
+- Fitted n: 0.658 [0.130, 2.025] (York SE 0.124, x sqrt(MSWD) 0.260, MSWD 4.39),
+  with K 1.005e-06 [9.14e-09, 7.75e-06] m^(0.408) yr^-1 and corr_n_lnK -0.991.
+
 ### 8c.2 Macrostrat lithology fetch (`lsdtt-fetch-lithology`)
 
 | Test | Labels | What it covers |
@@ -5461,8 +5569,8 @@ vector drivers `unit_format_support` requires.
 Calibrating the stream-power K from basin-averaged erosion rates is being built in
 steps. Built and tested so far: the OCTOPUS fetch (`lsdtt-fetch-erosion-rates`,
 `lsdtt_octopus_fetch`), area-matched snapping, the York regression, the erosion-rate
-sample reader with explicit units, the parameter groups (declared, not yet used by a
-CLI), and the K formula and property-table writer shared with relative K. Every test
+sample reader with explicit units, the parameter groups (wired into lsdtt-chi-analysis
+in 8c.6), and the K formula and property-table writer shared with relative K. Every test
 below also carries the label `erodibility_calibration`.
 
 | Test | Labels | What it covers |
@@ -5475,7 +5583,7 @@ below also carries the label `erodibility_calibration`.
 | `failure_fetch_erosion_rates_{no_bbox,too_many,bad_scheme,web_mercator,exception}` | `failure;cli;fetch` | no box; `max_features: 5` against the canned hits (28); `octopus_rate_scheme: cronus`; `output_epsg: 3857`; an ExceptionReport body |
 | `smoke_fetch_erosion_rates_help` | `smoke;cli;fetch` | `-h` lists `octopus_rate_scheme` |
 | `network_fetch_erosion_rates_cli` | `network;cli;fetch` | a live fetch of the wvbig box: S186WTS046 in the CSV, at least 5 polygons, the attribution; only with `LSDTT_ENABLE_NETWORK_TESTS` |
-| `unit_chi_erodibility_calibration` | `unit;chi` | 32 checks. York (below); the sample reader (unit factors exact, `m_per_myr` = `mm_per_kyr`, unknown and empty units listed, mass fluxes refused; a units column that agrees reads, one that disagrees throws naming row 2; missing rate / uncertainty columns throw listing the columns; no id column gives `row_<n>`; `bad_rate` and `missing_uncertainty` rows kept; km² to m²; a UTM GeoPackage point layer reads the same pixels and statuses as the CSV); `stream_power_erodibility_from_erosion_rate` (value, NaN cases, A0 = 1 vs 1e6 equal to 1e-10 relative for n = 1, 1.5, 2); the K units strings for m = 0.45 and 0.9; the shared property-table writer byte for byte and its case-insensitive name check; the two parameter groups (29 keys, defaults, groups, no n-list key); basin completeness at a grid edge (below). Driver `tests/cpp/test_erodibility_calibration.cpp` |
+| `unit_chi_erodibility_calibration` | `unit;chi` | 32 checks in this round (61 with the known answers of 8c.6). York (below); the sample reader (unit factors exact, `m_per_myr` = `mm_per_kyr`, unknown and empty units listed, mass fluxes refused; a units column that agrees reads, one that disagrees throws naming row 2; missing rate / uncertainty columns throw listing the columns; no id column gives `row_<n>`; `bad_rate` and `missing_uncertainty` rows kept; km² to m²; a UTM GeoPackage point layer reads the same pixels and statuses as the CSV); `stream_power_erodibility_from_erosion_rate` (value, NaN cases, A0 = 1 vs 1e6 equal to 1e-10 relative for n = 1, 1.5, 2); the K units strings for m = 0.45 and 0.9; the shared property-table writer byte for byte and its case-insensitive name check; the two parameter groups (29 keys, defaults, groups, no n-list key); basin completeness at a grid edge (below). Driver `tests/cpp/test_erodibility_calibration.cpp` |
 | `unit_flow_snapping` | `unit;flow;snapping` | 13 new checks of `snap_pixel_to_reported_drainage_area_expanding_square` on a synthetic junction (below) |
 | `unit_raster_fetch` | `unit;fetch` | 2 new checks: `bounds_fname` pointing at `tests/data/bounds/bounds_raster_utm.tif` returns its WGS84 footprint |
 
