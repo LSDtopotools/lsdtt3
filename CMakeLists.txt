@@ -470,6 +470,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_hillslope_transport_cpu.cpp
     src/cpu/lsdtt_hillslope_implicit_cpu.cpp
     src/cpu/lsdtt_lem_cpu.cpp
+    src/cpu/lsdtt_lem_parameter_rasters_cpu.cpp
+    src/cpu/lsdtt_lem_input_grid_cpu.cpp
     src/cpu/lsdtt_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp

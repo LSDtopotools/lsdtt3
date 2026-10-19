@@ -1,0 +1,14 @@
+# C16: snap with scalar K.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemksnaps
+read_initial_dem: true
+erodibility: 1e-4
+boundary_conditions: oooo
+n_threads: 1
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+snap_initial_surface_to_steady_state: true
+number_of_iterations: 1

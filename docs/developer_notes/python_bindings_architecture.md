@@ -208,6 +208,54 @@ wrappers can normalize kwargs before forwarding to an unwrapped native
 function. Native classes require nanobind constructor overloads/placement
 construction so `type` and `isinstance` remain correct.
 
+## Building the extension for development
+
+The pixi `packaging` environment carries `scikit-build-core`, `nanobind` and
+`pip`, so the bindings can be built and tested in place without a separate
+environment (on `/mnt/c` pixi cannot hard-link from its cache, so each extra
+environment is a full ~1 GB copy). Build against the **system** GDAL, the one
+the CMake build in `build/` (and so the CLIs there) uses:
+
+```bash
+pixi install -e packaging
+E=$PWD/.pixi/envs/packaging
+CMAKE_ARGS="-DCMAKE_IGNORE_PREFIX_PATH=$E -DGDAL_INCLUDE_DIR=/usr/include/gdal -DGDAL_LIBRARY=/usr/lib/libgdal.so" \
+CMAKE_BUILD_PARALLEL_LEVEL=8 \
+    pixi run -e packaging python -m pip install --no-build-isolation -e ./python_bindings
+```
+
+Without those `CMAKE_ARGS` the build mixes the environment's conda-forge GDAL
+with system headers and system netCDF/HDF5 and fails to link.
+
+Run the tests with the environment's Python **directly** (not `pixi run`, which
+exports the environment's `GDAL_DATA`/`PROJ_DATA` for a different GDAL), and
+preload the environment's newer `libstdc++`: the system GDAL pulls in the older
+system one, which then cannot satisfy the environment's own libraries, so a bare
+`import lsdtt3` fails unless numpy happened to load first:
+
+```bash
+LD_PRELOAD=$E/lib/libstdc++.so.6 $E/bin/python -m pytest -q python_bindings/tests
+```
+
+The contract tools in the next section run the same way.
+
+**Python version and `public_api.json`.** The packaging environment's Python is
+3.13, which dedents docstrings at compile time. A few exports whose `__doc__` is
+assembled at runtime from a template plus the class docstring
+(`GraphFloodInducedResult`, `GraphFloodMultigridResult`,
+`run_graphflood_induced`, `run_graphflood_multigrid`, `helper_for_llm`) therefore
+render with different indentation than under 3.12, and
+`generate_public_api_manifest.py --update` rewrites them. Keep the committed text
+for those entries; `test_public_api_manifest` reports them under 3.13+ until the
+template is made version-independent.
+
+Release wheels are unaffected by any of this: `tools/make_all_packages.sh` with
+podman, and `python-wheels.yml`, build inside the manylinux container with its
+own GDAL, and the host-wheel fallback calls the environment's Python by path (no
+activation) through an isolated `python -m build`. Do not run
+`make_all_packages.sh` under `pixi run -e packaging`: activation would let a
+host wheel pick up the environment's GDAL. Never publish an editable build.
+
 ## Verification
 
 Source-only checks do not need `_core`:

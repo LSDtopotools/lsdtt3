@@ -162,6 +162,8 @@ lsdtt3/
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
+│   │   ├── lsdtt_lem_parameter_rasters_cpu.hpp/.cpp          — per-pixel LEM parameters: K calibration, conversion, validation, forcing scaling
+│   │   ├── lsdtt_lem_input_grid_cpu.hpp/.cpp                 — LEM model grid and input-raster placement (clip / relabel / warp)
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
@@ -302,7 +304,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
 
 
-*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
+*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
 
 
 *Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`
@@ -1467,6 +1469,26 @@ raster. Output suffix: `_lambert`.
 
 ---
 
+
+## lsdtt_raster_warp
+
+Files: `src/core/lsdtt_raster_warp.hpp/.cpp` (header GDAL-free).
+
+- `clip_raster_to_reference_extent` and `warp_raster_to_reference_grid`: file to
+  file, against a reference raster.
+- `warp_raster_to_grid_in_memory(in_path, target_grid, opts)`: warps onto an
+  explicit grid description, so a grid that exists only in memory (a synthetic
+  model grid) can be the target. It writes a plain GeoTIFF to `/vsimem/`, reads it
+  back with `lsdtt_data_loader` and removes it. Shares its request with
+  `warp_raster_to_reference_grid`.
+- `crs_equal_semantically(a_wkt, b_wkt)`: public; OGR `IsSame` with traditional
+  GIS axis order.
+
+The `-te` extent is passed to GDAL at 17 significant digits. Until 2026-10-16 it
+went through a default `ostringstream` (6 digits), which turned a northing of
+5000202 into `5.0002e+06` and shifted any warp or clip with 7-digit coordinates
+(every UTM northing) by up to several metres.
+
 ## lsdtt_raster_base
 
 File: `src/core/lsdtt_raster_base.hpp/.cpp`
@@ -1660,6 +1682,13 @@ emptied**, or they become a permanent second spelling for every parameter.
 File: `src/core/lsdtt_data_loader.hpp/.cpp`
 
 `lsdtt_data_loader` handles both raster and vector I/O through GDAL/OGR.
+
+`open_raster` refuses geotransforms the meta cannot represent (the meta keeps
+only an origin and one cell size): rotated rasters and south-up rasters always,
+and non-square pixels unless the CRS is geographic. Geographic rasters must still
+open, because `lsdtt-raster-preprocessing` reads them to reproject them; analysis
+tools refuse geographic rasters themselves. `band_count()` reports the bands of
+the open raster.
 
 Its header includes no GDAL header: `GDALDataset` is forward declared, the
 dataset handles sit behind a deleter defined in the `.cpp`, and the OGR layer
@@ -2960,7 +2989,12 @@ outside the LEM (e.g. the steady-state solvers are useful standalone).
 
 ```
 cli/lsdtt-lem.cpp
-   │  builds/loads DEM, conditions it, owns the time loop or steady-state branch
+   │  resolves the model grid, builds/loads DEM, conditions it, owns the time loop
+   │  or steady-state branch
+   ├── lsdtt_lem_input_grid_cpu        model grid (parameters / DEM / K raster) and
+   │                                   placement of input rasters onto it
+   ├── lsdtt_lem_parameter_rasters_cpu K values: calibration, conversion, validation,
+   │                                   per-step scaling by the forcing history
    ▼
 lsdtt_lem_cpu            run_lem_step(): one timestep = fluvial → hillslope → uplift → restore boundaries
    ├── lsdtt_stream_power_cpu        implicit stream-power incision (transient)
@@ -3002,7 +3036,11 @@ Per-step sequence:
 
 `lsdtt_lem_options` carries all per-step knobs (fluvial K/m/n, threshold area,
 hillslope model + diffusivity + Sc, uplift rate, base-level fall rate, process
-switches, boundary conditions). `lsdtt_lem_step_stats` reports `delta_max_elevation`,
+switches, boundary conditions). `erodibility_field` is an optional per-pixel K
+(flat raster order, absolute K in the run's convention; empty = the scalar).
+`run_lem_step` checks it on every call (size, and finite K > 0 on every valid
+pixel, serially before any parallel region) and caches nothing derived from it,
+so a caller may rewrite it between steps. `lsdtt_lem_step_stats` reports `delta_max_elevation`,
 `delta_mean_elevation`, `max_local_elevation_change`, `mean_erosion_rate`,
 `max_erosion_rate`, and optionally the `erosion_rate` field.
 
@@ -3019,6 +3057,14 @@ run that erodes fluvially everywhere can still emit a network), which lets a flu
 run freeze its network and feed it back as `channel_mask_fname` to a hillslopes-only
 run. `hold_channel_mask_fixed` additionally adds the masked pixels to `boundary_flats`,
 so uplift cannot lift the frozen network away from the hillslopes relaxing toward it.
+
+**Snap helper.** `snap_lem_surface_to_fluvial_steady_state(dem, ss_opts, use_dinf,
+fi_opts, fg_opts, fill_min_slope, boundary_conditions, n_threads, before_solve)`
+fills, routes with the caller's flow options and solves the analytical steady
+state; it returns the result and the drainage area. Both the CLI's initial snap
+and each cycle of its legacy steady-state branch call it. `before_solve` receives
+the filled surface and a mutable copy of the options just before the solve: the
+hook for a per-step K source (lithology).
 
 ### Time-varying forcing (pulses of incision)
 
@@ -3039,6 +3085,70 @@ incision up the channel network. Together with `write_erosion_rate_raster` and
 `render/lem_pulse.py` animates: the pulse is essentially invisible in elevation
 but obvious in the erosion-rate field.
 
+An `erodibility` column changes the scalar K in time. With a K field active the
+CLI keeps the loaded field as a base and, at the start of each step, sets
+`opts.erodibility_field = scale_lem_erodibility_field(base, K_param, K_forcing(t))`,
+i.e. K(x, t) = K_base(x) K_forcing(t) / K_param. The CLI marks reserved hooks
+H1-H4 (time step, initial snap, start of the steady-state branch, each legacy
+cycle) where a per-step K source rewrites the base field. An exception inside a
+step is rethrown to one handler that prints `FATAL: time step failed ...` and
+exits 1.
+
+### lsdtt_lem_parameter_rasters_cpu (per-pixel K values)
+
+File: `src/cpu/lsdtt_lem_parameter_rasters_cpu.hpp/.cpp`. What K values mean and
+whether they are acceptable; never where pixels sit (that is the input-grid
+module). No GDAL headers; returns notes and warnings and never prints.
+
+- `check_lem_erodibility_calibration(stated, run, label)`: the single comparison
+  of a source's stated m, n, area convention and calibration cell size against
+  the run's. Returns the conversion factor (exactly 1.0 when nothing converts),
+  notes and warnings; a different m or n is fatal.
+- `validate_lem_erodibility_values` / `validate_lem_erodibility_field`: values on
+  the DEM grid → calibration → conversion → checks (nodata on a DEM-valid pixel
+  and K ≤ 0 are refused, naming the pixel). The `_field` form first applies
+  `check_lem_field_grid_alignment`.
+- `load_lem_erodibility_field(path, dem, placement, opts)`: prepare onto the grid,
+  then validate.
+- `check_lem_erodibility_field`: the per-step check `run_lem_step` uses.
+- `scale_lem_erodibility_field(base, reference, applied, out)`:
+  `float((double(b) · applied) / reference)`, which leaves `base` bitwise unchanged
+  when applied == reference; throws `range_error` naming the pixel on overflow or
+  underflow.
+
+The units and conversion factor themselves (`describe_erodibility_units`,
+`erodibility_area_conversion_factor`, `parse_erodibility_area_convention`) live in
+`lsdtt_stream_power_cpu`, as properties of the law.
+
+### lsdtt_lem_input_grid_cpu (model grid and input-raster placement)
+
+File: `src/cpu/lsdtt_lem_input_grid_cpu.hpp/.cpp`. The LEM step, the steady state
+and every validator only see rasters already on the model grid; getting an input
+raster there happens here, before the LEM, never inside a step. Uses only
+GDAL-free core headers.
+
+- Model grids: `make_lem_synthetic_grid` (Watopia when no WKT is given; the CLI's
+  synthetic branch calls it), `make_lem_model_grid_from_raster` (mode 2: the
+  source's grid; refuses no CRS, geographic, non-metre and distorting CRSs),
+  `make_lem_model_grid_from_raster_dimensions` (mode 1 (a)),
+  `apply_lem_source_footprint` (mode 2: source nodata becomes DEM nodata).
+- Grid functions take an `lsdtt_lem_source_grid` (meta + band count), never a
+  path, so a multi-band source can supply a grid. `describe_lem_source_grid`
+  builds one from an open loader.
+- `check_lem_field_grid_alignment`: the strict check (`same_grid` at 1e-6 m plus
+  `crs_equal_semantically`).
+- `check_lem_projection_distortion`: refuses EPSG:3857 by name and any CRS whose
+  point scale factor at the grid's centre or corners is more than 1 % from 1
+  (`lsdtt_raster_meta::max_linear_scale_error`).
+- Clip windows (`compute_lem_clip_window`, `compute_lem_clip_extent`,
+  `check_lem_clip_extent_within`): the only implementation of the centre /
+  lower-left rules. Equal cell size gives a pixel-aligned window counted from the
+  source's south-west corner (a point on a grid line belongs to the pixel to its
+  north / east); a different cell size gives an extent the source is resampled
+  onto. A window off the source is refused.
+- `prepare_lem_input_raster(path, model_grid, opts, label)`: the single entry
+  point for the five placements; the result's meta is the model grid.
+
 ### lsdtt_stream_power_cpu (transient incision)
 
 File: `src/cpu/lsdtt_stream_power_cpu.hpp/.cpp`
@@ -3048,9 +3158,12 @@ to D-inf per Anand et al. 2020). Both functions sweep the topological order in
 **reverse** (outlets first) so a receiver elevation is already updated when its
 donor is solved.
 
-- `compute_d8_stream_power_incision(dem, flowinfo, K, m, n, dt, threshold_area, divide_area_by_dx, slope_clamp)`
-  — single-receiver D8; serial reverse-topological sweep.
-- `compute_dinf_stream_power_incision(..., flowgraph, ..., n_threads)`
+- `compute_d8_stream_power_incision(dem, flowinfo, K, m, n, dt, threshold_area, divide_area_by_dx, slope_clamp, ..., erodibility_field = {})`
+  — single-receiver D8; serial reverse-topological sweep. A non-empty
+  `erodibility_field` (n_rows·n_cols values) gives each pixel its own K in the
+  one coefficient K·A^m every update path reads, so a uniform field is bitwise
+  the scalar run.
+- `compute_dinf_stream_power_incision(..., flowgraph, ..., n_threads, ..., erodibility_field = {})`
   — D-inf with up to two receivers; level-parallel (`build_reverse_levels`) sweep,
   OMP within each level.
 
@@ -3077,6 +3190,14 @@ back-calculated so `f·MaxChi = target_relief`). Result reports `K_used`,
 `max_unit_height` (= MaxChi), and `computed_relief`. The CLI can iterate this over
 `steady_state_n_cycles`, pit-filling between cycles, so divides migrate one pixel
 per cycle and the single-pass elevation breaks across divides are smoothed.
+
+`opts.erodibility_field` (optional, flat on the flow grid) turns chi into a
+K-weighted chi: each increment is multiplied by `w_i = (K/K_i)^(1/n)` (K being
+`opts.K`, the reference), precomputed once and validated serially (finite
+K_i > 0 on every valid pixel) before the parallel sweep. With no field the weight
+is exactly `1.0f`, so the scalar arithmetic is unchanged. In relief mode the
+field is scaled by `erodibility_field_scale = K_used / opts.K`, reported in the
+result.
 
 ### lsdtt_hillslope_transport_cpu (transient hillslope)
 

@@ -47,7 +47,8 @@ namespace lsdtt
 // Parameters:
 //   dem                     current elevation field
 //   flow                    D-inf flow graph (must have been built from dem)
-//   K                       erodibility scalar (m^(1-2m) yr^-1)
+//   K                       erodibility scalar; units from describe_erodibility_units()
+//                           (m^(1-m) yr^-1 with divide_area_by_dx, m^(1-2m) yr^-1 without)
 //   m                       drainage area exponent
 //   n                       slope exponent
 //   dt                      timestep (yr)
@@ -57,6 +58,11 @@ namespace lsdtt
 //   drainage_area_moving_average_kernel_size_pixels
 //                           odd square smoothing kernel; 1 disables smoothing
 //   boundary_conditions      four characters in N,E,S,W order; p enables wrapping
+//   erodibility_field       optional per-pixel K, flat raster order, same units as K.
+//                           Empty = K everywhere. Otherwise it must hold
+//                           n_rows*n_cols values (std::invalid_argument if not)
+//                           and pixel i uses erodibility_field[i]. Only the size
+//                           is checked here; values are the caller's contract.
 //
 //  There is no threading/parallelism here since it uses the depth-first 
 //  Braun & Willett (2013) stack in the flowinfo, which is not easily
@@ -73,7 +79,8 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     bool  divide_area_by_dx,
     float slope_clamp,
     int   drainage_area_moving_average_kernel_size_pixels = 1,
-    const std::string& boundary_conditions = ""
+    const std::string& boundary_conditions = "",
+    const std::vector<float>& erodibility_field = {}
 );
 
 // Returns a new elevation raster after one implicit stream-power timestep of
@@ -82,7 +89,8 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 // Parameters:
 //   dem                     current elevation field
 //   flow                    D-inf flow graph (must have been built from dem)
-//   K                       erodibility scalar (m^(1-2m) yr^-1)
+//   K                       erodibility scalar; units from describe_erodibility_units()
+//                           (m^(1-m) yr^-1 with divide_area_by_dx, m^(1-2m) yr^-1 without)
 //   m                       drainage area exponent
 //   n                       slope exponent
 //   dt                      timestep (yr)
@@ -93,6 +101,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 //   drainage_area_moving_average_kernel_size_pixels
 //                           odd square smoothing kernel; 1 disables smoothing
 //   boundary_conditions      four characters in N,E,S,W order; p enables wrapping
+//   erodibility_field       optional per-pixel K, as for the D8 kernel above
 lsdtt_raster_cpu compute_dinf_stream_power_incision(
     const lsdtt_raster_cpu&    dem,
     const lsdtt_flowgraph_cpu& flow,
@@ -105,8 +114,40 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     float slope_clamp,
     int   n_threads = 0,
     int   drainage_area_moving_average_kernel_size_pixels = 1,
-    const std::string& boundary_conditions = ""
+    const std::string& boundary_conditions = "",
+    const std::vector<float>& erodibility_field = {}
 );
+
+// -----------------------------------------------------------------------------
+// Erodibility units and area conventions
+//
+// The incision law is E = K a^m S^n. With divide_area_by_dx the area is the
+// specific area a = A/dx (m), so K has units m^(1-m) yr^-1 and, because a
+// channel's A is physical, K_specific(dx) = K_map * dx^m: a specific-area K is
+// tied to the cell size it was calibrated at. Without it the area is the map
+// area A (m^2) and K has units m^(1-2m) yr^-1.
+// -----------------------------------------------------------------------------
+enum class erodibility_area_convention { map_area, specific_area };
+
+// "map_area" or "specific_area"; anything else throws std::invalid_argument
+// naming both accepted values.
+[[nodiscard]] erodibility_area_convention
+parse_erodibility_area_convention(const std::string& name);
+
+// The units of K for this run, e.g.
+//   "m^(0.55) yr^-1 (specific area a = A/dx; K is tied to m and to the cell size)"
+//   "m^(0.1) yr^-1 (map area A; K is tied to m)"
+[[nodiscard]] std::string describe_erodibility_units(float m, bool divide_area_by_dx);
+
+// The factor F with K_run = K_stated * F, for a K stated in one area convention
+// (and, for specific area, at a calibration cell size) used in another:
+//   map -> map: 1;  map -> specific(dx_r): dx_r^m;  specific(dx_c) -> map: dx_c^(-m);
+//   specific(dx_c) -> specific(dx_r): (dx_r/dx_c)^m.
+// Computed in double; exactly 1.0 when nothing changes. Throws
+// std::invalid_argument if a cell size that is needed is <= 0.
+[[nodiscard]] double erodibility_area_conversion_factor(
+    float m, erodibility_area_convention stated, double stated_cell_size,
+    bool run_divide_area_by_dx, double run_cell_size);
 
 // =============================================================================
 // The channel threshold, and the units trap in it

@@ -1,0 +1,17 @@
+# C7: a forcing K step (x0.5 at t = 1000 yr) scales the K raster.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemkforce
+read_initial_dem: true
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+write_output_format: gtiff
+erodibility_fname: lemk_k_two_region.tif
+write_erodibility_raster: true
+forcing_history_fname: lemk_forcing_K.csv
+frequency_of_output_writing: 5

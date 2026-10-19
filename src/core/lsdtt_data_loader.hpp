@@ -447,6 +447,9 @@ public:
     // Return the metadata for the currently open raster.
     const lsdtt_raster_meta& get_meta() const;
 
+    // Number of bands in the currently open raster (0 if none is open).
+    int band_count() const;
+
     // -------------------------------------------------------------------------
     // Tile management
     // -------------------------------------------------------------------------

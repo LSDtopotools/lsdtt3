@@ -236,6 +236,22 @@ unit check passed. Reinstating that bug moves this test's peak to 6.862 m
 (+38.8 %), far outside the band. The strip starts **flat**, so "the solver did
 nothing" leaves it at 0 m and cannot be mistaken for the answer. ~1.5 s for both.
 
+### Spatially varying erodibility and the model grid
+
+`fixture_lem_erodibility_cli` writes every fixture these tests read, with
+`lsdtt-test-lem-erodibility --write-fixtures`, into
+`build/tests/lem_erodibility_cli_fixture/`: a 40 × 20 DEM, K rasters on and off
+its grid, placement sources whose pixels hold their own indices
+(`1 + 1000 r + c`), the expected results of each placement (computed from the
+placement rules, not by calling the code under test), channel masks and forcing
+CSVs. The `smoke_`/`failure_lem_erodibility_*`, `..._lem_grid_*` and
+`..._lem_channel_mask_*` runs read them through `--read-path`, and the
+`regression_lem_*` tests compare written rasters with `--compare-rasters` (dims,
+cell size, origin, CRS, mask, data bitwise) or `--compare-raster-values` (dims,
+mask, data). The library tests are `unit_lem_erodibility` (fast) and
+`rigorous_lem_erodibility_analytic` (the analytic steady states); see section 8c
+of `docs/developer_notes/testing_and_benchmarking.md`.
+
 ## Cosmogenic nuclide tests
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,

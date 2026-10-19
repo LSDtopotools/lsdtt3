@@ -5140,6 +5140,72 @@ cause is "the criterion is unreachable".
 
 ---
 
+
+## 8c. Spatially varying erodibility in the LEM (2026-10-16)
+
+Per-pixel erodibility K(x) in the stream-power solvers and the analytical steady
+state, the `lsdtt-lem` model-grid and input-raster placements, and the Python
+`LandscapeModel` field. Tests:
+
+| Test | Labels | What it covers |
+|---|---|---|
+| `unit_lem_erodibility` | `unit;lem` | kernels (K1-K6), units and conversion (U1-U3), calibration (V11-V12), steady state (S1-S6), values and scaling (V1-V14, F1-F3), `run_lem_step` (L1-L4), model grids and placements (G1-G16). Driver `tests/cpp/test_lem_erodibility.cpp`, `--suite fast` |
+| `rigorous_lem_erodibility_analytic` | `rigorous;lem` | analytic steady states A1, A1b, A2, A3 (`--suite analytic`) |
+| `unit_raster_loader_geotransform_guard` | `unit;gdal` | the loader refuses rotated, south-up and projected non-square rasters (G1-G8) |
+| `unit_lem_forcing_history` (F5) | `unit;lem` | an explicit forcing K <= 0 is refused, naming the row |
+| `smoke_/failure_lem_erodibility_*`, `smoke_/failure_lem_grid_*`, `..._channel_mask_*`, `regression_lem_*` | `smoke`/`failure`/`regression`, `cli;lem` | 39 CLI runs on fixtures from `fixture_lem_erodibility_cli`, and native comparisons of their outputs |
+| `smoke_lem_synthetic_default_georeference`, `smoke_lem_synthetic_supplied_crs` + `regression_lem_synthetic_*_crs` | `smoke`/`regression`, `lem` | the default synthetic georeference (Watopia, EPSG:32758, grid centre within one cell) and a supplied CRS |
+| `test_landscape_model.py::LandscapeModelErodibilityTest` | pytest | the Python field: bitwise equality with the scalar, `set_erodibility_field`, refusals, the strip identity |
+
+### How correctness is established
+
+* **Bitwise, within one build.** A uniform field equal to the scalar K must give
+  the scalar result bit for bit: one `run_lem_step`, five steps (D8 and D-inf,
+  n = 1 and 2), the steady state (D8 and D-inf, K and relief mode), the CLI snap
+  and the CLI run (compared with `lsdtt-test-lem-erodibility --compare-rasters`).
+  No test pins an absolute checksum of evolved topography.
+* **The pixel's own K, not its neighbour's.** K3 recomputes the n = 1 closed form
+  with each pixel's K to 1 ulp. K5 and K6 evaluate the Newton residual with the
+  pixel's K (within `slope_clamp · dx + 2 ulp`) and with the receiver's K, which
+  must exceed 10× the tolerance on at least 90 % of crossing pixels that incise
+  at least 0.01 m (100 % measured). These are the tests that catch K applied on
+  the wrong side of the implicit update; the steady-state identities do not.
+* **Analytic steady states.** A1: on an 80 × 3 strip (m = 0) the steady slopes
+  either side of a vertical contact are U/K_i: S1 = 0.1000 and S2 = 0.39999
+  (expected 0.1 and 0.4) at n = 1. A1b and A2: K_i a^m S^n = U on every pixel to
+  1e-3/n (measured worst 9.5e-4 at n = 1, 4.9e-4 at n = 2), for D8 and D-inf.
+  S2: the K-weighted chi on a 200-node chain matches a double reference within
+  200 ulp and U = K_i a^m S^n link by link to ~5e-6.
+* **Placements, value by value.** Source rasters hold `1 + 1000 r + c` (× a
+  constant), so every clip and warp is checked pixel by pixel against indices
+  computed in the test, including points on grid lines.
+
+### Findings
+
+* **Steady identities must be measured on the surface the step solved.** Boundary
+  pixels that are not flow outlets erode inside the implicit sweep and are reset
+  only after it, so their donors are solved against the eroded value. Measured on
+  the uplifted, restored surface, the identity is off by up to a factor of 4 next
+  to the boundary. The analytic tests evaluate it on one kernel call's output.
+* **p999 is not a per-pixel steady-state criterion.** Stopping at p999 |dz| <
+  1e-3 U dt leaves 0.1 % of pixels moving, enough for a per-pixel identity to fail
+  at 2e-3. The analytic tests stop on the maximum.
+* **The D-infinity two-receiver Newton stalls when a pixel ends below its cardinal
+  receiver** (f' changes sign); 33-40 of ~1100 two-receiver pixels end there and 6
+  had residuals of 0.1-1.4 m, with scalar K as much as with a field. K6 excludes
+  and counts them.
+* **The analytical snap is not a fixed point of the transient model** (see the
+  landscape evolution design notes): A3 compares the first step after a field snap
+  with the first after a scalar snap (99.9th-percentile change 1.368 m and 1.365 m)
+  rather than demanding a steady state the scalar snap does not reach either.
+* **The GDAL warp extent lost precision.** G6 (a 4 m raster clipped onto a 10 m
+  grid) failed by exactly one row: the warp passed `-te` with 6 significant digits,
+  so a northing of 5000202 became 5000200. Fixed for every warp and clip.
+* **The geotransform guard first broke reprojection.** The only test raster with
+  non-square pixels is a geographic DEM (1.5" × 1"), which
+  `lsdtt-raster-preprocessing` must open to reproject. The guard therefore exempts
+  geographic rasters from the square-pixel rule.
+
 ## 9. Credentials in tests
 
 `lsdtt-fetch-raster` is the only lsdtt3 tool that touches secrets, and the test

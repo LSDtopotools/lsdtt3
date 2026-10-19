@@ -21,6 +21,8 @@
 //       original uplift / base-level columns are unaffected.
 //   F4  at() is piecewise constant, so a stepped D ladder holds each value for
 //       its whole interval.
+//   F5  An explicit erodibility <= 0 is refused, naming the row; an empty cell
+//       is still "not given".
 //
 // Usage: lsdtt-test-lem-forcing-history <scratch_dir>
 // -----------------------------------------------------------------------------
@@ -104,6 +106,30 @@ int main(int argc, char* argv[])
               "F4: second value from the step onwards");
         check(near(h.at(3.0e6f).hillslope_diffusivity, 0.01f),
               "F4: last value held past the final row");
+    }
+
+    std::cout << "\n-- F5: explicit erodibility <= 0 is refused --\n";
+    {
+        auto throws_with = [&](const std::string& name, const std::string& body,
+                               const std::string& needle1, const std::string& needle2) {
+            try { (void)load_lem_forcing_history(write_file(dir, name, body)); }
+            catch (const std::exception& e)
+            {
+                const std::string w = e.what();
+                return w.find(needle1) != std::string::npos && w.find(needle2) != std::string::npos;
+            }
+            return false;
+        };
+        check(throws_with("forcing_k_zero.csv", "time_yr,erodibility\n0,1e-4\n500,0\n",
+                          "erodibility must be > 0", "row 2"),
+              "F5: erodibility = 0 throws naming the row");
+        check(throws_with("forcing_k_neg.csv", "time_yr,erodibility\n0,-1e-3\n",
+                          "erodibility must be > 0", "row 1"),
+              "F5: erodibility = -1e-3 throws");
+        const auto h = load_lem_forcing_history(write_file(dir, "forcing_k_empty.csv",
+            "time_yr,erodibility,uplift_rate\n0,,0.0001\n"));
+        check(h.points.size() == 1 && h.points[0].erodibility < 0.0f,
+              "F5: an empty erodibility cell is still 'not given'");
     }
 
     std::cout << "\n" << (g_checks - g_failures) << " / " << g_checks

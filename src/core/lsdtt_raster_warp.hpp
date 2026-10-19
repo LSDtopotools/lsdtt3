@@ -60,6 +60,16 @@
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
+// crs_equal_semantically
+//
+// True if two WKT strings describe the same CRS (OGR IsSame, traditional GIS
+// axis order), so that e.g. an EPSG-tagged WKT and an equivalent untagged one
+// compare equal. Two empty strings are equal; one empty string is not equal to
+// a non-empty one; a WKT that does not parse is not equal to anything.
+// -----------------------------------------------------------------------------
+bool crs_equal_semantically(const std::string& a_wkt, const std::string& b_wkt);
+
+// -----------------------------------------------------------------------------
 // lsdtt_warp_options
 //
 // User-facing controls for GDAL-backed clipping / warping to a reference raster.
@@ -179,6 +189,23 @@ lsdtt_warp_result warp_raster_to_reference_grid(
     const std::string&      in_path,
     const std::string&      reference_path,
     const std::string&      out_path,
+    const lsdtt_warp_options& opts = lsdtt_warp_options{}
+);
+
+// -----------------------------------------------------------------------------
+// warp_raster_to_grid_in_memory
+//
+// Warp a raster onto an explicit grid description (CRS, origin, cell size,
+// rows, cols) and return band 1 in memory, without a reference file, so a grid
+// that exists only in memory (e.g. a synthetic model grid) can be a target.
+// The warp writes a plain GeoTIFF to /vsimem/ (no overviews), reads it back
+// with lsdtt_data_loader and removes it. Both the source and the target need a
+// CRS. Throws std::runtime_error on GDAL failure or, with
+// opts.error_if_no_overlap, if they do not overlap.
+// -----------------------------------------------------------------------------
+lsdtt_raster_tile warp_raster_to_grid_in_memory(
+    const std::string&        in_path,
+    const lsdtt_raster_meta&  target_grid,
     const lsdtt_warp_options& opts = lsdtt_warp_options{}
 );
 

@@ -38,6 +38,10 @@
 //
 //   Step 4 - assign elevations:
 //     z[i] = baselevel + f * chi[i]
+//
+// With a per-pixel erodibility field (opts.erodibility_field) each chi
+// increment is weighted by w_i = (K / K_i)^(1/n), K being opts.K (the
+// reference), which makes the solution satisfy U = K_i A^m S^n pixel by pixel.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -72,6 +76,16 @@ struct lsdtt_fluvial_steady_state_options
     // divide_area_by_dx, map area in m^2 otherwise. 0 disables the calculation
     // and leaves chi_c unreported; it never affects the elevation field.
     float channel_threshold_area = 0.0f;
+
+    // Optional per-pixel erodibility, flat raster order on the flow grid. Empty
+    // (default) = uniform K. When given, chi becomes the K-weighted chi
+    //     chi_K[i] = chi_K[recv] + dx_eff * w_i * A_i^(-m/n),  w_i = (K / K_i)^(1/n)
+    // with this struct's K as the reference, so z = baselevel + (U/K)^(1/n) chi_K
+    // satisfies U = K_i A^m S^n on every pixel. Every valid pixel needs a finite
+    // K_i > 0 (std::invalid_argument otherwise). In relief mode the field is
+    // scaled by a single factor (erodibility_field_scale in the result) so the
+    // relief hits target_relief.
+    std::vector<float> erodibility_field;
 };
 
 // -----------------------------------------------------------------------------
@@ -85,6 +99,8 @@ struct lsdtt_fluvial_steady_state_result
     float max_unit_height;          // max(z - baselevel) computed with f = 1
                                     //   equals max chi when A_0 = 1 (D8 case)
     float computed_relief;          // actual max(z) - baselevel in the result
+    float erodibility_field_scale = 1.0f;   // with a field: K_used / opts.K (the factor
+                                            // applied to the field); 1 otherwise
 
     // -------------------------------------------------------------------------
     // chi at the CHANNEL HEAD, and why it is not max_unit_height
@@ -182,6 +198,7 @@ struct lsdtt_fluvial_steady_state_field
     float K_used          = 0.0f;
     float max_unit_height = 0.0f;        // MaxChi (chi with f = 1)
     float computed_relief = 0.0f;        // f * MaxChi
+    float erodibility_field_scale = 1.0f; // see lsdtt_fluvial_steady_state_result
 
     // chi restricted to channel pixels -- see lsdtt_fluvial_steady_state_result.
     float        max_unit_height_at_channel_head = 0.0f;

@@ -197,6 +197,9 @@ lsdtt_snap_cycle_record make_cycle_record(
         static_cast<double>(snap_result.computed_relief), 1e-12);
     rec.max_dz_over_relief = rec.max_abs_dz_m / relief;
 
+    // With a per-pixel erodibility field in opts.fluvial, K_used is the
+    // reference K the field is scaled to (erodibility_field_scale = K_used / K),
+    // not a K applied uniformly.
     rec.K_used = static_cast<double>(snap_result.K_used);
     rec.computed_relief = static_cast<double>(snap_result.computed_relief);
 

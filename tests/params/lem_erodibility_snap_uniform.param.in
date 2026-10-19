@@ -1,0 +1,15 @@
+# C16: snap with a uniform K raster (bitwise the scalar snap).
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemksnapu
+read_initial_dem: true
+erodibility: 1e-4
+boundary_conditions: oooo
+n_threads: 1
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility_fname: lemk_k_uniform.tif
+snap_initial_surface_to_steady_state: true
+number_of_iterations: 1

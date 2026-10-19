@@ -1,0 +1,15 @@
+# C9: a K raster half a cell off the DEM grid is refused.
+read_path: __READ_PATH__
+read_fname: lemk_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lemkshift
+read_initial_dem: true
+erodibility: 1e-4
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 20
+timestep: 100
+frequency_of_output_writing: 10
+write_output_format: gtiff
+erodibility_fname: lemk_k_shifted.tif
