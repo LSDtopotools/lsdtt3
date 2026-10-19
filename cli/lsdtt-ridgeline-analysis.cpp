@@ -115,34 +115,83 @@ static std::vector<lsdtt::lsdtt_ridgeline_cpu> union_mdd_ridgelines(
     std::vector<lsdtt::lsdtt_pixel_rc> nodes;
     std::unordered_map<std::uint64_t, std::size_t> index_by_node;
     for (const auto& trace : traces)
+    {
         for (const auto& node : trace.nodes())
             if (index_by_node.emplace(ridge_node_key(node), nodes.size()).second)
                 nodes.push_back(node);
+    }
 
+    // Build topology only from edges explicitly present in the ordered input
+    // traces. Merely adjacent cells can belong to opposite sides of a narrow
+    // ridge and must not create an inferred branch in the union.
     std::vector<std::vector<std::size_t>> adjacency(nodes.size());
-    auto add_neighbour = [&](std::size_t index, int row, int col)
+    auto node_index = [&](const lsdtt::lsdtt_pixel_rc& node) -> std::size_t
     {
-        if (periodic_rows)
-            row = (row % meta.n_rows + meta.n_rows) % meta.n_rows;
-        if (periodic_columns)
-            col = (col % meta.n_cols + meta.n_cols) % meta.n_cols;
-        if (row < 0 || row >= meta.n_rows || col < 0 || col >= meta.n_cols)
-            return;
-        const lsdtt::lsdtt_pixel_rc candidate{row, col};
-        const auto it = index_by_node.find(ridge_node_key(candidate));
-        if (it != index_by_node.end()) adjacency[index].push_back(it->second);
+        const auto it = index_by_node.find(ridge_node_key(node));
+        return it == index_by_node.end() ? nodes.size() : it->second;
     };
-    for (std::size_t i = 0; i < nodes.size(); ++i)
+    auto are_cardinal_neighbours = [&](const lsdtt::lsdtt_pixel_rc& a,
+                                       const lsdtt::lsdtt_pixel_rc& b)
     {
-        add_neighbour(i, nodes[i].row - 1, nodes[i].col);
-        add_neighbour(i, nodes[i].row + 1, nodes[i].col);
-        add_neighbour(i, nodes[i].row, nodes[i].col - 1);
-        add_neighbour(i, nodes[i].row, nodes[i].col + 1);
+        const int dr = std::abs(a.row - b.row);
+        const int dc = std::abs(a.col - b.col);
+        const bool row_wrap = periodic_rows && dr == meta.n_rows - 2 && dc == 0;
+        const bool col_wrap = periodic_columns && dc == meta.n_cols - 2 && dr == 0;
+        const bool row_step = dr == 1 && dc == 0;
+        const bool col_step = dr == 0 && dc == 1;
+        const bool same_node = dr == 0 && dc == 0;
+        const bool duplicate_seam = same_node &&
+            ((periodic_rows && (a.row == 0 || a.row == meta.n_rows - 1)) ||
+             (periodic_columns && (a.col == 0 || a.col == meta.n_cols - 1)));
+        return row_step || col_step || row_wrap || col_wrap || duplicate_seam;
+    };
+    auto add_edge = [&](std::size_t a, std::size_t b)
+    {
+        if (a == b || a >= nodes.size() || b >= nodes.size()) return;
+        if (std::find(adjacency[a].begin(), adjacency[a].end(), b) == adjacency[a].end())
+            adjacency[a].push_back(b);
+        if (std::find(adjacency[b].begin(), adjacency[b].end(), a) == adjacency[b].end())
+            adjacency[b].push_back(a);
+    };
+    std::vector<std::vector<std::size_t>> trace_indices(traces.size());
+    for (std::size_t t = 0; t < traces.size(); ++t)
+    {
+        const auto& trace_nodes = traces[t].nodes();
+        trace_indices[t].reserve(trace_nodes.size());
+        for (const auto& node : trace_nodes)
+            trace_indices[t].push_back(node_index(node));
+        for (std::size_t i = 1; i < trace_indices[t].size(); ++i)
+        {
+            const std::size_t a = trace_indices[t][i - 1];
+            const std::size_t b = trace_indices[t][i];
+            if (a >= nodes.size() || b >= nodes.size()) continue;
+            if (!are_cardinal_neighbours(nodes[a], nodes[b]))
+            {
+                std::cerr << "Warning: MDD union input trace " << t
+                          << " contains a non-cardinal edge "
+                          << nodes[a].row << '/' << nodes[a].col
+                          << " -> " << nodes[b].row << '/' << nodes[b].col
+                          << "; retaining the source edge.\n";
+            }
+            add_edge(a, b);
+        }
     }
 
     std::vector<bool> visited(nodes.size(), false);
     std::vector<lsdtt::lsdtt_ridgeline_cpu> components;
-    for (std::size_t seed = 0; seed < nodes.size(); ++seed)
+    std::vector<std::size_t> traversal_order;
+    std::vector<bool> in_traversal_order(nodes.size(), false);
+    for (const auto& indices : trace_indices)
+        for (const std::size_t index : indices)
+        {
+            if (index < nodes.size() && !in_traversal_order[index])
+            {
+                in_traversal_order[index] = true;
+                traversal_order.push_back(index);
+            }
+        }
+
+    for (const std::size_t seed : traversal_order)
     {
         if (visited[seed]) continue;
         std::vector<std::size_t> component, pending{seed};
@@ -159,29 +208,116 @@ static std::vector<lsdtt::lsdtt_ridgeline_cpu> union_mdd_ridgelines(
                     pending.push_back(neighbour);
                 }
         }
-        std::size_t start = component.front();
-        for (const std::size_t index : component)
-            if (adjacency[index].size() <= 1) { start = index; break; }
-        std::unordered_set<std::size_t> in_component(
-            component.begin(), component.end());
-        std::unordered_set<std::size_t> walked;
-        std::vector<lsdtt::lsdtt_pixel_rc> ordered;
-        std::size_t previous = nodes.size(), current = start;
-        while (in_component.count(current) && !walked.count(current))
+        std::unordered_set<std::size_t> in_component(component.begin(), component.end());
+        std::unordered_set<std::size_t> remaining(component.begin(), component.end());
+
+        // Prefer a complete source trace as the ordering backbone. Other
+        // traces may add non-overlapping tails; merge those only where there
+        // is an unambiguous endpoint continuation.
+        std::vector<std::size_t> backbone;
+        std::size_t backbone_trace = traces.size();
+        for (std::size_t t = 0; t < trace_indices.size(); ++t)
         {
-            walked.insert(current);
-            ordered.push_back(nodes[current]);
-            std::size_t next = nodes.size();
-            for (const std::size_t neighbour : adjacency[current])
-                if (neighbour != previous && !walked.count(neighbour))
-                { next = neighbour; break; }
-            if (next == nodes.size()) break;
-            previous = current;
-            current = next;
+            bool touches_component = false;
+            for (const std::size_t index : trace_indices[t])
+                if (in_component.count(index)) { touches_component = true; break; }
+            if (touches_component && trace_indices[t].size() > backbone.size())
+            {
+                backbone = trace_indices[t];
+                backbone_trace = t;
+            }
         }
-        for (const std::size_t index : component)
-            if (!walked.count(index)) ordered.push_back(nodes[index]);
-        components.emplace_back(std::move(ordered), meta);
+        std::vector<std::size_t> ordered_indices;
+        auto append_index = [&](std::size_t index)
+        {
+            if (index < nodes.size() && remaining.erase(index) != 0)
+                ordered_indices.push_back(index);
+        };
+        for (const std::size_t index : backbone) append_index(index);
+
+        // Iteratively absorb a source trace only if its as-yet-uncovered run
+        // attaches to one end of the assembled path. A trace that branches
+        // into or conflicts with an existing path is not guessed into place.
+        bool made_progress = true;
+        while (made_progress && !remaining.empty())
+        {
+            made_progress = false;
+            for (std::size_t t = 0; t < trace_indices.size(); ++t)
+            {
+                if (t == backbone_trace) continue;
+                const auto& indices = trace_indices[t];
+                if (indices.empty()) continue;
+                std::size_t first_new = indices.size(), last_new = 0;
+                for (std::size_t i = 0; i < indices.size(); ++i)
+                    if (remaining.count(indices[i]))
+                    {
+                        first_new = std::min(first_new, i);
+                        last_new = i;
+                    }
+                if (first_new == indices.size()) continue;
+
+                if (!ordered_indices.empty() &&
+                    indices[first_new] != ordered_indices.front() &&
+                    indices[last_new] != ordered_indices.front() &&
+                    indices[first_new] != ordered_indices.back() &&
+                    indices[last_new] != ordered_indices.back())
+                    continue;
+
+                if (!ordered_indices.empty() && first_new > 0 &&
+                    indices[first_new - 1] == ordered_indices.front())
+                {
+                    for (std::size_t i = first_new; i <= last_new; ++i)
+                        if (remaining.count(indices[i])) ordered_indices.insert(ordered_indices.begin(), indices[i]);
+                    made_progress = true;
+                }
+                else if (!ordered_indices.empty() && last_new + 1 < indices.size() &&
+                         indices[last_new + 1] == ordered_indices.back())
+                {
+                    for (std::size_t i = first_new; i <= last_new; ++i) append_index(indices[i]);
+                    made_progress = true;
+                }
+                else if (ordered_indices.empty())
+                {
+                    for (const std::size_t index : indices) append_index(index);
+                    made_progress = true;
+                }
+            }
+        }
+
+        if (!remaining.empty())
+        {
+            std::cerr << "Warning: MDD union component has " << remaining.size()
+                      << " nodes not orderable from source-trace endpoints; emitting "
+                      << "them as separate ordered fragments.\n";
+            while (!remaining.empty())
+            {
+                const std::size_t fragment_seed = *remaining.begin();
+                std::vector<std::size_t> fragment{fragment_seed};
+                remaining.erase(fragment_seed);
+                std::size_t previous = nodes.size();
+                std::size_t current = fragment_seed;
+                while (true)
+                {
+                    std::size_t next = nodes.size();
+                    for (const std::size_t neighbour : adjacency[current])
+                        if (in_component.count(neighbour) && remaining.count(neighbour) &&
+                            neighbour != previous)
+                        { next = neighbour; break; }
+                    if (next == nodes.size()) break;
+                    fragment.push_back(next);
+                    remaining.erase(next);
+                    previous = current;
+                    current = next;
+                }
+                std::vector<lsdtt::lsdtt_pixel_rc> fragment_nodes;
+                for (const std::size_t index : fragment) fragment_nodes.push_back(nodes[index]);
+                components.emplace_back(std::move(fragment_nodes), meta);
+            }
+        }
+        std::vector<lsdtt::lsdtt_pixel_rc> ordered;
+        ordered.reserve(ordered_indices.size());
+        for (const std::size_t index : ordered_indices) ordered.push_back(nodes[index]);
+        if (!ordered.empty()) components.emplace_back(std::move(ordered), meta);
     }
     return components;
 }
