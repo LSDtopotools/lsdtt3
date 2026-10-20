@@ -500,7 +500,6 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_paired_flowpaths_cpu.cpp
     src/cpu/lsdtt_landscape_equilibration_cpu.cpp
     src/cpu/lsdtt_manning_hydraulics_cpu.cpp
-    src/cpu/lsdtt_manning_hydraulics_cpu.cpp
 )
 
 if(LSDTT_HAS_EIGEN)
