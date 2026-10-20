@@ -10,6 +10,7 @@
 // See lsdtt_raster_fetch.hpp for full documentation.
 
 #include "lsdtt_raster_fetch.hpp"
+#include "lsdtt_gdal_init.hpp"
 #include "lsdtt_secret.hpp"
 
 #include <algorithm>
@@ -26,6 +27,7 @@
 #include <cpl_vsi.h>         // VSIStatL, VSIUnlink
 #include <gdal.h>
 #include <gdal_utils.h>      // GDALTranslate / GDALWarp
+#include "lsdtt_http_fetch.hpp"
 #include <cpl_json.h>        // CPLJSONDocument (STAC + SAS responses)
 #include <ogr_api.h>         // OGR_L_* / OGR_G_* vector access
 #include <ogr_srs_api.h>     // OSR* / OCT* coordinate transforms
@@ -383,45 +385,10 @@ bool http_request_body(const std::string& url,
                        std::string& body,
                        std::string& error)
 {
-    gdal_string_list_guard opts;
-    opts.add("TIMEOUT="     + std::to_string(timeout_seconds));
-    opts.add("MAX_RETRY="   + std::to_string(max_retry));
-    opts.add("RETRY_DELAY=2");
-    if (!post_body.empty())
-    {
-        opts.add("POSTFIELDS=" + post_body);
-        opts.add("HEADERS=Content-Type: application/json");
-    }
-
-    CPLHTTPResult* response = nullptr;
-    {
-        quiet_gdal_errors quiet;
-        response = CPLHTTPFetch(url.c_str(), opts.get());
-    }
-
-    if (response == nullptr)
-    {
-        error = "no response from " + mask_url_query(url);
-        return false;
-    }
-    if (response->nStatus != 0)
-    {
-        error = "request to " + mask_url_query(url) + " failed: " +
-                (response->pszErrBuf ? response->pszErrBuf : "transport error");
-        CPLHTTPDestroyResult(response);
-        return false;
-    }
-    if (response->nDataLen <= 0 || response->pabyData == nullptr)
-    {
-        error = "empty response from " + mask_url_query(url);
-        CPLHTTPDestroyResult(response);
-        return false;
-    }
-
-    body.assign(reinterpret_cast<const char*>(response->pabyData),
-                static_cast<std::size_t>(response->nDataLen));
-    CPLHTTPDestroyResult(response);
-    return true;
+    lsdtt_http_request_options o;
+    o.timeout_seconds = timeout_seconds;
+    o.max_retry = max_retry;
+    return lsdtt::http_request_body(url, post_body, o, body, error);
 }
 
 
@@ -979,6 +946,108 @@ std::string cop30_tile_url(const std::string& tile_name)
 }
 
 
+namespace
+{
+
+// The WGS84 envelope of a raster's footprint, or false when `path` is not a
+// raster with a geotransform. Every edge is densified (64 steps) and
+// transformed, so a projected footprint is covered fully.
+bool bounds_from_raster_footprint(const std::string& path, lsdtt_bounds_from_vector_result& result)
+{
+    GDALDatasetH ds = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        ds = GDALOpenEx(path.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY, nullptr, nullptr, nullptr);
+    }
+    if (ds == nullptr) return false;
+    double gt[6];
+    if (GDALGetGeoTransform(ds, gt) != CE_None)
+    {
+        GDALClose(ds);
+        return false;
+    }
+    const int nx = GDALGetRasterXSize(ds), ny = GDALGetRasterYSize(ds);
+
+    OGRSpatialReferenceH wgs84 = OSRNewSpatialReference(nullptr);
+    OSRImportFromEPSG(wgs84, 4326);
+    OSRSetAxisMappingStrategy(wgs84, OAMS_TRADITIONAL_GIS_ORDER);
+    OGRCoordinateTransformationH transform = nullptr;
+    bool transform_failed = false;
+    const char* wkt = GDALGetProjectionRef(ds);
+    if (wkt != nullptr && wkt[0] != '\0')
+    {
+        OGRSpatialReferenceH src = OSRNewSpatialReference(wkt);
+        OSRSetAxisMappingStrategy(src, OAMS_TRADITIONAL_GIS_ORDER);
+        const char* auth = OSRGetAuthorityCode(src, nullptr);
+        result.source_crs = auth ? (std::string("EPSG:") + auth) : "(named CRS)";
+        if (OSRIsSame(src, wgs84) == FALSE)
+        {
+            quiet_gdal_errors quiet;
+            transform = OCTNewCoordinateTransformation(src, wgs84);
+            transform_failed = transform == nullptr;
+        }
+        OSRDestroySpatialReference(src);
+    }
+    else
+    {
+        result.source_crs = "(none declared)";
+        result.warning = "'" + path + "' declares no CRS; assuming the coordinates are WGS84 "
+                         "degrees.";
+    }
+
+    constexpr int k_steps = 64;
+    std::vector<double> xs, ys;
+    for (int k = 0; k <= k_steps; ++k)
+    {
+        const double t = static_cast<double>(k) / k_steps;
+        const double px[4] = {t * nx, t * nx, 0.0, static_cast<double>(nx)};
+        const double py[4] = {0.0, static_cast<double>(ny), t * ny, t * ny};
+        for (int e = 0; e < 4; ++e)
+        {
+            xs.push_back(gt[0] + px[e] * gt[1] + py[e] * gt[2]);
+            ys.push_back(gt[3] + px[e] * gt[4] + py[e] * gt[5]);
+        }
+    }
+    bool ok = !transform_failed;
+    if (transform != nullptr)
+    {
+        std::vector<int> success(xs.size(), 0);
+        {
+            quiet_gdal_errors quiet;
+            OCTTransformEx(transform, static_cast<int>(xs.size()), xs.data(), ys.data(), nullptr,
+                           success.data());
+        }
+        ok = std::all_of(success.begin(), success.end(), [](int v) { return v != 0; });
+        OCTDestroyCoordinateTransformation(transform);
+    }
+    OSRDestroySpatialReference(wgs84);
+    GDALClose(ds);
+
+    result.layer_name = "";
+    result.geometry_kind = "raster";
+    result.n_features = 1;
+    if (!ok)
+    {
+        result.message = "could not transform the footprint of raster '" + path + "' (" +
+                         result.source_crs + ") to WGS84";
+        return true;
+    }
+    result.west = *std::min_element(xs.begin(), xs.end());
+    result.east = *std::max_element(xs.begin(), xs.end());
+    result.south = *std::min_element(ys.begin(), ys.end());
+    result.north = *std::max_element(ys.begin(), ys.end());
+    if (!(result.west < result.east) || !(result.south < result.north))
+    {
+        result.message = "raster '" + path + "' has a zero-area footprint";
+        return true;
+    }
+    result.ok = true;
+    result.message = "bounds from the footprint of raster '" + path + "'";
+    return true;
+}
+
+} // namespace
+
 lsdtt_bounds_from_vector_result bounds_from_vector_file(
     const std::string& path,
     const std::string& layer_name)
@@ -991,6 +1060,10 @@ lsdtt_bounds_from_vector_result bounds_from_vector_file(
         return result;
     }
 
+    // A CLI may resolve its bounds before anything else has registered the
+    // GDAL drivers (lsdtt-fetch-lithology and lsdtt-fetch-erosion-rates do).
+    gdal_init();
+
     GDALDatasetH dataset = nullptr;
     {
         quiet_gdal_errors quiet;
@@ -999,6 +1072,9 @@ lsdtt_bounds_from_vector_result bounds_from_vector_file(
     }
     if (dataset == nullptr)
     {
+        // Not a vector: a raster's footprint (e.g. the DEM itself) also
+        // defines a box.
+        if (bounds_from_raster_footprint(path, result)) return result;
         result.message = "could not open '" + path +
                          "' as a vector dataset (expected FlatGeobuf, "
                          "GeoPackage, or another OGR-readable format)";
@@ -1012,6 +1088,7 @@ lsdtt_bounds_from_vector_result bounds_from_vector_file(
     if (n_layers <= 0)
     {
         GDALClose(dataset);
+        if (bounds_from_raster_footprint(path, result)) return result;
         result.message = "'" + path + "' contains no layers";
         return result;
     }

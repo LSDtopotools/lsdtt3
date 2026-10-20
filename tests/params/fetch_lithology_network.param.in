@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithlive
+
+# Edinburgh: two tiles at zoom 10, BGS 1:625k source map.
+west: -3.25
+south: 55.90
+east: -3.15
+north: 55.97
+macrostrat_tile_zoom: 10
+
+# Fail promptly rather than stalling a test run on an unresponsive host.
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 30

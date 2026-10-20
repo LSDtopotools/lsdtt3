@@ -1,0 +1,29 @@
+# chi_lithology_relative_k.param.in with two m/n values: the relative-erodibility
+# stream is per m/n, so the 0.45 outputs equal the single-m/n run byte for byte.
+read_path: __READ_PATH__
+read_fname: lithks_steady_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lithkrkmn
+
+# Steady state with K1 = 1e-5 west of a vertical contact, K2 = 4e-5 east of it
+# (U = 2e-4, n = 1, map area): k_sn about 20 (sandstone) and 5 (shale).
+raster_is_filled: true
+boundary_conditions: oooo
+threshold_contributing_pixels: 50
+min_channel_pixels: 30
+n_largest_basins: 0
+m_over_n: 0.4,0.45
+chi_A0: 1
+
+fit_chi_networks: true
+write_fit_tables: false
+write_ksn_basin_summary: false
+
+lithology_fname: lithks_units.gpkg
+lithology_field_name: lith_primary
+write_lithology_code_raster: true
+lithology_ksn_histogram_n_bins: 20
+
+write_relative_erodibility: true
+relative_erodibility_n_values: 1,2
+relative_erodibility_erosion_rate_m_per_yr: 0.0002

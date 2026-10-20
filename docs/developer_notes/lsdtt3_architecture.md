@@ -33,7 +33,6 @@ lsdtt3/
 │   ├── lsdtt-basin-extraction.cpp
 │   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-basin-surface-metrics.cpp
-│   ├── lsdtt-bearing-comparison.cpp
 │   ├── lsdtt-channel-extraction.cpp
 │   ├── lsdtt-channel-network-analysis.cpp
 │   ├── lsdtt-chi-analysis.cpp             *(requires Eigen3)*
@@ -46,6 +45,8 @@ lsdtt3/
 │   ├── lsdtt-divide-migration.cpp
 │   ├── lsdtt-drainage-analysis.cpp
 │   ├── lsdtt-feature-finder.cpp
+│   ├── lsdtt-fetch-erosion-rates.cpp
+│   ├── lsdtt-fetch-lithology.cpp
 │   ├── lsdtt-fetch-raster.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-fluvial-surfaces.cpp
@@ -65,6 +66,7 @@ lsdtt3/
 │   ├── lsdtt-stream-burning.cpp
 │   ├── lsdtt-surface-metrics.cpp
 │   ├── lsdtt-swath-profile.cpp
+│   ├── lsdtt-lithology-erodibility.cpp
 │   ├── lsdtt-synthetic-networks.cpp
 │   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-valley-centreline.cpp
@@ -114,6 +116,9 @@ lsdtt3/
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_http_fetch.hpp/.cpp        — HTTP GET/POST through GDAL's curl (timeouts, retries)
+│   │   ├── lsdtt_macrostrat_fetch.hpp/.cpp  — Macrostrat map units for a box (vector tiles + API)
+│   │   ├── lsdtt_octopus_fetch.hpp/.cpp     — OCTOPUS basin erosion rates for a box (keyless WFS)
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
 │   ├── cpu/                                   — 99 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
@@ -164,6 +169,7 @@ lsdtt3/
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
 │   │   ├── lsdtt_lem_parameter_rasters_cpu.hpp/.cpp          — per-pixel LEM parameters: K calibration, conversion, validation, forcing scaling
 │   │   ├── lsdtt_lem_input_grid_cpu.hpp/.cpp                 — LEM model grid and input-raster placement (clip / relabel / warp)
+│   │   ├── lsdtt_lithology_map_cpu.hpp/.cpp                  — lithology maps to erodibility: property table, crosswalk, K raster
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
@@ -274,7 +280,7 @@ translation units.
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
+`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -304,7 +310,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
 
 
-*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
+*Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lithology_map_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
 
 
 *Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`
@@ -951,6 +957,16 @@ Current CLI programs are:
   across a swath corridor perpendicular to a polyline baseline. Outputs swath 
   CSV and optional visualization rasters.
 
+- **`lsdtt-lithology-erodibility.cpp`**  
+  **Lithology map to an erodibility (K) raster for `lsdtt-lem`.** Reads a polygon
+  map with a lithology field (e.g. a Macrostrat download) or an integer code
+  raster, maps values to codes (crosswalk, integer, or table name), and writes K
+  from a property table in the table's own convention, on a DEM's grid, a
+  synthetic grid (with `lsdtt-lem`'s placements) or the map's own grid. Also
+  writes the code raster, a legend and the `lsdtt-lem` parameter lines that state
+  the table's calibration. Uses `lsdtt_lithology_map_cpu`,
+  `rasterise_polygon_field_values` and `lsdtt_lem_input_grid_cpu`.
+
 - **`lsdtt-cross-sections.cpp`**  
   Cross-section extraction along a polyline. Samples elevation, slope, and metrics 
   perpendicular to a baseline, outputs profiles as CSV or rasters.
@@ -1005,16 +1021,28 @@ Current CLI programs are:
   from cloud providers (COP30, Planetary Computer, etc.) with optional tiling, 
   reprojection, and mosaicking.
 
+- **`lsdtt-fetch-lithology.cpp`**  
+  **Geological map units from Macrostrat for a bounding box.** Reads Macrostrat's
+  `carto` vector tiles (GDAL MVT driver), keeps the units overlapping the box,
+  looks up each map unit's linked lithologies and source maps in the API
+  (optional; a failed lookup is a warning), and writes a polygon layer in the
+  local UTM zone with `lith_primary` for `lsdtt-lithology-erodibility`, plus a
+  lithology vocabulary, a crosswalk template and the CC BY 4.0 attribution.
+  Shares the bounding-box, bounds-file and HTTP parameters with
+  `lsdtt-fetch-raster` (`lsdtt_common_parameters`). Uses `lsdtt_macrostrat_fetch`.
+
+- **`lsdtt-fetch-erosion-rates.cpp`**  
+  **Basin-averaged cosmogenic erosion rates from OCTOPUS for a bounding box.**
+  Counts the intersecting basins on the keyless WFS (`resultType=hits`), pages
+  the basins and outlets, joins them on `OBSID1`, nulls the no-data values, and
+  writes an erosion-rate sample CSV (outlet, rate, 1-sigma uncertainty, units,
+  reported area), the basin polygons, a suggested DEM box and the CC BY 4.0
+  attribution. Shares the bounding-box, bounds-file and HTTP parameters with the
+  other fetch CLIs. Uses `lsdtt_octopus_fetch`.
+
 - **`lsdtt-marsh-topography.cpp`**  
   Marsh and tidal platform analysis. Identifies marsh platforms and intertidal zones, 
   computes platform statistics, and extracts edges.
-
-- **`lsdtt-bearing-comparison.cpp`**  
-  Compares two angular (bearing / orientation) distributions read from CSV
-  columns and writes a distribution-comparison report: the circular
-  1-Wasserstein distance and the two-sample Kuiper test. Handles directional
-  (period 360°) and axial (period 180°) data. It reads bearings; it does not
-  compute them from a DEM, and makes no plots.
 
 - **`lsdtt-slope-area.cpp`**  
   Slope-area statistics. Builds D-infinity (default) or D8 drainage area,
@@ -2627,7 +2655,7 @@ Writers: `write_channel_link_bearings(...)`, `write_channel_link_bearing_vectors
 Each record includes (using descriptive names that map to Strong & Mudd 2023):
 - `donor_opening_angle` = α (angle between two donor channels)
 - `donor_1_receiver_angle` = β₁, `donor_2_receiver_angle` = β₂
-- `bending_angle_signed/abs` — offset between inward receiver and bisector of donor opening (new diagnostic)
+- `bending_angle_signed/abs` — direction of the donor-opening midpoint from the inward receiver, `wrap(180 + (beta_1 - beta_2)/2)` (symmetric junction = ±180); NOT Strong & Mudd's beta; new diagnostic, excluded from the statistics
 
 Writer: `write_junction_angle_data(...)`, `write_junction_angle_bearing_vectors(...)` (visual QA)
 
@@ -3148,6 +3176,157 @@ GDAL-free core headers.
   onto. A window off the source is refused.
 - `prepare_lem_input_raster(path, model_grid, opts, label)`: the single entry
   point for the five placements; the result's meta is the model grid.
+
+### lsdtt_lithology_map_cpu (lithology maps to erodibility)
+
+File: `src/cpu/lsdtt_lithology_map_cpu.hpp/.cpp`. No GDAL; never prints.
+
+- `load_lithology_property_table(path)`: `#` header lines (`erodibility_convention`,
+  `m_exponent`, `n_exponent` required; `calibration_cell_size_metres`, `provenance`
+  optional) then `code,name,erodibility[,reference]`. Codes 0..65534 and names
+  unique; K finite and > 0; errors name the line (and column). The stated
+  calibration is an `lsdtt_erodibility_calibration`, checked later by the LEM's
+  `check_lem_erodibility_calibration` when the raster is used.
+- `load_lithology_crosswalk(path)`: `value,code`.
+- `lithology_codes_for_values(values, counts, crosswalk*, table)`: crosswalk, else
+  integer code, else table name (case-insensitive); lists every unmapped value with
+  its pixel count.
+- `make_lithology_erodibility(grid, value_index, values, codes, table, opts)`: the
+  code and K rasters on `grid` (whose mask is the domain) and a legend. Unmapped
+  domain pixels are refused, given `unmapped_code`, or (footprint mode) left
+  nodata.
+
+Lithologic units with no property table, for analyses categorised by unit
+(a DEM and a geologic map are all they need):
+
+- `read_lithology_units_on_grid(grid, source)`: the unit code of every valid pixel
+  (-1 = unmapped) and a label per code (name, map values, pixel count). Vectors go
+  through `rasterise_polygon_field_values` (the field must exist); a code raster is
+  read as it is when already on the grid, else warped onto it with nearest
+  neighbour. Only map values reaching a valid pixel need a code.
+- `lithology_unit_codes_for_values(values, counts, crosswalk, names)`: with a
+  crosswalk, its codes, named by its optional `name` column (else its values joined
+  with "; "); without, integer values are their own codes and otherwise the sorted
+  values are numbered 1..N. Codes are local to a run; the unit name is the key
+  between runs.
+- `lithology_source_from_path`, `load_lithology_crosswalk_names`,
+  `lithology_unit_code_raster`.
+
+The parameters are declared once in `lsdtt_common_parameters`
+(`declare_lithology_map_parameters`, `declare_write_lithology_code_raster_parameter`);
+`lsdtt-lithology-erodibility` adopts them and overwrites the guidance text with its
+table-name matching, so its `-h json` is unchanged.
+
+The categorical polygon rasteriser it relies on is
+`rasterise_polygon_field_values` in `lsdtt_vector_rasterise_cpu`: cell-centre
+assignment (overlaps to the lower sorted value), then a coverage pass on an
+oversampled subgrid, in 512² chunks, that fills sliver gaps (fragments of one
+value add up). The older `rasterise_polygon_string_field` (STI) and
+`rasterise_macrostrat_geology` are separate implementations still.
+
+### lsdtt_lithology_channel_stats_cpu (k_sn by lithologic unit)
+
+File: `src/cpu/lsdtt_lithology_channel_stats_cpu.hpp/.cpp`. GDAL-free; never prints.
+Used by `lsdtt-chi-analysis` when `lithology_fname` is set (needs
+`fit_chi_networks: true`).
+
+- `assign_chi_fit_nodes_to_segments(fit)`: segments share end nodes; a node belongs
+  to the segment it lies on except that segment's downstream end, which belongs to
+  the next segment down (a confluence to the receiving branch); the outlet to the
+  last segment.
+- `compute_lithology_contact_distance(grid, units)`: distance to the nearest
+  contact pixel (a valid pixel with a valid 4-neighbour of another unit; unmapped
+  counts as a unit), through `euclidean_distance_transform`.
+- `build_chi_lithology_node_table`: every fitted node with its segment k_sn, unit,
+  flow length to its receiver and distance to contact. Observation only: the fits
+  are not changed and the existing fit tables stay byte-identical.
+- `summarise_chi_ksn_by_lithology`: per unit, unmapped and all: node, segment and
+  basin counts, channel length, median, quartiles, mean, range and length-weighted
+  mean of the node k_sn; `low_sample` below 5 segments.
+- `make_chi_ksn_histogram_by_lithology`: common bins (linear or log10) over the
+  pooled 1st-99th percentile, with below and above rows, so units overlay.
+
+k_sn per node is its fitted segment's; segments are not split at contacts.
+
+### lsdtt_macrostrat_fetch and lsdtt_http_fetch (Macrostrat map units)
+
+Files: `src/core/lsdtt_macrostrat_fetch.hpp/.cpp`, `src/core/lsdtt_http_fetch.hpp/.cpp`.
+GDAL-free headers; never print (notes and warnings are returned).
+
+Macrostrat's map API answers per point, so an area comes from its vector tiles
+(`https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt`, layer `units`, EPSG:3857).
+
+- `http_request_body(url, post_body, opts, body, error)`: one GET (or POST) through
+  GDAL's curl with timeouts and retries. `lsdtt_raster_fetch` uses it too.
+- `slippy_tiles_for_bbox`, `slippy_tile_bounds_3857`, `utm_epsg_for`: tile maths.
+- `parse_macrostrat_lithologies` / `_map_unit_liths` / `_sources`: the API's
+  `success/data` JSON (malformed JSON or an `error` response throws).
+- `macrostrat_primary_lithology(lith_text, lith_ids, vocabulary)`: the first
+  lithology of a unit: the first `Major:{...}` term, else the first linked
+  vocabulary name, else the whole text, else empty; lower case, whitespace
+  collapsed. `lith_primary_source` records which.
+- `fetch_macrostrat_units(opts)`: downloads the tiles (or reads
+  `<tile_dir>/{z}/{x}/{y}.mvt|.pbf`), each through a `/vsimem` path carrying z/x/y
+  because that is how the MVT driver georeferences a single tile; keeps features
+  whose envelope overlaps the box; batches the API lookups 100 map ids at a time;
+  reprojects to the UTM zone of the box centre (or `target_epsg`) and writes layer
+  `units`. Too many tiles, no readable tile or no units are errors; a failed API
+  lookup is a warning and `lith_primary` falls back to the tiles' text.
+- `macrostrat_attribution_text(result)`: the CC BY 4.0 citation (Peters, Husson &
+  Czaplewski 2018) and each source map.
+
+### lsdtt_octopus_fetch (OCTOPUS basin erosion rates)
+
+Files: `src/core/lsdtt_octopus_fetch.hpp/.cpp`. GDAL-free header; never prints.
+
+- The endpoint (`http://geoserver.octopusdata.org/geoserver/wfs`, HTTP only) and
+  the layers (`be10-denude:crn_int_basins`, `be10-denude:crn_int_outlets`) are
+  constants.
+- Pure recipe: `octopus_wfs_bbox_parameter` (latitude first,
+  `S,W,N,E,urn:ogc:def:crs:EPSG::4326`; other forms return no features),
+  `octopus_wfs_hits_url`, `octopus_wfs_page_url` (`count` / `startIndex`, sorted
+  by `OBSID1`; never `maxFeatures`, which the server ignores),
+  `octopus_wfs_outlets_by_id_url`, `octopus_wfs_page_starts`,
+  `parse_octopus_wfs_number_matched`, `octopus_wfs_exception_text`,
+  `is_octopus_no_data_sentinel` (negative all-nines values with at least three
+  nines) and `octopus_rate_fields(scheme, nuclide)`.
+- `fetch_octopus_erosion_rates(opts)`: hits, then pages, each body staged in
+  `/vsimem` and read with the GeoJSON driver; or the GeoJSON bodies of
+  `response_dir` offline. Returns the basins with their typed attributes, the
+  per-field counts of nulled sentinels and the calibration rows.
+- Writers: `write_octopus_erosion_rate_csv`, `write_octopus_basin_polygons`,
+  `octopus_dem_bounds` / `write_octopus_dem_bounds`, `octopus_attribution_text`.
+
+`bounds_from_vector_file` (`lsdtt_raster_fetch`) also takes a raster: when the
+file opens as no vector layer, the WGS84 envelope of its densified footprint is
+the box (`geometry_kind` `raster`).
+
+### lsdtt_erodibility_calibration_cpu (stream-power K from basin erosion rates)
+
+Files: `src/cpu/lsdtt_erodibility_calibration_cpu.hpp/.cpp`. Never prints; takes
+`const lsdtt_flow_base&`. Used by `lsdtt-chi-analysis` (`erosion_rate_fname`).
+
+- Input: `canonical_erosion_rate_units` / `erosion_rate_units_to_m_per_yr` (`mm_per_kyr`
+  = `m_per_myr` 1e-6, `cm_per_kyr` 1e-5, `mm_per_yr` 1e-3, `m_per_yr` 1; no default,
+  mass fluxes refused) and `read_erosion_rate_samples` (any point input through
+  `load_point_layer_with_attributes`; a per-row `erosion_rate_units` column must agree).
+- `delineate_erosion_rate_basins` (m/n independent): snapping
+  (`snap_pixel_by_method`, `reported_area` by default), basin completeness, DEM vs
+  reported area, nested and duplicate samples, nesting groups (union-find), the
+  nested-basin policy, lithologic composition.
+- `compute_erosion_rate_basin_ksn` (per m/n): the reach median of each sample basin's
+  own fitted chi network on a single-unit grid (reaches split at confluences only), its
+  reach bootstrap, and the diagnostic statistics.
+- `calibrate_erodibility_from_erosion_rates` (per m/n): K per sample (Monte Carlo over
+  E and the k_sn replicates), K at fixed n (weighted log mean), a fitted (n, K)
+  (`fit_york_line`), K per unit (`mono`, `unit_in_basin`); intervals by a bootstrap
+  over nesting groups from `erodibility_calibration_bootstrap_engine` (stream tag 2).
+- Writers: the samples, basin K, fit, by-lithology and basin-lithology CSVs, the basin
+  polygons, and the draft property table (`write_lithology_erodibility_property_table`).
+- Parameter groups: `declare_erosion_rate_input_parameters`,
+  `declare_erodibility_calibration_parameters`, `declare_stream_power_n_values_parameter`
+  (`lsdtt_common_parameters`). Shared: `stream_power_erodibility_from_erosion_rate`
+  (`lsdtt_lithology_relative_erodibility_cpu`).
 
 ### lsdtt_stream_power_cpu (transient incision)
 

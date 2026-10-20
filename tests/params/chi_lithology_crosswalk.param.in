@@ -1,0 +1,25 @@
+read_path: __READ_PATH__
+read_fname: lithks_steady_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lithkscw
+
+# The steady state with a crosswalk naming the units, a 60 m contact buffer
+# and the bootstrap resampling whole basins.
+raster_is_filled: true
+boundary_conditions: oooo
+threshold_contributing_pixels: 50
+min_channel_pixels: 30
+n_largest_basins: 0
+m_over_n: 0.45
+chi_A0: 1
+
+fit_chi_networks: true
+write_fit_tables: false
+write_ksn_basin_summary: false
+
+lithology_fname: lithks_units.gpkg
+lithology_field_name: lith_primary
+lithology_crosswalk_fname: lithks_crosswalk.csv
+lithology_contact_buffer_metres: 60
+lithology_bootstrap_cluster: basin
+lithology_bootstrap_replicates: 200

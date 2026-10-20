@@ -1,0 +1,24 @@
+# lsdtt-channel-network-analysis with a lithology code raster on the synthetic trellis
+# (N-S trunks of order 2, E-W tributaries of order 1). The units are the two halves
+# north and south of row 150, so every trunk crosses the contact. Written by
+# lsdtt-test-channel-bearing-statistics --write-fixtures.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbslith
+boundary_conditions: nnon
+write_channel_link_bearings: true
+write_junction_angles: true
+write_channel_bearing_statistics: true
+write_junction_angle_statistics: true
+channel_bearing_group_by: lithology
+channel_bearing_stratify_by: strahler_order
+channel_bearing_comparison_mode: one_vs_rest
+channel_bearing_block_order: 2
+junction_angle_group_by: lithology
+lithology_fname: cbs_region_halves.tif
+lithology_bootstrap_replicates: 200
+write_lithology_code_raster: true

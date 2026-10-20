@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wvvec
+
+# bounds_fname as a vector polygon (WGS84 FlatGeobuf, the Alps): exercises the
+# bounds helper before any other GDAL call of the CLI.
+bounds_fname: bounds/bounds_polygon.fgb
+octopus_response_dir: octopus_erosion_rates/wv_large_box

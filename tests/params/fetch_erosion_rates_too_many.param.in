@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wvmany
+
+# The canned hits response says 28 basins.
+west: -80.5
+south: 38.3
+east: -78.5
+north: 39.7
+octopus_response_dir: octopus_erosion_rates/wv_large_box
+max_features: 5

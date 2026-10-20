@@ -26,6 +26,11 @@
 # 2026-10-07 but never listed here), and bearing-comparison and swath-profile,
 # which had shipped untested, got their first tests. A new CLI joins core once
 # it has a test; until then it ships only under `all`.
+#
+# bearing-comparison was removed on 2026-10-17: it was folded into
+# channel-network-analysis (write_channel_bearing_statistics), which compares
+# bearing distributions by group within one run, and its analytic tests moved
+# to the lsdtt-test-channel-bearing-statistics driver.
 
 
 qgis lsdtt-raster-preprocessing
@@ -43,7 +48,6 @@ core lsdtt-bankfull-width
 core lsdtt-basin-extraction
 core lsdtt-basin-stats
 core lsdtt-basin-surface-metrics
-core lsdtt-bearing-comparison
 core lsdtt-channel-extraction
 core lsdtt-channel-network-analysis
 core lsdtt-chi-analysis
@@ -56,6 +60,8 @@ core lsdtt-distributed-hydrology
 core lsdtt-divide-migration
 core lsdtt-drainage-analysis
 core lsdtt-feature-finder
+core lsdtt-fetch-erosion-rates
+core lsdtt-fetch-lithology
 core lsdtt-fetch-raster
 core lsdtt-flat-surface-finder
 core lsdtt-fluvial-surfaces
@@ -63,6 +69,7 @@ core lsdtt-graphflood
 core lsdtt-hillslope-channel-coupling
 core lsdtt-internal-drainage
 core lsdtt-lem
+core lsdtt-lithology-erodibility
 core lsdtt-linear-stats
 core lsdtt-marsh-topography
 core lsdtt-mountain-front

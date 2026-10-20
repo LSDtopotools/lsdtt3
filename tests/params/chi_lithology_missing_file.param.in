@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+read_fname: lithks_steady_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lithksmiss
+
+# A lithology map that does not exist is refused before any routing.
+raster_is_filled: true
+threshold_contributing_pixels: 50
+n_largest_basins: 0
+m_over_n: 0.45
+fit_chi_networks: true
+lithology_fname: lithks_no_such_units.gpkg

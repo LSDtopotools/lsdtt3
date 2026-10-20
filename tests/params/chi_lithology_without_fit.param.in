@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinynofit
+
+# k_sn by lithology comes from the fitted networks: refused without them.
+fit_chi_networks: false
+lithology_fname: lithks_tiny_codes.tif

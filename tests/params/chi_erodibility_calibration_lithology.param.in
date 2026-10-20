@@ -1,0 +1,29 @@
+# lsdtt-chi-analysis with erosion-rate samples and a lithology map on the F2
+# known answer (lsdtt-test-erodibility-calibration --write-fixtures): K1 = 1e-5
+# west of a vertical contact, K2 = 4e-5 east of it, n = 1, a different uplift
+# in each of ten basins (E_b = U_b). Per-unit K by mono and unit_in_basin, and
+# a draft property table.
+read_path: __READ_PATH__
+read_fname: f2_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ercallith
+
+raster_is_filled: true
+boundary_conditions: oooo
+threshold_contributing_pixels: 50
+min_channel_pixels: 30
+n_largest_basins: 0
+m_over_n: 0.45
+chi_A0: 1
+
+fit_chi_networks: true
+write_fit_tables: false
+write_ksn_basin_summary: false
+
+lithology_fname: f2_units.gpkg
+lithology_field_name: lith_primary
+
+erosion_rate_fname: f2_samples.csv
+erosion_rate_units: mm_per_kyr
+erosion_rate_snap_max_distance_metres: 0
+stream_power_n_values: 1

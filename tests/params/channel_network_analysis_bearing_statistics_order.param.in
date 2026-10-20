@@ -1,0 +1,15 @@
+# lsdtt-channel-network-analysis: channel-link bearing and junction-angle statistics by
+# Strahler order on the synthetic trellis (N-S trunks of order 2, E-W tributaries of order 1).
+# The fixture is written by lsdtt-test-channel-bearing-statistics --write-fixtures.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbso
+boundary_conditions: nnon
+write_channel_bearing_statistics: true
+write_junction_angle_statistics: true
+channel_bearing_group_by: strahler_order
+channel_bearing_block_order: 2

@@ -1,0 +1,12 @@
+# A region map 200 km from the trellis DEM (same CRS) labels no valid DEM pixel:
+# refused, naming both extents and CRSs.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbsrfar
+boundary_conditions: nnon
+write_channel_bearing_statistics: true
+channel_bearing_group_by: region
+channel_region_fname: cbs_region_far.tif

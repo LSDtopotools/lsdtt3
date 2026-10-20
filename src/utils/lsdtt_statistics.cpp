@@ -428,4 +428,157 @@ double compute_quantile_floor_in_place(std::vector<float>& values, double q_0_to
     return static_cast<double>(values[idx]);
 }
 
+double compute_weighted_quantile(const std::vector<double>& values,
+                                 const std::vector<double>& weights, double q_0_to_1)
+{
+    if (values.size() != weights.size())
+        throw std::invalid_argument("compute_weighted_quantile: values and weights differ in size");
+    if (!(q_0_to_1 >= 0.0 && q_0_to_1 <= 1.0))
+        throw std::invalid_argument("compute_weighted_quantile: q must be in [0, 1]");
+    if (values.empty()) return nan_value();
+
+    std::vector<std::size_t> order(values.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t a, std::size_t b) { return values[a] < values[b]; });
+
+    // Total accumulated in the sorted order, so the last cumulative sum equals
+    // it exactly and q = 1 always finds an element.
+    double total = 0.0;
+    for (std::size_t i : order)
+    {
+        const double w = weights[i];
+        if (!(w >= 0.0) || !std::isfinite(w))
+            throw std::invalid_argument("compute_weighted_quantile: weights must be finite and >= 0");
+        total += w;
+    }
+    if (!(total > 0.0))
+        throw std::invalid_argument("compute_weighted_quantile: total weight is zero");
+
+    const double target = q_0_to_1 * total;
+    double cum = 0.0;
+    for (std::size_t i : order)
+    {
+        cum += weights[i];
+        if (cum >= target) return values[i];
+    }
+    return values[order.back()];
+}
+
+lsdtt_york_fit fit_york_line(
+    const std::vector<double>& x,
+    const std::vector<double>& y,
+    const std::vector<double>& sigma_x,
+    const std::vector<double>& sigma_y)
+{
+    const std::size_t n = x.size();
+    if (y.size() != n || sigma_x.size() != n || sigma_y.size() != n)
+        throw std::invalid_argument("fit_york_line: x, y, sigma_x and sigma_y differ in length");
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!std::isfinite(x[i]) || !std::isfinite(y[i]) || !std::isfinite(sigma_x[i]) ||
+            !std::isfinite(sigma_y[i]))
+            throw std::invalid_argument("fit_york_line: values and sigmas must be finite");
+        if (!(sigma_y[i] > 0.0) || sigma_x[i] < 0.0)
+            throw std::invalid_argument("fit_york_line: sigma_y must be > 0 and sigma_x >= 0");
+    }
+
+    lsdtt_york_fit f;
+    f.n_points = static_cast<int>(n);
+    if (n < 3) return f;
+    const auto [x_lo, x_hi] = std::minmax_element(x.begin(), x.end());
+    if (!(*x_hi > *x_lo)) return f;
+
+    std::vector<double> vx(n), vy(n), W(n), beta(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        vx[i] = sigma_x[i] * sigma_x[i];
+        vy[i] = sigma_y[i] * sigma_y[i];
+    }
+
+    // Weighted means and the York beta_i for a slope b.
+    double x_mean = 0.0, y_mean = 0.0;
+    auto weights_for = [&](double b) {
+        double sw = 0.0, swx = 0.0, swy = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            W[i] = 1.0 / (vy[i] + b * b * vx[i]);
+            sw += W[i];
+            swx += W[i] * x[i];
+            swy += W[i] * y[i];
+        }
+        x_mean = swx / sw;
+        y_mean = swy / sw;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const double U = x[i] - x_mean, V = y[i] - y_mean;
+            beta[i] = W[i] * (U * vy[i] + b * V * vx[i]);
+        }
+        return sw;
+    };
+
+    // Start from the ordinary least-squares slope.
+    double b = 0.0;
+    {
+        double mx = 0.0, my = 0.0;
+        for (std::size_t i = 0; i < n; ++i) { mx += x[i]; my += y[i]; }
+        mx /= static_cast<double>(n);
+        my /= static_cast<double>(n);
+        double sxx = 0.0, sxy = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            sxx += (x[i] - mx) * (x[i] - mx);
+            sxy += (x[i] - mx) * (y[i] - my);
+        }
+        b = sxy / sxx;
+    }
+
+    constexpr int k_max_iter = 1000;
+    constexpr double k_rel_tol = 1e-15;
+    for (int it = 1; it <= k_max_iter; ++it)
+    {
+        weights_for(b);
+        double num = 0.0, den = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const double U = x[i] - x_mean, V = y[i] - y_mean;
+            num += W[i] * beta[i] * V;
+            den += W[i] * beta[i] * U;
+        }
+        if (!(den != 0.0) || !std::isfinite(num / den)) return f;
+        const double b_new = num / den;
+        f.n_iter = it;
+        const bool done = std::fabs(b_new - b) <= k_rel_tol * std::max(1.0, std::fabs(b_new));
+        b = b_new;
+        if (done) { f.converged = true; break; }
+    }
+    if (!f.converged) return f;
+
+    const double sw = weights_for(b);
+    const double a = y_mean - b * x_mean;
+    double sum_wx = 0.0;
+    for (std::size_t i = 0; i < n; ++i) sum_wx += W[i] * (x_mean + beta[i]);
+    const double x_bar = sum_wx / sw;
+    double sum_wuu = 0.0, S = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double u = x_mean + beta[i] - x_bar;
+        sum_wuu += W[i] * u * u;
+        const double r = y[i] - b * x[i] - a;
+        S += W[i] * r * r;
+    }
+    f.slope = b;
+    f.intercept = a;
+    f.x_bar = x_bar;
+    const double var_b = 1.0 / sum_wuu;
+    f.se_slope = std::sqrt(var_b);
+    f.se_intercept = std::sqrt(1.0 / sw + x_bar * x_bar * var_b);
+    f.corr_slope_intercept = -x_bar * var_b / (f.se_slope * f.se_intercept);
+    f.mswd = S / static_cast<double>(n - 2);
+    const double scale = std::sqrt(f.mswd);
+    f.se_slope_scaled = f.se_slope * scale;
+    f.se_intercept_scaled = f.se_intercept * scale;
+    return f;
+}
+
 } // namespace lsdtt

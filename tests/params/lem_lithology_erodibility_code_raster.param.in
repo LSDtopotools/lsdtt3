@@ -1,0 +1,7 @@
+# A code raster on its own grid.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkcode
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_codes.tif

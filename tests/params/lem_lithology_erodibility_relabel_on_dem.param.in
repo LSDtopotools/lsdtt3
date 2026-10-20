@@ -1,0 +1,11 @@
+# Relabel placements need a synthetic grid.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkreldem
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+dem_fname: lithk_dem.tif
+input_raster_placement: relabel_centre_clip
+input_raster_clip_easting_metres: 500405
+input_raster_clip_northing_metres: 5000495

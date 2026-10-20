@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wvexc
+
+# The basins body is a canned OWS ExceptionReport.
+west: -80.5
+south: 38.3
+east: -78.5
+north: 39.7
+octopus_response_dir: octopus_erosion_rates/exception_report

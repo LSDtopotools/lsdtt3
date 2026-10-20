@@ -2088,28 +2088,11 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
-# lsdtt-bearing-comparison and lsdtt-swath-profile
+# lsdtt-swath-profile
 #
-# Both shipped in the core profile with no test at all (they predate the rule
-# in tools/cli_profiles.txt). Tested 2026-10-14 against analytic answers.
+# Shipped in the core profile with no test at all (it predates the rule in
+# tools/cli_profiles.txt). Tested 2026-10-14 against analytic answers.
 # =============================================================================
-foreach(_bc_case
-        "identical|Circular Wasserstein distance : 0 degrees"
-        "rotated|Circular Wasserstein distance : 20 degrees"
-        "rotation_invariant|Optimal rotation              : 340 degrees"
-        "axial|Circular Wasserstein distance : 0 degrees")
-    string(REPLACE "|" ";" _bc_case "${_bc_case}")
-    list(GET _bc_case 0 _bc_name)
-    list(GET _bc_case 1 _bc_line)
-    add_lsdtt_cli_smoke_test(
-        smoke_bearing_comparison_${_bc_name}
-        lsdtt-bearing-comparison
-        bearing_comparison_${_bc_name}.param.in
-        bc_bearing_comparison.csv
-        --stdout-contains "${_bc_line}"
-    )
-endforeach()
-
 add_lsdtt_cli_smoke_test(
     smoke_swath_profile_plane
     lsdtt-swath-profile
@@ -2282,6 +2265,136 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'source_pixels_threshold' is deprecated"
     --stderr-contains "use 'threshold_contributing_pixels'"
     --expect-sha256 cna_legacy_tokunaga_channel_data.csv:dd48f4ace30af5b591dc788c6930bb084da2f8274d6a5403e718f8e65b04d923
+)
+
+# =============================================================================
+# Channel-link bearing and junction-angle statistics
+# (lsdtt_channel_bearing_statistics_cpu, lsdtt_channel_network_grouping_cpu,
+#  lsdtt-channel-network-analysis write_channel_bearing_statistics /
+#  write_junction_angle_statistics)
+#
+# The driver modes are native and run in every configure. The first one holds
+# the analytic circular two-sample cases that the retired lsdtt-bearing-comparison
+# CLI tests pinned (same 8 bearings, same answers), now with no Python needed.
+# The trellis and grouping modes build synthetic networks in memory: a trellis
+# whose trunks run N-S and whose tributaries run E-W, so the expected bearings,
+# axial/directional contrast and junction angles follow from the geometry.
+# =============================================================================
+add_executable(lsdtt-test-channel-bearing-statistics cpp/test_channel_bearing_statistics.cpp)
+target_link_libraries(lsdtt-test-channel-bearing-statistics PRIVATE lsdtt3_cpu)
+
+foreach(_cbs_mode
+        "circular|--circular-two-sample"
+        "summaries|--group-summaries"
+        "comparisons|--comparisons"
+        "junction_angles|--junction-angle-stats"
+        "trellis|--trellis-network"
+        "grouping|--grouping-keys"
+        "isotropic_null|--isotropic-null")
+    string(REPLACE "|" ";" _cbs_mode "${_cbs_mode}")
+    list(GET _cbs_mode 0 _cbs_name)
+    list(GET _cbs_mode 1 _cbs_flag)
+    add_test(NAME unit_channel_bearing_statistics_${_cbs_name}
+             COMMAND lsdtt-test-channel-bearing-statistics ${_cbs_flag})
+    lsdtt_set_tests_properties(unit_channel_bearing_statistics_${_cbs_name} PROPERTIES
+        LABELS "unit;network")
+endforeach()
+
+# CLI fixture: the trellis DEM and its transpose, a north/south region code
+# raster on the trellis grid, an off-grid region raster with no CRS, and the
+# committed reference CSV copied beside them.
+set(LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/channel_bearing_statistics_fixture")
+add_test(NAME fixture_channel_bearing_statistics
+         COMMAND lsdtt-test-channel-bearing-statistics --write-fixtures
+                 "${LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR}"
+                 "${LSDTT_TEST_DATA_DIR}/channel_bearing_statistics/ns_trunk_bearings.csv")
+lsdtt_set_tests_properties(fixture_channel_bearing_statistics PROPERTIES
+    LABELS "fixture;network"
+    FIXTURES_SETUP channel_bearing_statistics)
+
+function(lsdtt_add_channel_bearing_cli_test TEST_NAME TEMPLATE EXPECTED)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-channel-network-analysis
+        ${TEMPLATE} ${EXPECTED}
+        --read-path "${LSDTT_CHANNEL_BEARING_STATISTICS_FIXTURE_DIR}" ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED channel_bearing_statistics)
+    endif()
+endfunction()
+
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_bearing_statistics_order
+    channel_network_analysis_bearing_statistics_order.param.in
+    cbso_channel_bearing_group_summary.csv
+    --expect cbso_channel_bearing_comparisons.csv
+    --expect cbso_channel_bearing_rose.csv
+    --expect cbso_channel_bearing_group_membership.csv
+    --expect cbso_junction_angle_group_summary.csv
+    --expect cbso_junction_angle_comparisons.csv
+    --stdout-contains "Bearing group strahler_order=2 [axial]: n="
+    --stdout-contains "Junction-angle group strahler_order=2 [alpha]: n="
+    --expect-file-contains "cbso_channel_bearing_group_summary.csv:measurand,group_key,group_value,stratum_key,stratum_value,angular_type,period_deg,n,n_blocks,total_length_m,circular_mean_deg_count,mean_resultant_length_count,circular_variance_count,circular_sd_deg_count,circular_mean_deg_length,mean_resultant_length_length,n_eff_length,rayleigh_z,rayleigh_p_iid_approx,fraction_on_d8_multiples,meets_min_group_size"
+    --expect-file-contains "cbso_channel_bearing_comparisons.csv:measurand,stratum_key,stratum_value,angular_type,comparison_mode,group_a,group_b,n_a,n_b,n_blocks_a,n_blocks_b,circular_wasserstein_deg,rotation_invariant,optimal_rotation_deg,kuiper_V,kuiper_p_iid_approx,kuiper_p_holm,n_comparisons_in_family,permutation_p,note"
+)
+
+# The rotated trellis (trunks draining west) against a committed reference of
+# N-S trunk bearings (180, order 2) read through the order filter: axial W1 90.
+lsdtt_add_channel_bearing_cli_test(
+    rigorous_channel_network_analysis_bearing_statistics_reference
+    channel_network_analysis_bearing_statistics_reference.param.in
+    cbsr_channel_bearing_comparisons.csv
+    --stdout-contains "Reference bearings           : 4 from"
+    --stdout-contains "Bearing comparison strahler_order=2 vs reference [axial]: n="
+    --stdout-contains "W1=90.0 deg"
+)
+
+lsdtt_add_channel_bearing_cli_test(
+    rigorous_channel_network_analysis_bearing_statistics_region
+    channel_network_analysis_bearing_statistics_region.param.in
+    cbsg_channel_bearing_group_summary.csv
+    --stdout-contains "Bearing group region=1 (strahler_order=2) [axial]: n="
+    --stdout-contains "Bearing group region=2 (strahler_order=2) [axial]: n="
+    --stdout-contains "Bearing comparison region=1 vs 2 (strahler_order=2) [axial]:"
+    --stdout-contains "W1=0.0 deg"
+    --expect-file-contains "cbsg_channel_bearing_group_membership.csv:upstream_junction,downstream_junction,stream_order,total_length_m,bearing_deg,axial_bearing_deg,group_value,stratum_value,basin_id,block_id,region_value,region_purity"
+)
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_stratify_equals_group
+    channel_network_analysis_bearing_stratify_equals_group.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_bearing_stratify_by must differ from channel_bearing_group_by."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_region_missing
+    channel_network_analysis_bearing_region_missing.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_region_fname is required when channel_bearing_group_by or channel_bearing_stratify_by is region."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_unknown_key
+    channel_network_analysis_bearing_unknown_key.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: channel_bearing_group_by must be one of: strahler_order, basin, region, lithology."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_donor_pair
+    channel_network_analysis_bearing_donor_pair.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "FATAL: donor_order_pair is only valid for junction_angle_group_by."
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_region_grid
+    channel_network_analysis_bearing_region_grid.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "is not on the DEM grid"
+)
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_bearing_reference_column
+    channel_network_analysis_bearing_reference_column.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "Column 'nope' not found in"
 )
 
 # Phase 4 readiness: preserve the legacy spelling as a compatibility test after
@@ -3004,6 +3117,112 @@ lsdtt_add_lem_k_cli_test(failure_lem_erodibility_scalar_zero_no_fluvial
 lsdtt_add_lem_k_cli_test(failure_lem_forcing_erodibility_zero
     lem_forcing_erodibility_zero.param.in unused.tif --expect-exit-code 1
     --stderr-contains "erodibility must be > 0" --stderr-contains "row")
+
+# =============================================================================
+# lsdtt-lithology-erodibility: lithology maps to K rasters for lsdtt-lem
+#
+# Fixtures (polygon maps, a code raster, a DEM, property tables, a crosswalk
+# and the expected K rasters) come from lsdtt-test-lithology-erodibility
+# --write-fixtures. The map's unit edges lie on pixel boundaries, so every
+# expected K raster is computed from the layout, not by the code under test.
+# =============================================================================
+set(LITHK_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_cli_fixture")
+add_test(NAME fixture_lem_lithology_erodibility_cli
+         COMMAND lsdtt-test-lithology-erodibility --write-fixtures "${LITHK_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_lem_lithology_erodibility_cli PROPERTIES
+    LABELS "fixture;lem"
+    FIXTURES_SETUP lem_lithology_erodibility_cli)
+
+function(lsdtt_add_lithk_cli_test TEST_NAME TEMPLATE EXPECTED)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-lithology-erodibility ${TEMPLATE} ${EXPECTED}
+        --read-path "${LITHK_FIXTURE_DIR}" ${ARGN})
+    if(TEST_NAME MATCHES "^failure_")
+        set(_labels "failure;cli;lem")
+    else()
+        set(_labels "smoke;cli;lem")
+    endif()
+    lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+        LABELS "${_labels}"
+        FIXTURES_REQUIRED lem_lithology_erodibility_cli
+        FIXTURES_SETUP ${TEST_NAME})
+endfunction()
+
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_own_grid
+    lem_lithology_erodibility_own_grid.param.in lithkown_erodibility.tif
+    --expect lithkown_lithology_code.tif
+    --expect lithkown_lithology_legend.csv
+    --expect lithkown_lem_erodibility_parameters.txt
+    --expect-raster-size lithkown_erodibility.tif:80x100
+    --expect-file-contains "lithkown_lem_erodibility_parameters.txt:erodibility_raster_area_convention: map_area"
+    --stdout-contains "its footprint is the model domain")
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_own_grid --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_own_grid/out/lithkown_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_own_grid")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_dem_grid
+    lem_lithology_erodibility_dem_grid.param.in lithkdem_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_dem_grid --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_dem_grid/out/lithkdem_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_dem_grid.tif"
+    "smoke_lem_lithology_erodibility_dem_grid")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_centre_clip
+    lem_lithology_erodibility_centre_clip.param.in lithkclip_erodibility.tif
+    --stdout-contains "relabelled onto the synthetic grid")
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_centre_clip --compare-raster-values
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_centre_clip/out/lithkclip_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_centre_clip.tif"
+    "smoke_lem_lithology_erodibility_centre_clip")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_code_raster
+    lem_lithology_erodibility_code_raster.param.in lithkcode_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_code_raster --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_code_raster/out/lithkcode_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_code_raster")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_crosswalk
+    lem_lithology_erodibility_crosswalk.param.in lithkcw_erodibility.tif)
+lsdtt_add_lem_k_compare(regression_lem_lithology_erodibility_crosswalk --compare-rasters
+    "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_crosswalk/out/lithkcw_erodibility.tif"
+    "${LITHK_FIXTURE_DIR}/lithk_expect_own_grid.tif"
+    "smoke_lem_lithology_erodibility_crosswalk")
+lsdtt_add_lithk_cli_test(smoke_lem_lithology_erodibility_unmapped_code
+    lem_lithology_erodibility_unmapped_code.param.in lithkfill_erodibility.tif
+    --stdout-contains "given code 30")
+
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_unknown_value
+    lem_lithology_erodibility_unknown_value.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "could not be given a code" --stderr-contains "'basalt'")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_hole
+    lem_lithology_erodibility_hole.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "inside the model domain have no lithology")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_table_zero
+    lem_lithology_erodibility_table_zero.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "K must be > 0")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_table_no_m
+    lem_lithology_erodibility_table_no_m.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "m_exponent")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_vector_no_cell_size
+    lem_lithology_erodibility_vector_no_cell_size.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "cell_size_metres")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_relabel_on_dem
+    lem_lithology_erodibility_relabel_on_dem.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "model_grid_source: parameters")
+lsdtt_add_lithk_cli_test(failure_lem_lithology_erodibility_geographic
+    lem_lithology_erodibility_geographic.param.in unused.tif --expect-exit-code 1
+    --stderr-contains "geographic")
+
+# The chain: lsdtt-lem runs on the K raster the own-grid test made, with the
+# parameter lines it printed, on the map's own grid.
+add_lsdtt_cli_smoke_test(
+    smoke_lem_lithology_erodibility_chain
+    lsdtt-lem
+    lem_lithology_erodibility_chain.param.in
+    lithkchain_modelled_topography.tif
+    --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_lithology_erodibility_own_grid/out"
+    --stdout-contains "converted map-area K to specific-area K at cell size 10"
+    --expect-raster-size lithkchain_modelled_topography.tif:80x100)
+lsdtt_set_tests_properties(smoke_lem_lithology_erodibility_chain PROPERTIES
+    LABELS "smoke;cli;lem"
+    FIXTURES_REQUIRED smoke_lem_lithology_erodibility_own_grid)
 
 # Synthetic georeference. With no synthetic_crs_wkt the grid is centred on
 # Watopia (UTM zone 58S); a supplied WKT is kept. The CRS and the grid centre
@@ -5022,6 +5241,641 @@ add_test(NAME unit_lem_forcing_history
          COMMAND lsdtt-test-lem-forcing-history "${CMAKE_CURRENT_BINARY_DIR}")
 lsdtt_set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "unit;lem")
 
+# Lithology maps to erodibility: property table, crosswalk, the categorical
+# polygon rasteriser and the K raster (lsdtt-lithology-erodibility's library).
+add_executable(lsdtt-test-lithology-erodibility cpp/test_lithology_erodibility.cpp)
+target_link_libraries(lsdtt-test-lithology-erodibility PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lem_lithology_erodibility
+         COMMAND lsdtt-test-lithology-erodibility
+                 "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_work")
+lsdtt_set_tests_properties(unit_lem_lithology_erodibility PROPERTIES LABELS "unit;lem")
+
+# k_sn by lithologic unit: contact distance, node -> segment, bookkeeping, and
+# the known-answer steady states (two units, n = 1 and n = 2).
+add_executable(lsdtt-test-lithology-channel-stats cpp/test_lithology_channel_stats.cpp)
+target_link_libraries(lsdtt-test-lithology-channel-stats PRIVATE lsdtt3_cpu)
+add_test(NAME unit_chi_lithology_channel_stats
+         COMMAND lsdtt-test-lithology-channel-stats
+                 "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
+lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "unit;chi")
+
+# Erodibility calibration from basin erosion rates: the York regression
+# (Pearson's data with York's weights), the erosion-rate sample reader and its
+# units, the K formula and property-table seams shared with relative K, the
+# declared parameter groups, and basin completeness at an open grid edge.
+add_executable(lsdtt-test-erodibility-calibration cpp/test_erodibility_calibration.cpp)
+target_link_libraries(lsdtt-test-erodibility-calibration PRIVATE lsdtt3_cpu)
+add_test(NAME unit_chi_erodibility_calibration
+         COMMAND lsdtt-test-erodibility-calibration
+                 "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_work")
+lsdtt_set_tests_properties(unit_chi_erodibility_calibration PROPERTIES LABELS "unit;chi")
+
+# lsdtt-chi-analysis with erosion-rate samples. The fixture writer produces the
+# F1 (one K, a different uplift per basin) and F2 (two units) steady states, their
+# sample CSVs (mm/kyr and m/yr) and the F2 unit polygons. The CLI routes the
+# steady states itself (raster_is_filled: true), which moves a few divide pixels,
+# so its pins are measured separately from the in-process ones.
+set(LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_cli_fixture")
+add_test(NAME fixture_chi_erodibility_calibration_cli
+         COMMAND lsdtt-test-erodibility-calibration --write-fixtures
+                 "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_chi_erodibility_calibration_cli PROPERTIES
+    LABELS "fixture;chi"
+    FIXTURES_SETUP chi_erodibility_calibration_cli)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration
+    lsdtt-chi-analysis
+    chi_erodibility_calibration.param.in
+    ercal_erodibility_calibration_samples_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect ercal_erodibility_calibration_basin_K_mn_0p450.csv
+    --expect ercal_erodibility_calibration_fit_mn_0p450.csv
+    --expect ercal_erodibility_calibration_basins.fgb
+    --expect-vector-feature-min ercal_erodibility_calibration_basins.fgb:13
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:sample_id,input_row,input_latitude,input_longitude,snapped_latitude,snapped_longitude,snapping_method,snap_distance_m,outlet_flat,status,status_detail,reported_area_km2,dem_area_km2,area_ratio,area_check,nesting_group,nested_in,n_samples_inside,duplicate_outlet_of,erosion_rate_input,erosion_rate_uncertainty_input,erosion_rate_input_units,erosion_rate_m_per_yr,erosion_rate_uncertainty_m_per_yr,m_over_n,A_0,k_sn_statistic,k_sn,k_sn_ci_low,k_sn_ci_high,n_reaches,n_reaches_qualifying,k_sn_reach_iqr_over_median,k_sn_chi_z_slope,chi_z_r_squared,k_sn_segment_median,k_sn_chi_weighted_mean,dominant_lith_code,dominant_lith_name,dominant_area_fraction,dominant_channel_length_fraction,unmapped_area_fraction"
+    --expect-file-contains "ercal_erodibility_calibration_fit_mn_0p450.csv:fit_type,method,status,N_basins,N_groups,ksn_range_ratio,m_over_n,A_0,n,n_ci_low,n_ci_high,n_se_york,n_se_york_mswd_scaled,m,K,K_ci_low,K_ci_high,ln_K_se,ln_K_se_mswd_scaled,corr_n_lnK,E_at_median_ksn_m_per_yr,mswd,ln_K_dispersion,corr_lnK_lnk,n_bootstrap,bootstrap_cluster,K_units"
+    --expect-file-contains "ercal_erodibility_calibration_basin_K_mn_0p450.csv:sample_id,status,nesting_group,m_over_n,A_0,n,m,erosion_rate_m_per_yr,erosion_rate_uncertainty_m_per_yr,k_sn,k_sn_ci_low,k_sn_ci_high,K,K_ci_low,K_ci_high,n_bootstrap,K_units"
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:,area_mismatch,"
+    --expect-file-contains "ercal_erodibility_calibration_samples_mn_0p450.csv:,outside_dem,"
+    --expect-file-contains "ercal_erodibility_calibration_fit_mn_0p450.csv:fixed_n,weighted_log_mean,ok,12,10,"
+    --expect-file-contains "ercal_erodibility_calibration_basin_K_mn_0p450.csv:m^(-0.8) yr^-1"
+    --stdout-contains "Erodibility calibration (m/n = 0.45, A0 = 1): 12 basin(s) used in 10 independent group(s)"
+    --stdout-contains "area mismatch (outside 1/1.25..1.25 of the reported area): 1 (exclude)"
+    --stdout-contains "fitted: n = "
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_m_per_yr
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_m_per_yr.param.in
+    ercalm_erodibility_calibration_fit_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --stdout-contains "(units m_per_yr -> m/yr x 1)"
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_m_per_yr PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_m_per_yr)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_off
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_off.param.in
+    ercaloff_chi_fit_nodes_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect-absent ercaloff_erodibility_calibration_samples_mn_0p450.csv
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_off PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_off)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_analysis_erodibility_calibration_lithology
+    lsdtt-chi-analysis
+    chi_erodibility_calibration_lithology.param.in
+    ercallith_erodibility_calibration_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+    --expect ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt
+    --expect ercallith_erodibility_calibration_basin_lithology.csv
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:lith_code,lith_name,method,m_over_n,A_0,n,m,N_basins,N_groups,K,K_ci_low,K_ci_high,n_bootstrap,low_sample,status,purity_threshold,K_units"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,west,mono,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,east,mono,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,west,unit_in_basin,"
+    --expect-file-contains "ercallith_erodibility_calibration_by_lithology_mn_0p450.csv:,east,unit_in_basin,"
+    --expect-file-contains "ercallith_erodibility_calibration_basin_lithology.csv:sample_id,lith_code,lith_name,area_km2,area_fraction,channel_length_m,channel_length_fraction"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:# erodibility_convention: map_area"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:# m_exponent: 0.45"
+    --expect-file-contains "ercallith_erodibility_calibration_property_table_mn_0p450_n_1.txt:code,name,erodibility,reference"
+    --stdout-contains "by lithology (unit_in_basin"
+)
+lsdtt_set_tests_properties(smoke_chi_analysis_erodibility_calibration_lithology PROPERTIES
+    FIXTURES_REQUIRED chi_erodibility_calibration_cli
+    FIXTURES_SETUP smoke_chi_analysis_erodibility_calibration_lithology)
+
+if(TEST smoke_chi_analysis_erodibility_calibration)
+    set(_ercal_out "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration/out")
+    # The CLI known answer (F1, n = 1, K = 1e-5). Measured 2026-10-19: fitted
+    # n 1.04242 (abs err 0.0424; K at that n 8.342e-6), fixed-n K 9.53205e-6
+    # (rel err 4.68 %). Twice the measured error exceeds the plan's CLI caps,
+    # so the pins are the caps: 0.05 on n, 6.4 % on K.
+    add_test(NAME rigorous_chi_erodibility_calibration_n
+             COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-fit
+                     "${_ercal_out}/ercal_erodibility_calibration_fit_mn_0p450.csv" fitted_n 0 1 0.05 1e-5 1e9)
+    add_test(NAME rigorous_chi_erodibility_calibration_fixed_n_K
+             COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-fit
+                     "${_ercal_out}/ercal_erodibility_calibration_fit_mn_0p450.csv" fixed_n 1 1 0 1e-5 0.064)
+    foreach(_t rigorous_chi_erodibility_calibration_n rigorous_chi_erodibility_calibration_fixed_n_K)
+        lsdtt_set_tests_properties(${_t} PROPERTIES
+            LABELS "rigorous;chi"
+            FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration)
+    endforeach()
+    # The same samples in m/yr give the same basin K and fit files, byte for byte.
+    add_test(NAME rigorous_chi_erodibility_calibration_units_invariant
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${_ercal_out}/ercal"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_m_per_yr/out/ercalm"
+                 "-DSUFFIXES=_erodibility_calibration_basin_K_mn_0p450.csv;_erodibility_calibration_fit_mn_0p450.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_units_invariant PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_m_per_yr")
+    # The calibration only observes: the chi fit tables, k_sn basin summary and
+    # disorder sweep are the same with and without erosion_rate_fname.
+    add_test(NAME rigorous_chi_erodibility_calibration_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${_ercal_out}/ercal"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_off/out/ercaloff"
+                 "-DSUFFIXES=_chi_fit_nodes_mn_0p450.csv;_chi_fit_segments_mn_0p450.csv;_chi_ksn_basin_summary_mn_0p450.csv;_chi_disorder_sweep.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_observation_only PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_off")
+    # The CLI known answer per unit (F2, unit_in_basin). Measured 2026-10-19:
+    # west 9.46848e-6 (rel err 5.32 %), east 3.86206e-5 (rel err 3.45 %); twice
+    # those exceed the plan's 6.4 % cap, so the pin is the cap. (mono, measured
+    # west 7.05 %, east 3.58 %, is not asserted: west exceeds the cap.)
+    foreach(_u "west;1e-5" "east;4e-5")
+        list(GET _u 0 _name)
+        list(GET _u 1 _K)
+        add_test(NAME rigorous_chi_erodibility_calibration_lithology_units_${_name}
+                 COMMAND lsdtt-test-erodibility-calibration --check-erodibility-calibration-unit
+                         "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_lithology/out/ercallith_erodibility_calibration_by_lithology_mn_0p450.csv"
+                         unit_in_basin 1 ${_name} ${_K} 0.064)
+        lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_lithology_units_${_name} PROPERTIES
+            LABELS "rigorous;chi"
+            FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration_lithology)
+    endforeach()
+else()
+    foreach(_t n fixed_n_K units_invariant observation_only lithology_units_west lithology_units_east)
+        lsdtt_mark_test_unregistered(python rigorous_chi_erodibility_calibration_${_t})
+    endforeach()
+endif()
+
+foreach(_f "no_units;erosion_rate_units must be one of"
+           "units_conflict;disagrees with erosion_rate_units"
+           "without_fit;erosion_rate_fname needs fit_chi_networks: true"
+           "missing_column;erosion_rate_column 'rate' is not a column"
+           "missing_file;erosion_rate_fname does not exist")
+    list(GET _f 0 _name)
+    list(GET _f 1 _msg)
+    add_lsdtt_cli_smoke_test(
+        failure_chi_analysis_erodibility_calibration_${_name}
+        lsdtt-chi-analysis
+        chi_erodibility_calibration_${_name}.param.in
+        unused_expected_output
+        --read-path "${LSDTT_CHI_ERODIBILITY_CALIBRATION_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "${_msg}")
+    lsdtt_set_tests_properties(failure_chi_analysis_erodibility_calibration_${_name} PROPERTIES
+        FIXTURES_REQUIRED chi_erodibility_calibration_cli)
+endforeach()
+
+# lsdtt-chi-analysis with a lithology map. The fixture writer produces the
+# steady-state landscape (two units, k_sn about 20 and 5) with its unit polygons,
+# and a two-unit code raster beside a copy of tiny_dem.asc.
+set(LSDTT_CHI_LITHOLOGY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_cli_fixture")
+add_test(NAME fixture_chi_lithology_cli
+         COMMAND lsdtt-test-lithology-channel-stats --write-fixtures
+                 "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}" "${LSDTT_TEST_DATA_DIR}/tiny_dem.asc")
+lsdtt_set_tests_properties(fixture_chi_lithology_cli PROPERTIES
+    LABELS "fixture;chi"
+    FIXTURES_SETUP chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_ksn
+    lsdtt-chi-analysis
+    chi_lithology_ksn.param.in
+    lithks_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv
+    --expect lithks_chi_ksn_lithology_nodes_mn_0p450.csv
+    --expect lithks_chi_lithology_reaches_mn_0p450.csv
+    --expect lithks_chi_lithology_segments_mn_0p450.csv
+    --expect lithks_chi_ksn_by_lithology_and_basin_mn_0p450.csv
+    --expect lithks_lithology_units.csv
+    --expect lithks_lithology_code.tif
+    --expect-raster-values lithks_lithology_code.tif:1,2
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:2,shale,"
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:-1,unmapped,0,"
+    --expect-file-contains "lithks_chi_ksn_by_lithology_mn_0p450.csv:reach_k_sn_median,reach_k_sn_p25,reach_k_sn_p75,reach_k_sn_length_weighted_median,reach_k_sn_median_ci_low,reach_k_sn_median_ci_high,n_bootstrap,bootstrap_cluster"
+    # Run-local codes 1..N from the map's own text values (no crosswalk).
+    --expect-file-contains "lithks_lithology_units.csv:1,sandstone,sandstone,9600,8.64,"
+    --expect-file-contains "lithks_lithology_units.csv:2,shale,shale,9600,8.64,"
+    --expect-file-contains "lithks_lithology_units.csv:-1,unmapped,,0,0,0"
+    --expect-file-contains "lithks_chi_lithology_reaches_mn_0p450.csv:upstream_end,downstream_end,qualifies"
+    # The units separate: shale peaks in bin 0 (k_sn 4.6-5.7) where sandstone has
+    # no node, sandstone in bin 14 (19.8-20.9) where shale has none.
+    --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:1,sandstone,0,4.632725239,5.716628242,0,"
+    --expect-file-contains "lithks_chi_ksn_histogram_by_lithology_mn_0p450.csv:2,shale,14,19.80736728,20.89127028,0,"
+    --stdout-contains "2 lithologic unit(s)"
+    --stdout-contains "Reading k_sn by lithologic unit:"
+    --stdout-contains "reach median k_sn and its reach-bootstrap interval"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_ksn PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli
+    FIXTURES_SETUP smoke_chi_lithology_ksn)
+
+# Lithology is observation only: the fit nodes CSV keeps the hash pinned by
+# rigorous_chi_nodes_sha256 (chi_analysis_smoke.param.in without the map).
+add_lsdtt_cli_smoke_test(
+    rigorous_chi_lithology_observation_only
+    lsdtt-chi-analysis
+    chi_lithology_observation_only.param.in
+    tiny_chi_fit_nodes_mn_0p500.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect tiny_chi_ksn_by_lithology_mn_0p500.csv
+    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
+)
+lsdtt_set_tests_properties(rigorous_chi_lithology_observation_only PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_without_fit
+    lsdtt-chi-analysis
+    chi_lithology_without_fit.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: lithology_fname needs fit_chi_networks: true"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_without_fit PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+# The CLI known answer. The CLI re-routes the steady-state DEM, so
+# its routing differs from the generating tree near channel heads. Measured
+# 2026-10-17: reach medians sandstone 20.40326316, shale 5.163420929, ratio
+# 3.951501038, relative error 1.212 % against 4; pinned at twice that, 2.42 %.
+# Native, but its input comes from a Python-harness test, so it is registered
+# with the Python tests.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME rigorous_chi_lithology_ksn_ratio
+             COMMAND lsdtt-test-lithology-channel-stats --check-ksn-by-lithology
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks_chi_ksn_by_lithology_mn_0p450.csv"
+                     sandstone shale 4 0.0242)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_ksn_ratio PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_ksn)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_ksn_ratio)
+endif()
+
+# A crosswalk with a name column, a contact buffer and basin
+# clusters. Codes come from the crosswalk, names from its `name` column.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_crosswalk
+    lsdtt-chi-analysis
+    chi_lithology_crosswalk.param.in
+    lithkscw_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkscw_lithology_units.csv
+    --expect lithkscw_chi_lithology_reaches_mn_0p450.csv
+    --expect-file-contains "lithkscw_lithology_units.csv:10,quartz sandstone,sandstone,9600,"
+    --expect-file-contains "lithkscw_lithology_units.csv:30,grey shale,shale,9600,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:10,quartz sandstone,"
+    # 60 m buffer: 25 + 27 = 52 nodes set aside; 200 replicates by basin.
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:-2,all,1339,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:,60,10,52,84,26,"
+    --expect-file-contains "lithkscw_chi_ksn_by_lithology_mn_0p450.csv:,200,basin,"
+    --expect-file-contains "lithkscw_chi_lithology_reaches_mn_0p450.csv:,buffer,"
+    --stdout-contains "basin-bootstrap interval"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_crosswalk PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+# Refusals: a missing map, an unknown field, a value missing from the crosswalk,
+# a bootstrap cluster other than reach or basin.
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_missing_file
+    lsdtt-chi-analysis
+    chi_lithology_missing_file.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lithology map does not exist"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_missing_file PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_bad_field
+    lsdtt-chi-analysis
+    chi_lithology_bad_field.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "has no field 'formation'"
+    --stderr-contains "its fields are: lith_primary"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_bad_field PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_crosswalk_gap
+    lsdtt-chi-analysis
+    chi_lithology_crosswalk_gap.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "'shale' (9600 pixels)"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_crosswalk_gap PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_bad_cluster
+    lsdtt-chi-analysis
+    chi_lithology_bad_cluster.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lithology_bootstrap_cluster must be reach or basin, not 'segment'"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_bad_cluster PROPERTIES FIXTURES_REQUIRED chi_lithology_cli)
+
+# A lithology map that labels no valid DEM pixel (200 km east, same CRS) is
+# refused with both extents and CRSs: a code raster and a vector.
+foreach(_lithks_far raster vector)
+    add_lsdtt_cli_smoke_test(
+        failure_chi_lithology_no_overlap_${_lithks_far}
+        lsdtt-chi-analysis
+        chi_lithology_no_overlap_${_lithks_far}.param.in
+        unused_expected_output
+        --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "labels no valid DEM pixel: the map covers x 700000.0 to 704800.0, y 5000000.0 to 5003600.0 (WGS 84 / UTM zone 32N)"
+        --stderr-contains "the DEM covers x 500000.0 to 504800.0, y 5000000.0 to 5003600.0 (WGS 84 / UTM zone 32N)"
+    )
+    lsdtt_set_tests_properties(failure_chi_lithology_no_overlap_${_lithks_far} PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli)
+endforeach()
+
+# The bootstrap stream is per m/n: the 0.45 tables of a run with m/n 0.4 and
+# 0.45 equal those of the single-m/n run byte for byte.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_multi_mn
+    lsdtt-chi-analysis
+    chi_lithology_multi_mn.param.in
+    lithksmn_chi_ksn_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithksmn_chi_ksn_by_lithology_mn_0p400.csv
+)
+if(TEST smoke_chi_lithology_multi_mn)
+    lsdtt_set_tests_properties(smoke_chi_lithology_multi_mn PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli
+        FIXTURES_SETUP smoke_chi_lithology_multi_mn)
+    add_test(NAME rigorous_chi_lithology_bootstrap_per_mn
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_multi_mn/out/lithksmn"
+                 "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_bootstrap_per_mn PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_multi_mn")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_bootstrap_per_mn)
+endif()
+
+# Relative erodibility from k_sn by lithologic unit (write_relative_erodibility):
+# K_i / K_ref = (k_ref / k_i)^n and, with E, K_i = E / k_i^n, on the n = 1 steady
+# state (K1 = 1e-5 sandstone, K2 = 4e-5 shale, U = 2e-4) with E = U. The n = 2
+# rows of this run apply n = 2 to an n = 1 landscape; the n = 2 known answer is
+# in the driver (R4).
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility
+    lsdtt-chi-analysis
+    chi_lithology_relative_k.param.in
+    lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt
+    --expect lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_2.txt
+    --expect lithkrk_chi_ksn_by_lithology_mn_0p450.csv
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:lith_code,lith_name,m_over_n,A_0,n,m,reference_unit,n_reaches_qualifying,reach_k_sn_median,k_ratio,k_ratio_ci_low,k_ratio_ci_high,n_bootstrap,bootstrap_cluster,low_sample,erosion_rate_m_per_yr,K_abs,K_abs_ci_low,K_abs_ci_high,K_units"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:1,sandstone,0.45,1,1,0.45,sandstone,15,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:2,shale,0.45,1,2,0.9,sandstone,11,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:,1000,reach,0,0.0002,"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:m^(0.1) yr^-1"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:m^(-0.8) yr^-1"
+    --expect-file-not-contains "lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv:unmapped"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# erodibility_convention: map_area"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# m_exponent: 0.45"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:# n_exponent: 1"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:DEM lithks_steady_dem.tif"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:lithology map lithks_units.gpkg (field lith_primary)"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:assumes uniform erosion and steady state"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt:code,name,erodibility,reference"
+    --expect-file-contains "lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_2.txt:# m_exponent: 0.9"
+    --stdout-contains "reference 'sandstone' (default: the most qualifying reaches (15))"
+    --stdout-contains "These values hold only under these conditions:"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli
+    FIXTURES_SETUP smoke_chi_lithology_relative_erodibility)
+
+if(TEST smoke_chi_lithology_relative_erodibility)
+    # Switching relative erodibility on leaves every k_sn-by-lithology output
+    # of the same run byte-identical (its bootstrap stream is separate).
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk"
+                 "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_ksn_histogram_by_lithology_mn_0p450.csv;_chi_ksn_lithology_nodes_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv;_chi_lithology_segments_mn_0p450.csv;_lithology_units.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_observation_only PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_relative_erodibility")
+
+    # The CLI known answer (n = 1, E = U). The CLI re-routes the steady-state
+    # DEM. Measured 2026-10-19: shale K/K_ref 3.951501037 (rel err 1.212 %, the
+    # same reach medians as rigorous_chi_lithology_ksn_ratio), K shale
+    # 3.87340104e-05 (rel err 3.165 %), K sandstone 9.802353596e-06 (rel err
+    # 1.976 %). Pins at twice the measured error: ratio 2.42 %, K shale 6.4 %,
+    # K sandstone 4 %.
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_ratio
+             COMMAND lsdtt-test-lithology-channel-stats --check-relative-erodibility
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
+                     shale 1 4 0.0242 4e-5 0.064)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_ratio PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_reference
+             COMMAND lsdtt-test-lithology-channel-stats --check-relative-erodibility
+                     "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
+                     sandstone 1 1 1e-12 1e-5 0.04)
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_reference PROPERTIES
+        LABELS "rigorous;chi"
+        FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_observation_only)
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_ratio)
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_reference)
+endif()
+
+# The loop closes: lsdtt-lithology-erodibility reads the n = 1 draft table
+# unchanged and, with the same DEM and map, writes the K raster (the two K
+# values of the table, min sandstone and max shale).
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility_k_raster
+    lsdtt-lithology-erodibility
+    chi_lithology_relative_k_raster.param.in
+    lithkrkk_erodibility.tif
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrkk_lithology_legend.csv
+    --expect-raster-size lithkrkk_erodibility.tif:160x120
+    --expect-raster-stat lithkrkk_erodibility.tif:min:9.80235e-06:9.80236e-06
+    --expect-raster-stat lithkrkk_erodibility.tif:max:3.87340e-05:3.87341e-05
+    --expect-file-contains "lithkrkk_lem_erodibility_parameters.txt:erodibility_raster_m_exponent: 0.45"
+    --expect-file-contains "lithkrkk_lem_erodibility_parameters.txt:erodibility_raster_area_convention: map_area"
+)
+lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility_k_raster PROPERTIES
+    FIXTURES_REQUIRED "chi_lithology_cli;smoke_chi_lithology_relative_erodibility")
+
+# Per m/n stream: with m/n 0.4 and 0.45 the 0.45 relative-erodibility outputs
+# equal those of the single-m/n run byte for byte.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_lithology_relative_erodibility_multi_mn
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_multi_mn.param.in
+    lithkrkmn_chi_relative_erodibility_by_lithology_mn_0p450.csv
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect lithkrkmn_chi_relative_erodibility_by_lithology_mn_0p400.csv
+)
+if(TEST smoke_chi_lithology_relative_erodibility_multi_mn)
+    lsdtt_set_tests_properties(smoke_chi_lithology_relative_erodibility_multi_mn PROPERTIES
+        FIXTURES_REQUIRED chi_lithology_cli
+        FIXTURES_SETUP smoke_chi_lithology_relative_erodibility_multi_mn)
+    add_test(NAME rigorous_chi_lithology_relative_erodibility_per_mn
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility_multi_mn/out/lithkrkmn"
+                 "-DSUFFIXES=_chi_relative_erodibility_by_lithology_mn_0p450.csv;_chi_relative_erodibility_property_table_mn_0p450_n_1.txt;_chi_relative_erodibility_property_table_mn_0p450_n_2.txt"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_per_mn PROPERTIES
+        LABELS "rigorous;cli;chi"
+        FIXTURES_REQUIRED "smoke_chi_lithology_relative_erodibility;smoke_chi_lithology_relative_erodibility_multi_mn")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_per_mn)
+endif()
+
+# Refusals: relative erodibility without a lithology map; a reference that is
+# not a unit of the map (the units are listed).
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_relative_erodibility_no_map
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_no_map.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: write_relative_erodibility needs lithology_fname"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_relative_erodibility_no_map PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+add_lsdtt_cli_smoke_test(
+    failure_chi_lithology_relative_erodibility_bad_reference
+    lsdtt-chi-analysis
+    chi_lithology_relative_k_bad_reference.param.in
+    unused_expected_output
+    --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "relative_erodibility_reference_unit 'granite' is not a unit of the lithology map"
+    --stderr-contains "the units are: sandstone, shale"
+)
+lsdtt_set_tests_properties(failure_chi_lithology_relative_erodibility_bad_reference PROPERTIES
+    FIXTURES_REQUIRED chi_lithology_cli)
+
+# Channel-link bearings and junction angles by lithologic unit (T12, T13): link
+# and junction tags on the synthetic trellis with in-process unit grids, the
+# axial rose by unit, the junction median bootstrap, the appended record
+# columns and the analysed-area mask.
+add_executable(lsdtt-test-lithology-network-stats cpp/test_lithology_network_stats.cpp)
+target_link_libraries(lsdtt-test-lithology-network-stats PRIVATE lsdtt3_cpu)
+add_test(NAME unit_lithology_channel_network_stats
+         COMMAND lsdtt-test-lithology-network-stats
+                 "${CMAKE_CURRENT_BINARY_DIR}/lithology_channel_network_stats_work")
+lsdtt_set_tests_properties(unit_lithology_channel_network_stats PROPERTIES LABELS "unit;network")
+
+# lsdtt-channel-network-analysis with a lithology code raster (the trellis
+# fixture's north/south halves). These use lsdtt_add_channel_bearing_cli_test,
+# defined with the bearing-statistics tests above.
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_lithology
+    channel_network_analysis_lithology.param.in
+    cbslith_channel_bearing_group_summary.csv
+    --expect cbslith_lithology_units.csv
+    --expect cbslith_lithology_code.tif
+    --expect cbslith_junction_angle_group_summary.csv
+    --expect-file-contains "cbslith_channel_link_bearings.csv:downstream_longitude,lith_code,lith_name,lith_majority_fraction"
+    --expect-file-contains "cbslith_junction_angles.csv:longitude,junction_lith_code,junction_lith_name,donor_1_lith_code,donor_1_lith_fraction,donor_2_lith_code,donor_2_lith_fraction,receiver_lith_code,receiver_lith_fraction,lith_all_arms_agree"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:meets_min_group_size,median_ci_low_deg,median_ci_high_deg,n_bootstrap"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:alpha,lithology_interior,"
+    --expect-file-contains "cbslith_junction_angle_comparisons.csv:group_key=lithology_interior"
+    --expect-file-contains "cbslith_lithology_units.csv:-1,unmapped,,0,0,0"
+    # Integer codes are their own unit names; the south half's 364 pixels below
+    # the lowest junctions do not drain through an analysed junction.
+    --expect-file-contains "cbslith_lithology_units.csv:1,1,1,24000,2.4,24000"
+    --expect-file-contains "cbslith_lithology_units.csv:2,2,2,24000,2.4,23636"
+    # The 4 links of no single unit are the group mixed: summarised, never compared.
+    --stdout-contains "Link bearings, lithology: 4 link(s) with majority unit 1 are 'mixed (<80% one unit)'"
+    --stdout-contains "Note: 4 link record(s) in 'mixed (<80% one unit)' and"
+    --expect-file-contains "cbslith_channel_bearing_group_summary.csv:link_bearing,lithology,mixed (<80% one unit),"
+    --expect-file-contains "cbslith_junction_angle_group_summary.csv:alpha,lithology_interior,arms disagree,"
+    --expect-file-not-contains "cbslith_channel_bearing_comparisons.csv:mixed"
+    --expect-file-contains "cbslith_channel_bearing_group_summary.csv:meets_min_group_size,block_order,block_order_mode,min_blocks,n_unblocked,note"
+    --expect cbslith_channel_network_block_order_counts.csv
+    --stdout-contains "2 lithologic unit(s)"
+    --stdout-contains "Bearing group lithology=1 (strahler_order=2) [axial]: n="
+    --stdout-contains "Junction-angle group lithology_interior=1 [alpha]: n="
+)
+
+# Lithology given but no key uses it: every statistics output equals the
+# order-grouped run byte for byte.
+lsdtt_add_channel_bearing_cli_test(
+    smoke_channel_network_analysis_lithology_observation
+    channel_network_analysis_lithology_observation.param.in
+    cbsobs_channel_bearing_group_summary.csv
+    --expect cbsobs_lithology_units.csv)
+if(TEST smoke_channel_network_analysis_lithology_observation)
+    lsdtt_set_tests_properties(smoke_channel_network_analysis_lithology_observation PROPERTIES
+        FIXTURES_SETUP cna_lithology_observation)
+    lsdtt_set_tests_properties(smoke_channel_network_analysis_bearing_statistics_order PROPERTIES
+        FIXTURES_SETUP cna_bearing_statistics_order)
+    add_test(NAME rigorous_channel_network_analysis_lithology_observation_only
+             COMMAND ${CMAKE_COMMAND}
+                 "-DPREFIX_A=${CMAKE_CURRENT_BINARY_DIR}/smoke_channel_network_analysis_bearing_statistics_order/out/cbso"
+                 "-DPREFIX_B=${CMAKE_CURRENT_BINARY_DIR}/smoke_channel_network_analysis_lithology_observation/out/cbsobs"
+                 "-DSUFFIXES=_channel_bearing_group_summary.csv;_channel_bearing_comparisons.csv;_channel_bearing_rose.csv;_channel_bearing_group_membership.csv;_junction_angle_group_summary.csv;_junction_angle_comparisons.csv"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
+    lsdtt_set_tests_properties(rigorous_channel_network_analysis_lithology_observation_only PROPERTIES
+        LABELS "rigorous;cli;network"
+        FIXTURES_REQUIRED "cna_lithology_observation;cna_bearing_statistics_order")
+else()
+    lsdtt_mark_test_unregistered(python rigorous_channel_network_analysis_lithology_observation_only)
+endif()
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_lithology_bad_source
+    channel_network_analysis_lithology_bad_source.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "auto, vector_map or code_raster")
+
+lsdtt_add_channel_bearing_cli_test(
+    failure_channel_network_analysis_lithology_key_without_map
+    channel_network_analysis_lithology_key_without_map.param.in
+    unused.csv --expect-exit-code 1
+    --stderr-contains "lithology_fname is required when channel_bearing_group_by or channel_bearing_stratify_by is lithology")
+
+# Lithology and region maps that label no valid DEM pixel (200 km east, same
+# CRS): refused, naming both extents and CRSs.
+foreach(_cbs_far lithology_no_overlap_raster lithology_no_overlap_vector
+                 region_no_overlap_raster region_no_overlap_vector)
+    lsdtt_add_channel_bearing_cli_test(
+        failure_channel_network_analysis_${_cbs_far}
+        channel_network_analysis_${_cbs_far}.param.in
+        unused.csv --expect-exit-code 1
+        --stderr-contains "labels no valid DEM pixel: the map covers x 913650.1 to 915250.1"
+        --stderr-contains "the DEM covers x 713650.1 to 715250.1, y 8711785.5 to 8714785.5 (WGS 84 / UTM zone 58S)")
+endforeach()
+
 # Spatially varying erodibility (K): kernels, steady state, values, grid modes.
 add_executable(lsdtt-test-lem-erodibility cpp/test_lem_erodibility.cpp)
 target_link_libraries(lsdtt-test-lem-erodibility PRIVATE lsdtt3_cpu)
@@ -6207,6 +7061,203 @@ foreach(_case geo_missing_modules gdal_programs_missing)
         LABELS "unit;configure_contract")
 endforeach()
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-lithology CLI. The offline test reads the committed synthetic tile
+# (tests/data/macrostrat_tiles) with the API lookup off; the network test is
+# opt-in like the fetch_raster ones.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_lithology_offline
+    lsdtt-fetch-lithology
+    fetch_lithology_offline.param.in
+    lithoff_macrostrat_units.fgb
+    --expect lithoff_lithology_vocabulary.csv
+    --expect lithoff_crosswalk_template.csv
+    --expect lithoff_ATTRIBUTION.txt
+    --expect-vector-feature-min lithoff_macrostrat_units.fgb:3
+    --expect-file-contains "lithoff_lithology_vocabulary.csv:\"granite\",major"
+    --expect-file-contains "lithoff_lithology_vocabulary.csv:\"sandstone and shale\",text"
+    --expect-file-not-contains "lithoff_lithology_vocabulary.csv:limestone"
+    --expect-file-contains "lithoff_ATTRIBUTION.txt:source_id 7"
+    --stdout-contains "(EPSG:32632)"
+    --stdout-contains "lithology_field_name: lith_primary"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_no_bbox
+    lsdtt-fetch-lithology
+    fetch_lithology_no_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: give a bounding box"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_too_many_tiles
+    lsdtt-fetch-lithology
+    fetch_lithology_too_many_tiles.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_tiles"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_lithology_web_mercator
+    lsdtt-fetch-lithology
+    fetch_lithology_web_mercator.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: output_epsg: Web Mercator"
+)
+
+add_test(NAME smoke_fetch_lithology_help
+         COMMAND lsdtt-fetch-lithology -h)
+lsdtt_set_tests_properties(smoke_fetch_lithology_help PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "macrostrat_tile_zoom")
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_lsdtt_cli_smoke_test(
+        network_fetch_lithology_cli
+        lsdtt-fetch-lithology
+        fetch_lithology_network.param.in
+        lithlive_macrostrat_units.fgb
+        --expect lithlive_lithology_vocabulary.csv
+        --expect-vector-feature-min lithlive_macrostrat_units.fgb:1
+        --expect-file-contains "lithlive_ATTRIBUTION.txt:doi:10.1029/2018GC007467"
+        --stdout-contains "(EPSG:32630)"
+    )
+    lsdtt_set_tests_properties(network_fetch_lithology_cli PROPERTIES LABELS "network;cli;fetch")
+endif()
+
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-erosion-rates CLI (OCTOPUS). The offline tests read the committed
+# WV responses (tests/data/octopus_erosion_rates); the network test is opt-in
+# like the other fetch ones and asserts minima only, because OCTOPUS grows.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline.param.in
+    wvoff_erosion_rates.csv
+    --expect wvoff_octopus_basins.fgb
+    --expect wvoff_octopus_dem_bounds.fgb
+    --expect wvoff_ATTRIBUTION.txt
+    --expect-vector-feature-min wvoff_octopus_basins.fgb:28
+    --expect-file-contains "wvoff_erosion_rates.csv:sample_id,latitude,longitude,erosion_rate,erosion_rate_uncertainty,erosion_rate_units,erosion_rate_uncertainty_kind,erosion_rate_internal_uncertainty,reported_area_km2,rate_scheme,rate_field,nuclide,obsid2,study_id,author,pub_year,ref_doi,mean_elevation_m,outlet_in_bbox"
+    --expect-file-contains "wvoff_erosion_rates.csv:S186WTS046,38.88961897,-79.40200545,12.88,2.62,mm_per_kyr,total_1sigma,"
+    --expect-file-not-contains "wvoff_erosion_rates.csv:S186WTS001"
+    --expect-file-not-contains "wvoff_erosion_rates.csv:-9999"
+    --expect-file-contains "wvoff_ATTRIBUTION.txt:10.5194/gchron-7-113-2025"
+    --expect-file-contains "wvoff_ATTRIBUTION.txt:S186, Portenga, 2019, 10.1130/b31840.1, 17"
+    --stdout-contains "Read 28 OCTOPUS basins (23 with an outlet in the box)"
+    --stdout-contains "samples written: 23"
+    --stdout-contains "(EPSG:32617)"
+    --stdout-contains "erosion_rate_units: mm_per_kyr"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline_lsdn
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline_lsdn.param.in
+    wvofflsdn_erosion_rates.csv
+    --expect-file-contains "wvofflsdn_erosion_rates.csv:S186WTS046,38.88961897,-79.40200545,12.8,0.83,mm_per_kyr,external_1sigma,0.29,20.14,lsdn,EBEL,be10,"
+    --stdout-contains "scheme lsdn (EBEL, mm/kyr)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_offline_empty
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_offline_empty.param.in
+    wvempty_erosion_rates.csv
+    --expect wvempty_ATTRIBUTION.txt
+    --stderr-contains "no OCTOPUS basins intersect the box"
+    --stdout-contains "(header only)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_raster_bounds
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_raster_bounds.param.in
+    wvrast_erosion_rates.csv
+    --stdout-contains "(raster, EPSG:32632)"
+    --stdout-contains "samples written: 0"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_erosion_rates_vector_bounds
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_vector_bounds.param.in
+    wvvec_erosion_rates.csv
+    --stdout-contains "(polygon, EPSG:4326)"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_no_bbox
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_no_bbox.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: give a bounding box"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_too_many
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_too_many.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_features"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_bad_scheme
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_bad_scheme.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "st, lsdn, lsdn_no_topo_shielding, published"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_web_mercator
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_web_mercator.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: output_epsg: Web Mercator"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_erosion_rates_exception
+    lsdtt-fetch-erosion-rates
+    fetch_erosion_rates_exception.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "OCTOPUS WFS error:"
+)
+
+add_test(NAME smoke_fetch_erosion_rates_help
+         COMMAND lsdtt-fetch-erosion-rates -h)
+lsdtt_set_tests_properties(smoke_fetch_erosion_rates_help PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "octopus_rate_scheme")
+
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_lsdtt_cli_smoke_test(
+        network_fetch_erosion_rates_cli
+        lsdtt-fetch-erosion-rates
+        fetch_erosion_rates_network.param.in
+        wvlive_erosion_rates.csv
+        --expect wvlive_octopus_basins.fgb
+        --expect-file-contains "wvlive_erosion_rates.csv:S186WTS046"
+        --expect-vector-feature-min wvlive_octopus_basins.fgb:5
+        --expect-file-contains "wvlive_ATTRIBUTION.txt:10.5194/gchron-7-113-2025"
+        --stdout-contains "with an outlet in the box)"
+    )
+    lsdtt_set_tests_properties(network_fetch_erosion_rates_cli PROPERTIES LABELS "network;cli;fetch")
+endif()
+
 # Native DEM fetching (docs/developer_notes/testing_and_benchmarking.md).
 #
 # The offline half needs no network and runs in the default suite: it covers UTM
@@ -6227,6 +7278,29 @@ target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME unit_dem_grouping
          COMMAND lsdtt-test-dem-grouping "${CMAKE_CURRENT_BINARY_DIR}/dem_grouping_output")
 lsdtt_set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
+
+# Macrostrat lithology fetch (lsdtt-fetch-lithology), offline: tile maths, the
+# API parsers, the lith_primary rule, and a fetch from a committed synthetic
+# vector tile (tests/data/macrostrat_tiles). Skips (77) without GDAL's MVT driver.
+add_executable(lsdtt-test-macrostrat-fetch cpp/test_macrostrat_fetch.cpp)
+target_link_libraries(lsdtt-test-macrostrat-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-macrostrat-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_lithology
+         COMMAND lsdtt-test-macrostrat-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/macrostrat_tiles"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_lithology_work")
+lsdtt_set_tests_properties(unit_fetch_lithology PROPERTIES LABELS "unit;fetch" SKIP_RETURN_CODE 77)
+
+# OCTOPUS erosion-rate fetch (lsdtt-fetch-erosion-rates), offline: the WFS
+# request recipe (latitude-first bbox, hits then paging, never maxFeatures), the
+# sentinel predicate, the rate-field map, and reads of the committed WV
+# responses (tests/data/octopus_erosion_rates). No HTTP request is made.
+add_executable(lsdtt-test-octopus-fetch cpp/test_octopus_fetch.cpp)
+target_link_libraries(lsdtt-test-octopus-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-octopus-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_erosion_rates
+         COMMAND lsdtt-test-octopus-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/octopus_erosion_rates"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_erosion_rates_work")
+lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "unit;fetch")
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)
@@ -7953,7 +9027,7 @@ set(LSDTT_DOMAIN_RULES
     # sections, bankfull width and the water-body centreline are channel /
     # hydrography work; marsh platform and tidal channel extraction is landform
     # extraction, beside feature_finder.
-    "cross_sections|bankfull_width|water_centreline|water_line_repair|slope_area|outlet_matching|bearing_comparison" "network"
+    "cross_sections|bankfull_width|water_centreline|water_line_repair|slope_area|outlet_matching" "network"
     "marsh_topography"       "surface_metrics"
     "basin_stats"            "network"
     "junction_graph"         "network"
@@ -8044,6 +9118,20 @@ foreach(_test IN LISTS _lsdtt_tests)
     # seeing the CLI for the module it is named after.
     if(_test MATCHES "landslide" AND NOT _domains STREQUAL "landslide")
         list(APPEND _domains "landslide")
+    endif()
+
+    # Lithology cuts across compartments: the map readers live with the LEM,
+    # the Macrostrat fetch with fetch, and the analyses by lithologic unit with
+    # chi and network. `ctest -L lithology` reaches all of them.
+    if(_test MATCHES "lithology")
+        list(APPEND _domains "lithology")
+    endif()
+
+    # The erodibility calibration from basin erosion rates spans chi (the
+    # calibration maths and the sample reader) and fetch (the OCTOPUS rates).
+    # `ctest -L erodibility_calibration` runs the whole thread.
+    if(_test MATCHES "erodibility_calibration|erosion_rates")
+        list(APPEND _domains "erodibility_calibration")
     endif()
 
     if("${_test}" IN_LIST LSDTT_HEAVY_TESTS)

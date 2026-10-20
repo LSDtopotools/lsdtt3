@@ -1,0 +1,11 @@
+# lsdtt-lithology-erodibility on the draft property table that
+# smoke_chi_lithology_relative_erodibility wrote (n = 1), with the same DEM and
+# map: DEM + geologic map -> k_sn by unit -> K table -> K raster.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkrkk
+lithology_property_table_fname: ../smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_property_table_mn_0p450_n_1.txt
+write_output_format: gtiff
+lithology_fname: lithks_units.gpkg
+lithology_field_name: lith_primary
+dem_fname: lithks_steady_dem.tif

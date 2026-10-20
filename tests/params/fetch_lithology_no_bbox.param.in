@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithnobox
+
+# Deliberately gives only three edges: a missing edge must be a hard error,
+# never a zero that would fetch the Gulf of Guinea.
+west: 10.00
+south: 46.00
+east: 10.08
+macrostrat_tile_dir: macrostrat_tiles
+lookup_map_units: false

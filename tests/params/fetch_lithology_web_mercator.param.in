@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithmerc
+
+# Web Mercator distorts distances and is refused as an output CRS.
+west: 10.00
+south: 46.00
+east: 10.08
+north: 46.05
+output_epsg: 3857
+macrostrat_tile_dir: macrostrat_tiles
+lookup_map_units: false

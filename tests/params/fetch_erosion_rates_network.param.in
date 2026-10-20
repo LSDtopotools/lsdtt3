@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wvlive
+
+# The wvbig box (Allegheny Front, West Virginia): 5 basins intersect, 1 outlet.
+west: -79.80
+south: 38.85
+east: -79.05
+north: 39.15
+
+# Fail promptly rather than stalling a test run on an unresponsive host.
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 60

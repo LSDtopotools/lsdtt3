@@ -1109,4 +1109,230 @@ lsdtt_raster_cpu macrostrat_rasterise_faults(
         "macrostrat_rasterise_faults: not yet implemented");
 }
 
+// =============================================================================
+// rasterise_polygon_field_values
+// =============================================================================
+namespace
+{
+
+OGRLayer* open_layer_by_name_or_first(const std::string& path, const std::string& layer_name,
+                                      GDALDataset*& ds)
+{
+    return layer_name.empty() ? open_first_layer(path, ds) : open_named_layer(path, layer_name, ds);
+}
+
+struct polygon_feature
+{
+    std::unique_ptr<OGRGeometry> geom;   // in the raster CRS
+    std::int32_t value = -1;             // index into the sorted values
+    int row0 = 0, row1 = -1, col0 = 0, col1 = -1;
+};
+
+// Oversampled burn of one geometry over a coarse window; returns, per coarse
+// pixel of the window, the number of subcells covered (0..oversample^2).
+std::vector<std::uint16_t> coverage_counts(const lsdtt_raster_meta& meta, OGRGeometry* geom,
+                                           int row0, int col0, int rows, int cols, int os)
+{
+    double gt[6];
+    fill_window_geotransform(meta, row0, col0, os, gt);
+    GDALDataset* mem = make_mem_byte_raster(rows * os, cols * os, gt);
+    std::vector<OGRGeometry*> one{geom};
+    try { burn_geometries(mem, one, false); }
+    catch (...) { GDALClose(mem); throw; }
+    const std::vector<std::uint8_t> hi = read_byte_band(mem, rows * os, cols * os);
+    GDALClose(mem);
+    std::vector<std::uint16_t> out(static_cast<std::size_t>(rows) * cols, 0);
+    for (int r = 0; r < rows * os; ++r)
+        for (int c = 0; c < cols * os; ++c)
+            if (hi[static_cast<std::size_t>(r) * cols * os + c])
+                ++out[static_cast<std::size_t>(r / os) * cols + c / os];
+    return out;
+}
+
+} // namespace
+
+polygon_field_rasterise_result rasterise_polygon_field_values(
+    const lsdtt_raster_cpu& reference_raster, const std::string& vector_path,
+    const std::string& layer_name, const std::string& field_name, int oversample)
+{
+    const lsdtt_raster_meta& meta = reference_raster.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error("rasterise_polygon_field_values: reference raster metadata is invalid");
+    if (oversample <= 0)
+        throw std::runtime_error("rasterise_polygon_field_values: oversample must be > 0");
+
+    GDALDataset* ds = nullptr;
+    OGRLayer* layer = open_layer_by_name_or_first(vector_path, layer_name, ds);
+    std::unique_ptr<GDALDataset, void (*)(GDALDataset*)> ds_guard(
+        ds, [](GDALDataset* d) { if (d) GDALClose(d); });
+    const int field_index = layer->GetLayerDefn()->GetFieldIndex(field_name.c_str());
+    if (field_index < 0)
+    {
+        std::string names;
+        for (int i = 0; i < layer->GetLayerDefn()->GetFieldCount(); ++i)
+            names += std::string(i ? ", " : "") + layer->GetLayerDefn()->GetFieldDefn(i)->GetNameRef();
+        throw std::runtime_error("rasterise_polygon_field_values: field '" + field_name +
+                                 "' not found in " + vector_path + " (fields: " + names + ")");
+    }
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt,
+                                             k_crs_transform_failure);
+
+    polygon_field_rasterise_result out;
+    std::vector<polygon_feature> features;
+    std::vector<std::string> raw_values;
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr)
+    {
+        std::unique_ptr<OGRFeature, void (*)(OGRFeature*)> fg(feat, OGRFeature::DestroyFeature);
+        ++out.n_features_read;
+        OGRGeometry* geom = feat->GetGeometryRef();
+        std::string value;
+        if (!geom || !is_polygon_type(geom->getGeometryType()) ||
+            !get_string_field_value(feat, field_index, value))
+        {
+            ++out.n_features_skipped;
+            continue;
+        }
+        std::unique_ptr<OGRGeometry> clone(geom->clone());
+        if (ct && clone->transform(ct.get()) != OGRERR_NONE)
+        {
+            ++out.n_features_skipped;
+            continue;
+        }
+        polygon_feature pf;
+        OGREnvelope env;
+        clone->getEnvelope(&env);
+        if (!raster_window_from_envelope(meta, env, pf.row0, pf.row1, pf.col0, pf.col1))
+            continue;   // entirely off the grid
+        pf.geom = std::move(clone);
+        features.push_back(std::move(pf));
+        raw_values.push_back(value);
+    }
+
+    out.values = raw_values;
+    std::sort(out.values.begin(), out.values.end());
+    out.values.erase(std::unique(out.values.begin(), out.values.end()), out.values.end());
+    for (std::size_t f = 0; f < features.size(); ++f)
+        features[f].value = static_cast<std::int32_t>(
+            std::lower_bound(out.values.begin(), out.values.end(), raw_values[f]) - out.values.begin());
+
+    const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    const std::vector<std::uint8_t>& ref_mask = reference_raster.get_mask();
+    out.value_index.assign(npix, -1);
+
+    // 1. Cell-centre burn, one feature at a time over its own window.
+    for (const auto& pf : features)
+    {
+        const int rows = pf.row1 - pf.row0 + 1, cols = pf.col1 - pf.col0 + 1;
+        double gt[6];
+        fill_window_geotransform(meta, pf.row0, pf.col0, 1, gt);
+        GDALDataset* mem = make_mem_byte_raster(rows, cols, gt);
+        std::vector<OGRGeometry*> one{pf.geom.get()};
+        try { burn_geometries(mem, one, false); }
+        catch (...) { GDALClose(mem); throw; }
+        const std::vector<std::uint8_t> hit = read_byte_band(mem, rows, cols);
+        GDALClose(mem);
+        for (int r = 0; r < rows; ++r)
+            for (int c = 0; c < cols; ++c)
+            {
+                if (!hit[static_cast<std::size_t>(r) * cols + c]) continue;
+                const std::size_t i =
+                    static_cast<std::size_t>(pf.row0 + r) * meta.n_cols + (pf.col0 + c);
+                if (!ref_mask[i]) continue;
+                std::int32_t& v = out.value_index[i];
+                if (v < 0) v = pf.value;
+                else if (v != pf.value)
+                {
+                    ++out.n_overlap_pixels;
+                    v = std::min(v, pf.value);
+                }
+            }
+    }
+
+    // 2. Coverage gap fill for valid pixels whose centre fell in no polygon.
+    std::vector<std::uint8_t> unmapped(npix, 0);
+    std::size_t n_unmapped = 0;
+    for (std::size_t i = 0; i < npix; ++i)
+        if (ref_mask[i] && out.value_index[i] < 0) { unmapped[i] = 1; ++n_unmapped; }
+    if (n_unmapped > 0)
+    {
+        std::vector<std::vector<std::pair<std::int32_t, std::uint32_t>>> cover(npix);
+        constexpr int k_chunk = 512;   // bounds one burn at 512^2 * oversample^2 bytes
+        for (const auto& pf : features)
+            for (int r0 = pf.row0; r0 <= pf.row1; r0 += k_chunk)
+                for (int c0 = pf.col0; c0 <= pf.col1; c0 += k_chunk)
+                {
+                    const int rows = std::min(k_chunk, pf.row1 - r0 + 1);
+                    const int cols = std::min(k_chunk, pf.col1 - c0 + 1);
+                    bool any = false;
+                    for (int r = 0; r < rows && !any; ++r)
+                        for (int c = 0; c < cols && !any; ++c)
+                            any = unmapped[static_cast<std::size_t>(r0 + r) * meta.n_cols + c0 + c];
+                    if (!any) continue;
+                    const std::vector<std::uint16_t> cnt =
+                        coverage_counts(meta, pf.geom.get(), r0, c0, rows, cols, oversample);
+                    for (int r = 0; r < rows; ++r)
+                        for (int c = 0; c < cols; ++c)
+                        {
+                            const std::uint16_t k = cnt[static_cast<std::size_t>(r) * cols + c];
+                            const std::size_t i = static_cast<std::size_t>(r0 + r) * meta.n_cols + c0 + c;
+                            if (!k || !unmapped[i]) continue;
+                            auto& list = cover[i];
+                            auto it = std::find_if(list.begin(), list.end(),
+                                                   [&](const auto& e) { return e.first == pf.value; });
+                            if (it == list.end()) list.emplace_back(pf.value, k);
+                            else it->second += k;   // fragments of one value add up
+                        }
+                }
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (!unmapped[i]) continue;
+            std::int32_t best = -1;
+            std::uint32_t best_k = 0;
+            for (const auto& e : cover[i])
+                if (e.second > best_k || (e.second == best_k && e.first < best))
+                {
+                    best = e.first;
+                    best_k = e.second;
+                }
+            if (best >= 0)
+            {
+                out.value_index[i] = best;
+                ++out.n_gap_filled;
+            }
+            else
+                ++out.n_unmapped_valid;
+        }
+    }
+    return out;
+}
+
+polygon_layer_info read_polygon_layer_info(const std::string& vector_path,
+                                           const std::string& layer_name)
+{
+    GDALDataset* ds = nullptr;
+    OGRLayer* layer = open_layer_by_name_or_first(vector_path, layer_name, ds);
+    std::unique_ptr<GDALDataset, void (*)(GDALDataset*)> ds_guard(
+        ds, [](GDALDataset* d) { if (d) GDALClose(d); });
+    polygon_layer_info info;
+    OGREnvelope env;
+    if (layer->GetExtent(&env, TRUE) != OGRERR_NONE)
+        throw std::runtime_error("read_polygon_layer_info: cannot read the extent of " + vector_path);
+    info.x_min = env.MinX;
+    info.y_min = env.MinY;
+    info.x_max = env.MaxX;
+    info.y_max = env.MaxY;
+    if (const OGRSpatialReference* srs = layer->GetSpatialRef())
+    {
+        char* wkt = nullptr;
+        if (srs->exportToWkt(&wkt) == OGRERR_NONE && wkt) info.crs_wkt = wkt;
+        CPLFree(wkt);
+    }
+    for (int i = 0; i < layer->GetLayerDefn()->GetFieldCount(); ++i)
+        info.field_names.push_back(layer->GetLayerDefn()->GetFieldDefn(i)->GetNameRef());
+    info.n_features = layer->GetFeatureCount(TRUE);
+    return info;
+}
+
 } // namespace lsdtt

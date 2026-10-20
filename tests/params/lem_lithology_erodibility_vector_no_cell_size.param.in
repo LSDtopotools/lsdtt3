@@ -1,0 +1,7 @@
+# A vector cannot define a grid without cell_size_metres.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithknocs
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg

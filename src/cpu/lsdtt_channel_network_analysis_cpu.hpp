@@ -35,6 +35,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <limits>
 
@@ -213,6 +214,11 @@ struct lsdtt_channel_link_bearing
     double representative_x = std::numeric_limits<double>::quiet_NaN();
     double representative_y = std::numeric_limits<double>::quiet_NaN();
 
+    // The pixels the bearing was fitted on (the sampled sub-chain, in channel
+    // order; size == n_nodes_used). Not written to any output; kept so that
+    // per-record attributes (e.g. the lithologic unit) can be taken over
+    // exactly the nodes that set the bearing.
+    std::vector<std::int64_t> sampled_flats;
 
     bool empty() const noexcept
     {
@@ -294,8 +300,10 @@ struct lsdtt_junction_angle_record
     double donor_1_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
     double donor_2_receiver_angle_deg = std::numeric_limits<double>::quiet_NaN();
 
-    // Bending angle: signed and absolute angular offset between the inward
-    // receiver direction and the bisector of the donor opening angle.
+    // Bending angle (NOT Strong & Mudd's beta): the direction of the midpoint
+    // of the donor opening sector, measured from the inward receiver direction,
+    // bending_angle_signed = wrap(180 + (beta_1 - beta_2) / 2). A symmetric
+    // junction (beta_1 = beta_2) therefore reads +/-180. abs is |signed|.
     double bending_angle_signed_rad = std::numeric_limits<double>::quiet_NaN();
     double bending_angle_abs_rad    = std::numeric_limits<double>::quiet_NaN();
 
@@ -322,6 +330,14 @@ struct lsdtt_junction_angle_record
     double donor_1_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
     double donor_2_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
     double receiver_sampled_length_metres = std::numeric_limits<double>::quiet_NaN();
+
+    // The pixels each arm's bearing was fitted on, in channel order: donors
+    // sampled at their downstream end (ending at the junction), the receiver at
+    // its upstream end (starting at the junction). size == *_nodes_used. Not
+    // written to any output.
+    std::vector<std::int64_t> donor_1_sampled_flats;
+    std::vector<std::int64_t> donor_2_sampled_flats;
+    std::vector<std::int64_t> receiver_sampled_flats;
 
     bool empty() const noexcept
     {
@@ -363,8 +379,12 @@ struct lsdtt_junction_angle_record
 //   bending_angle_abs
 //
 // These are NEW derived diagnostics and are not part of the original
-// alpha / beta_1 / beta_2 set. They describe the offset between the inward
-// receiver direction and the bisector of the donor opening angle.
+// alpha / beta_1 / beta_2 set, and bending_angle is NOT Strong & Mudd's beta.
+// It is the direction of the midpoint of the donor opening sector, measured
+// from the inward receiver direction:
+//   bending_angle_signed = wrap(180 + (beta_1 - beta_2) / 2)
+// so a symmetric junction (beta_1 = beta_2) reads +/-180. The columns are
+// written unchanged and are kept out of the statistics.
 //
 // donor_1 and donor_2 are stable implementation labels only; they should not
 // be interpreted as left/right tributaries unless an additional geometric
@@ -390,6 +410,20 @@ std::vector<lsdtt_junction_angle_record> calculate_junction_angles(
 // We use point_output_format here so that csv remains available as an option.
 // For non-csv formats, gpkg/fgb are converted internally to vector output.
 // -----------------------------------------------------------------------------
+// Optional per-record columns appended after every standard column of the
+// record writers below (e.g. the lithologic unit of each record). names are the
+// CSV headers, vector_names the attribute names in vector outputs (kept to 10
+// characters for shapefiles), values[i] the values for records[i] (same order
+// as the records, empty records included). nullptr = no extra columns, and the
+// output is exactly what it was without the argument.
+struct lsdtt_channel_record_extra_columns
+{
+    std::vector<std::string> names;
+    std::vector<std::string> vector_names;
+    std::vector<lsdtt_vector_field_type> types;
+    std::vector<std::vector<lsdtt_vector_field_value>> values;
+};
+
 void write_channel_link_bearings(
     const std::vector<lsdtt_channel_link_bearing>& records,
     const lsdtt_flow_base&                         flow,
@@ -397,7 +431,8 @@ void write_channel_link_bearings(
     const std::string&                             out_path,
     point_output_format                            format,
     const std::string&                             layer_name = "channel_link_bearings",
-    bool                                           spatial_index = true
+    bool                                           spatial_index = true,
+    const lsdtt_channel_record_extra_columns*      extra = nullptr
 );
 
 // -----------------------------------------------------------------------------
@@ -414,7 +449,8 @@ void write_junction_angle_data(
     const std::string&                              out_path,
     point_output_format                             format,
     const std::string&                              layer_name = "junction_angles",
-    bool                                            spatial_index = true
+    bool                                            spatial_index = true,
+    const lsdtt_channel_record_extra_columns*       extra = nullptr
 );
 
 
