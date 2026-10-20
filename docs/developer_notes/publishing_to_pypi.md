@@ -258,8 +258,10 @@ tag it**, build, and upload to TestPyPI (step 5 above). That catches most
 
 ## Route B: publishing from GitHub Actions
 
-`.github/workflows/python-wheels.yml` builds and tests wheels on four platform
-legs for one existing tag (its `tag` input: `vX.Y.Z` or `vX.Y.Z.postN`), and
+`.github/workflows/python-wheels.yml` builds and tests wheels for one existing
+tag (its `tag` input: `vX.Y.Z` or `vX.Y.Z.postN`), on Linux only or on all four
+platform legs (its `platforms` input, `linux` by default; see
+[A Linux-only wheel build](building_python_wheels.md#a-linux-only-wheel-build-the-cheap-one)), and
 can upload them to the `vX.Y.Z` GitHub release (its `upload` input). It never
 bumps a version, commits or tags. **It does not upload to PyPI** — there is no
 `twine` step and no token. Adding one is a small change.
@@ -323,16 +325,18 @@ building the wheels does.
 
 | | Route A (twine) | Route B (Actions) |
 |---|---|---|
-| Actions minutes | none | the full wheel matrix |
-| Platforms | Linux only, unless you own Macs and Windows boxes | Linux, macOS ARM, macOS Intel, Windows |
+| Actions minutes | none | one Linux runner (`platforms: linux`), or the full matrix with macOS at 10× and Windows at 2× (`all`) |
+| Platforms | Linux only, unless you own Macs and Windows boxes | Linux only, or Linux, macOS ARM, macOS Intel, Windows |
 | Python versions | whatever you tell cibuildwheel to build | cp310–cp314 |
 | Credentials | a token on your machine | OIDC, nothing stored |
 | Tag and GitHub release | you tag; `gh release upload` | you tag; the workflow can upload |
 | Pre-upload testing | you run it | `test-command` runs against every wheel |
 
-**Route B for real releases**, because Linux-only wheels leave most users
-building from source, and because the per-wheel test suite runs there. **Route
-A when you want a Linux release without spending minutes**, or to rehearse on
+**Route B with `platforms: all` for releases that should reach every user**:
+with no source distribution, a Linux-only release leaves macOS and Windows
+users with nothing to install. **Route B with `platforms: linux`** is the cheap
+middle ground, with the per-wheel test suite still run on GitHub. **Route A when
+you want a Linux release without spending minutes**, or to rehearse on
 TestPyPI.
 
 ---

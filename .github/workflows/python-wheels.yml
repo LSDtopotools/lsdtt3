@@ -1,6 +1,8 @@
 name: Build Python wheels
 
-# Builds the 20-wheel matrix for ONE existing lsdtt3 tag. Run by hand, and only
+# Builds wheels for ONE existing lsdtt3 tag: Linux only (5 wheels, the cheap
+# choice) or every platform (20 wheels; macOS runners bill at 10x and Windows
+# at 2x the Linux rate on a private repository). Run by hand, and only
 # for releases where the Python API is supported: lsdtt3 has one version number,
 # but not every vX.Y.Z gets wheels. This workflow never bumps a version, commits
 # or tags; tags are made by the maintainer (vX.Y.Z, or vX.Y.Z.postN for a
@@ -13,6 +15,14 @@ on:
         description: Tag to build (vX.Y.Z or vX.Y.Z.postN)
         required: true
         type: string
+      platforms:
+        description: Which wheels to build (linux = Linux x86_64 only; all = Linux, macOS ARM64 and Intel, Windows)
+        required: true
+        type: choice
+        options:
+          - linux
+          - all
+        default: linux
       upload:
         description: Upload the wheels to the GitHub release vX.Y.Z (otherwise they stay workflow artefacts)
         required: true
@@ -33,6 +43,7 @@ jobs:
     outputs:
       sha: ${{ steps.source.outputs.sha }}
       release: ${{ steps.source.outputs.release }}
+      matrix: ${{ steps.platforms.outputs.matrix }}
 
     steps:
       - uses: actions/checkout@v5
@@ -66,6 +77,35 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
           echo "release=v${stem}" >> "${GITHUB_OUTPUT}"
 
+      # The build matrix is chosen here rather than skipped per job: a matrix
+      # job that is skipped still starts a runner, and a macOS runner bills at
+      # 10x even for that.
+      - name: Choose the platforms to build
+        id: platforms
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          release = 'CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON'
+          legs = [
+              {"name": "Linux x86_64", "os": "ubuntu-24.04", "arch": "x86_64",
+               "environment": release + '"'},
+              {"name": "macOS ARM64", "os": "macos-15", "arch": "arm64",
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'},
+              {"name": "macOS Intel", "os": "macos-15-intel", "arch": "x86_64",
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'},
+              {"name": "Windows x86_64", "os": "windows-2025", "arch": "AMD64",
+               "environment": release + ' -DLSDTT_PYTHON_OPENMP=OFF '
+                              '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"'},
+          ]
+          if os.environ["PLATFORMS"] == "linux":
+              legs = legs[:1]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("matrix=" + json.dumps({"include": legs}) + "\n")
+          print("Building:", ", ".join(leg["name"] for leg in legs))
+          PY
+
       - name: Check API contracts and documentation
         run: |
           python -m pip install \
@@ -82,24 +122,7 @@ jobs:
     needs: prepare-release
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            arch: x86_64
-            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
-          - name: macOS ARM64
-            os: macos-15
-            arch: arm64
-            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
-          - name: macOS Intel
-            os: macos-15-intel
-            arch: x86_64
-            environment: MACOSX_DEPLOYMENT_TARGET=15.0 CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"
-          - name: Windows x86_64
-            os: windows-2025
-            arch: AMD64
-            environment: CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON -DLSDTT_PYTHON_OPENMP=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      matrix: ${{ fromJSON(needs.prepare-release.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
 
@@ -181,4 +204,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release view "${RELEASE}" >/dev/null
-          gh release upload "${RELEASE}" release-assets/*.whl
+          # --clobber: a later "all" run for the same tag replaces the Linux
+          # wheels a "linux" run already attached (same tag, same source).
+          gh release upload --clobber "${RELEASE}" release-assets/*.whl
