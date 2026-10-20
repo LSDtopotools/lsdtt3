@@ -41,11 +41,11 @@ the full parameter lists are in the CLI reference pages.
 
 ### Which CLIs the backend needs
 
-The plugin uses the eight CLIs in the table. The `qgis` backend bundle ships
+The plugin uses the nine CLIs in the table. The `qgis` backend bundle ships
 exactly these (the `qgis` profile in `tools/cli_profiles.txt`).
 
 - **When you save a backend folder** in `lsdtt3 -> LSDTT Backend Settings`,
-  the plugin checks for all eight and warns, naming every one that is missing.
+  the plugin checks for all nine and warns, naming every one that is missing.
   The folder is still saved.
 - **When you run an algorithm**, only that algorithm's CLI must be present.
   An older bundle still runs the algorithms it has; the others stop before
@@ -200,13 +200,12 @@ bundle before running algorithms.
 
 ### Recommended (Windows): use packaged backend zip
 
-1. Build/package backend (developer side):
-
-```powershell
-.\tools\package_windows_backend.ps1 -Version <version>
-```
-
-2. Share and unzip `dist/lsdtt3-backend-win64-qgis-v<version>.zip`.
+1. Download `lsdtt3-backend-win64-qgis-v<version>.zip` from the same release
+   as the plugin (the plugin and backend must share major.minor; see
+   [Versioning](#versioning-plugin-and-backend)). Developers build it with
+   `.\tools\package_windows_backend.ps1 -Version <version>` (see
+   `tools/README.md`).
+2. Unzip it.
 3. In a PowerShell session, load runtime env vars:
 
 ```powershell
@@ -216,6 +215,10 @@ cd C:\path\to\lsdtt3-backend-win64-qgis-v<version>
 ```
 
 If `--version` works, the backend is ready.
+
+On Linux, use the Linux backend package
+(`lsdtt3-backend-linux-x86_64-core-v<version>.tar.gz`) instead: unpack it and
+point the plugin at the unpacked folder.
 
 ### Point plugin to backend folder
 

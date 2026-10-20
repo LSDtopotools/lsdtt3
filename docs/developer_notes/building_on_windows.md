@@ -191,6 +191,14 @@ give real OpenMP 3.1+, but it switches the runtime from `vcomp140.dll` to
 `libomp140.x86_64.dll`, which `package_windows_backend.ps1` does not bundle —
 so that is a deliberate change, not a flag flip.
 
+To build a **release tag** rather than your working tree, let the packaging
+script export, configure and build it in a scratch folder (this configure line,
+the `qgis` profile's targets, then packaging):
+
+```powershell
+.\tools\package_windows_backend.ps1 -Version 0.7.0 -Tag v0.7.0
+```
+
 ### 4. Verify
 
 ```powershell

@@ -39,8 +39,15 @@ first. On Ubuntu:
 sudo apt install cmake g++ pkg-config libgdal-dev libfftw3-dev \
                  libnetcdf-dev libeigen3-dev
 python -m pip install --upgrade pip cibuildwheel
-python -m cibuildwheel python_bindings --output-dir wheelhouse
+CIBW_CONTAINER_ENGINE=podman CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28 \
+    python -m cibuildwheel python_bindings --output-dir wheelhouse
 ```
+
+On Linux `cibuildwheel` builds inside the manylinux container, and it uses
+Docker unless told otherwise. This project does not use Docker: set
+`CIBW_CONTAINER_ENGINE=podman` (`sudo apt install podman`).
+`tools/make_all_packages.sh --only wheel` does all of this for you, for one
+Python version, from a tag.
 
 `cibuildwheel` will build one wheel per supported Python version, which takes
 a while. To build a single wheel for the interpreter you already have, bypass

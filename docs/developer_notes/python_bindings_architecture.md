@@ -239,15 +239,15 @@ LD_PRELOAD=$E/lib/libstdc++.so.6 $E/bin/python -m pytest -q python_bindings/test
 
 The contract tools in the next section run the same way.
 
-**Python version and `public_api.json`.** The packaging environment's Python is
-3.13, which dedents docstrings at compile time. A few exports whose `__doc__` is
-assembled at runtime from a template plus the class docstring
-(`GraphFloodInducedResult`, `GraphFloodMultigridResult`,
-`run_graphflood_induced`, `run_graphflood_multigrid`, `helper_for_llm`) therefore
-render with different indentation than under 3.12, and
-`generate_public_api_manifest.py --update` rewrites them. Keep the committed text
-for those entries; `test_public_api_manifest` reports them under 3.13+ until the
-template is made version-independent.
+**Python version and `public_api.json`.** The manifest is the same whichever
+Python generates it. Python 3.13 dedents docstrings at compile time, so
+`__init__.py` normalises each docstring it pastes into a generated one
+(`_notes_block()`), and the generator writes every union annotation as `A | B`
+(3.14 prints `str | Callable[...]` where earlier versions print
+`Union[str, Callable[...]]`). The whole `python_bindings/tests` suite passes on
+3.12 and 3.14. If a new runtime-assembled docstring makes
+`test_public_api_manifest` differ between versions, fix the assembly rather than
+the committed manifest.
 
 Release wheels are unaffected by any of this: `tools/make_all_packages.sh` with
 podman, and `python-wheels.yml`, build inside the manylinux container with its

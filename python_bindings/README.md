@@ -4,10 +4,20 @@
 
 ## Install
 
-From the repository root:
+```bash
+python -m pip install lsdtt3
+```
+
+Wheels bundle GDAL and PROJ, and also install the lsdtt3 command-line tools as
+commands. Install into a virtual, conda or pixi environment rather than your
+system Python. See "Versioning" below for why some lsdtt3 versions have no
+wheel.
+
+To install from a clone of the repository instead (needs a C++17 compiler,
+CMake and the GDAL development files), from the repository root:
 
 ```bash
-python -m pip install --no-build-isolation --force-reinstall -e ./python_bindings
+python -m pip install ./python_bindings
 ```
 
 ## Quickstart
@@ -43,7 +53,7 @@ grid metadata, values, and nodata masks. Analysis is deliberately functional:
 operations accept rasters and return new rasters rather than wrapping CLI
 parameter files or mutating inputs.
 
-See [Python bindings architecture and API contracts](../docs/developer_notes/python_bindings_architecture.md)
+See [Python bindings architecture and API contracts](https://github.com/LSDtopotools/lsdtt3/blob/main/docs/developer_notes/python_bindings_architecture.md)
 for the backend/API distinction, contract manifests, extension workflow, and
 verification commands.
 

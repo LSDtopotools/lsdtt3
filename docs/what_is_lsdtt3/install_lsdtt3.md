@@ -24,13 +24,18 @@ Both of these hold the same files. Use whichever you can reach.
 File names look like this:
 
 ```
-lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.5.1.zip               Windows (native)
+lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz     Linux
+lsdtt3-backend-win64-qgis-v0.6.0.zip               Windows (native)
+lsdtt3-qgis-plugin-0.7.0.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 
 `core` and `qgis` are **profiles** — which set of command-line tools the
 package contains. `core` is the general-purpose set; `qgis` is the smaller
 subset the QGIS plugin drives.
+
+> lsdtt3 has **one version number** for everything: the command-line tools,
+> the backend packages, the QGIS plugin and the Python package. Files from the
+> same release go together.
 
 > **The version numbers on this page are examples and will go stale.** Every
 > command below spells out a version because a bare filename would not work,
@@ -51,6 +56,8 @@ subset the QGIS plugin drives.
 |---|---|
 | On my own computer | continue to question 2 |
 | In a browser, with nothing installed | [Google Colab](#google-colab) |
+| Inside QGIS | [QGIS plugin](#qgis-plugin) (plus a backend package from question 2) |
+| From Python scripts | [Python package](#python-package) |
 
 **2. What is your computer running?**
 
@@ -70,14 +77,14 @@ This is the main way to install, and in other operating systems you just end up 
 ### 1. Download and unpack
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
 ```
 
 ### 2. Activate it
 
 ```bash
-source lsdtt3-backend-linux-x86_64-core-v0.5.1/setenv.sh
+source lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh
 ```
 
 `setenv.sh` must be **`source`d**, not run with `bash`. All it does is export
@@ -99,7 +106,7 @@ in every new terminal, append the same line, with the **full** path, to the
 end of your `~/.bashrc`:
 
 ```bash
-echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.5.1/setenv.sh" >> ~/.bashrc
+echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh" >> ~/.bashrc
 ```
 
 ### What you need
@@ -158,10 +165,10 @@ Follow [Linux package](#linux-package) inside the Ubuntu terminal.
 
 If you downloaded the tarball with a Windows browser it is on your Windows
 disk, which WSL2 mounts under `/mnt/`. A file at
-`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz` is:
+`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz` is:
 
 ```
-/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
+/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
 ```
 
 You will need to update this path unless your username is Alice.
@@ -223,7 +230,7 @@ WSL2 is unavailable on a managed machine — use [WSL2](#windows-via-wsl2).
 Unzip it, then in PowerShell:
 
 ```powershell
-cd lsdtt3-backend-win64-qgis-v0.5.1
+cd lsdtt3-backend-win64-qgis-v0.6.0
 . .\setenv.ps1
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
@@ -235,7 +242,8 @@ Note the leading `. ` (dot, space) — like `source` on Linux, it runs
 
 ## macOS
 
-**There is no macOS package yet.** One is planned; until then, run the Linux
+**There is no macOS package yet.** The packaging script exists but has not been
+tested on real hardware, so none is published. Until then, run the Linux
 package inside a lightweight Ubuntu virtual machine using
 [Multipass](https://multipass.run), which Canonical maintain for exactly this.
 
@@ -267,8 +275,8 @@ installed on your own machine at all. Two things differ from a normal terminal.
 Download and unpack in a code cell (`!` runs a shell command):
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
-!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz
+!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
 ```
 
 **Or get the URL from https://www.geos.ed.ac.uk/~smudd/lsdtt_packages** 
@@ -280,7 +288,7 @@ Python instead, once per session:
 ```python
 import os
 
-root = "/content/lsdtt3-backend-linux-x86_64-core-v0.5.1"
+root = "/content/lsdtt3-backend-linux-x86_64-core-v0.6.0"
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
 os.environ["GDAL_DATA"] = f"{root}/share/gdal"
@@ -299,6 +307,62 @@ cells next time, and anything you want to keep must be copied to Google Drive.
 
 ---
 
+## QGIS plugin
+
+The plugin adds an **lsdtt3** group to the QGIS Processing Toolbox. It runs the
+command-line tools, so it needs a backend package as well:
+
+1. Install a backend package for your system: the
+   [Windows native package](#windows-native-package) on Windows, or the
+   [Linux package](#linux-package) on Linux.
+2. Download `lsdtt3-qgis-plugin-<version>.zip` from the same release.
+3. In QGIS: **Plugins → Manage and Install Plugins… → Install from ZIP**, and
+   choose the zip.
+4. Open **lsdtt3 → LSDTT Backend Settings** and select the backend package's
+   root folder (the one containing `bin/`, `share/` and `manifest.json`).
+
+**The plugin and the backend must come from the same `X.Y` series**: plugin
+0.7.x works with any 0.7.x backend. A mismatch is refused before anything
+runs, with a message saying whether to update the plugin or the backend.
+Plugins up to 0.4.0 predate this rule; if one reports that the backend
+"supports plugin versions …", update the plugin.
+
+To update either, repeat its install step: **Install from ZIP** replaces the
+plugin in place, and a new backend goes in a new folder, which you then select
+in the settings.
+
+---
+
+## Python package
+
+The `lsdtt3` Python package wraps the same C++ code for use from scripts and
+notebooks, keeping rasters and results in memory instead of files. It shares
+the lsdtt3 version number, but **wheels are not built for every release**: only
+for releases where the Python API is supported, so a version missing from PyPI
+or from a release page is expected.
+
+**It is not on PyPI yet** while the repository is in private beta. When a
+release has wheels, they are attached to its GitHub release; install the one
+for your Python and platform:
+
+```bash
+python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
+```
+
+The wheel is self-contained: it bundles GDAL and PROJ, and also installs the
+command-line tools as commands. Install it into a virtual environment, conda
+or pixi environment, not into your system Python. Check what you have with:
+
+```bash
+python -c "import lsdtt3; print(lsdtt3.__version__, lsdtt3._core.lsdtt3_version())"
+```
+
+To use the Python package from unreleased code, build it from a clone; see
+[`docs/developer_notes/building_python_wheels.md`](../developer_notes/building_python_wheels.md).
+The [Python guide](../python/index.md) shows what to do once it is installed.
+
+---
+
 ## What is inside a package
 
 | Path | Contents |
@@ -306,9 +370,11 @@ cells next time, and anything you want to keep must be copied to Google Drive.
 | `bin/` | the `lsdtt-*` command-line tools |
 | `lib/` | every shared library they need (GDAL, PROJ, …) |
 | `share/gdal`, `share/proj` | support data those libraries read at runtime |
+| `share/lsdtt3` | lsdtt3's own data (the cosmogenic-nuclide parameter file) |
 | `setenv.sh` / `setenv.ps1` | sets `PATH` and the library/data variables |
 | `manifest.json` | version and a SHA256 checksum of every file |
 | `README.md` | the same instructions, offline |
+| `LICENSE`, `THIRD_PARTY_NOTICES.txt` | the AGPL licence, and the licences of the bundled libraries |
 
 Nothing is installed system-wide. To uninstall, delete the folder (and the
 `source` line from `~/.bashrc` if you added one).
@@ -351,7 +417,9 @@ bundled next to the binary always wins over `PROJ_DATA`, `PROJ_LIB` or
 not have to source `setenv.sh` for the tools to find their own data — that
 matters in places like Google Colab where each `!` line is a separate shell.
 
-**Check what is actually in use** with any tool's `-v`:
+**Check what is actually in use** with any tool's `-v` (shown here as
+0.7.0 and later print it; the first line names the lsdtt3 version and whether
+the tool is `stable` or `experimental`):
 
 ```bash
 lsdtt-raster-preprocessing -v
