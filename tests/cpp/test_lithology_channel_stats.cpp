@@ -1103,6 +1103,12 @@ void test_relative_known_answer(float m_exp, float n_exp, const relk_pins& pa, c
     const std::string tag = "R4 n = " + fmt(n_exp) + ": ";
     std::cout << "-- R4 relative erodibility on the steady state, m = " << m_exp << ", n = " << n_exp << " --\n";
     const double mn = static_cast<double>(m_exp) / n_exp;
+    // Caps scale with n (Simon, 2026-10-20): K and K/K_ref are k_sn^-n, so the
+    // k_sn error is multiplied by n. A pin may not exceed n x (1 % ratio, 2 % K).
+    const double cap_ratio = 0.01 * n_exp, cap_K = 0.02 * n_exp;
+    check(tag + "pins within n x caps (ratio " + fmt(cap_ratio) + ", K " + fmt(cap_K) + ")",
+          pa.tol_ratio <= cap_ratio && pb.tol_ratio <= cap_ratio &&
+          pa.tol_K <= cap_K && pb.tol_K <= cap_K);
     check_relative_answer(tag + "layout A: ", make_steady(m_exp, n_exp), mn, n_exp, pa);
     check_relative_answer(tag + "layout B: ", make_steady(m_exp, n_exp, contact_layout::cross_strike), mn, n_exp, pb);
 }
@@ -1361,7 +1367,8 @@ int main(int argc, char* argv[])
     //   n = 2, A: ratio 0.887 %, K west 3.426 %, K east 2.570 %
     //   n = 2, B: ratio 0.770 %, K west 2.342 %, K east 3.088 %
     // K and K/K_ref are k_sn^-n, so the reach-median error is multiplied by n.
-    // Pins: twice the measured error, capped at n times the median caps (1 %
+    // Pins (caps scaling with n decided by Simon 2026-10-20, enforced in
+    // test_relative_known_answer): twice the measured error, capped at n times the median caps (1 %
     // on a ratio, 2 % absolute): n = 1 ratio 0.9 % (A) / 0.8 % (B), K 2 % (the
     // cap); n = 2 ratio 1.8 % / 1.6 %, K 4 % (the n-scaled cap).
     test_relative_known_answer(0.45f, 1.0f, {0.009, 0.02}, {0.008, 0.02});

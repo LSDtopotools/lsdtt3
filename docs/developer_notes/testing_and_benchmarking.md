@@ -5338,8 +5338,9 @@ K and K/K_ref are powers -n of the reach medians, so the median errors (above) a
 multiplied by n. The pins are twice the measured error, capped at n times the median
 caps (1 % on a ratio, 2 % absolute): K for n = 1 sits at the 2 % cap, K for n = 2 at
 4 %, and the n = 2 ratios at 1.8 % and 1.6 %, above the 1 % median-ratio cap.
-These tolerances were accepted as pinned (2026-10-19): twice the measured error,
-capped at n times the caps. The
+Decision (2026-10-20): the caps scale with n (n x 1 % on a ratio, n x 2 % on K),
+because the error is the k_sn error raised to the power n; the k_sn caps are unchanged.
+The driver checks that every relative-K pin is within n x the caps. The
 K intervals (1000 replicates by reach) do not contain the generating K: for n = 1,
 layout A, K west [9.760e-06, 9.877e-06] against 1e-5; the reach medians are biased
 high by the rectangle-versus-trapezoid chi difference above, and the bootstrap
