@@ -340,4 +340,121 @@ void declare_synthetic_noise_parameters(
     lsdtt_help_registry&                help_map,
     const std::string&                  prefix = "");
 
+// -----------------------------------------------------------------------------
+// Fetch tools (lsdtt-fetch-raster, lsdtt-fetch-lithology)
+//
+// declare_fetch_bbox_parameters: west, east, south, north (WGS84 degrees, as
+//   strings so the parser keeps double precision).
+// declare_fetch_bounds_file_parameters: bounds_fname, bounds_path, bounds_layer.
+// declare_http_request_parameters: http_timeout_seconds,
+//   http_connect_timeout_seconds, http_max_retry.
+// -----------------------------------------------------------------------------
+void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
+                                   lsdtt_help_registry&                help_map);
+void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& string_default_map,
+                                          lsdtt_help_registry&                help_map);
+void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
+                                     lsdtt_help_registry&        help_map);
+
+// -----------------------------------------------------------------------------
+// Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)
+//
+// declare_lithology_map_parameters: lithology_fname, lithology_source,
+//   lithology_layer_name, lithology_field_name, lithology_crosswalk_fname. The
+//   help states the codes-only rules of read_lithology_units_on_grid; a CLI
+//   with extra rules (lsdtt-lithology-erodibility's table-name matching)
+//   overwrites the guidance element [3] after the call.
+// declare_write_lithology_code_raster_parameter: write_lithology_code_raster
+//   (default true; analysis CLIs overwrite the default to false).
+// -----------------------------------------------------------------------------
+void declare_lithology_map_parameters(std::map<std::string, std::string>& string_default_map,
+                                      lsdtt_help_registry&                help_map,
+                                      const std::string&                  prefix = "");
+void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& bool_default_map,
+                                                   lsdtt_help_registry&         help_map,
+                                                   const std::string&           prefix = "");
+
+// -----------------------------------------------------------------------------
+// Channel region input (grouping channel statistics by user-drawn regions)
+//
+// declare_channel_region_parameters: channel_region_fname,
+//   channel_region_source, channel_region_layer_name, channel_region_field_name.
+//   Regions are read like a lithology map (polygon vector or integer code
+//   raster). Used by lsdtt-channel-network-analysis to group link bearings and
+//   junction angles by region.
+// -----------------------------------------------------------------------------
+void declare_channel_region_parameters(std::map<std::string, std::string>& string_default_map,
+                                       lsdtt_help_registry&                help_map,
+                                       const std::string&                  prefix = "");
+
+// -----------------------------------------------------------------------------
+// Lithology summaries (per-unit statistics of channel metrics)
+//
+// Split into three so that no CLI advertises a key it does not use.
+//
+// declare_lithology_ksn_summary_parameters: lithology_contact_buffer_metres
+//   (float 0), lithology_min_reach_pixels (int 10), lithology_bootstrap_cluster
+//   (string "reach"). Per-unit k_sn summaries (lsdtt-chi-analysis).
+// declare_lithology_network_summary_parameters: lithology_min_majority_fraction
+//   (float 0.8). Per-unit link / junction statistics
+//   (lsdtt-channel-network-analysis).
+// declare_lithology_bootstrap_parameters: lithology_bootstrap_replicates
+//   (int 1000), lithology_bootstrap_random_seed (int 5489). Shared by both.
+// -----------------------------------------------------------------------------
+void declare_lithology_ksn_summary_parameters(std::map<std::string, float>&       float_default_map,
+                                              std::map<std::string, int>&         int_default_map,
+                                              std::map<std::string, std::string>& string_default_map,
+                                              lsdtt_help_registry&                help_map,
+                                              const std::string&                  prefix = "");
+void declare_lithology_network_summary_parameters(std::map<std::string, float>& float_default_map,
+                                                  lsdtt_help_registry&          help_map,
+                                                  const std::string&            prefix = "");
+void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          prefix = "");
+
+// -----------------------------------------------------------------------------
+// Erosion-rate samples and erodibility calibration (stream-power K from
+// basin-averaged erosion rates; lsdtt_erodibility_calibration_cpu)
+//
+// declare_erosion_rate_input_parameters (group "Erosion-rate samples"):
+//   erosion_rate_fname, erosion_rate_layer_name,
+//   erosion_rate_sample_id_column, erosion_rate_latitude_column,
+//   erosion_rate_longitude_column, erosion_rate_column,
+//   erosion_rate_uncertainty_column, erosion_rate_units (required, no
+//   default), erosion_rate_reported_area_column, erosion_rate_snapping_method,
+//   erosion_rate_snap_max_distance_metres, erosion_rate_area_mismatch_tolerance,
+//   erosion_rate_area_mismatch_action, erosion_rate_nested_basins.
+// declare_erodibility_calibration_parameters (group "Erodibility calibration"):
+//   erosion_rate_ksn_statistic, erosion_rate_min_reach_pixels,
+//   erosion_rate_min_reaches_per_basin, erosion_rate_fit_n,
+//   erosion_rate_min_groups_for_n_fit, erosion_rate_min_ksn_range_ratio,
+//   erosion_rate_mono_lithology_min_area_fraction,
+//   erosion_rate_min_unit_reaches_per_basin, erosion_rate_unit_k_methods,
+//   erosion_rate_property_table_method,
+//   erosion_rate_systematic_relative_uncertainty,
+//   erosion_rate_bootstrap_replicates, erosion_rate_bootstrap_random_seed,
+//   write_erodibility_calibration_basin_polygons,
+//   write_erodibility_calibration_property_table.
+// Every key is effective only with erosion_rate_fname. The list of n values
+// is not declared here.
+// -----------------------------------------------------------------------------
+// declare_stream_power_n_values_parameter: stream_power_n_values (string "1"),
+// the slope exponent(s) n shared by relative erodibility and the erodibility
+// calibration in lsdtt-chi-analysis (relative_erodibility_n_values is its
+// deprecated alias there).
+void declare_stream_power_n_values_parameter(std::map<std::string, std::string>& string_default_map,
+                                             lsdtt_help_registry&                help_map,
+                                             const std::string&                  prefix = "");
+void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
+                                           std::map<std::string, std::string>& string_default_map,
+                                           lsdtt_help_registry&                help_map,
+                                           const std::string&                  prefix = "");
+void declare_erodibility_calibration_parameters(std::map<std::string, bool>&        bool_default_map,
+                                                std::map<std::string, int>&         int_default_map,
+                                                std::map<std::string, float>&       float_default_map,
+                                                std::map<std::string, std::string>& string_default_map,
+                                                lsdtt_help_registry&                help_map,
+                                                const std::string&                  prefix = "");
+
 } // namespace lsdtt

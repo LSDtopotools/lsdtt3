@@ -8,10 +8,18 @@ param(
     [string]$Version,
 
     [string]$BuildDir = "build/windows-qgis",
+
+    # Build this tag instead of packaging an existing build: export it with
+    # git archive into a scratch tree, configure and build the profile's CLIs
+    # there (the configure line in tools/README.md), then package that build.
+    # Must match -Version. -BuildDir is ignored.
+    [string]$Tag = "",
     [string]$OutDir = "dist",
     [string]$VcpkgRoot = "$env:USERPROFILE/tools/vcpkg",
     [string]$Triplet = "x64-windows",
-    [string]$PluginVersionRange = ">=0.1.0 <0.5.0",
+    # Default: the version's X.Y series, ">=X.Y.0 <X.(Y+1).0" (a plugin X.Y.*
+    # accepts a backend X.Y.*).
+    [string]$PluginVersionRange = "",
 
     # CLI set to package: qgis / core (from tools/cli_profiles.txt) or all
     # (every lsdtt-*.exe in the build directory, excluding lsdtt-test-*).
@@ -39,6 +47,37 @@ $ErrorActionPreference = "Stop"
 # ---------------------------------------------------------------------------
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRootEarly = (Resolve-Path (Join-Path $scriptDir "..")).Path
+# Outputs always land in the checkout this script was run from.
+$outputRoot = $repoRootEarly
+
+# -Tag: build exactly what the tag contains, as make_all_packages.sh --clean
+# does on Linux. The export has no .git, so the binaries report the plain
+# release version. From here on $repoRootEarly is the exported tree: the
+# version check, the CLI list and the bundled data files come from the tag.
+$tagSource = ""
+if ($Tag) {
+    if ($Tag -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+)$') {
+        throw "-Tag must look like vX.Y.Z, got '$Tag'"
+    }
+    if ($Matches[1] -ne $Version) {
+        throw "-Tag $Tag does not match -Version $Version"
+    }
+    & git -C $repoRootEarly rev-parse --verify --quiet "refs/tags/$Tag" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "no such tag: $Tag"
+    }
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("lsdtt3-win-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    $tagSource = Join-Path $scratch "src"
+    New-Item -ItemType Directory -Force -Path $tagSource | Out-Null
+    $archive = Join-Path $scratch "src.tar"
+    Write-Host "Exporting $Tag to $tagSource"
+    & git -C $repoRootEarly archive --format=tar -o $archive $Tag
+    if ($LASTEXITCODE -ne 0) { throw "git archive $Tag failed" }
+    & tar -xf $archive -C $tagSource
+    if ($LASTEXITCODE -ne 0) { throw "extracting $archive failed" }
+    $repoRootEarly = $tagSource
+    $BuildDir = Join-Path $tagSource "build/windows-qgis"
+}
 $cmakeLists = Join-Path $repoRootEarly "CMakeLists.txt"
 
 # The version is typed by hand here, unlike the Linux path where
@@ -58,6 +97,17 @@ if ($Version -eq $versionStem) {
 }
 elseif ($versionStem -ne $cmakeVersion) {
     Write-Warning "Pre-release stem $versionStem != CMake version $cmakeVersion (continuing)"
+}
+
+if (-not $PluginVersionRange) {
+    if ($versionStem -match '^([0-9]+)\.([0-9]+)\.[0-9]+$') {
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        $PluginVersionRange = ">=$major.$minor.0 <$major.$($minor + 1).0"
+    }
+    else {
+        throw "Cannot derive -PluginVersionRange from version '$Version' (expected X.Y.Z)"
+    }
 }
 
 # The CLIs that currently exist are declared in CMakeLists.txt. A long-lived
@@ -103,6 +153,23 @@ else {
     if ($CliNames.Count -eq 0) {
         throw "profile '$CliProfile' has no entries in $profilesFile"
     }
+}
+
+if ($tagSource) {
+    if ($CliProfile -eq "all") {
+        throw "-Tag needs a profile or -CliNames that names the CLIs to build; 'all' discovers them from an existing build"
+    }
+    $toolchain = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
+    & cmake -S $tagSource -B $BuildDir -G "Ninja" `
+        -DCMAKE_BUILD_TYPE=Release `
+        "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+        "-DVCPKG_TARGET_TRIPLET=$Triplet" `
+        -DBUILD_TESTING=OFF -DLSDTT_OPENMP=OFF -DLSDTT_EIGEN=OFF `
+        -DLSDTT_GPU=OFF `
+        -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
+    if ($LASTEXITCODE -ne 0) { throw "configuring $Tag failed" }
+    & cmake --build $BuildDir --target @($CliNames)
+    if ($LASTEXITCODE -ne 0) { throw "building $Tag failed" }
 }
 
 # Resolve a CLI executable from either:
@@ -267,9 +334,14 @@ function Assert-SelfContained {
 # Resolve key input/output locations from script parameters.
 # Use repository root (parent of this tools directory) so the script works even
 # when launched from inside tools/ or any other working directory.
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$buildAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
-$outAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir))
+$repoRoot = $repoRootEarly
+if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    $buildAbs = [System.IO.Path]::GetFullPath($BuildDir)
+}
+else {
+    $buildAbs = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
+}
+$outAbs = [System.IO.Path]::GetFullPath((Join-Path $outputRoot $OutDir))
 $vcpkgAbs = [System.IO.Path]::GetFullPath($VcpkgRoot)
 
 $vcpkgBin = Join-Path $vcpkgAbs (Join-Path "installed" (Join-Path $Triplet "bin"))

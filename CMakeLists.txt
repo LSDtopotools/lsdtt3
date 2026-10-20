@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(lsdtt3 VERSION 0.6.0 LANGUAGES CXX)
+project(lsdtt3 VERSION 0.7.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -269,6 +269,9 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_vector_utils.cpp
     src/core/lsdtt_raster_warp.cpp
     src/core/lsdtt_raster_fetch.cpp
+    src/core/lsdtt_http_fetch.cpp
+    src/core/lsdtt_macrostrat_fetch.cpp
+    src/core/lsdtt_octopus_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
     src/core/lsdtt_outlet_bounds_discovery.cpp
@@ -429,6 +432,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_disorder_cpu.cpp
     src/cpu/lsdtt_chi_data_maps_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp
+    src/cpu/lsdtt_channel_bearing_statistics_cpu.cpp
+    src/cpu/lsdtt_channel_network_grouping_cpu.cpp
     src/cpu/lsdtt_strahler_tokunaga_analysis_cpu.cpp
     src/cpu/lsdtt_raster_skeleton_graph_cpu.cpp
     src/cpu/lsdtt_raster_binary_mask_vectorise_cpu.cpp
@@ -472,6 +477,10 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_lem_cpu.cpp
     src/cpu/lsdtt_lem_parameter_rasters_cpu.cpp
     src/cpu/lsdtt_lem_input_grid_cpu.cpp
+    src/cpu/lsdtt_lithology_map_cpu.cpp
+    src/cpu/lsdtt_lithology_channel_stats_cpu.cpp
+    src/cpu/lsdtt_lithology_relative_erodibility_cpu.cpp
+    src/cpu/lsdtt_erodibility_calibration_cpu.cpp
     src/cpu/lsdtt_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_steady_state_cpu.cpp
     src/cpu/lsdtt_hillslope_newton_cpu.cpp
@@ -490,7 +499,6 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_divide_diagnostics_cpu.cpp
     src/cpu/lsdtt_paired_flowpaths_cpu.cpp
     src/cpu/lsdtt_landscape_equilibration_cpu.cpp
-    src/cpu/lsdtt_manning_hydraulics_cpu.cpp
     src/cpu/lsdtt_manning_hydraulics_cpu.cpp
 )
 
@@ -648,8 +656,10 @@ lsdtt_cli(lsdtt-cosmo-landslides       cli/lsdtt-cosmo-landslides.cpp)
 lsdtt_cli(lsdtt-cosmo-column-tool      cli/lsdtt-cosmo-column-tool.cpp)
 lsdtt_cli(lsdtt-marsh-topography       cli/lsdtt-marsh-topography.cpp)
 lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
-lsdtt_cli(lsdtt-bearing-comparison     cli/lsdtt-bearing-comparison.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
+lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
+lsdtt_cli(lsdtt-fetch-lithology        cli/lsdtt-fetch-lithology.cpp)
+lsdtt_cli(lsdtt-fetch-erosion-rates    cli/lsdtt-fetch-erosion-rates.cpp)
 lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-advection-diffusion    cli/lsdtt-advection-diffusion.cpp)
 lsdtt_cli(lsdtt-sediment-routing       cli/lsdtt-sediment-routing.cpp)

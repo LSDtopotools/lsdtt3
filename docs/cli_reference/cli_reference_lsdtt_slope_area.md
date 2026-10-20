@@ -133,6 +133,8 @@ basin_clip_mode: none
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: stable.**
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
@@ -160,6 +162,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `flow_algorithm` | `string` | `dinf` | `param` | - | Flow-routing algorithm. | Allowed values are dinf or d8. |
 | `write_flowinfo_rasters` | `bool` | `true` | `switch` | - | Write the drainage-area and flow-direction rasters. | The drainage-area raster is used by the slope-area analysis. |
+| `write_log10_drainage_area_raster` | `bool` | `false` | `switch` | - | Write the base-10 logarithm of the drainage-area raster. | Values are log10 of each positive drainage-area pixel; non-positive and nodata pixels remain nodata. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four characters in north, east, south, west order. |
 
 ### Threading

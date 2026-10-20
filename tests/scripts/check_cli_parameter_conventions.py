@@ -28,6 +28,11 @@ mechanical naming rules:
                         underscore-token `tol` (or a `tol...` token that is not
                         `tolerance...`) is matched, so `tolerance` and words
                         that merely contain the letters are safe.
+  R7 cli_status         the top-level `status` (the CLI's k_status) is
+                        `experimental` or `stable`.  lsdtt3 has one version
+                        number; CLIs carry only this stability label, and
+                        promoting a CLI to `stable` is a manual review
+                        decision, so only the value is checked.
 
 A CLI whose `-h json` cannot be parsed is itself reported, as rule
 `help_json_unparseable`, through the same baseline mechanism.
@@ -81,6 +86,8 @@ R_FORMAT = "duplicate_format"
 R_MINIMUM = "minimum_prefix"
 R_TOL = "tol_abbreviation"
 R_UNPARSEABLE = "help_json_unparseable"
+R_STATUS = "cli_status"
+CLI_STATUSES = ("experimental", "stable")
 
 # Section 3 / 10b deliberate exception to the `min_` rule.
 MINIMUM_EXCEPTION = re.compile(r"^.+_minimum_contributing_pixels$")
@@ -204,10 +211,11 @@ def unmeasurable_clis(bin_dir: Path, cli_src_dir: Path) -> tuple[list[str], list
     return missing, stale
 
 
-def read_parameters(exe: Path, timeout: float) -> list[dict]:
+def read_help_json(exe: Path, timeout: float) -> tuple[list[dict], object]:
     """Run `<exe> -h json` and parse the JSON document that follows the banner.
 
-    Raises RuntimeError with a short reason if the document cannot be read.
+    Returns (parameters, status). Raises RuntimeError with a short reason if
+    the document cannot be read.
     """
     try:
         proc = lsdtt_test_env.run(
@@ -235,7 +243,7 @@ def read_parameters(exe: Path, timeout: float) -> list[dict]:
     params = doc.get("parameters")
     if not isinstance(params, list):
         raise RuntimeError("document has no 'parameters' array")
-    return params
+    return params, doc.get("status")
 
 
 def helptext(param: dict) -> str:
@@ -519,7 +527,7 @@ def main() -> int:
     n_params = 0
     for exe in clis:
         try:
-            params = read_parameters(exe, args.timeout)
+            params, status = read_help_json(exe, args.timeout)
         except RuntimeError as exc:
             violations.append(
                 {
@@ -533,6 +541,16 @@ def main() -> int:
         n_parsed += 1
         n_params += len(params)
         violations.extend(check_cli(exe.name, params))
+        if status not in CLI_STATUSES:
+            violations.append(
+                {
+                    "cli": exe.name,
+                    "parameter": "-",
+                    "rule": R_STATUS,
+                    "detail": "`-h json` status is %r; must be one of %s"
+                    % (status, ", ".join(CLI_STATUSES)),
+                }
+            )
 
     print("CLI parameter-convention check")
     print("  binaries found        : %d" % len(clis))

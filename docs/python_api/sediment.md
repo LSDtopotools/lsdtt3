@@ -6,30 +6,29 @@ This page is generated from the built Python runtime manifest. Do not edit signa
 
 In-memory stochastic landslide-event outputs.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    In-memory stochastic landslide-event outputs.
+Notes
+-----
+In-memory stochastic landslide-event outputs.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -71,21 +70,21 @@ B. Gailleton
 
 Outputs from a stochastic sequence of landslide events.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Outputs from a stochastic sequence of landslide events.
+Notes
+-----
+Outputs from a stochastic sequence of landslide events.
 
 The elevation raster accumulates every excavation. ``failure_time`` and
 ``excavation_depth`` describe the most recent scar at each pixel, which is the
@@ -95,10 +94,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -532,30 +530,29 @@ B. Gailleton
 
 Reach-scale bedload routing outputs and channel-raster diagnostics.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Reach-scale bedload routing outputs and channel-raster diagnostics.
+Notes
+-----
+Reach-scale bedload routing outputs and channel-raster diagnostics.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -629,21 +626,21 @@ B. Gailleton
 
 basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, split_method: str = 'longest_channel', snout_smoothing_fraction: float = 0.10000000149011612, detrend_smoothing_pixels: int = 5) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, split_method: str = 'longest_channel', snout_smoothing_fraction: float = 0.10000000149011612, detrend_smoothing_pixels: int = 5) -> object
+Notes
+-----
+basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, split_method: str = 'longest_channel', snout_smoothing_fraction: float = 0.10000000149011612, detrend_smoothing_pixels: int = 5) -> object
 
 Locate topology-aware maxima and minima along selected basin-outline ridgelines.
 
@@ -667,10 +664,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, split_method: str = 'longest_channel', snout_smoothing_fraction: float = 0.10000000149011612, detrend_smoothing_pixels: int = 5) -> object
@@ -682,28 +678,27 @@ def basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.Chan
 
 extract_roads_smooth(dem: lsdtt3.Raster, roughness_radius_metres: float = 1.5, smoothness_threshold: float = 0.5, path_min_length_pixels: int = 40, min_component_pixels: int = 40, n_threads: int = 0) -> lsdtt3.RoadSmoothnessResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    extract_roads_smooth(dem: lsdtt3.Raster, roughness_radius_metres: float = 1.5, smoothness_threshold: float = 0.5, path_min_length_pixels: int = 40, min_component_pixels: int = 40, n_threads: int = 0) -> lsdtt3.RoadSmoothnessResult
+Notes
+-----
+extract_roads_smooth(dem: lsdtt3.Raster, roughness_radius_metres: float = 1.5, smoothness_threshold: float = 0.5, path_min_length_pixels: int = 40, min_component_pixels: int = 40, n_threads: int = 0) -> lsdtt3.RoadSmoothnessResult
 
 Extract long smooth road-like ribbons from a DEM.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def extract_roads_smooth(dem: lsdtt3.Raster, roughness_radius_metres: float = 1.5, smoothness_threshold: float = 0.5, path_min_length_pixels: int = 40, min_component_pixels: int = 40, n_threads: int = 0) -> lsdtt3.RoadSmoothnessResult
@@ -715,28 +710,27 @@ def extract_roads_smooth(dem: lsdtt3.Raster, roughness_radius_metres: float = 1.
 
 extract_thin_lines(response: lsdtt3.Raster, threshold: float = 20.0, path_length_pixels: int = 40, min_component_pixels: int = 40, min_elongation: float = 1.0, n_threads: int = 0) -> lsdtt3.ThinLinesResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    extract_thin_lines(response: lsdtt3.Raster, threshold: float = 20.0, path_length_pixels: int = 40, min_component_pixels: int = 40, min_elongation: float = 1.0, n_threads: int = 0) -> lsdtt3.ThinLinesResult
+Notes
+-----
+extract_thin_lines(response: lsdtt3.Raster, threshold: float = 20.0, path_length_pixels: int = 40, min_component_pixels: int = 40, min_elongation: float = 1.0, n_threads: int = 0) -> lsdtt3.ThinLinesResult
 
 Keep thin elongated lines from a response raster.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def extract_thin_lines(response: lsdtt3.Raster, threshold: float = 20.0, path_length_pixels: int = 40, min_component_pixels: int = 40, min_elongation: float = 1.0, n_threads: int = 0) -> lsdtt3.ThinLinesResult
@@ -748,28 +742,27 @@ def extract_thin_lines(response: lsdtt3.Raster, threshold: float = 20.0, path_le
 
 find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
+Notes
+-----
+find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
 
 Build flow-direction and terrain diagnostics for road/channel discrimination.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
@@ -781,28 +774,27 @@ def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres:
 
 find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0) -> lsdtt3.RoadResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0) -> lsdtt3.RoadResult
+Notes
+-----
+find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0) -> lsdtt3.RoadResult
 
 Detect narrow, along-contour road benches from a DEM.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0) -> lsdtt3.RoadResult
@@ -814,21 +806,21 @@ def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_t
 
 identify_mountain_front(dem: lsdtt3.Raster, relief_scales: collections.abc.Sequence[collections.abc.Sequence[float]] = [], require_all_scales_pass: bool = False, relief_window_shape: str = 'square', use_elevation_filter: bool = False, elevation_upper_percentile: float = 0.5, fit_method: str = 'plane_ransac', ransac_inlier_tolerance: float = 20.0, ransac_max_iterations: int = 1000, ransac_seed: int = 1, spectral_lambda_metres: float = 5000.0, residual_percentile: float = 0.8, min_component_pixels: int = 0, infill_valley_radius_metres: float = 0.0, return_diagnostics: bool = False, n_threads: int = 0) -> lsdtt3.MountainFrontResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    identify_mountain_front(dem: lsdtt3.Raster, relief_scales: collections.abc.Sequence[collections.abc.Sequence[float]] = [], require_all_scales_pass: bool = False, relief_window_shape: str = 'square', use_elevation_filter: bool = False, elevation_upper_percentile: float = 0.5, fit_method: str = 'plane_ransac', ransac_inlier_tolerance: float = 20.0, ransac_max_iterations: int = 1000, ransac_seed: int = 1, spectral_lambda_metres: float = 5000.0, residual_percentile: float = 0.8, min_component_pixels: int = 0, infill_valley_radius_metres: float = 0.0, return_diagnostics: bool = False, n_threads: int = 0) -> lsdtt3.MountainFrontResult
+Notes
+-----
+identify_mountain_front(dem: lsdtt3.Raster, relief_scales: collections.abc.Sequence[collections.abc.Sequence[float]] = [], require_all_scales_pass: bool = False, relief_window_shape: str = 'square', use_elevation_filter: bool = False, elevation_upper_percentile: float = 0.5, fit_method: str = 'plane_ransac', ransac_inlier_tolerance: float = 20.0, ransac_max_iterations: int = 1000, ransac_seed: int = 1, spectral_lambda_metres: float = 5000.0, residual_percentile: float = 0.8, min_component_pixels: int = 0, infill_valley_radius_metres: float = 0.0, return_diagnostics: bool = False, n_threads: int = 0) -> lsdtt3.MountainFrontResult
 
 Identify elevated terrain above a fitted low-ground piedmont surface.
 
@@ -848,10 +840,9 @@ MountainFrontResult
     Low-ground mask, fitted surface, residual, mountain mask, and optional
     local-relief diagnostics.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def identify_mountain_front(dem: lsdtt3.Raster, relief_scales: collections.abc.Sequence[collections.abc.Sequence[float]] = [], require_all_scales_pass: bool = False, relief_window_shape: str = 'square', use_elevation_filter: bool = False, elevation_upper_percentile: float = 0.5, fit_method: str = 'plane_ransac', ransac_inlier_tolerance: float = 20.0, ransac_max_iterations: int = 1000, ransac_seed: int = 1, spectral_lambda_metres: float = 5000.0, residual_percentile: float = 0.8, min_component_pixels: int = 0, infill_valley_radius_metres: float = 0.0, return_diagnostics: bool = False, n_threads: int = 0) -> lsdtt3.MountainFrontResult
@@ -863,21 +854,21 @@ def identify_mountain_front(dem: lsdtt3.Raster, relief_scales: collections.abc.S
 
 landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> lsdtt3.Raster
+Notes
+-----
+landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> lsdtt3.Raster
 
 Compute one-nuclide surface concentration after landslide excavation.
 
@@ -899,10 +890,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> lsdtt3.Raster
@@ -914,21 +904,21 @@ def landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: l
 
 landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> dict
+Notes
+-----
+landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> dict
 
 Compute Be10, Al26, and C14 concentrations after landslide excavation.
 
@@ -948,10 +938,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> dict
@@ -963,21 +952,21 @@ def landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: 
 
 mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: lsdtt3.Raster, min_contributing_pixels: int) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: lsdtt3.Raster, min_contributing_pixels: int) -> lsdtt3.Raster
+Notes
+-----
+mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: lsdtt3.Raster, min_contributing_pixels: int) -> lsdtt3.Raster
 
 Return high-contributing-area pixels on a mountain-mask boundary.
 
@@ -985,10 +974,9 @@ Return high-contributing-area pixels on a mountain-mask boundary.
 an edge pixel. This established Python keyword is independent of the CLI's
 ``basin_minimum_contributing_pixels`` parameter name.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: lsdtt3.Raster, min_contributing_pixels: int) -> lsdtt3.Raster
@@ -1000,21 +988,21 @@ def mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: ls
 
 route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
+Notes
+-----
+route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: str = 'wilcock_crowe', n_timesteps: int = 365, timestep_seconds: float = 86400.0, porosity: float = 0.4, active_layer_depth_metres: float = -1.0, width_coefficient: float = 2.76, width_exponent: float = 0.4, discharge_coefficient: float = 1e-05, discharge_exponent: float = 0.8, d50_metres: float = 0.016, d84_metres: float = 0.045, d90_metres: float = 0.055, mannings_n: float = 0.04, grain_sizes_mm: object | None = None, grain_fractions: object | None = None, discharge: object | None = None, n_threads: int = 0) -> lsdtt3.SedimentRoutingResult
 
 Route bedload through an existing D8 channel network.
 
@@ -1059,10 +1047,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `active_layer_depth_m` -> `active_layer_depth_metres`; earliest removal: following minor.
@@ -1080,21 +1067,21 @@ def route_sediment(network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, formula: 
 
 run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
+Notes
+-----
+run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_yr: float = 0.0, end_time_yr: float = 100000.0, mean_recurrence_yr: float = 1000.0, poisson_timing: bool = True, target_volume_per_event_m3: float = 0.0, long_term_erosion_rate_mm_kyr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, event_budget_relative_tolerance: float = 0.02, budget_max_iter: int = 50, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideSeriesResult
 
 Run a reproducible, annealing-aware landslide time series.
 
@@ -1134,10 +1121,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `budget_tol` -> `event_budget_relative_tolerance`; earliest removal: following minor.
@@ -1152,28 +1138,27 @@ def run_landslide_series(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, start_time_y
 
 sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult
+Notes
+-----
+sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult
 
 Compute sediment connectivity using D8 topology; drainage area may be D8, MFD, or D-infinity.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult
@@ -1185,21 +1170,21 @@ def sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster,
 
 trigger_landslides(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, target_volume_m3: float, event_time_yr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    trigger_landslides(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, target_volume_m3: float, event_time_yr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideResult
+Notes
+-----
+trigger_landslides(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, target_volume_m3: float, event_time_yr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideResult
 
 Trigger a volume-budgeted stochastic landslide event.
 
@@ -1225,10 +1210,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def trigger_landslides(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, target_volume_m3: float, event_time_yr: float = 0.0, channel_threshold_pixels: int = 1000, size_model: str = 'inverse_gamma', area_volume_preset: str = 'larsen_soil_scar', min_pixels: int = 1, max_area_m2: float = 0.0, anneal_time_yr: float = 0.0, seed: int = 1, active_mask: lsdtt3.Raster | None = None) -> lsdtt3.LandslideResult

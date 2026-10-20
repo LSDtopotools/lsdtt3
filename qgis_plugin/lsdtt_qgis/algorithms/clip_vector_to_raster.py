@@ -15,6 +15,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     layer_file_path,
@@ -24,7 +25,7 @@ from .support import (
 )
 
 
-class ClipVectorToRasterAlgorithm(QgsProcessingAlgorithm):
+class ClipVectorToRasterAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_VECTOR = "INPUT_VECTOR"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
@@ -53,6 +54,7 @@ class ClipVectorToRasterAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_vclip"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.VECTOR_FORMAT,

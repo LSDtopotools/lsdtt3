@@ -310,30 +310,29 @@ B. Gailleton
 
 Result of stationary GraphFlood-style hydraulic routing.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Result of stationary GraphFlood-style hydraulic routing.
+Notes
+-----
+Result of stationary GraphFlood-style hydraulic routing.
 
 All raster properties use the routed hydraulic domain. ``projection_volume``
 is the explicitly non-conservative volume added while priority-flood projects
 the evolving ``z + h`` surface.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -399,29 +398,28 @@ the evolving ``z + h`` surface.
 
 Priority-flood projection of a hydraulic surface towards selected outlets.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Priority-flood projection of a hydraulic surface towards selected outlets.
+Notes
+-----
+Priority-flood projection of a hydraulic surface towards selected outlets.
 
 ``added_depth`` and ``added_volume`` quantify the explicitly non-conservative
 water required to remove local minima in the supplied surface.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -443,21 +441,21 @@ water required to remove local minima in the supplied surface.
 
 fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
+Notes
+-----
+fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
 
 Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 
@@ -465,10 +463,9 @@ The node-state raster uses 0 for excluded cells, 1 for active cells, and 3
 for outlets. Unlike terrain pit filling, excluded/nodata cells are walls, not
 drains. Code-3 cells are prescribed sinks wherever they occur.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
@@ -480,21 +477,21 @@ def fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, bo
 
 run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, n_threads: int = 0, initial_water_depth: object | None = None) -> lsdtt3.HydraulicResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, n_threads: int = 0, initial_water_depth: object | None = None) -> lsdtt3.HydraulicResult
+Notes
+-----
+run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, n_threads: int = 0, initial_water_depth: object | None = None) -> lsdtt3.HydraulicResult
 
 Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
 
@@ -509,10 +506,9 @@ every connected active component must contain an outlet.
 The friction law is ``q / width = coefficient * h**a * S**b``. Point inflows
 are an N by 3 array of ``(row, col, discharge_m3_s)``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -581,7 +577,7 @@ B. Gailleton
 - `tol_median_rel_dhw` -> `median_dhw_relative_convergence_tolerance`; earliest removal: following minor.
 
 ```python
-(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, qin_threshold: float, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', halo_cells: int = 3, edge_depth_threshold: float = 0.0001, max_expansions: int = 2, point_inflows: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodInducedResult
+(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, qin_threshold: float, *, backend: str | Callable[..., Any] = 'optimised_v2', halo_cells: int = 3, edge_depth_threshold: float = 0.0001, max_expansions: int = 2, point_inflows: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodInducedResult
 ```
 
 ---
@@ -641,7 +637,7 @@ B. Gailleton
 - `tol_median_rel_dhw` -> `median_dhw_relative_convergence_tolerance`; earliest removal: following minor.
 
 ```python
-(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, *, backend: Union[str, Callable[..., Any]] = 'optimised_v2', factors: Sequence[int] = (8, 4, 2, 1), steps_per_level: Union[int, Sequence[int]] = 100, point_inflows: Any = None, initial_water_depth: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodMultigridResult
+(bed: Any, node_state: Any, rainfall_rate: Any, friction_coefficient: Any, *, backend: str | Callable[..., Any] = 'optimised_v2', factors: Sequence[int] = (8, 4, 2, 1), steps_per_level: int | Sequence[int] = 100, point_inflows: Any = None, initial_water_depth: Any = None, median_dhw_convergence_tolerance_metres: float | None = None, median_dhw_relative_convergence_tolerance: float | None = None, **backend_options: Any) -> lsdtt3._graphflood_accelerators.GraphFloodMultigridResult
 ```
 
 ---
@@ -650,31 +646,30 @@ B. Gailleton
 
 run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, initial_water_depth: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, initial_water_depth: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
+Notes
+-----
+run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, initial_water_depth: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
 
 Run the separate CPU-optimised stationary MFD GraphFlood implementation.
 
 The reference ``run_graphflood`` path is unchanged. This implementation uses
 direct raster MFD routing and validates a cached topology before reuse.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -690,21 +685,21 @@ def run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rain
 
 run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, dirty_tile_size: int = 64, full_validation_every: int = 128, initial_water_depth: object | None = None, prescribed_qin: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, dirty_tile_size: int = 64, full_validation_every: int = 128, initial_water_depth: object | None = None, prescribed_qin: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
+Notes
+-----
+run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, dirty_tile_size: int = 64, full_validation_every: int = 128, initial_water_depth: object | None = None, prescribed_qin: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
 
 Run GraphFlood with the incremental v2 CPU kernels.
 
@@ -716,10 +711,9 @@ cached order. ``full_validation_every=0`` disables periodic full audits.
 ``prescribed_qin`` downslope while its depth and capacity-limited ``qout``
 evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.

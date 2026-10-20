@@ -600,4 +600,440 @@ void declare_synthetic_noise_parameters(
     declare_diamond_square_parameters(float_default_map, help_map, prefix);
 }
 
+// -----------------------------------------------------------------------------
+// Fetch tools
+// -----------------------------------------------------------------------------
+void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
+                                   lsdtt_help_registry&                help_map)
+{
+    string_default_map["west"] = "";
+    help_map["west"] = {"string","",
+        "Western edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be less than east. Range -180 to 180.",
+        "Bounding box", "param", ""};
+
+    string_default_map["east"] = "";
+    help_map["east"] = {"string","",
+        "Eastern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be greater than west. Range -180 to 180.",
+        "Bounding box", "param", ""};
+
+    string_default_map["south"] = "";
+    help_map["south"] = {"string","",
+        "Southern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be less than north. Range -90 to 90.",
+        "Bounding box", "param", ""};
+
+    string_default_map["north"] = "";
+    help_map["north"] = {"string","",
+        "Northern edge of the bounding box, WGS84 decimal degrees.",
+        "Required. Must be greater than south. Range -90 to 90.",
+        "Bounding box", "param", ""};
+}
+
+void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& string_default_map,
+                                          lsdtt_help_registry&                help_map)
+{
+    string_default_map["bounds_fname"] = "";
+    help_map["bounds_fname"] = {"string","",
+        "Vector file (or raster) defining the area, instead of west/south/east/north.",
+        "FlatGeobuf (.fgb), GeoPackage (.gpkg) or any other OGR-readable "
+        "format. The layer must contain either one or more polygons (the "
+        "envelope of all of them is used), or exactly two points marking "
+        "opposite corners. For two points either diagonal works -- "
+        "lower-left/upper-right and lower-right/upper-left give the same box, "
+        "so the orientation is worked out automatically. If the layer is in a "
+        "projected CRS such as UTM it is reprojected to WGS84 for you, so a "
+        "box drawn in a GIS can be used directly. A raster with a "
+        "georeference (e.g. an existing DEM GeoTIFF) works too: its footprint "
+        "is reprojected to WGS84. Set this or the four edge parameters, not "
+        "both.",
+        "Bounding box", "param", ""};
+
+    string_default_map["bounds_path"] = "";
+    help_map["bounds_path"] = {"string","",
+        "Optional directory for bounds_fname.",
+        "If empty, read_path is used. Ignored when bounds_fname is an "
+        "absolute path.",
+        "Bounding box", "param", ""};
+
+    string_default_map["bounds_layer"] = "";
+    help_map["bounds_layer"] = {"string","",
+        "Layer name within bounds_fname.",
+        "If empty, the first layer is used (with a warning when the file has "
+        "more than one).",
+        "Bounding box", "param", ""};
+}
+
+void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
+                                     lsdtt_help_registry&        help_map)
+{
+    int_default_map["http_timeout_seconds"] = 60;
+    help_map["http_timeout_seconds"] = {"int","60",
+        "Maximum seconds for an individual HTTP request.",
+        "Bounds how long an unresponsive server can stall the fetch.",
+        "Network", "param", ""};
+
+    int_default_map["http_connect_timeout_seconds"] = 15;
+    help_map["http_connect_timeout_seconds"] = {"int","15",
+        "Maximum seconds to establish a connection.",
+        "Keep this short so an offline machine fails promptly.",
+        "Network", "param", ""};
+
+    int_default_map["http_max_retry"] = 3;
+    help_map["http_max_retry"] = {"int","3",
+        "Number of retries on a transient HTTP failure.",
+        "Cloud storage occasionally returns 5xx responses; retrying absorbs "
+        "those without failing the run.",
+        "Network", "param", ""};
+}
+
+void declare_lithology_map_parameters(std::map<std::string, std::string>& string_default_map,
+                                      lsdtt_help_registry&                help_map,
+                                      const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology input");
+    const std::string k_fname = prefixed_parameter_key(prefix, "lithology_fname");
+
+    string_default_map[k_fname] = "";
+    help_map[k_fname] = {"string","",
+        "Lithology map (in read_path): a polygon vector file or a categorical code raster.",
+        "Vectors: any OGR polygon layer (GeoPackage, FlatGeobuf, GeoJSON, Shapefile), e.g. "
+        "lsdtt-fetch-lithology output; it is reprojected to the DEM's CRS. Rasters: integer "
+        "lithology codes, warped onto the DEM grid with nearest neighbour if not on it already.",
+        group, "param", ""};
+
+    const std::string k_source = prefixed_parameter_key(prefix, "lithology_source");
+    string_default_map[k_source] = "auto";
+    help_map[k_source] = {"string","auto",
+        "auto, vector_map or code_raster.",
+        "auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc "
+        "are rasters).",
+        group, "param", ""};
+
+    const std::string k_layer = prefixed_parameter_key(prefix, "lithology_layer_name");
+    string_default_map[k_layer] = "";
+    help_map[k_layer] = {"string","",
+        "Vector layer to read. Empty (default) = the first layer.", "",
+        group, "param", "lithology_fname"};
+
+    const std::string k_field = prefixed_parameter_key(prefix, "lithology_field_name");
+    string_default_map[k_field] = "lith_primary";
+    help_map[k_field] = {"string","lith_primary",
+        "Attribute of the vector layer that holds the lithology.",
+        "Each distinct value is a lithologic unit unless lithology_crosswalk_fname groups them. "
+        "lith_primary is the first lithology of each unit in lsdtt-fetch-lithology output; "
+        "name (the map unit) or lith_class group more finely or more coarsely. Units are "
+        "numbered within a run; compare runs by unit name.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_cw = prefixed_parameter_key(prefix, "lithology_crosswalk_fname");
+    string_default_map[k_cw] = "";
+    help_map[k_cw] = {"string","",
+        "Optional CSV (in read_path) with columns value,code[,name] mapping map values to units.",
+        "When given, every map value present must be in it. Use it to group many map values "
+        "into a few units; the optional name column names each code (else the values joined "
+        "with '; ').",
+        group, "param", "lithology_fname"};
+}
+
+void declare_write_lithology_code_raster_parameter(std::map<std::string, bool>& bool_default_map,
+                                                   lsdtt_help_registry&         help_map,
+                                                   const std::string&           prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Output");
+    const std::string k = prefixed_parameter_key(prefix, "write_lithology_code_raster");
+    bool_default_map[k] = true;
+    help_map[k] = {"bool","true",
+        "Write the lithologic unit code of every pixel.",
+        "Output: <write_fname>_lithology_code.tif.", group, "switch", ""};
+}
+
+void declare_channel_region_parameters(std::map<std::string, std::string>& string_default_map,
+                                       lsdtt_help_registry&                help_map,
+                                       const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Channel region input");
+    const std::string k_fname = prefixed_parameter_key(prefix, "channel_region_fname");
+
+    string_default_map[k_fname] = "";
+    help_map[k_fname] = {"string","",
+        "Region map (in read_path): a polygon vector file or an integer code raster.",
+        "User-drawn regions such as physiographic provinces, used to group channel statistics "
+        "by region. Vectors: any OGR polygon layer, reprojected to the DEM's CRS. Rasters: "
+        "integer region codes, warped onto the DEM grid with nearest neighbour if not on it "
+        "already. Empty (default) = no region grouping.",
+        group, "param", ""};
+
+    const std::string k_source = prefixed_parameter_key(prefix, "channel_region_source");
+    string_default_map[k_source] = "auto";
+    help_map[k_source] = {"string","auto",
+        "auto, vector_map or code_raster.",
+        "auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc "
+        "are rasters).",
+        group, "param", "channel_region_fname"};
+
+    const std::string k_layer = prefixed_parameter_key(prefix, "channel_region_layer_name");
+    string_default_map[k_layer] = "";
+    help_map[k_layer] = {"string","",
+        "Vector layer to read. Empty (default) = the first layer.", "",
+        group, "param", "channel_region_fname"};
+
+    const std::string k_field = prefixed_parameter_key(prefix, "channel_region_field_name");
+    string_default_map[k_field] = "";
+    help_map[k_field] = {"string","",
+        "Attribute of the vector layer whose values name the regions.",
+        "Required for a vector map; each distinct value is one region. Ignored for a code "
+        "raster.",
+        group, "param", "channel_region_fname"};
+}
+
+void declare_lithology_ksn_summary_parameters(std::map<std::string, float>&       float_default_map,
+                                              std::map<std::string, int>&         int_default_map,
+                                              std::map<std::string, std::string>& string_default_map,
+                                              lsdtt_help_registry&                help_map,
+                                              const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+
+    const std::string k_buffer = prefixed_parameter_key(prefix, "lithology_contact_buffer_metres");
+    float_default_map[k_buffer] = 0.0f;
+    help_map[k_buffer] = {"float","0.0",
+        "Exclude channel nodes closer than this to a mapped lithologic contact from the "
+        "per-unit k_sn statistics.",
+        "Excluded nodes are still written, flagged near_contact = 1. 0 keeps every node. "
+        "Mapped contacts carry a positional error of about 0.5 mm at map scale (about 125 m "
+        "at 1:250,000).",
+        group, "param", "lithology_fname"};
+
+    const std::string k_min_reach = prefixed_parameter_key(prefix, "lithology_min_reach_pixels");
+    int_default_map[k_min_reach] = 10;
+    help_map[k_min_reach] = {"int","10",
+        "Minimum number of channel nodes for a lithologic reach to enter the per-unit "
+        "statistics.",
+        "A lithologic reach is a run of channel nodes in one unit on one branch. It must also "
+        "span a chi interval greater than 0.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_cluster = prefixed_parameter_key(prefix, "lithology_bootstrap_cluster");
+    string_default_map[k_cluster] = "reach";
+    help_map[k_cluster] = {"string","reach",
+        "Resampling unit of the bootstrap interval of the per-unit median k_sn: reach or basin.",
+        "reach resamples lithologic reaches within a unit; basin resamples whole basins. "
+        "Reaches on one trunk channel are correlated, so the reach interval is a lower bound "
+        "on the uncertainty.",
+        group, "param", "lithology_fname"};
+}
+
+void declare_lithology_network_summary_parameters(std::map<std::string, float>& float_default_map,
+                                                  lsdtt_help_registry&          help_map,
+                                                  const std::string&            prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+    const std::string k = prefixed_parameter_key(prefix, "lithology_min_majority_fraction");
+    float_default_map[k] = 0.8f;
+    help_map[k] = {"float","0.8",
+        "Minimum fraction of a channel link or junction arm in its majority lithologic unit "
+        "for it to count as that unit.",
+        "The fraction is length-weighted over the sampled nodes. No record is dropped: links "
+        "below it form the group 'mixed (<x% one unit)' and junctions whose arms fall short "
+        "the group 'arms disagree'; both are summarised but left out of every comparison "
+        "(never compared, never part of 'rest'). Every record keeps its majority unit and "
+        "fraction in the per-record columns.",
+        group, "param", "lithology_fname"};
+}
+
+void declare_lithology_bootstrap_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Lithology summaries");
+
+    const std::string k_reps = prefixed_parameter_key(prefix, "lithology_bootstrap_replicates");
+    int_default_map[k_reps] = 1000;
+    help_map[k_reps] = {"int","1000",
+        "Number of bootstrap replicates for the per-unit confidence intervals.",
+        "0 = no bootstrap; the interval columns are written as NaN.",
+        group, "param", "lithology_fname"};
+
+    const std::string k_seed = prefixed_parameter_key(prefix, "lithology_bootstrap_random_seed");
+    int_default_map[k_seed] = 5489;
+    help_map[k_seed] = {"int","5489",
+        "Random seed for the per-unit bootstrap.",
+        "lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from "
+        "seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n "
+        "values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A "
+        "fixed seed reproduces the intervals. Same default as bootstrap_random_seed.",
+        group, "param", "lithology_fname"};
+}
+
+void declare_stream_power_n_values_parameter(std::map<std::string, std::string>& string_default_map,
+                                             lsdtt_help_registry&                help_map,
+                                             const std::string&                  prefix)
+{
+    const std::string k = prefixed_parameter_key(prefix, "stream_power_n_values");
+    string_default_map[k] = "1";
+    help_map[k] = {"string", "1",
+        "Slope exponent(s) n of the stream power law E = K A^m S^n, a comma list (e.g. 1,2).",
+        "Used by write_relative_erodibility and the erodibility calibration (erosion_rate_fname): "
+        "each n gives its own rows, with m = (m/n) n for the m/n of the chi run. Every value must "
+        "be > 0. Replaces relative_erodibility_n_values (still accepted, with a warning).",
+        prefixed_group_label(prefix, "Stream power"), "param", ""};
+}
+
+void declare_erosion_rate_input_parameters(std::map<std::string, float>&       float_default_map,
+                                           std::map<std::string, std::string>& string_default_map,
+                                           lsdtt_help_registry&                help_map,
+                                           const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Erosion-rate samples");
+    const std::string dep = "erosion_rate_fname";
+    auto str = [&](const char* key, const char* def, const char* text, const char* guidance,
+                   const char* depends) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        string_default_map[k] = def;
+        help_map[k] = {"string", def, text, guidance, group, "param", depends};
+    };
+    auto flt = [&](const char* key, float def, const char* def_text, const char* text,
+                   const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        float_default_map[k] = def;
+        help_map[k] = {"float", def_text, text, guidance, group, "param", dep};
+    };
+
+    str("erosion_rate_fname", "",
+        "Basin-averaged erosion-rate samples: a CSV with latitude/longitude (EPSG:4326) or an "
+        "OGR point layer in any CRS. Empty = off.",
+        "One row per sample: the basin outlet, the erosion rate and its 1-sigma uncertainty, "
+        "optionally the reported drainage area. lsdtt-fetch-erosion-rates writes this format "
+        "from OCTOPUS.",
+        "");
+    str("erosion_rate_layer_name", "", "Layer of a vector erosion-rate file.",
+        "Empty takes the only (or first) layer. Not used for CSV.", dep.c_str());
+    str("erosion_rate_sample_id_column", "sample_id", "Column holding the sample identifier.",
+        "When the column is missing or a value is blank the sample is called row_<n> (n counts "
+        "data rows from 1).", dep.c_str());
+    str("erosion_rate_latitude_column", "latitude", "CSV column holding the outlet latitude.",
+        "WGS84 decimal degrees. Not used for vector input.", dep.c_str());
+    str("erosion_rate_longitude_column", "longitude", "CSV column holding the outlet longitude.",
+        "WGS84 decimal degrees. Not used for vector input.", dep.c_str());
+    str("erosion_rate_column", "erosion_rate", "Column holding the basin-averaged erosion rate.",
+        "In the units of erosion_rate_units. A missing column is an error.", dep.c_str());
+    str("erosion_rate_uncertainty_column", "erosion_rate_uncertainty",
+        "Column holding the 1-sigma uncertainty of the erosion rate.",
+        "Same units as the rate. A missing column is an error; a blank or non-positive value "
+        "marks that sample missing_uncertainty.", dep.c_str());
+    str("erosion_rate_units", "",
+        "Units of the erosion rate and its uncertainty (required, no default): mm_per_kyr, "
+        "m_per_myr, cm_per_kyr, mm_per_yr or m_per_yr.",
+        "mm_per_kyr equals m_per_myr (1e-6 m/yr). Mass fluxes (g cm^-2 yr^-1) are refused: "
+        "divide by the rock density first. When the file has an erosion_rate_units column every "
+        "row must agree with this parameter.", dep.c_str());
+    str("erosion_rate_reported_area_column", "reported_area_km2",
+        "Column holding each sample's reported drainage area in km^2.",
+        "Used for area-matched snapping and the DEM-vs-reported area check. Empty, or a column "
+        "not in the file, skips both.", dep.c_str());
+    str("erosion_rate_snapping_method", "reported_area",
+        "How a sample is snapped to the channel network: reported_area, expanding_square, "
+        "downstream or none.",
+        "reported_area takes the nearest channel cell whose drainage area is within "
+        "erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in "
+        "area. Without a reported area it falls back to expanding_square (nearest channel "
+        "cell).", dep.c_str());
+    flt("erosion_rate_snap_max_distance_metres", 300.0f, "300",
+        "Search radius for snapping a sample, in metres.",
+        "Converted to pixels with the cell size and rounded up, so a parameter file stays valid "
+        "across resolutions.");
+    flt("erosion_rate_area_mismatch_tolerance", 1.25f, "1.25",
+        "Ratio tolerance (> 1) between the DEM drainage area and the reported area.",
+        "A basin with A_dem / A_reported outside [1/tol, tol] is area_mismatch. Also the "
+        "matching tolerance of reported_area snapping.");
+    str("erosion_rate_area_mismatch_action", "exclude",
+        "What an area_mismatch basin does: exclude (written, kept out of every fit) or flag "
+        "(kept in the fits and flagged).", "", dep.c_str());
+    str("erosion_rate_nested_basins", "keep",
+        "Nested sample basins: keep, outermost or innermost.",
+        "keep uses all basins and resamples nesting groups in the bootstrap; outermost keeps "
+        "only basins nested in no other sample; innermost only basins containing no other "
+        "sample.", dep.c_str());
+}
+
+void declare_erodibility_calibration_parameters(std::map<std::string, bool>&        bool_default_map,
+                                                std::map<std::string, int>&         int_default_map,
+                                                std::map<std::string, float>&       float_default_map,
+                                                std::map<std::string, std::string>& string_default_map,
+                                                lsdtt_help_registry&                help_map,
+                                                const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Erodibility calibration");
+    const std::string dep = "erosion_rate_fname";
+    auto str = [&](const char* key, const char* def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        string_default_map[k] = def;
+        help_map[k] = {"string", def, text, guidance, group, "param", dep};
+    };
+    auto integer = [&](const char* key, int def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        int_default_map[k] = def;
+        help_map[k] = {"int", std::to_string(def), text, guidance, group, "param", dep};
+    };
+    auto flt = [&](const char* key, float def, const char* def_text, const char* text,
+                   const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        float_default_map[k] = def;
+        help_map[k] = {"float", def_text, text, guidance, group, "param", dep};
+    };
+    auto flag = [&](const char* key, bool def, const char* text, const char* guidance) {
+        const std::string k = prefixed_parameter_key(prefix, key);
+        bool_default_map[k] = def;
+        help_map[k] = {"bool", def ? "true" : "false", text, guidance, group, "param", dep};
+    };
+
+    str("erosion_rate_ksn_statistic", "reach_median",
+        "Basin k_sn that drives the calibration: reach_median, chi_z_slope or segment_median.",
+        "reach_median is the median k_sn of the basin's qualifying reaches (split at "
+        "confluences only), with a bootstrap interval. The others are written as diagnostics "
+        "either way.");
+    integer("erosion_rate_min_reach_pixels", 10,
+            "Minimum channel nodes for a basin reach to qualify.",
+            "Reaches run between confluences, sources and the outlet.");
+    integer("erosion_rate_min_reaches_per_basin", 5,
+            "Minimum qualifying reaches for a basin to enter the calibration.",
+            "Basins with fewer are written with status too_few_reaches and enter no fit.");
+    flag("erosion_rate_fit_n", true, "Fit n and K together (York regression of ln E on ln k_sn).",
+         "Attempted only with enough independent basin groups and a wide enough k_sn range; "
+         "K at each fixed n is always written.");
+    integer("erosion_rate_min_groups_for_n_fit", 8,
+            "Minimum independent basin groups for fitting n.",
+            "Nested basins form one group. Below this only K at fixed n is reported.");
+    flt("erosion_rate_min_ksn_range_ratio", 2.0f, "2.0",
+        "Minimum max/min k_sn ratio over the used basins for fitting n.", "");
+    flt("erosion_rate_mono_lithology_min_area_fraction", 0.8f, "0.8",
+        "Minimum area fraction of a basin's dominant unit for the basin to count as "
+        "mono-lithologic.", "Needs lithology_fname.");
+    integer("erosion_rate_min_unit_reaches_per_basin", 3,
+            "Minimum qualifying lithologic reaches of a unit in a basin for the unit-in-basin "
+            "estimate.", "Needs lithology_fname.");
+    str("erosion_rate_unit_k_methods", "mono,unit_in_basin",
+        "Per-unit K estimators, comma separated: mono, unit_in_basin.", "Needs lithology_fname.");
+    str("erosion_rate_property_table_method", "unit_in_basin",
+        "Per-unit estimator written to the draft lithology property table.",
+        "Needs lithology_fname.");
+    flt("erosion_rate_systematic_relative_uncertainty", 0.0f, "0",
+        "Relative systematic uncertainty of every erosion rate (e.g. the production-rate "
+        "term), added to the K interval in quadrature.", "0 adds nothing.");
+    integer("erosion_rate_bootstrap_replicates", 1000,
+            "Bootstrap replicates of the calibration intervals.", "0 = no intervals.");
+    integer("erosion_rate_bootstrap_random_seed", 5489,
+            "Seed of the calibration bootstrap.",
+            "One stream per m/n, separate from the k_sn summary and relative-erodibility "
+            "streams.");
+    flag("write_erodibility_calibration_basin_polygons", true,
+         "Write the sample basins as polygons (write_vector_format).",
+         "For checking the snapping against the published basins in a GIS.");
+    flag("write_erodibility_calibration_property_table", true,
+         "Write a draft lithology property table from the per-unit K.",
+         "Needs lithology_fname.");
+}
+
 } // namespace lsdtt

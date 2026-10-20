@@ -252,6 +252,120 @@ mask, data). The library tests are `unit_lem_erodibility` (fast) and
 `rigorous_lem_erodibility_analytic` (the analytic steady states); see section 8c
 of `docs/developer_notes/testing_and_benchmarking.md`.
 
+### Lithology to erodibility
+
+`fixture_lem_lithology_erodibility_cli` writes the fixtures for
+`lsdtt-lithology-erodibility` (`lsdtt-test-lithology-erodibility --write-fixtures`)
+into `build/tests/lem_lithology_erodibility_cli_fixture/`: GeoPackage maps (the
+three-unit map, one with a hole, one in EPSG:4326, one with an unknown
+lithology), a code raster, a 20 m DEM, property tables (valid, K = 0, no m), a
+crosswalk, and the expected K rasters. `smoke_lem_lithology_erodibility_chain`
+then runs `lsdtt-lem` on the K raster the own-grid test wrote.
+
+### k_sn by lithologic unit" in tests/README.md with this. -->
+### k_sn by lithologic unit
+
+`fixture_chi_lithology_cli` (`lsdtt-test-lithology-channel-stats --write-fixtures`)
+writes `build/tests/chi_lithology_cli_fixture/`: a steady-state DEM with two units
+(k_sn about 20 west, 5 east), the unit polygons, a crosswalk naming the units
+(`lithks_crosswalk.csv`) and one missing a value (`lithks_crosswalk_gap.csv`), the
+unit polygons and a code raster 200 km east of the DEM in the same CRS
+(`lithks_units_far.gpkg`, `lithks_codes_far.tif`, for the no-overlap refusals), and a
+two-unit code raster beside a copy of `tiny_dem.asc`. `rigorous_chi_lithology_observation_only`
+reuses the hash of `rigorous_chi_nodes_sha256`: if that hash is ever re-pinned, re-pin both.
+
+`rigorous_chi_lithology_ksn_ratio` is not a CLI run: it runs the driver's
+`--check-ksn-by-lithology` mode on the summary that `smoke_chi_lithology_ksn` wrote
+(FIXTURES_REQUIRED on that test), and checks the sandstone/shale ratio of the reach
+median k_sn against 4. The same check mode is exercised inside
+`unit_chi_lithology_channel_stats` on a summary written in process.
+`rigorous_chi_lithology_bootstrap_per_mn` compares the 0.45 tables of
+`smoke_chi_lithology_ksn` and `smoke_chi_lithology_multi_mn` (m/n 0.4 and 0.45) byte
+for byte, with `tests/cmake/compare_output_sets.cmake`.
+
+Relative erodibility (`write_relative_erodibility`) runs on the same fixture.
+`smoke_chi_lithology_relative_erodibility` is `chi_lithology_ksn.param.in` with relative
+erodibility on (n = 1 and 2, E = U = 2e-4 m/yr); its n = 2 rows apply n = 2 to the
+n = 1 landscape and are checked for format only (the n = 2 known answer is in the
+driver). `rigorous_chi_lithology_relative_erodibility_observation_only` compares every
+k_sn-by-lithology output of that run with `smoke_chi_lithology_ksn` byte for byte.
+`rigorous_chi_lithology_relative_erodibility_{ratio,reference}` run the driver's
+`--check-relative-erodibility` mode on its CSV (shale K/K_ref against 4 and K against
+4e-5; sandstone, the reference, against 1 and 1e-5).
+`smoke_chi_lithology_relative_erodibility_k_raster` runs `lsdtt-lithology-erodibility`
+on the n = 1 draft property table that run wrote (its parameter file reaches it through
+`../smoke_chi_lithology_relative_erodibility/out/` relative to the fixture directory),
+with the fixture's DEM and map, and checks the two K values in the raster.
+`rigorous_chi_lithology_relative_erodibility_per_mn` compares the 0.45 relative-erodibility
+outputs of the single-m/n run and `smoke_chi_lithology_relative_erodibility_multi_mn`
+(m/n 0.4 and 0.45) byte for byte.
+
+### Macrostrat lithology fetch
+
+`unit_fetch_lithology` and `smoke_fetch_lithology_offline` read one committed,
+synthetic Mapbox Vector Tile, `data/macrostrat_tiles/10/540/364.pbf`, through
+`macrostrat_tile_dir`, so they need no network. `data/macrostrat_tiles/README.md`
+lists its units and the `ogr2ogr` command that regenerates it from
+`units_source.geojson`. `network_fetch_lithology_cli` downloads from Macrostrat
+and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`.
+
+### OCTOPUS erosion-rate fetch and the erodibility calibration
+
+`unit_fetch_erosion_rates` (driver `tests/cpp/test_octopus_fetch.cpp`) and the
+`smoke_` / `failure_fetch_erosion_rates_*` tests read committed WFS responses
+from `data/octopus_erosion_rates/` through `octopus_response_dir`, so they need
+no network; that directory's README gives the queries, the date and the
+CC BY 4.0 citations (the basin geometries are bounding rectangles, not the real
+polygons). `network_fetch_erosion_rates_cli` downloads the wvbig box from OCTOPUS
+and is registered only with `-DLSDTT_ENABLE_NETWORK_TESTS=ON`; it asserts minima,
+because OCTOPUS grows. `unit_chi_erodibility_calibration`
+(`tests/cpp/test_erodibility_calibration.cpp`) covers the York regression, the
+erosion-rate sample reader and its units, the K formula and property-table
+writer shared with relative K, the parameter groups, and the known answers: F1
+(n and K from basins with their own uplift on a steady state) and F2 (K per
+lithologic unit). The same driver writes the CLI fixtures
+(`fixture_chi_erodibility_calibration_cli`: the F1 and F2 steady states, sample CSVs
+in mm/kyr and m/yr, unit polygons) and reads the CLI's fit and per-unit CSVs back for
+the `rigorous_chi_erodibility_calibration_*` checks
+(`--check-erodibility-calibration-fit`, `--check-erodibility-calibration-unit`). All of these
+also carry the label `erodibility_calibration`, so `ctest -L
+erodibility_calibration -LE heavy` runs the thread. `data/bounds/bounds_raster_utm.tif`
+is a 10 x 10 GeoTIFF in UTM 32N for `bounds_fname` given as a raster
+(`unit_raster_fetch`, `smoke_fetch_erosion_rates_raster_bounds`).
+
+### Channel-link bearing and junction-angle statistics
+
+`lsdtt-test-channel-bearing-statistics` (`tests/cpp/test_channel_bearing_statistics.cpp`)
+runs one mode per test, all labelled `unit;network` and native (no Python):
+`unit_channel_bearing_statistics_circular` (the analytic circular Wasserstein and
+Kuiper cases, including the four the retired `lsdtt-bearing-comparison` smoke tests
+pinned), `_summaries`, `_comparisons`, `_junction_angles`, `_trellis` (a synthetic
+trellis network built in memory: N-S trunks, E-W tributaries, known bearings and
+junction angles), `_grouping` (region purity, order pooling, order-k and nested
+outlet basins) and `_isotropic_null` (a seeded diamond-square surface; the seed and
+the measured value are recorded in the source).
+
+`fixture_channel_bearing_statistics` (`--write-fixtures`) writes
+`build/tests/channel_bearing_statistics_fixture/`: the trellis DEM and its
+transpose, a north/south region code raster on the trellis grid, an off-grid region
+raster with no CRS, a code raster and a one-polygon GeoPackage (field `unit`) 200 km
+east of the trellis in the same CRS (`cbs_region_far.tif`, `cbs_region_far.gpkg`, for
+the no-overlap refusals), and a copy of `data/channel_bearing_statistics/ns_trunk_bearings.csv`.
+The `*_channel_network_analysis_bearing_*` CLI tests (Python harness) read it.
+
+### Channel-network statistics by lithologic unit
+
+`unit_lithology_channel_network_stats` (`tests/cpp/test_lithology_network_stats.cpp`,
+`unit;network;lithology`, native) builds its own copy of the trellis in memory and
+gives it lithologic units on the grid in process: a contact parallel to the trunks
+(no channel crosses it), one across them, and one with an unmapped strip. The
+`*_channel_network_analysis_lithology*` CLI tests read
+`build/tests/channel_bearing_statistics_fixture/` and use its north/south code
+raster as the lithology map. `rigorous_channel_network_analysis_lithology_observation_only`
+compares the statistics outputs of a run with an unused lithology map against
+`smoke_channel_network_analysis_bearing_statistics_order` byte for byte, with
+`tests/cmake/compare_output_sets.cmake`.
+
 ## Cosmogenic nuclide tests
 
 `unit_cosmo_physics` (labels `unit;cosmo`) runs `tests/cpp/test_cosmo_physics.cpp`,

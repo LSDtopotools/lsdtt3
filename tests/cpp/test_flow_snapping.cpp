@@ -1,5 +1,9 @@
-// Direct tests for the string snapping dispatcher.
+// Direct tests for the string snapping dispatcher, and for area-matched
+// snapping (snap_pixel_to_reported_drainage_area_expanding_square) on a
+// synthetic tributary junction.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -48,6 +52,175 @@ lsdtt::lsdtt_flowinfo make_flow()
     options.build_s_vector = true;
     return lsdtt::lsdtt_flowinfo(
         dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), options);
+}
+
+// A trunk running south down column 10 and a tributary running east along
+// row 12 into it, on a 30 x 21 grid at 10 m. Hillslopes fall 3 m per pixel
+// towards the nearer channel. The tributary meets the trunk at (13, 10), so a
+// point at (13, 9) is one pixel from the tributary cell (12, 9) and one pixel
+// from the trunk cell (13, 10) below the confluence.
+lsdtt::lsdtt_flowinfo make_junction_flow()
+{
+    lsdtt::lsdtt_raster_meta meta;
+    meta.n_rows = 30;
+    meta.n_cols = 21;
+    meta.cell_size = 10.0;
+    meta.no_data_value = -9999.0;
+    meta.set_default_synthetic_georeference();
+
+    std::vector<float> data(static_cast<std::size_t>(meta.n_rows * meta.n_cols));
+    std::vector<std::uint8_t> mask(data.size(), 1);
+    for (int row = 0; row < meta.n_rows; ++row)
+    {
+        for (int col = 0; col < meta.n_cols; ++col)
+        {
+            const double trunk = 100.0 - row + 3.0 * std::abs(col - 10);
+            double z = trunk;
+            if (col < 10)
+            {
+                const double trib = 88.0 + (10 - col) + 3.0 * std::abs(row - 12);
+                z = std::min(z, trib);
+            }
+            data[static_cast<std::size_t>(row * meta.n_cols + col)] = static_cast<float>(z);
+        }
+    }
+
+    const lsdtt::lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+    lsdtt::lsdtt_flowinfo_options options;
+    options.boundary_conditions = "oooo";
+    options.build_topological_order = true;
+    options.build_s_vector = true;
+    return lsdtt::lsdtt_flowinfo(
+        dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), options);
+}
+
+void check_reported_area_snapping()
+{
+    const lsdtt::lsdtt_flowinfo flow = make_junction_flow();
+    const double cell_area = 100.0;
+    auto area_of = [&](int r, int c) {
+        return static_cast<double>(flow.s_vector_size(flow.flat_index(r, c))) * cell_area;
+    };
+    const double a_trib = area_of(12, 9);
+    const double a_trunk = area_of(13, 10);
+    std::cout << "junction fixture: tributary (12,9) " << a_trib / cell_area
+              << " px, trunk (13,10) " << a_trunk / cell_area << " px, trunk above (11,10) "
+              << area_of(11, 10) / cell_area << " px, (12,10) " << area_of(12, 10) / cell_area
+              << " px, (12,8) " << area_of(12, 8) / cell_area << " px\n";
+    check("T-SN fixture: the trunk below the confluence is more than 1.25x the tributary",
+          a_trunk > 1.25 * a_trib && a_trib >= 20.0 * cell_area);
+
+    lsdtt::lsdtt_square_snap_options sq;
+    sq.contributing_pixels_threshold = 20;
+    sq.min_search_radius_pixels = 0;
+    sq.max_search_radius_pixels = 3;
+    const auto nearest =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_expanding_square(flow, 13, 9, sq);
+    check("T-SN1: expanding_square from (13,9) takes the trunk (13,10) (the failure "
+          "area matching fixes)",
+          nearest.status == lsdtt::lsdtt_snap_status::success &&
+          nearest.snapped_row == 13 && nearest.snapped_col == 10);
+
+    lsdtt::lsdtt_reported_area_snap_options ao;
+    ao.contributing_pixels_threshold = 20;
+    ao.max_search_radius_pixels = 3;
+    ao.area_ratio_tolerance = 1.25;
+    const auto matched =
+        lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(flow, 13, 9, a_trib, ao);
+    check("T-SN1: reported_area with the tributary's area takes the tributary cell (12,9)",
+          matched.status == lsdtt::lsdtt_snap_status::success &&
+          matched.snapped_row == 12 && matched.snapped_col == 9 &&
+          matched.snapped_flat == flow.flat_index(12, 9) && matched.search_radius_pixels == 1 &&
+          matched.downstream_steps == -1);
+
+    // T-SN2: nothing within the tolerance: the cell closest in area (the
+    // largest in the window, the trunk at the window's bottom row) and still
+    // success; the caller sees the ratio is outside the tolerance.
+    const double huge = 50.0 * a_trunk;
+    const auto closest =
+        lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(flow, 13, 9, huge, ao);
+    const double ratio = closest.status == lsdtt::lsdtt_snap_status::success
+                             ? static_cast<double>(closest.snapped_contributing_pixels) * cell_area / huge
+                             : 0.0;
+    check("T-SN2: no cell within the tolerance: success on the min |ln ratio| cell (16,10)",
+          closest.status == lsdtt::lsdtt_snap_status::success && closest.snapped_row == 16 &&
+          closest.snapped_col == 10 && closest.search_radius_pixels == 3);
+    check("T-SN2: the snapped area ratio is outside the tolerance for the caller to flag",
+          ratio < 1.0 / 1.25);
+
+    // T-SN3: no channel cell in the window.
+    lsdtt::lsdtt_reported_area_snap_options far = ao;
+    far.max_search_radius_pixels = 1;
+    const auto none_found =
+        lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(flow, 2, 2, a_trib, far);
+    check("T-SN3: no channel cell within R -> threshold_not_found_in_search_window",
+          none_found.status == lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window &&
+          none_found.snapped_flat == -1);
+    const auto off_grid =
+        lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(flow, -5, 2, a_trib, ao);
+    check("T-SN3: a point off the grid -> input_out_of_bounds",
+          off_grid.status == lsdtt::lsdtt_snap_status::input_out_of_bounds);
+
+    // Ties: from (11,9) the tributary (12,9) and the trunk (11,10) are both one
+    // pixel away and both within a tolerance of 2 of 150 and of 110 px; the
+    // smaller |ln ratio| decides, so the choice flips with the reported area.
+    lsdtt::lsdtt_reported_area_snap_options wide = ao;
+    wide.max_search_radius_pixels = 1;
+    wide.area_ratio_tolerance = 2.0;
+    const auto tie_trunk = lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(
+        flow, 11, 9, 150.0 * cell_area, wide);
+    const auto tie_trib = lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(
+        flow, 11, 9, 110.0 * cell_area, wide);
+    check("T-SN: equally near in-tolerance cells go to the smaller |ln ratio|",
+          flow.s_vector_size(flow.flat_index(11, 9)) < 20 &&
+          tie_trunk.status == lsdtt::lsdtt_snap_status::success && tie_trunk.snapped_row == 11 &&
+          tie_trunk.snapped_col == 10 && tie_trib.status == lsdtt::lsdtt_snap_status::success &&
+          tie_trib.snapped_row == 12 && tie_trib.snapped_col == 9);
+
+    auto throws = [&](double area, double tol, std::uint64_t thr) {
+        lsdtt::lsdtt_reported_area_snap_options o = ao;
+        o.area_ratio_tolerance = tol;
+        o.contributing_pixels_threshold = thr;
+        try
+        {
+            (void)lsdtt::snap_pixel_to_reported_drainage_area_expanding_square(flow, 13, 9, area, o);
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+        return false;
+    };
+    check("T-SN: tolerance <= 1, a non-positive area and a zero threshold throw",
+          throws(a_trib, 1.0, 20) && throws(0.0, 1.25, 20) && throws(std::nan(""), 1.25, 20) &&
+          throws(a_trib, 1.25, 0));
+
+    // T-SN4: the dispatcher.
+    lsdtt::lsdtt_downstream_snap_options ds;
+    ds.contributing_pixels_threshold = 20;
+    const auto dispatched =
+        lsdtt::snap_pixel_by_method(flow, 13, 9, "reported_area", sq, ds, a_trib, ao);
+    check("T-SN4: reported_area dispatch matches the direct call",
+          dispatched.status == matched.status && dispatched.snapped_flat == matched.snapped_flat &&
+          dispatched.search_radius_pixels == matched.search_radius_pixels);
+    const auto sq_dispatched =
+        lsdtt::snap_pixel_by_method(flow, 13, 9, "expanding_square", sq, ds, a_trib, ao);
+    check("T-SN4: the area overload passes the other methods through unchanged",
+          sq_dispatched.snapped_flat == nearest.snapped_flat &&
+          sq_dispatched.search_radius_pixels == nearest.search_radius_pixels);
+    bool unknown = false, needs_area = false;
+    try { (void)lsdtt::snap_pixel_by_method(flow, 13, 9, "sideways", sq, ds, a_trib, ao); }
+    catch (const std::invalid_argument& e)
+    {
+        unknown = std::string(e.what()).find("reported_area") != std::string::npos;
+    }
+    try { (void)lsdtt::snap_pixel_by_method(flow, 13, 9, "reported_area", sq, ds); }
+    catch (const std::invalid_argument& e)
+    {
+        needs_area = std::string(e.what()).find("reported drainage area") != std::string::npos;
+    }
+    check("T-SN4: an unknown method still throws (listing reported_area)", unknown);
+    check("T-SN4: reported_area without an area throws", needs_area);
 }
 
 } // namespace
@@ -106,6 +279,8 @@ int main()
         unknown_threw = std::string(e.what()).find("sideways") != std::string::npos;
     }
     check("unknown method throws invalid_argument naming the method", unknown_threw);
+
+    check_reported_area_snapping();
 
     std::cout << "RESULT: " << (failures == 0 ? "PASS" : "FAIL") << '\n';
     return failures == 0 ? 0 : 1;

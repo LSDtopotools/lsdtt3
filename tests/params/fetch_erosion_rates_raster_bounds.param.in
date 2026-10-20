@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: wvrast
+
+# bounds_fname may be a raster: here a 10 x 10 GeoTIFF in UTM 32N (the Alps),
+# so the committed WV responses hold basins but none has its outlet in the box.
+bounds_fname: bounds/bounds_raster_utm.tif
+octopus_response_dir: octopus_erosion_rates/wv_large_box

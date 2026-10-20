@@ -478,6 +478,26 @@ void test_bounds_from_vector(const std::string& data_dir)
               r.source_crs.find("32632") != std::string::npos, r.source_crs);
     }
 
+    // --- a raster (bounds_fname: <DEM>): a 10 x 10 GeoTIFF in UTM 32N whose
+    // extent is the UTM envelope of bounds_polygon_utm.gpkg. Its WGS84
+    // footprint is therefore larger than that polygon's; the expected edges are
+    // its four corners transformed by gdaltransform (PROJ, GDAL 3.4.1):
+    // SW 10.3352468907 / 46.4569057500, NW 10.3373970652 / 46.5446520523,
+    // NE 10.4649546110 / 46.5430893193, SE 10.4625995289 / 46.4553477705.
+    // The edges are densified, so the tolerance allows the 1e-7 degree bow
+    // of a 10 km UTM edge. ---
+    {
+        const auto r = lsdtt::bounds_from_vector_file(data_dir + "/bounds_raster_utm.tif");
+        check("raster GeoTIFF UTM: footprint matches the transformed corners",
+              r.ok && close(r.west, 10.3352468907, 1e-6) && close(r.south, 46.4553477705, 1e-6) &&
+              close(r.east, 10.4649546110, 1e-6) && close(r.north, 46.5446520523, 1e-6),
+              "got [" + std::to_string(r.west) + ", " + std::to_string(r.south) + ", " +
+              std::to_string(r.east) + ", " + std::to_string(r.north) + "] msg=" + r.message);
+        check("raster GeoTIFF UTM: reported as raster with its CRS",
+              r.geometry_kind == "raster" && r.source_crs.find("32632") != std::string::npos,
+              r.geometry_kind + " " + r.source_crs);
+    }
+
     // --- two points, lower-left + upper-right ---
     const auto ll_ur = lsdtt::bounds_from_vector_file(data_dir + "/bounds_points_ll_ur.gpkg");
     check_extent("points LL/UR", ll_ur, 1e-9);

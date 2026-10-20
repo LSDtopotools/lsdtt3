@@ -1,0 +1,11 @@
+# A lithology source other than auto, vector_map or code_raster is refused.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbslbad
+boundary_conditions: nnon
+write_channel_link_bearings: true
+lithology_fname: cbs_region_halves.tif
+lithology_source: shapefile

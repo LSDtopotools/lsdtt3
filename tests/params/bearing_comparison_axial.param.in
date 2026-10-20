@@ -1,9 +1,0 @@
-# lsdtt-bearing-comparison, analytic case: the bearings shifted by 180 degrees, compared as AXIAL data (period 180):
-# identical orientations, so the distance is 0.
-# Inputs are text CSVs in tests/data/bearing_comparison/.
-read_path: __READ_PATH__/bearing_comparison
-write_path: __WRITE_PATH__
-write_fname: bc
-bearing_fname_1: sample.csv
-bearing_fname_2: sample_plus_180.csv
-data_is_axial: true

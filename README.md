@@ -68,9 +68,9 @@ Packages are on the [Releases page](../../releases/latest) and at
 ### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.4.0.tar.gz
-source lsdtt3-backend-linux-x86_64-core-v0.4.0/setenv.sh
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh
 lsdtt-channel-extraction --help
 ```
 
@@ -89,6 +89,11 @@ Ubuntu VM (`brew install --cask multipass`).
 
 On **Google Colab**, `!source setenv.sh` does not work — set the environment
 from Python instead. The install guide has the cell to paste.
+
+The **QGIS plugin** (a zip installed with *Install from ZIP*, plus a backend
+package) and the **Python package** (wheels, for releases that support the
+Python API) are covered in the install guide too. All of them share one
+version number: files from the same release go together.
 
 ### Want the latest code rather than a release?
 
@@ -130,7 +135,7 @@ every library they need. This section is for building from source.
 ```sh
 # Required
 sudo apt update
-sudo apt install cmake build-essential libgdal-dev
+sudo apt install cmake build-essential pkg-config libgdal-dev
 
 # Optional — install whichever you need
 sudo apt install libfftw3-dev        # spectral analysis, wavelet polyfit
@@ -356,6 +361,10 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` |
 | `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` |
 | `lsdtt-synthetic-surfaces` | Generates one-shot analytical, stochastic, and ground-truth fixture surfaces for algorithm validation. | [reference](docs/cli_reference/cli_reference_lsdtt_synthetic_surfaces.md) |
+| `lsdtt-synthetic-networks` | Optimal channel networks with tunable branching, for testing network metrics against known structure. | [reference](docs/cli_reference/cli_reference_lsdtt_synthetic_networks.md) |
+| `lsdtt-fetch-lithology` | Downloads geological map units for a bounding box from Macrostrat. | [reference](docs/cli_reference/cli_reference_lsdtt_fetch_lithology.md) |
+| `lsdtt-fetch-erosion-rates` | Downloads basin-averaged cosmogenic erosion rates for a bounding box from OCTOPUS. | [reference](docs/cli_reference/cli_reference_lsdtt_fetch_erosion_rates.md) |
+| `lsdtt-lithology-erodibility` | Turns a lithology map and a property table into an erodibility (K) raster. | [reference](docs/cli_reference/cli_reference_lsdtt_lithology_erodibility.md) |
 
 ### Surface analysis
 
@@ -366,6 +375,11 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | `docs/cli_reference/cli_reference_lsdtt_mountain_front.md` |
 | `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | — |
 | `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | — |
+| `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](docs/cli_reference/cli_reference_lsdtt_basin_surface_metrics.md) |
+| `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](docs/cli_reference/cli_reference_lsdtt_slope_area.md) |
+| `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](docs/cli_reference/cli_reference_lsdtt_swath_profile.md) |
+| `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](docs/cli_reference/cli_reference_lsdtt_ridgeline_analysis.md) |
+| `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](docs/cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) |
 
 ### Flow routing and drainage
 
@@ -378,6 +392,10 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
 | `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | — |
 | `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | — |
+| `lsdtt-internal-drainage` | Detects and routes closed (internally drained) basins. | [reference](docs/cli_reference/cli_reference_lsdtt_internal_drainage.md) |
+| `lsdtt-distributed-hydrology` | A raster TOPMODEL: rainfall and PET drive stores on every pixel, and runoff is routed down the flow network. | [reference](docs/cli_reference/cli_reference_lsdtt_distributed_hydrology.md) |
+| `lsdtt-water-centreline` | Centrelines for water-area polygons and their tributaries. | [reference](docs/cli_reference/cli_reference_lsdtt_water_centreline.md) |
+| `lsdtt-water-line-repair` | Reconnects water lines truncated by roads. | [reference](docs/cli_reference/cli_reference_lsdtt_water_line_repair.md) |
 
 ### Channel network analysis
 
@@ -386,6 +404,10 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-channel-network-analysis` | Channel-link bearing fitting, junction-angle calculation (donor opening, bending angle), Strahler/Tokunaga self-similarity analysis. | `docs/cli_reference/cli_reference_lsdtt_channel_network_analysis.md` |
 | `lsdtt-chi-analysis` *(requires Eigen3)* | End-to-end chi workflow: chi extraction, piecewise-linear network fitting, disorder metrics with jackknife/bootstrap uncertainty, spatial k_sn / u* inversion with m/n model selection. | `docs/cli_reference/cli_reference_lsdtt_chi_analysis.md` |
 | `lsdtt-cross-sections` | Cross-section extraction along channel networks or user-defined transects. | `docs/cli_reference/cli_reference_lsdtt_cross_sections.md` |
+| `lsdtt-valley-centreline` | Each channel's valley and its centreline. | [reference](docs/cli_reference/cli_reference_lsdtt_valley_centreline.md) |
+| `lsdtt-bankfull-width` | Manning's-equation bankfull channel width, solved per cross section from a high-resolution DEM. | [reference](docs/cli_reference/cli_reference_lsdtt_bankfull_width.md) |
+| `lsdtt-divide-migration` | Drainage-divide migration metrics, such as chi-coordinate offsets across divides. | [reference](docs/cli_reference/cli_reference_lsdtt_divide_migration.md) |
+| `lsdtt-hillslope-channel-coupling` | Links hilltop curvature to the channels below it. | [reference](docs/cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.md) |
 
 ### Tidal / marsh
 
@@ -400,18 +422,22 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | `docs/cli_reference/cli_reference_lsdtt_cosmo_tool.md` |
 | `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` |
 | `lsdtt-cosmo-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference/cli_reference_lsdtt_cosmo_column_tool.md` |
+| `lsdtt-cosmo-landslides` | Cosmogenic concentrations under triggered landslides with an imposed size distribution. | [reference](docs/cli_reference/cli_reference_lsdtt_cosmo_landslides.md) |
 
 ### Landscape evolution
 
 | Program | Description |
 |---|---|
 | `lsdtt-lem` | Landscape evolution model: D-infinity flow routing, implicit stream-power fluvial incision (Anand et al. 2020 / Braun & Willett 2013), Cidre linear/nonlinear hillslope transport (Carretier et al. 2016), uniform uplift. Runs from a synthetic flat or noise surface, or an input DEM. |
+| `lsdtt-advection-diffusion` | A minimal transient landscape-evolution model. |
+| `lsdtt-sediment-routing` | 1-D reach-scale bedload sediment routing, built from a port of d-CASCADE (Battista et al. 2022). |
 
 ### Utilities
 
 | Program | Description |
 |---|---|
 | `lsdtt-linear-stats` | Statistical summaries for linear (directional/bearing) data. |
+| `lsdtt-raster-calculator` | Two-raster algebra and overlap masking, for example DEMs of difference. |
 
 ---
 

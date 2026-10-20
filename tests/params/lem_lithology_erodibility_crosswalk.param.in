@@ -1,0 +1,9 @@
+# Map values mapped to codes through a crosswalk.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkcw
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+cell_size_metres: 10
+lithology_crosswalk_fname: lithk_crosswalk.csv

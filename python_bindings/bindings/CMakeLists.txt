@@ -3,6 +3,7 @@ nanobind_add_module(_core
     geospatial_runtime.cpp
     raster_types.cpp
     raster_basic_ops.cpp
+    raster_conditioning.cpp
     raster_resampling.cpp
     raster_hierarchy.cpp
     raster_pit_processing.cpp

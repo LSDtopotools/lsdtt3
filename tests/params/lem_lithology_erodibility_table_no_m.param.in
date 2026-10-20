@@ -1,0 +1,8 @@
+# A table without m_exponent is refused.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithknom
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+cell_size_metres: 10
+lithology_property_table_fname: lithk_table_no_m.csv

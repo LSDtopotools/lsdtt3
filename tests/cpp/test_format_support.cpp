@@ -92,8 +92,10 @@ const raster_driver_case k_raster_drivers[] = {
     {"Zarr",    true,  ".zarr"},
 };
 
+// MVT reads Macrostrat's vector tiles (lsdtt-fetch-lithology); OpenFileGDB
+// reads the file geodatabases national geological surveys distribute.
 const char* const k_vector_drivers[] = {
-    "GPKG", "FlatGeobuf", "GeoJSON", "ESRI Shapefile",
+    "GPKG", "FlatGeobuf", "GeoJSON", "ESRI Shapefile", "MVT", "OpenFileGDB",
 };
 
 constexpr int    k_nx        = 8;

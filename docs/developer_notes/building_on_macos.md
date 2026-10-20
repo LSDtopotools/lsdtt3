@@ -104,7 +104,10 @@ ctest --test-dir build/macos-core --output-on-failure
 The command sequence is in `tools/README.md` in the repository (see
 [Making release packages](making_release_packages.md)); in short,
 `tools/package_macos_backend.sh --version <version>` produces
-`dist/lsdtt3-backend-macos-<arch>-core-v<version>.tar.gz`. Bundles are
+`dist/lsdtt3-backend-macos-<arch>-core-v<version>.tar.gz`. Add
+`--tag v<version>` to build the release tag itself: the script exports it with
+`git archive` into a scratch folder, configures and builds it there, and
+packages that build. Bundles are
 architecture-specific: package on Apple Silicon for `arm64` users and on Intel
 for `x86_64` users.
 

@@ -18,9 +18,10 @@
 #
 # -------------------------------------------------------------------------
 
-# Keep in step with project(lsdtt3 VERSION ...) on line 2 of CMakeLists.txt,
-# which is the single source of truth for the version.
-{% set version = "0.6.0" %}
+# A checked copy of project(lsdtt3 VERSION ...) in CMakeLists.txt, the single
+# source of truth. Change it with tools/set_version.py; the CTest test
+# unit_version_consistency fails if the two differ.
+{% set version = "0.7.0" %}
 
 package:
   name: lsdtt3

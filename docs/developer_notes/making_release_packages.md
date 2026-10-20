@@ -33,14 +33,42 @@ The release build configures with `-DBUILD_TESTING=OFF`. A release packages
 nothing from the CTest suite, so compiling it is billed CI minutes spent on
 artefacts that are thrown away. Run the tests before releasing, not during.
 
-**The version lives in exactly one place: line 2 of `CMakeLists.txt`.** Tags,
-bundle filenames, the manifest, and the version the binaries report are all
-derived from `project(lsdtt3 VERSION ...)`, and `make_release.sh` aborts if the
-version it is asked to release disagrees with it. Bumping is therefore a
-one-line edit plus the version numbers quoted in the install documentation
-(`README.md`, `docs/what_is_lsdtt3/install_lsdtt3.md`), which are examples and have no
-authority — always check `CMakeLists.txt` rather than trusting a version you
-read in prose.
+**lsdtt3 has one version number, and it lives on line 2 of `CMakeLists.txt`.**
+The C++ package, the backend bundles, the Python package and the QGIS plugin
+all carry it, and every release is the tag `vX.Y.Z`. Tags, bundle filenames,
+the manifest, and the version the binaries report are derived from
+`project(lsdtt3 VERSION ...)`. Five files hold checked copies, because their
+ecosystems read them as they stand: `python_bindings/pyproject.toml`,
+`qgis_plugin/lsdtt_qgis/metadata.txt`, `conda-recipe/meta.yaml`, `pixi.toml`
+and the top entry of `debian/changelog`. `tools/set_version.py` rewrites all
+six together; the CTest test `unit_version_consistency` fails if any differs,
+and `make_release.sh` and `make_all_packages.sh` refuse to build. Only the
+ecosystem rebuild suffixes may differ: `.postN` in `pyproject.toml` (a
+rebuilt wheel) and `+pkgN` in the Debian changelog. The version numbers quoted
+in the install documentation (`README.md`,
+`docs/what_is_lsdtt3/install_lsdtt3.md`) are examples and have no authority.
+
+CLIs have no version of their own. Each carries a stability label, `k_status`
+(`experimental` or `stable`), shown in its banner, its `-v` output and its
+`--help-json`, and on its reference page. Promoting a CLI to `stable` is a
+review decision.
+
+**Choosing the number.** Bump the **minor** version when any component changes
+in a way another component or a user's parameter files depend on: a parameter
+rename, a removed output, a CLI behaviour the plugin wrappers rely on, a Python
+API break. Bump the **patch** version for fixes that need no change elsewhere.
+Components with the same major.minor work together; the QGIS plugin enforces
+that against the backend.
+
+**Every tag gets every artefact, except the Python wheel.** A tag is one
+consistent snapshot, so each artefact built from it contains everything on
+`main` at that commit. The wheel is built by hand, and only for releases where
+the Python API is supported; between wheels, `make_release.sh` builds the
+bindings once on Linux and runs their whole test suite, so a C++ change that
+breaks them stops the release. Releases are tagged on `main`; a `release/X.Y`
+branch is cut only when a fix must ship while `main` holds work that should
+not. The commands, the worked example and the rebuild-without-a-version-change
+table are in `tools/README.md` ("Release cheat sheet").
 
 Which CLIs go in a bundle is a **profile** (`tools/cli_profiles.txt`, the single
 source of truth for all four scripts): `qgis` (the plugin subset, Windows

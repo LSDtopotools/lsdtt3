@@ -10,12 +10,17 @@
 #   1. Resolve the release version (--version flag, else exact git tag).
 #   2. Check it against project(lsdtt3 VERSION ...) in CMakeLists.txt.
 #      Pre-release versions (e.g. 0.3.0-rc1) compare only the X.Y.Z stem.
+#      Then check that every copy of the version number agrees
+#      (tests/scripts/check_version_consistency.py; fix with tools/set_version.py).
 #   3. Configure and build (Release; Eigen on; tests off - a release build
 #      packages nothing from the CTest suite, so compiling it is wasted CI
 #      minutes). Then refuse to continue if an optional dependency was missing:
 #      they degrade silently, so this is the only place it can be caught.
 #   4. Smoke-check every packaged CLI (runs each with -v and checks the output
-#      reports GDAL, not merely that the process exited 0).
+#      reports GDAL, not merely that the process exited 0). Then build the
+#      Python bindings once and run the whole python_bindings/tests suite
+#      against them (tests/scripts/check_python_bindings_smoke.sh). This is
+#      mandatory: a release whose C++ breaks the bindings does not ship.
 #   5. Package the Linux backend bundle (tools/package_linux_backend.sh).
 #   6. Optionally publish to a GitHub release with gh (--publish).
 
@@ -43,6 +48,9 @@ Options:
   --prerelease                Mark the published release as a prerelease
   --cli <name>                Override the CLI list entirely (repeatable;
                               bundle is labelled 'custom')
+  --smoke-python <exe>        Interpreter for the Python bindings smoke check
+                              (default: python3; needs the venv module and
+                              network access or a pip cache)
   --help                      Show this help
 
 Examples:
@@ -59,6 +67,7 @@ SKIP_BUILD=0
 PUBLISH=0
 PRERELEASE=0
 CLI_OVERRIDE=()
+SMOKE_PYTHON="python3"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -69,6 +78,7 @@ while [[ $# -gt 0 ]]; do
         --publish)    PUBLISH=1; shift ;;
         --prerelease) PRERELEASE=1; shift ;;
         --cli)        CLI_OVERRIDE+=("${2:-}"); shift 2 ;;
+        --smoke-python) SMOKE_PYTHON="${2:-}"; shift 2 ;;
         --help|-h)    usage; exit 0 ;;
         *) echo "ERROR: unknown option: $1" >&2; usage; exit 1 ;;
     esac
@@ -155,6 +165,10 @@ else
         info "WARNING: pre-release stem $version_stem != CMake version $cmake_version (continuing)"
     fi
 fi
+
+python3 tests/scripts/check_version_consistency.py --repo-root "$REPO_ROOT" \
+    || fail "the version copies disagree (above). Run tools/set_version.py $cmake_version
+and commit before releasing."
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
     info "WARNING: working tree has uncommitted changes; binaries will report -dirty"
@@ -243,6 +257,17 @@ $v_out"
 $v_out"
 done
 info "smoke check passed for ${#RELEASE_CLIS[@]} CLIs (profile: $CLI_PROFILE)"
+
+# The Python wheel matrix is built by hand and not for every release, so this
+# is the only check that the bindings still compile and pass their tests
+# against this C++. Exit 77 (no usable venv) is a failure here, not a skip.
+smoke_args=(--repo-root "$REPO_ROOT" --work-dir "$BUILD_DIR/python_smoke"
+            --python "$SMOKE_PYTHON")
+[[ "$SKIP_BUILD" -eq 1 ]] && smoke_args+=(--reuse)
+info "Python bindings smoke check (whole python_bindings/tests suite)"
+bash tests/scripts/check_python_bindings_smoke.sh "${smoke_args[@]}" || fail \
+    "the Python bindings do not build or their tests fail against this C++ (above).
+Fix the bindings before releasing: whoever broke them fixes them."
 
 # -----------------------------------------------------------------------------
 # 5. Package

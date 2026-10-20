@@ -1,0 +1,20 @@
+# chi_erodibility_calibration.param.in without erosion_rate_fname: the chi fit
+# tables and the k_sn basin summary must equal the calibration run byte for
+# byte (the calibration only observes).
+read_path: __READ_PATH__
+read_fname: f1_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ercaloff
+
+raster_is_filled: true
+boundary_conditions: oooo
+threshold_contributing_pixels: 50
+min_channel_pixels: 30
+n_largest_basins: 0
+m_over_n: 0.45
+chi_A0: 1
+
+fit_chi_networks: true
+write_fit_tables: true
+write_ksn_basin_summary: true
+

@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithbig
+
+# All of the Alps at zoom 12 is far more than max_tiles; refused before any
+# request is made.
+west: 5.0
+south: 43.5
+east: 16.5
+north: 48.5
+macrostrat_tile_zoom: 12
+macrostrat_tile_dir: macrostrat_tiles
+lookup_map_units: false

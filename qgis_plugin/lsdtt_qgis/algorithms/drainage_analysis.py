@@ -36,6 +36,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     layer_file_path,
     require_output,
@@ -65,7 +66,7 @@ WRITE_SWITCHES = (
 )
 
 
-class DrainageAnalysisBase(QgsProcessingAlgorithm):
+class DrainageAnalysisBase(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -105,6 +106,7 @@ class DrainageAnalysisBase(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", self.DEFAULT_PREFIX)
         )
+        self.add_overwrite_parameter()
         self.add_product_parameters()
         self.addParameter(
             QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False)

@@ -26,11 +26,17 @@ Python API. Guides explain a workflow; API pages specify the exact callable.
 
 ## Installation
 
-Install a released wheel with:
+`lsdtt3` shares its version number with the lsdtt3 command-line tools, but
+wheels are built only for releases where the Python API is supported, so not
+every version has one. It is **not on PyPI yet** while the repository is in
+private beta: when a release has wheels they are attached to its GitHub
+release, and you install the file for your Python and platform into a virtual,
+conda or pixi environment:
 
 ```bash
-python -m pip install lsdtt3
+python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
 ```
 
-For development from this checkout, build/install `python_bindings/` in an
-environment that has the native dependencies required by lsdtt3.
+The [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)
+has the details. For development from this checkout, see
+[Building the Python wheels](../developer_notes/building_python_wheels.md).

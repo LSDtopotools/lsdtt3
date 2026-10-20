@@ -136,6 +136,29 @@ target_compile_options(lsdtt3_runtime PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Wno-unused-parameter>
 )
 
+# The lsdtt3 version reported by the wheel's CLIs (-v) and by
+# _core.lsdtt3_version(). lsdtt3 has one version number: under pip,
+# scikit-build-core passes the pyproject.toml version (the shared X.Y.Z, plus
+# .postN for a rebuilt wheel). A direct CMake build reads
+# project(lsdtt3 VERSION ...) from the root CMakeLists.txt instead.
+if(DEFINED SKBUILD_PROJECT_VERSION_FULL)
+    set(LSDTT3_PYTHON_PACKAGE_VERSION "${SKBUILD_PROJECT_VERSION_FULL}")
+elseif(DEFINED SKBUILD_PROJECT_VERSION)
+    set(LSDTT3_PYTHON_PACKAGE_VERSION "${SKBUILD_PROJECT_VERSION}")
+else()
+    file(STRINGS "${LSDTT3_SOURCE_DIR}/CMakeLists.txt" _lsdtt3_project_line
+        REGEX "^project\\(lsdtt3[ \t]+VERSION[ \t]+[0-9]+\\.[0-9]+\\.[0-9]+")
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+"
+        LSDTT3_PYTHON_PACKAGE_VERSION "${_lsdtt3_project_line}")
+    if(NOT LSDTT3_PYTHON_PACKAGE_VERSION)
+        message(FATAL_ERROR "Could not read project(lsdtt3 VERSION ...) from "
+                            "${LSDTT3_SOURCE_DIR}/CMakeLists.txt")
+    endif()
+endif()
+message(STATUS "lsdtt3 package version (bindings): ${LSDTT3_PYTHON_PACKAGE_VERSION}")
+set_property(SOURCE "${LSDTT3_SRC_DIR}/core/lsdtt_param_parser.cpp" APPEND PROPERTY
+    COMPILE_DEFINITIONS "LSDTT3_VERSION=\"${LSDTT3_PYTHON_PACKAGE_VERSION}\"")
+
 if(OpenMP_CXX_FOUND)
     target_link_libraries(lsdtt3_runtime PUBLIC OpenMP::OpenMP_CXX)
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_OPENMP=1)
@@ -238,9 +261,9 @@ if(LSDTT_PYTHON_CLI)
     lsdtt_python_cli(lsdtt-cosmo-column-tool "cli/lsdtt-cosmo-column-tool.cpp")
     lsdtt_python_cli(lsdtt-marsh-topography "cli/lsdtt-marsh-topography.cpp")
     lsdtt_python_cli(lsdtt-linear-stats "cli/lsdtt-linear-stats.cpp")
-    lsdtt_python_cli(lsdtt-bearing-comparison "cli/lsdtt-bearing-comparison.cpp")
     lsdtt_python_cli(lsdtt-swath-profile "cli/lsdtt-swath-profile.cpp")
     lsdtt_python_cli(lsdtt-lem "cli/lsdtt-lem.cpp")
+    lsdtt_python_cli(lsdtt-lithology-erodibility "cli/lsdtt-lithology-erodibility.cpp")
     lsdtt_python_cli(lsdtt-advection-diffusion "cli/lsdtt-advection-diffusion.cpp")
     lsdtt_python_cli(lsdtt-sediment-routing "cli/lsdtt-sediment-routing.cpp")
     lsdtt_python_cli(lsdtt-ridgeline-analysis "cli/lsdtt-ridgeline-analysis.cpp")
@@ -248,6 +271,8 @@ if(LSDTT_PYTHON_CLI)
     lsdtt_python_cli(lsdtt-divide-migration "cli/lsdtt-divide-migration.cpp")
     lsdtt_python_cli(lsdtt-raster-calculator "cli/lsdtt-raster-calculator.cpp")
     lsdtt_python_cli(lsdtt-fetch-raster "cli/lsdtt-fetch-raster.cpp")
+    lsdtt_python_cli(lsdtt-fetch-lithology "cli/lsdtt-fetch-lithology.cpp")
+    lsdtt_python_cli(lsdtt-fetch-erosion-rates "cli/lsdtt-fetch-erosion-rates.cpp")
     lsdtt_python_cli(lsdtt-bankfull-width "cli/lsdtt-bankfull-width.cpp")
     if(LSDTT_PYTHON_FFTW_TARGET)
         lsdtt_python_cli(lsdtt-spectral-analysis "cli/lsdtt-spectral-analysis.cpp")

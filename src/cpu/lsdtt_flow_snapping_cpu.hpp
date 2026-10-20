@@ -32,6 +32,14 @@
 //      Follow the D8 receiver chain until the first cell is reached whose
 //      contributing-pixel count meets or exceeds the threshold.
 //
+//   3. reported_area (snap_pixel_to_reported_drainage_area_expanding_square)
+//      For a point that comes with a reported drainage area (e.g. a sampled
+//      basin). Among every channel cell (contributing pixels >= threshold) in
+//      the square of radius R, take the NEAREST whose area is within a ratio
+//      tolerance of the reported one; if none is, the one closest in area.
+//      This stops a sample on a small tributary snapping to the trunk next to
+//      it, which nearest-cell snapping cannot detect.
+//
 // Notes
 // -----
 // - These routines require a flow object built with s_vector enabled because
@@ -158,6 +166,29 @@ struct lsdtt_downstream_snap_options
 };
 
 // -----------------------------------------------------------------------------
+// lsdtt_reported_area_snap_options
+//
+// Options for area-matched snapping.
+//
+// contributing_pixels_threshold
+//   Only cells with at least this many contributing pixels (channel cells) are
+//   candidates.
+//
+// max_search_radius_pixels
+//   Inclusive half-width of the search square.
+//
+// area_ratio_tolerance
+//   A candidate matches when 1/tol <= A_cell / A_reported <= tol, i.e.
+//   |ln(A_cell / A_reported)| <= ln(tol). Must be > 1.
+// -----------------------------------------------------------------------------
+struct lsdtt_reported_area_snap_options
+{
+    std::uint64_t contributing_pixels_threshold = 1000;
+    int           max_search_radius_pixels      = 10;
+    double        area_ratio_tolerance          = 1.25;
+};
+
+// -----------------------------------------------------------------------------
 // lsdtt_snap_result
 //
 // Result record returned for each attempted snap.
@@ -226,6 +257,36 @@ snap_pixel_to_contributing_pixels_threshold_downstream(
     int                                  col,
     const lsdtt_downstream_snap_options& options =
         lsdtt_downstream_snap_options{}
+);
+
+// -----------------------------------------------------------------------------
+// snap_pixel_to_reported_drainage_area_expanding_square
+//
+// Area-matched snapping (method 3 above). reported_area_m2 is in the squared
+// map units of the grid (m^2 for a projected DEM); a cell's area is
+// contributing pixels * cell_size^2. Rule, over the valid cells of the square
+// of radius max_search_radius_pixels around (row, col) whose contributing
+// pixels are at least the threshold:
+//   1. if any candidate has |ln(A_cell / A_rep)| <= ln(tol), take the nearest
+//      of those (pixel distance), ties to the smaller |ln ratio|, then the
+//      smaller flat index;
+//   2. otherwise take the candidate with the smallest |ln ratio|, ties to the
+//      smaller distance, then the smaller flat index, and still return
+//      success: the caller compares the snapped area with the reported one
+//      and flags the mismatch.
+// search_radius_pixels is the ring (Chebyshev distance) of the chosen cell.
+// Status threshold_not_found_in_search_window when there is no candidate,
+// input_out_of_bounds for a point off the grid. Throws std::invalid_argument
+// for a zero threshold, a negative radius, a tolerance <= 1 or a reported
+// area that is not finite and > 0.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_snap_result
+snap_pixel_to_reported_drainage_area_expanding_square(
+    const lsdtt_flow_base&                   flow,
+    int                                      row,
+    int                                      col,
+    double                                   reported_area_m2,
+    const lsdtt_reported_area_snap_options&  options
 );
 
 // -----------------------------------------------------------------------------
@@ -302,6 +363,8 @@ snap_flats_to_contributing_pixels_threshold_downstream(
 // produce unsnapped outlets that look like a modelling choice.
 //
 // -----------------------------------------------------------------------------
+// "reported_area" needs the reported area, so this overload throws
+// std::invalid_argument for it and names the overload below.
 [[nodiscard]] lsdtt_snap_result snap_pixel_by_method(
     const lsdtt_flow_base&               flow,
     int                                  row,
@@ -309,6 +372,21 @@ snap_flats_to_contributing_pixels_threshold_downstream(
     const std::string&                   method,
     const lsdtt_square_snap_options&     square_options,
     const lsdtt_downstream_snap_options& downstream_options
+);
+
+// The same, with "reported_area" too:
+//   "reported_area"     snap_pixel_to_reported_drainage_area_expanding_square
+//                       with reported_area_m2 and area_options
+// The other methods ignore reported_area_m2 and area_options.
+[[nodiscard]] lsdtt_snap_result snap_pixel_by_method(
+    const lsdtt_flow_base&                  flow,
+    int                                     row,
+    int                                     col,
+    const std::string&                      method,
+    const lsdtt_square_snap_options&        square_options,
+    const lsdtt_downstream_snap_options&    downstream_options,
+    double                                  reported_area_m2,
+    const lsdtt_reported_area_snap_options& area_options
 );
 
 } // namespace lsdtt

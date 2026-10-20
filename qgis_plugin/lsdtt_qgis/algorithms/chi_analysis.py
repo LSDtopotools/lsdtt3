@@ -6,6 +6,8 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingOutputFile,
+    QgsProcessingOutputMultipleLayers,
+    QgsProcessingOutputRasterLayer,
     QgsProcessingOutputVectorLayer,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterDefinition,
@@ -18,6 +20,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     require_output,
@@ -26,7 +29,23 @@ from .support import (
 )
 
 
-class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
+def _per_mn_outputs(output_folder, output_prefix, suffix, description):
+    """Return the sorted per-m/n files <prefix><suffix>_mn_*.csv, raising if none."""
+    pattern = os.path.join(
+        output_folder, "{}{}_mn_*.csv".format(output_prefix, suffix)
+    )
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        raise QgsProcessingException(
+            "Expected {} output not found: {}. "
+            "Check the run log in the output folder for warnings.".format(
+                description, pattern
+            )
+        )
+    return matches
+
+
+class ChiAnalysisAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -49,6 +68,11 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
     DATA_MAPS_FORMAT = "DATA_MAPS_FORMAT"
     WRITE_DATA_MAP_LINES = "WRITE_DATA_MAP_LINES"
     DATA_MAP_LINES_FORMAT = "DATA_MAP_LINES_FORMAT"
+
+    # Lithology map: k_sn by lithologic unit (needs fit_chi_networks)
+    LITHOLOGY_FNAME = "LITHOLOGY_FNAME"
+    WRITE_KSN_LITHOLOGY_SUMMARY = "WRITE_KSN_LITHOLOGY_SUMMARY"
+    WRITE_LITHOLOGY_CODE_RASTER = "WRITE_LITHOLOGY_CODE_RASTER"
 
     # Advanced: run control
     THREADS = "THREADS"
@@ -87,17 +111,52 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
     INVERSION_USE_MAE = "INVERSION_USE_MAE"
     WRITE_INVERSION_RASTERS = "WRITE_INVERSION_RASTERS"
 
+    # Advanced: lithology map reading and k_sn-by-lithology statistics
+    LITHOLOGY_SOURCE = "LITHOLOGY_SOURCE"
+    LITHOLOGY_LAYER_NAME = "LITHOLOGY_LAYER_NAME"
+    LITHOLOGY_FIELD_NAME = "LITHOLOGY_FIELD_NAME"
+    LITHOLOGY_CROSSWALK_FNAME = "LITHOLOGY_CROSSWALK_FNAME"
+    LITHOLOGY_KSN_HISTOGRAM_N_BINS = "LITHOLOGY_KSN_HISTOGRAM_N_BINS"
+    LITHOLOGY_KSN_HISTOGRAM_LOG_BINS = "LITHOLOGY_KSN_HISTOGRAM_LOG_BINS"
+    LITHOLOGY_CONTACT_BUFFER_METRES = "LITHOLOGY_CONTACT_BUFFER_METRES"
+    LITHOLOGY_MIN_REACH_PIXELS = "LITHOLOGY_MIN_REACH_PIXELS"
+    LITHOLOGY_BOOTSTRAP_CLUSTER = "LITHOLOGY_BOOTSTRAP_CLUSTER"
+    LITHOLOGY_BOOTSTRAP_REPLICATES = "LITHOLOGY_BOOTSTRAP_REPLICATES"
+    LITHOLOGY_BOOTSTRAP_RANDOM_SEED = "LITHOLOGY_BOOTSTRAP_RANDOM_SEED"
+
     OUTPUT_DISORDER_SWEEP = "OUTPUT_DISORDER_SWEEP"
     OUTPUT_SEGMENT_LINES = "OUTPUT_SEGMENT_LINES"
     OUTPUT_DATA_MAPS = "OUTPUT_DATA_MAPS"
     OUTPUT_DATA_MAP_LINES = "OUTPUT_DATA_MAP_LINES"
     OUTPUT_INVERSION_BEST = "OUTPUT_INVERSION_BEST"
     OUTPUT_INVERSION_TRIALS = "OUTPUT_INVERSION_TRIALS"
+    OUTPUT_KSN_BY_LITHOLOGY = "OUTPUT_KSN_BY_LITHOLOGY"
+    OUTPUT_KSN_BY_LITHOLOGY_AND_BASIN = "OUTPUT_KSN_BY_LITHOLOGY_AND_BASIN"
+    OUTPUT_KSN_HISTOGRAM_BY_LITHOLOGY = "OUTPUT_KSN_HISTOGRAM_BY_LITHOLOGY"
+    OUTPUT_KSN_LITHOLOGY_NODES = "OUTPUT_KSN_LITHOLOGY_NODES"
+    OUTPUT_LITHOLOGY_REACHES = "OUTPUT_LITHOLOGY_REACHES"
+    OUTPUT_LITHOLOGY_SEGMENTS = "OUTPUT_LITHOLOGY_SEGMENTS"
+    OUTPUT_LITHOLOGY_UNITS = "OUTPUT_LITHOLOGY_UNITS"
+    OUTPUT_LITHOLOGY_CODE = "OUTPUT_LITHOLOGY_CODE"
 
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
     POINT_FORMAT_OPTIONS = ["csv", "flatgeobuf", "gpkg"]
     OUTPUT_FORMAT_OPTIONS = ["cog", "gtiff"]
     SNAPPING_OPTIONS = ["downstream", "expanding_square", "none"]
+    LITHOLOGY_SOURCE_OPTIONS = ["auto", "vector_map", "code_raster"]
+    LITHOLOGY_BOOTSTRAP_CLUSTER_OPTIONS = ["reach", "basin"]
+
+    # Per-m/n k_sn-by-lithology tables: (output id, file suffix, description).
+    LITHOLOGY_MN_OUTPUTS = [
+        (OUTPUT_KSN_BY_LITHOLOGY, "_chi_ksn_by_lithology", "k_sn by lithology"),
+        (OUTPUT_KSN_BY_LITHOLOGY_AND_BASIN, "_chi_ksn_by_lithology_and_basin",
+         "k_sn by lithology and basin"),
+        (OUTPUT_KSN_HISTOGRAM_BY_LITHOLOGY, "_chi_ksn_histogram_by_lithology",
+         "k_sn histogram by lithology"),
+        (OUTPUT_KSN_LITHOLOGY_NODES, "_chi_ksn_lithology_nodes", "k_sn lithology nodes"),
+        (OUTPUT_LITHOLOGY_REACHES, "_chi_lithology_reaches", "lithologic reaches"),
+        (OUTPUT_LITHOLOGY_SEGMENTS, "_chi_lithology_segments", "lithology segments"),
+    ]
 
     def _add_advanced(self, param):
         param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -113,6 +172,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_chi"))
+        self.add_overwrite_parameter()
         self.addParameter(QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False))
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -228,6 +288,28 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
                 "Data map lines format",
                 options=self.VECTOR_FORMAT_OPTIONS,
                 defaultValue=0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.LITHOLOGY_FNAME,
+                "Lithology map (optional; polygon vector or code raster; "
+                "enables fit chi networks)",
+                optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.WRITE_KSN_LITHOLOGY_SUMMARY,
+                "Write k_sn by lithologic unit (with a lithology map)",
+                True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.WRITE_LITHOLOGY_CODE_RASTER,
+                "Write lithologic unit code raster (with a lithology map)",
+                False,
             )
         )
 
@@ -455,12 +537,112 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        # --- Advanced: lithology map and k_sn-by-lithology statistics ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.LITHOLOGY_SOURCE,
+                "Lithology map type",
+                options=self.LITHOLOGY_SOURCE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.LITHOLOGY_LAYER_NAME,
+                "Lithology vector layer name (empty = first layer)",
+                "",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.LITHOLOGY_FIELD_NAME,
+                "Lithology vector attribute holding the unit",
+                "lith_primary",
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterFile(
+                self.LITHOLOGY_CROSSWALK_FNAME,
+                "Lithology crosswalk CSV (optional; columns value,code[,name])",
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_KSN_HISTOGRAM_N_BINS,
+                "Lithology: k_sn histogram bins",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=30,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.LITHOLOGY_KSN_HISTOGRAM_LOG_BINS,
+                "Lithology: space k_sn histogram bins in log10(k_sn)",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_CONTACT_BUFFER_METRES,
+                "Lithology: exclude nodes within this distance of a contact (m)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_MIN_REACH_PIXELS,
+                "Lithology: minimum channel nodes per lithologic reach",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=10,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.LITHOLOGY_BOOTSTRAP_CLUSTER,
+                "Lithology: bootstrap resampling unit",
+                options=self.LITHOLOGY_BOOTSTRAP_CLUSTER_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_BOOTSTRAP_REPLICATES,
+                "Lithology: bootstrap replicates (0 = no interval)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=1000,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.LITHOLOGY_BOOTSTRAP_RANDOM_SEED,
+                "Lithology: bootstrap random seed",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=0,
+                defaultValue=5489,
+            )
+        )
+
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_DISORDER_SWEEP, "Chi disorder sweep CSV"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_SEGMENT_LINES, "Chi fit segment lines"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_DATA_MAPS, "Chi data maps (per-node points)"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_DATA_MAP_LINES, "Chi data map lines"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_INVERSION_BEST, "Inversion best-model CSV"))
         self.addOutput(QgsProcessingOutputFile(self.OUTPUT_INVERSION_TRIALS, "Inversion trials CSV"))
+        for output_id, _, description in self.LITHOLOGY_MN_OUTPUTS:
+            self.addOutput(
+                QgsProcessingOutputMultipleLayers(
+                    output_id, "Chi {} CSVs (one per m/n)".format(description)
+                )
+            )
+        self.addOutput(QgsProcessingOutputFile(self.OUTPUT_LITHOLOGY_UNITS, "Lithologic unit legend CSV"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_LITHOLOGY_CODE, "Lithologic unit code raster"))
 
         attach_backend_help(
             self,
@@ -513,6 +695,13 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             fit_networks = True
             feedback.pushInfo(
                 "Chi fit segment lines require network fitting; enabling fit_chi_networks."
+            )
+        lithology_file = self.parameterAsFile(parameters, self.LITHOLOGY_FNAME, context)
+        if lithology_file and not fit_networks:
+            fit_networks = True
+            feedback.pushInfo(
+                "k_sn by lithology is computed from the fitted chi networks; "
+                "enabling fit_chi_networks."
             )
         print_data_maps = self.parameterAsBool(parameters, self.PRINT_DATA_MAPS, context)
         write_data_map_lines = self.parameterAsBool(parameters, self.WRITE_DATA_MAP_LINES, context)
@@ -652,6 +841,56 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         if m_over_n:
             param_values["m_over_n"] = m_over_n
 
+        write_ksn_lithology_summary = False
+        write_lithology_code_raster = False
+        if lithology_file:
+            write_ksn_lithology_summary = self.parameterAsBool(
+                parameters, self.WRITE_KSN_LITHOLOGY_SUMMARY, context
+            )
+            write_lithology_code_raster = self.parameterAsBool(
+                parameters, self.WRITE_LITHOLOGY_CODE_RASTER, context
+            )
+            param_values.update({
+                "lithology_fname": lithology_file,
+                "lithology_source": self.LITHOLOGY_SOURCE_OPTIONS[
+                    self.parameterAsEnum(parameters, self.LITHOLOGY_SOURCE, context)
+                ],
+                "lithology_field_name": self.parameterAsString(
+                    parameters, self.LITHOLOGY_FIELD_NAME, context
+                ) or "lith_primary",
+                "write_ksn_lithology_summary": write_ksn_lithology_summary,
+                "write_lithology_code_raster": write_lithology_code_raster,
+                "lithology_ksn_histogram_n_bins": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_KSN_HISTOGRAM_N_BINS, context
+                ),
+                "lithology_ksn_histogram_log_bins": self.parameterAsBool(
+                    parameters, self.LITHOLOGY_KSN_HISTOGRAM_LOG_BINS, context
+                ),
+                "lithology_contact_buffer_metres": self.parameterAsDouble(
+                    parameters, self.LITHOLOGY_CONTACT_BUFFER_METRES, context
+                ),
+                "lithology_min_reach_pixels": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_MIN_REACH_PIXELS, context
+                ),
+                "lithology_bootstrap_cluster": self.LITHOLOGY_BOOTSTRAP_CLUSTER_OPTIONS[
+                    self.parameterAsEnum(parameters, self.LITHOLOGY_BOOTSTRAP_CLUSTER, context)
+                ],
+                "lithology_bootstrap_replicates": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_BOOTSTRAP_REPLICATES, context
+                ),
+                "lithology_bootstrap_random_seed": self.parameterAsInt(
+                    parameters, self.LITHOLOGY_BOOTSTRAP_RANDOM_SEED, context
+                ),
+            })
+            layer_name = self.parameterAsString(parameters, self.LITHOLOGY_LAYER_NAME, context)
+            if layer_name:
+                param_values["lithology_layer_name"] = layer_name
+            crosswalk_file = self.parameterAsFile(
+                parameters, self.LITHOLOGY_CROSSWALK_FNAME, context
+            )
+            if crosswalk_file:
+                param_values["lithology_crosswalk_fname"] = crosswalk_file
+
         run_lsdtt_tool(
             "lsdtt-chi-analysis", param_values, output_folder, output_prefix, feedback
         )
@@ -697,6 +936,20 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
                 output_folder, output_prefix, "_chi_ksn_inversion_trials.csv",
                 "inversion trials",
             )
+        if write_ksn_lithology_summary:
+            for output_id, suffix, description in self.LITHOLOGY_MN_OUTPUTS:
+                outputs[output_id] = _per_mn_outputs(
+                    output_folder, output_prefix, suffix, description
+                )
+            outputs[self.OUTPUT_LITHOLOGY_UNITS] = require_output(
+                output_folder, output_prefix, "_lithology_units.csv",
+                "lithologic unit legend",
+            )
+        if write_lithology_code_raster:
+            outputs[self.OUTPUT_LITHOLOGY_CODE] = require_output(
+                output_folder, output_prefix, "_lithology_code.tif",
+                "lithologic unit code raster",
+            )
         return outputs
 
     def name(self):
@@ -717,7 +970,9 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
             "channel networks (largest basins or supplied outlets with "
             "snapping), piecewise-linear chi-network fitting with an m/n "
             "disorder sweep (optional subset/jackknife/bootstrap "
-            "uncertainty), diagnostic chi data maps, and optional spatial "
+            "uncertainty), diagnostic chi data maps, optional k_sn by "
+            "lithologic unit from a lithology map (polygon vector or code "
+            "raster; this enables chi-network fitting), and optional spatial "
             "k_sn/u* inversion (Eigen-enabled backend required). Backend "
             "path is managed in plugin settings."
         )

@@ -1,0 +1,8 @@
+# A vector map rasterised onto a 20 m DEM grid.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkdem
+lithology_property_table_fname: lithk_table.csv
+write_output_format: gtiff
+lithology_fname: lithk_map.gpkg
+dem_fname: lithk_dem.tif

@@ -1,0 +1,16 @@
+# lsdtt-channel-network-analysis: the rotated trellis (trunks drain west, bearing 270) compared
+# with a reference of N-S trunk bearings (180) from another run, order 2 only: axial W1 = 90.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_rotated_dem.tif
+write_fname: cbsr
+boundary_conditions: nnno
+write_channel_bearing_statistics: true
+channel_bearing_group_by: strahler_order
+channel_bearing_angular_type: axial
+channel_bearing_block_order: 2
+channel_bearing_reference_fname: ns_trunk_bearings.csv
+channel_bearing_reference_order_filter: 2

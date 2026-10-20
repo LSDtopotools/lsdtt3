@@ -85,7 +85,7 @@ std::string render_overview(const lsdtt::lsdtt_help_registry& help)
     args.help_requested = true;
     std::ostringstream os;
     lsdtt::lsdtt_param_parser::print_terminal_help(
-        "lsdtt-test-tool", "0.1", "https://example.org/citation",
+        "lsdtt-test-tool", "experimental", "https://example.org/citation",
         help, args, os);
     return os.str();
 }
@@ -98,7 +98,7 @@ std::string render_topic(const lsdtt::lsdtt_help_registry& help,
     args.help_topic = topic;
     std::ostringstream os;
     lsdtt::lsdtt_param_parser::print_terminal_help(
-        "lsdtt-test-tool", "0.1", "https://example.org/citation",
+        "lsdtt-test-tool", "experimental", "https://example.org/citation",
         help, args, os);
     return os.str();
 }
@@ -125,7 +125,7 @@ void test_parse_args_deferred()
         char prog[] = "tool"; char h[] = "-h";
         char* argv[] = {prog, h};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            2, argv, "tool", "0.1", "cite");
+            2, argv, "tool", "experimental", "cite");
         check(args.help_requested && !args.help_html &&
               args.help_topic.empty(),
               "-h sets help_requested only");
@@ -134,7 +134,7 @@ void test_parse_args_deferred()
         char prog[] = "tool"; char h[] = "-h"; char html[] = "html";
         char* argv[] = {prog, h, html};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            3, argv, "tool", "0.1", "cite");
+            3, argv, "tool", "experimental", "cite");
         check(args.help_requested && args.help_html,
               "-h html sets help_html");
     }
@@ -142,7 +142,7 @@ void test_parse_args_deferred()
         char prog[] = "tool"; char h[] = "--help"; char t[] = "n_threads";
         char* argv[] = {prog, h, t};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            3, argv, "tool", "0.1", "cite");
+            3, argv, "tool", "experimental", "cite");
         check(args.help_requested && args.help_topic == "n_threads",
               "--help <name> sets help_topic");
     }
@@ -150,7 +150,7 @@ void test_parse_args_deferred()
         char prog[] = "tool"; char f[] = "params.driver";
         char* argv[] = {prog, f};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            2, argv, "tool", "0.1", "cite");
+            2, argv, "tool", "experimental", "cite");
         check(!args.help_requested && args.path == "./" &&
               args.fname == "params.driver",
               "two-arg form resolves fname with default path");
@@ -159,7 +159,7 @@ void test_parse_args_deferred()
         char prog[] = "tool"; char p[] = "/data/"; char f[] = "params.driver";
         char* argv[] = {prog, p, f};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            3, argv, "tool", "0.1", "cite");
+            3, argv, "tool", "experimental", "cite");
         check(!args.help_requested && args.path == "/data/" &&
               args.fname == "params.driver",
               "three-arg form resolves path and fname");
@@ -170,8 +170,11 @@ void test_overview_rendering()
 {
     const std::string out = render_overview(make_test_registry());
 
-    check(out.find("lsdtt-test-tool 0.1") != std::string::npos,
-          "overview shows tool name and version");
+    // lsdtt3 has one version number: the header names the package version
+    // and the CLI's status, e.g. "lsdtt-test-tool (lsdtt3 0.7.0, experimental)".
+    check(out.find("lsdtt-test-tool (lsdtt3 " + lsdtt::lsdtt3_package_version()
+                   + ", experimental)") != std::string::npos,
+          "overview shows tool name, package version and status");
     check(out.find("File I/O and run control:") != std::string::npos,
           "overview has io section");
     check(appears_before(out, "File I/O and run control:", "Zebra analysis:"),
@@ -251,7 +254,7 @@ void test_json_help()
         char prog[] = "tool"; char j[] = "--help-json";
         char* argv[] = {prog, j};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            2, argv, "tool", "0.1", "cite");
+            2, argv, "tool", "experimental", "cite");
         check(args.help_requested && args.help_json,
               "--help-json sets help_json");
     }
@@ -259,7 +262,7 @@ void test_json_help()
         char prog[] = "tool"; char h[] = "-h"; char j[] = "json";
         char* argv[] = {prog, h, j};
         auto args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-            3, argv, "tool", "0.1", "cite");
+            3, argv, "tool", "experimental", "cite");
         check(args.help_requested && args.help_json,
               "-h json sets help_json");
     }
@@ -269,12 +272,17 @@ void test_json_help()
     args.help_json = true;
     std::ostringstream os;
     lsdtt::lsdtt_param_parser::print_terminal_help(
-        "lsdtt-test-tool", "0.1", "https://example.org/citation",
+        "lsdtt-test-tool", "experimental", "https://example.org/citation",
         make_test_registry(), args, os, {"fftw", "eigen"});
     const std::string out = os.str();
 
     check(out.find("\"tool\": \"lsdtt-test-tool\"") != std::string::npos,
           "json contains tool name");
+    check(out.find("\"version\": \"" + lsdtt::lsdtt3_package_version() + "\"")
+              != std::string::npos,
+          "json version is the lsdtt3 package version");
+    check(out.find("\"status\": \"experimental\"") != std::string::npos,
+          "json contains the CLI's status");
     check(out.find("\"features\": [\"fftw\", \"eigen\"]") != std::string::npos,
           "json contains the supplied feature list");
     check(out.find("\"name\": \"write_zebra_raster\"") != std::string::npos &&

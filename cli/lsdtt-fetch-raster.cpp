@@ -59,6 +59,7 @@
 
 #include "../src/core/lsdtt_gdal_init.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_dem_grouping.hpp"
 #include "../src/core/lsdtt_outlet_bounds_discovery.hpp"
 #include "../src/core/lsdtt_coastal_mask.hpp"
@@ -72,7 +73,7 @@
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
-static const std::string k_version   = "1.0.0";
+static const std::string k_status    = "stable";
 static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-fetch-raster";
 
@@ -87,10 +88,9 @@ static void print_banner()
         << "|| Download a DEM for a bounding box, ready to analyse  ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                      ||\n"
         << "=========================================================\n"
-        << "|| -v or --version    : full lsdtt3 release version\n"
-        << "|| This CLI's version : " << k_version << "\n"
-        << "|| If CLI version number is lower than 1.0.0 it means\n"
-        << "|| this CLI is still experimental and not fully tested.\n"
+        << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"
+        << "|| Status         : " << k_status
+        << (k_status == "stable" ? "" : " -- not yet fully tested") << "\n"
         << "=========================================================\n"
         << "|| Citation : " << k_citation << "\n"
         << "|| -h       : help explaining the parameters\n"
@@ -143,7 +143,7 @@ int main(int argc, char* argv[])
     lsdtt::gdal_init();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-        argc, argv, k_tool_name, k_version, k_citation);
+        argc, argv, k_tool_name, k_status, k_citation);
 
     std::map<std::string, bool>        bool_default_map;
     std::map<std::string, float>       float_default_map;
@@ -160,29 +160,7 @@ int main(int argc, char* argv[])
     // parser carries floats, so the bounds are declared as strings and parsed
     // here. A float would quantise ~1e-7 degrees, which is metres on the
     // ground and enough to shift the fetched window.
-    string_default_map["west"] = "";
-    help_map["west"] = {"string","",
-        "Western edge of the bounding box, WGS84 decimal degrees.",
-        "Required. Must be less than east. Range -180 to 180.",
-        "Bounding box", "param", ""};
-
-    string_default_map["east"] = "";
-    help_map["east"] = {"string","",
-        "Eastern edge of the bounding box, WGS84 decimal degrees.",
-        "Required. Must be greater than west. Range -180 to 180.",
-        "Bounding box", "param", ""};
-
-    string_default_map["south"] = "";
-    help_map["south"] = {"string","",
-        "Southern edge of the bounding box, WGS84 decimal degrees.",
-        "Required. Must be less than north. Range -90 to 90.",
-        "Bounding box", "param", ""};
-
-    string_default_map["north"] = "";
-    help_map["north"] = {"string","",
-        "Northern edge of the bounding box, WGS84 decimal degrees.",
-        "Required. Must be greater than south. Range -90 to 90.",
-        "Bounding box", "param", ""};
+    lsdtt::declare_fetch_bbox_parameters(string_default_map, help_map);
 
     // --- Bounds mode and vector bounds ---
     string_default_map["bounds_mode"] = "manual";
@@ -194,33 +172,7 @@ int main(int argc, char* argv[])
         "outlet points, with status CSV output.",
         "Bounding box", "param", ""};
 
-    string_default_map["bounds_fname"] = "";
-    help_map["bounds_fname"] = {"string","",
-        "Vector file defining the area, instead of west/south/east/north.",
-        "FlatGeobuf (.fgb), GeoPackage (.gpkg) or any other OGR-readable "
-        "format. The layer must contain either one or more polygons (the "
-        "envelope of all of them is used), or exactly two points marking "
-        "opposite corners. For two points either diagonal works -- "
-        "lower-left/upper-right and lower-right/upper-left give the same box, "
-        "so the orientation is worked out automatically. If the layer is in a "
-        "projected CRS such as UTM it is reprojected to WGS84 for you, so a "
-        "box drawn in a GIS can be used directly. Set this or the four edge "
-        "parameters, not both.",
-        "Bounding box", "param", ""};
-
-    string_default_map["bounds_path"] = "";
-    help_map["bounds_path"] = {"string","",
-        "Optional directory for bounds_fname.",
-        "If empty, read_path is used. Ignored when bounds_fname is an "
-        "absolute path.",
-        "Bounding box", "param", ""};
-
-    string_default_map["bounds_layer"] = "";
-    help_map["bounds_layer"] = {"string","",
-        "Layer name within bounds_fname.",
-        "If empty, the first layer is used (with a warning when the file has "
-        "more than one).",
-        "Bounding box", "param", ""};
+    lsdtt::declare_fetch_bounds_file_parameters(string_default_map, help_map);
 
     string_default_map["outlet_points_fname"] = "";
     help_map["outlet_points_fname"] = {"string","",
@@ -571,24 +523,7 @@ int main(int argc, char* argv[])
         "Output grid", "param", ""};
 
     // --- Network ---
-    int_default_map["http_timeout_seconds"] = 60;
-    help_map["http_timeout_seconds"] = {"int","60",
-        "Maximum seconds for an individual HTTP request.",
-        "Bounds how long an unresponsive server can stall the fetch.",
-        "Network", "param", ""};
-
-    int_default_map["http_connect_timeout_seconds"] = 15;
-    help_map["http_connect_timeout_seconds"] = {"int","15",
-        "Maximum seconds to establish a connection.",
-        "Keep this short so an offline machine fails promptly.",
-        "Network", "param", ""};
-
-    int_default_map["http_max_retry"] = 3;
-    help_map["http_max_retry"] = {"int","3",
-        "Number of retries on a transient HTTP failure.",
-        "Cloud storage occasionally returns 5xx responses; retrying absorbs "
-        "those without failing the run.",
-        "Network", "param", ""};
+    lsdtt::declare_http_request_parameters(int_default_map, help_map);
 
     string_default_map["cache_dir"] = "";
     help_map["cache_dir"] = {"string","",
@@ -604,7 +539,7 @@ int main(int argc, char* argv[])
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
-            k_tool_name, k_version, k_citation, help_map, cli_args);
+            k_tool_name, k_status, k_citation, help_map, cli_args);
 
         // The help printer word-wraps, so a table cannot live in help_map.
         // Print it here instead: the dataset list is the thing a user actually
@@ -1967,7 +1902,7 @@ int main(int argc, char* argv[])
                 pp.print_help(
                     help_map,
                     pp.get_write_fname() + "_README",
-                    k_version,
+                    k_status,
                     k_citation
                 );
                 pp.print_parameters();
@@ -2517,7 +2452,7 @@ int main(int argc, char* argv[])
     pp.print_help(
         help_map,
         pp.get_write_fname() + "_README",
-        k_version,
+        k_status,
         k_citation
     );
     pp.print_parameters();

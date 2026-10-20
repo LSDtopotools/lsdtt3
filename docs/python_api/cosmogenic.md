@@ -70,31 +70,30 @@ B. Gailleton
 
 One-dimensional cosmogenic-nuclide column model.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    One-dimensional cosmogenic-nuclide column model.
+Notes
+-----
+One-dimensional cosmogenic-nuclide column model.
 
 Set an erosion history, ordered from present backwards in time, then use
 ``transient`` to model depth profiles. Point steady-state and step-change
 calculations require no history. Erosion rates for these point calculations
 are effective rates in g/cm²/yr.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `removal_m` -> `removal_metres`; earliest removal: following minor.
@@ -182,28 +181,27 @@ def transient(self, sampling_depths_metres: collections.abc.Sequence[float], pro
 
 A modeled cosmogenic-nuclide sample within a column.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    A modeled cosmogenic-nuclide sample within a column.
+Notes
+-----
+A modeled cosmogenic-nuclide sample within a column.
 
 Concentrations are atoms/g and effective depth is g/cm².
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -285,28 +283,27 @@ B. Gailleton
 
 crn_accumulated_concentration(concentration: lsdtt3.Raster, weight: lsdtt3.Raster, flow: lsdtt3.FlowInfo) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_accumulated_concentration(concentration: lsdtt3.Raster, weight: lsdtt3.Raster, flow: lsdtt3.FlowInfo) -> lsdtt3.Raster
+Notes
+-----
+crn_accumulated_concentration(concentration: lsdtt3.Raster, weight: lsdtt3.Raster, flow: lsdtt3.FlowInfo) -> lsdtt3.Raster
 
 Route an upstream weight-averaged CRN concentration to every D8 pixel.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_accumulated_concentration(concentration: lsdtt3.Raster, weight: lsdtt3.Raster, flow: lsdtt3.FlowInfo) -> lsdtt3.Raster
@@ -318,28 +315,27 @@ def crn_accumulated_concentration(concentration: lsdtt3.Raster, weight: lsdtt3.R
 
 crn_apparent_erosion_rate(nuclide: str, concentration_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_apparent_erosion_rate(nuclide: str, concentration_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> dict
+Notes
+-----
+crn_apparent_erosion_rate(nuclide: str, concentration_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> dict
 
 Invert a surface concentration for its apparent steady-state erosion rate.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_apparent_erosion_rate(nuclide: str, concentration_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> dict
@@ -351,28 +347,27 @@ def crn_apparent_erosion_rate(nuclide: str, concentration_atoms_g: float, total_
 
 crn_burial_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNBurialResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_burial_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNBurialResult
+Notes
+-----
+crn_burial_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNBurialResult
 
 Invert a two-nuclide burial pair. ``nuclide_fast`` must decay faster.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_burial_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNBurialResult
@@ -384,21 +379,21 @@ def crn_burial_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_ato
 
 crn_invert_basin_erosion(flow: lsdtt3.FlowInfo, samples: object, production_scaling: lsdtt3.Raster, concentration_column: str = 'concentration', nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', channel_threshold_pixels: int = 1000, snap_radius_pixels: int = 25, topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None, rock_density_kg_m3: float = 2650.0) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_invert_basin_erosion(flow: lsdtt3.FlowInfo, samples: object, production_scaling: lsdtt3.Raster, concentration_column: str = 'concentration', nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', channel_threshold_pixels: int = 1000, snap_radius_pixels: int = 25, topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None, rock_density_kg_m3: float = 2650.0) -> object
+Notes
+-----
+crn_invert_basin_erosion(flow: lsdtt3.FlowInfo, samples: object, production_scaling: lsdtt3.Raster, concentration_column: str = 'concentration', nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', channel_threshold_pixels: int = 1000, snap_radius_pixels: int = 25, topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None, rock_density_kg_m3: float = 2650.0) -> object
 
 Invert basin-mean erosion rates from a point GeoDataFrame.
 
@@ -407,10 +402,9 @@ meeting ``channel_threshold_pixels``, then inverted with the native CAIRN
 solver over each snapped outlet's exact upslope pixel set. Failed rows remain
 in the returned GeoDataFrame and are identified by ``crn_status``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_invert_basin_erosion(flow: lsdtt3.FlowInfo, samples: object, production_scaling: lsdtt3.Raster, concentration_column: str = 'concentration', nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', channel_threshold_pixels: int = 1000, snap_radius_pixels: int = 25, topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None, rock_density_kg_m3: float = 2650.0) -> object
@@ -422,28 +416,27 @@ def crn_invert_basin_erosion(flow: lsdtt3.FlowInfo, samples: object, production_
 
 crn_isotope_ratio(numerator: lsdtt3.Raster, denominator: lsdtt3.Raster) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_isotope_ratio(numerator: lsdtt3.Raster, denominator: lsdtt3.Raster) -> object
+Notes
+-----
+crn_isotope_ratio(numerator: lsdtt3.Raster, denominator: lsdtt3.Raster) -> object
 
 Return an isotope-ratio raster with nodata-accounting counts.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_isotope_ratio(numerator: lsdtt3.Raster, denominator: lsdtt3.Raster) -> object
@@ -455,28 +448,27 @@ def crn_isotope_ratio(numerator: lsdtt3.Raster, denominator: lsdtt3.Raster) -> o
 
 crn_outlet_concentration(concentration: lsdtt3.Raster, erosion_rate: lsdtt3.Raster, flow: lsdtt3.FlowInfo, row: int, col: int) -> float
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_outlet_concentration(concentration: lsdtt3.Raster, erosion_rate: lsdtt3.Raster, flow: lsdtt3.FlowInfo, row: int, col: int) -> float
+Notes
+-----
+crn_outlet_concentration(concentration: lsdtt3.Raster, erosion_rate: lsdtt3.Raster, flow: lsdtt3.FlowInfo, row: int, col: int) -> float
 
 Return erosion-weighted upstream CRN concentration at one outlet pixel.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_outlet_concentration(concentration: lsdtt3.Raster, erosion_rate: lsdtt3.Raster, flow: lsdtt3.FlowInfo, row: int, col: int) -> float
@@ -488,21 +480,21 @@ def crn_outlet_concentration(concentration: lsdtt3.Raster, erosion_rate: lsdtt3.
 
 crn_pair_diagnostics(samples: object, mode: str = 'burial', nuclide_fast: str = 'Al26', nuclide_slow: str = 'Be10', concentration_fast_column: str = 'Al26_CONC', concentration_slow_column: str = 'Be10_CONC', total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers', effective_erosion_rate_old_g_cm2_yr: float = 0.01) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_pair_diagnostics(samples: object, mode: str = 'burial', nuclide_fast: str = 'Al26', nuclide_slow: str = 'Be10', concentration_fast_column: str = 'Al26_CONC', concentration_slow_column: str = 'Be10_CONC', total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers', effective_erosion_rate_old_g_cm2_yr: float = 0.01) -> object
+Notes
+-----
+crn_pair_diagnostics(samples: object, mode: str = 'burial', nuclide_fast: str = 'Al26', nuclide_slow: str = 'Be10', concentration_fast_column: str = 'Al26_CONC', concentration_slow_column: str = 'Be10_CONC', total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers', effective_erosion_rate_old_g_cm2_yr: float = 0.01) -> object
 
 Apply native two-nuclide burial or step-change diagnostics to GeoDataFrame rows.
 
@@ -511,10 +503,9 @@ Apply native two-nuclide burial or step-change diagnostics to GeoDataFrame rows.
 forward-predicted pair concentrations. Invalid rows remain in place and carry
 ``crn_pair_status='invalid_concentration'``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_pair_diagnostics(samples: object, mode: str = 'burial', nuclide_fast: str = 'Al26', nuclide_slow: str = 'Be10', concentration_fast_column: str = 'Al26_CONC', concentration_slow_column: str = 'Be10_CONC', total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers', effective_erosion_rate_old_g_cm2_yr: float = 0.01) -> object
@@ -526,28 +517,27 @@ def crn_pair_diagnostics(samples: object, mode: str = 'burial', nuclide_fast: st
 
 crn_pressure(dem: lsdtt3.Raster, crn_parameters_path: str = '', atmosphere: str = 'auto') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_pressure(dem: lsdtt3.Raster, crn_parameters_path: str = '', atmosphere: str = 'auto') -> lsdtt3.Raster
+Notes
+-----
+crn_pressure(dem: lsdtt3.Raster, crn_parameters_path: str = '', atmosphere: str = 'auto') -> lsdtt3.Raster
 
 Return atmospheric pressure (hPa) for a DEM.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_pressure(dem: lsdtt3.Raster, crn_parameters_path: str = '', atmosphere: str = 'auto') -> lsdtt3.Raster
@@ -559,28 +549,27 @@ def crn_pressure(dem: lsdtt3.Raster, crn_parameters_path: str = '', atmosphere: 
 
 crn_production_scaling(dem: lsdtt3.Raster, crn_parameters_path: str = '', sample_age_yr: float = 0.0, atmosphere: str = 'auto', scaling: str = 'stone', nuclide: str = 'Be10') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_production_scaling(dem: lsdtt3.Raster, crn_parameters_path: str = '', sample_age_yr: float = 0.0, atmosphere: str = 'auto', scaling: str = 'stone', nuclide: str = 'Be10') -> lsdtt3.Raster
+Notes
+-----
+crn_production_scaling(dem: lsdtt3.Raster, crn_parameters_path: str = '', sample_age_yr: float = 0.0, atmosphere: str = 'auto', scaling: str = 'stone', nuclide: str = 'Be10') -> lsdtt3.Raster
 
 Return a per-pixel CRN production-scaling raster. DEM coordinates and elevations must be metres.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_production_scaling(dem: lsdtt3.Raster, crn_parameters_path: str = '', sample_age_yr: float = 0.0, atmosphere: str = 'auto', scaling: str = 'stone', nuclide: str = 'Be10') -> lsdtt3.Raster
@@ -592,28 +581,27 @@ def crn_production_scaling(dem: lsdtt3.Raster, crn_parameters_path: str = '', sa
 
 crn_steady_state(erosion_rate: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_steady_state(erosion_rate: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None) -> lsdtt3.Raster
+Notes
+-----
+crn_steady_state(erosion_rate: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None) -> lsdtt3.Raster
 
 Return whole-raster steady-state CRN concentration (atoms/g).
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_steady_state(erosion_rate: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, snow_shielding: lsdtt3.Raster | None = None, self_shielding: lsdtt3.Raster | None = None) -> lsdtt3.Raster
@@ -625,28 +613,27 @@ def crn_steady_state(erosion_rate: lsdtt3.Raster, production_scaling: lsdtt3.Ras
 
 crn_step_change(time_since_change: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, erosion_rate_old_g_cm2_yr: float = 0.01, erosion_rate_new_g_cm2_yr: float = 0.01, pre_change_erosion_rate: lsdtt3.Raster | None = None) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_step_change(time_since_change: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, erosion_rate_old_g_cm2_yr: float = 0.01, erosion_rate_new_g_cm2_yr: float = 0.01, pre_change_erosion_rate: lsdtt3.Raster | None = None) -> lsdtt3.Raster
+Notes
+-----
+crn_step_change(time_since_change: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, erosion_rate_old_g_cm2_yr: float = 0.01, erosion_rate_new_g_cm2_yr: float = 0.01, pre_change_erosion_rate: lsdtt3.Raster | None = None) -> lsdtt3.Raster
 
 Return a whole-raster surface concentration after a step change in erosion.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_step_change(time_since_change: lsdtt3.Raster, production_scaling: lsdtt3.Raster, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', topographic_shielding: lsdtt3.Raster | None = None, erosion_rate_old_g_cm2_yr: float = 0.01, erosion_rate_new_g_cm2_yr: float = 0.01, pre_change_erosion_rate: lsdtt3.Raster | None = None) -> lsdtt3.Raster
@@ -658,28 +645,27 @@ def crn_step_change(time_since_change: lsdtt3.Raster, production_scaling: lsdtt3
 
 crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, effective_erosion_rate_old_g_cm2_yr: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNStepPairResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, effective_erosion_rate_old_g_cm2_yr: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNStepPairResult
+Notes
+-----
+crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, effective_erosion_rate_old_g_cm2_yr: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNStepPairResult
 
 Invert a two-nuclide step-change pair for new erosion rate and timing.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fast_atoms_g: float, concentration_slow_atoms_g: float, effective_erosion_rate_old_g_cm2_yr: float, total_scaling: float = 1.0, muon_scheme: str = 'BraucherBorchers') -> lsdtt3.CRNStepPairResult
@@ -691,21 +677,21 @@ def crn_step_change_pair(nuclide_fast: str, nuclide_slow: str, concentration_fas
 
 crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
+Notes
+-----
+crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.Raster, topographic_shielding: lsdtt3.Raster | None = None, sampling_depth_metres: float = 0.0, muon_scheme: str = 'BraucherBorchers') -> object
 
 Predict Be-10, Al-26, and C-14 raster concentrations for an arbitrary erosion history.
 
@@ -733,10 +719,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `sampling_depth_m` -> `sampling_depth_metres`; earliest removal: following minor.
@@ -751,28 +736,27 @@ def crn_transient_history(column: lsdtt3.CRNColumn, production_scaling: lsdtt3.R
 
 crn_uniform_raster(reference: lsdtt3.Raster, value: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    crn_uniform_raster(reference: lsdtt3.Raster, value: float) -> lsdtt3.Raster
+Notes
+-----
+crn_uniform_raster(reference: lsdtt3.Raster, value: float) -> lsdtt3.Raster
 
 Create a masked constant raster for CRN erosion or shielding inputs.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def crn_uniform_raster(reference: lsdtt3.Raster, value: float) -> lsdtt3.Raster

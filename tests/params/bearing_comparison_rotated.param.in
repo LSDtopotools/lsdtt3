@@ -1,8 +1,0 @@
-# lsdtt-bearing-comparison, analytic case: the same bearings rotated by 20 degrees: the circular Wasserstein distance is
-# exactly 20 degrees.
-# Inputs are text CSVs in tests/data/bearing_comparison/.
-read_path: __READ_PATH__/bearing_comparison
-write_path: __WRITE_PATH__
-write_fname: bc
-bearing_fname_1: sample.csv
-bearing_fname_2: sample_rotated_20.csv

@@ -61,7 +61,7 @@ namespace
 // -----------------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------------
-const std::string k_version = "0.1.0";
+const std::string k_status  = "experimental";
 const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 const std::string k_tool_name = "lsdtt-advection-diffusion";
 
@@ -128,7 +128,7 @@ int main(int argc, char* argv[])
 {
     print_banner();
     const auto cli = lsdtt::lsdtt_param_parser::parse_args_deferred(
-        argc, argv, k_tool_name, k_version, k_citation);
+        argc, argv, k_tool_name, k_status, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter declarations
@@ -378,7 +378,7 @@ int main(int argc, char* argv[])
     if (cli.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
-            k_tool_name, k_version, k_citation, help_map, cli);
+            k_tool_name, k_status, k_citation, help_map, cli);
         return 0;
     }
 

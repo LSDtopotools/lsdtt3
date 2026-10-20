@@ -85,6 +85,17 @@ struct lsdtt_cli_args
 };
 
 // -----------------------------------------------------------------------------
+// lsdtt3_package_version
+//
+// The lsdtt3 version this library was built as: "X.Y.Z" for a release build,
+// "X.Y.Z-dev, git <describe>" for a development build of the root project,
+// or the Python package version ("X.Y.Z", "X.Y.Z.postN") inside a wheel. It is
+// the LSDTT3_VERSION compile definition of lsdtt_param_parser.cpp, which both
+// the root CMakeLists.txt and python_bindings/CMakeLists.txt set; -v prints it.
+// -----------------------------------------------------------------------------
+std::string lsdtt3_package_version();
+
+// -----------------------------------------------------------------------------
 // lsdtt_compiled_features
 //
 // Returns the optional-dependency features compiled into the CALLING
@@ -392,14 +403,19 @@ public:
     //   -h <parameter_name>    full guidance for one parameter
     //   -h html                write <tool>_help.html/.csv to the current dir
     //   --help-json / -h json  machine-readable JSON to stdout (tool,
-    //                          version, citation, compiled features, and
-    //                          all parameters with their grouped metadata)
+    //                          lsdtt3 version, status, citation, compiled
+    //                          features, and all parameters with their
+    //                          grouped metadata)
+    // `status` is the CLI's stability label, "experimental" or "stable"
+    // (k_status in each CLI). The version reported everywhere is the lsdtt3
+    // package version (lsdtt3_package_version()); CLIs have no version of
+    // their own.
     // When no help is requested, path/fname resolution requires a parameter
     // file (exit(1) when none is given).
     static lsdtt_cli_args parse_args_deferred(
         int argc, char* argv[],
         const std::string& tool_name,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation
     );
 
@@ -419,7 +435,7 @@ public:
     // dependencies; it is reported in the JSON output.
     static void print_terminal_help(
         const std::string& tool_name,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation,
         const lsdtt_help_registry& help,
         const lsdtt_cli_args& args,
@@ -430,7 +446,7 @@ public:
     // Convenience overload writing to std::cout.
     static void print_terminal_help(
         const std::string& tool_name,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation,
         const lsdtt_help_registry& help,
         const lsdtt_cli_args& args,
@@ -442,7 +458,7 @@ public:
     // run outputs).
     static void write_reference_files(
         const std::string& tool_name,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation,
         const lsdtt_help_registry& help,
         const std::string& out_prefix
@@ -462,12 +478,13 @@ public:
     // Write a help file (CSV + HTML) from a help map.
     //   help_map    - key -> {type, default, description, guidance}
     //   file_prefix - output filename prefix
-    //   version     - version string to embed in the help file
+    //   status      - the CLI's stability label ("experimental" / "stable");
+    //                 the lsdtt3 package version is embedded alongside it
     //   citation    - citation URL or string to embed
     void print_help(
         const std::map<std::string, std::vector<std::string>>& help_map,
         const std::string& file_prefix,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation
     ) const;
 
@@ -477,7 +494,7 @@ public:
     void print_help(
         const lsdtt_help_registry& help,
         const std::string& file_prefix,
-        const std::string& version,
+        const std::string& status,
         const std::string& citation
     ) const;
 

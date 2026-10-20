@@ -10,11 +10,15 @@ name: Build and release
 #     -> builds the backend bundle and attaches it to the GitHub Release
 #   - manual run from the Actions tab
 #     -> builds the bundle and uploads it as a workflow artifact only
+#
+# vX.Y.Z.postN tags are wheel-only rebuilds of the same source: they run only
+# python-wheels.yml (by hand), never this workflow.
 
 on:
   push:
     tags:
       - "v*"
+      - "!v*.post*"
   workflow_dispatch:
 
 concurrency:
@@ -43,7 +47,9 @@ jobs:
             libnetcdf-dev \
             libgomp1 \
             patchelf \
-            python3-pip
+            python3-pip \
+            python3-venv \
+            python3-dev
 
       - name: Install documentation dependencies
         run: >-
@@ -75,7 +81,9 @@ jobs:
       - name: Write commit roll-call for release notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          # .postN tags are wheel-only rebuilds, not releases: skip them so the
+          # notes cover everything since the previous vX.Y.Z.
+          prev="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*.post*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
           if [[ -n "$prev" ]]; then
             range="${prev}..${GITHUB_REF_NAME}"
             since="since ${prev}"
@@ -83,7 +91,32 @@ jobs:
             range="${GITHUB_REF_NAME}"
             since="in this release"
           fi
+          # lsdtt3 has one version number, so every component is released under
+          # this tag. Say which ones changed, so users of an unchanged one know
+          # they can skip the update.
+          component() {
+            if git diff --quiet "${prev:-$(git rev-list --max-parents=0 HEAD | tail -1)}" "${GITHUB_REF_NAME}" -- "${@:2}"; then
+              echo "- **$1:** no changes (rebuilt)"
+            else
+              echo "- **$1:** changed ${since}"
+            fi
+          }
           {
+            echo "## Components"
+            echo ""
+            component "C++ core and CLIs" src cli CMakeLists.txt
+            component "Python bindings" python_bindings
+            component "QGIS plugin" qgis_plugin
+            echo ""
+            echo "## Artefacts"
+            echo ""
+            echo "- Linux backend bundle: attached by this workflow."
+            echo "- Debian package, conda package, QGIS plugin zip, Windows and macOS"
+            echo "  bundles: built locally from this tag and attached by hand"
+            echo "  (docs/developer_notes/making_release_packages.md)."
+            echo "- Python wheel: not built for this release, unless attached later"
+            echo "  by a manual python-wheels.yml run."
+            echo ""
             echo "## Commit authors ${since}"
             echo ""
             git shortlog -sn "$range" | while read -r count author; do

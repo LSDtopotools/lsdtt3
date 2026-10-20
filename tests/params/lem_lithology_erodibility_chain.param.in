@@ -1,0 +1,18 @@
+# lsdtt-lem on the K raster made by smoke_lem_lithology_erodibility_own_grid,
+# with the parameter lines that tool printed, on the map's own grid.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: lithkchain
+model_grid_source: erodibility_raster
+erodibility_fname: lithkown_erodibility.tif
+erodibility_raster_m_exponent: 0.45
+erodibility_raster_n_exponent: 1
+erodibility_raster_area_convention: map_area
+erodibility: 2e-5
+noise_type: white_noise
+max_initial_elevation: 1
+snap_initial_surface_to_steady_state: false
+boundary_conditions: oooo
+n_threads: 1
+number_of_iterations: 5
+write_output_format: gtiff

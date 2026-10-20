@@ -6,13 +6,26 @@ spinning up a new `lsdtt3` release.
 
 ## Finding the latest version number
 
-**`CMakeLists.txt` line 2 is the single source of truth.** Every other version
-string in the project — release tags, package filenames, the version the
-binaries print — is derived from it:
+**`CMakeLists.txt` line 2 is the single source of truth.** lsdtt3 has one
+version number for the C++ package, the backend bundles, the Python package and
+the QGIS plugin. Release tags, package filenames and the version the binaries
+print are derived from it:
 
 ```bash
 sed -n 2p CMakeLists.txt      # project(lsdtt3 VERSION 0.5.1 LANGUAGES CXX)
 ```
+
+Five files carry checked copies: `python_bindings/pyproject.toml`,
+`qgis_plugin/lsdtt_qgis/metadata.txt`, `conda-recipe/meta.yaml`, `pixi.toml`
+and the top entry of `debian/changelog`. Never edit them by hand:
+
+```bash
+tools/set_version.py 0.5.1        # rewrites all six, adds the changelog entry
+```
+
+It also resets the conda build number and runs the check that the CTest test
+`unit_version_consistency` runs. `make_release.sh` and `make_all_packages.sh`
+run that check too, and refuse to build if the copies disagree.
 
 Read it before quoting a version anywhere. Documentation that spells out a
 version in an example command is a snapshot and drifts; this line does not.
@@ -37,31 +50,48 @@ If you are cutting a new release, that value must match
 `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` — `make_release.sh` reads
 that line and refuses to run on a mismatch.
 
-For local Windows packaging, `package_windows_backend.ps1` does **not** validate
-the version string against git tags or `CMakeLists.txt`: it simply writes your
-`-Version` into the zip name, bundle README, and `manifest.json`.
+The Windows and macOS packaging scripts check `-Version` / `--version` against
+`CMakeLists.txt` the same way: an exact match for a release, the `X.Y.Z` stem
+for a pre-release.
 
 ## Building everything locally (`make_all_packages.sh`)
 
-**If your goal is "produce all three artefacts without spending GitHub Actions
-minutes", this is the script.** It wraps the three separate release paths:
+**If your goal is "produce every Linux-side artefact without spending GitHub
+Actions minutes", this is the script.** It wraps the separate release paths:
 
 | | artefact | what it wraps |
 |---|---|---|
 | a | backend tarball | `make_release.sh`, i.e. what `release.yml` uploads |
 | b | Debian package | `dpkg-buildpackage` over `debian/` |
 | c | Python wheel | what `python-wheels.yml` ships |
+| d | conda package | `conda-build conda-recipe` (local; not conda-forge) |
+| e | QGIS plugin zip | `qgis_plugin/package_plugin.py` |
 
 ```bash
 # always start here: checks tooling, prints the plan, builds nothing
 tools/make_all_packages.sh --check-only
 
-# the latest tagged version, all three artefacts, into dist/
+# the latest tagged version, every artefact, into dist/v<version>/
 tools/make_all_packages.sh --clean
+
+# a named tag: a patch release cut on a release branch
+tools/make_all_packages.sh --clean --tag v0.5.2
+
+# a wheel-only rebuild of the same source (see publishing_to_pypi.md)
+tools/make_all_packages.sh --clean --tag v0.5.1.post1 --only wheel
 
 # the working tree including uncommitted changes, wheel only
 tools/make_all_packages.sh --dirty --only wheel
 ```
+
+Not every release gets a wheel: build one (`--only wheel`, or skip it with
+`--skip wheel`) only when the release supports the Python API. In `--clean` mode
+the script checks the tag before compiling anything: `vX.Y.Z` must match the
+tag's own `CMakeLists.txt`, the tag minus its `v` must match its
+`pyproject.toml`, and every version copy in the tag must agree. Tags up to
+`v0.6.0` predate the shared number, so build them with `--skip wheel`. The run
+ends with a list of what the release still needs: the Windows and macOS bundles
+and the `gh release upload` command.
 
 ### Clean versus dirty
 
@@ -77,21 +107,22 @@ from `git describe`, so a dirty build can never be mistaken for a release:
 |---|---|---|
 | tarball | `0.5.1` | `0.5.1-39-g79b6649-dirty` |
 | `.deb` | `0.5.1` | `0.5.1+git39.g79b6649.dirty` |
-| wheel | `0.1.0` | `0.1.0+git39.g79b6649.dirty` |
+| wheel | `0.5.1` | `0.5.1+git39.g79b6649.dirty` |
 
 The three grammars differ because the three packaging systems demand it.
 `make_release.sh` compares the part before the first `-` against
 `CMakeLists.txt`, so the tarball wants a hyphen. `debian/source/format` is
 `3.0 (native)`, where a hyphen would be read as introducing a Debian revision,
-so the `.deb` uses `+git`. The wheel follows PEP 440, and takes its base
-version from `python_bindings/pyproject.toml`, which is independent of the
-lsdtt3 version.
+so the `.deb` uses `+git`. The wheel follows PEP 440, with the dev part as a
+local version identifier. The conda package and the plugin zip take the
+version from their own files, which `set_version.py` keeps equal to CMake.
 
 ### Two things to know before you run it
 
-**Each target compiles the C++ separately.** There is no shared object cache
-between the tarball, the `.deb` and the wheel: three targets is roughly three
-full builds. While iterating, use `--only`.
+**Each compiled target compiles the C++ separately.** There is no shared object
+cache between the tarball, the `.deb`, the wheel and the conda package; the
+plugin zip is pure Python. The tarball stage also builds the Python bindings
+once, for `make_release.sh`'s bindings check. While iterating, use `--only`.
 
 **Without podman the wheel is not distributable.** A publishable Linux wheel
 must be a manylinux wheel, built inside the manylinux image so it does not
@@ -165,19 +196,27 @@ use `--dirty`, or skip the target.
 
 Releasing `0.5.1`, start to finish:
 
-**1. Bump the version and get it onto main.** 
-*You must first of all increment the version in the CMakeLists.txt file.* This version number will need to match your tag.
-`make_release.sh` refuses to run
-if the version it is releasing does not match `project(lsdtt3 VERSION ...)` in
-`CMakeLists.txt`, so this is step one, not an afterthought. The tag must be
-exactly `v` + that version (`v0.5.1` for `VERSION 0.5.1`); `CMakeLists.txt` uses
-the same rule to decide whether a build reports a plain release version or a
-`-dev` one, so a mismatch silently produces `-dev` binaries in what looks like
-a release.
+**1. Choose the number, bump it, and get it onto main.** Choose it from
+everything on `main` since the last release, not from the change that prompted
+the release:
+
+- only fixes → **patch** (`0.5.0` → `0.5.1`);
+- any new feature, or any change to parameters, outputs, the Python API or a
+  CLI behaviour the plugin wrappers rely on → **minor** (`0.5.1` → `0.6.0`),
+  even when a small fix was the trigger. The QGIS plugin accepts only a backend
+  with its own major.minor, so this is what keeps mismatched pairs apart.
+
+`make_release.sh` refuses to run if the version it is releasing does not match
+`project(lsdtt3 VERSION ...)` in `CMakeLists.txt`, or if the version copies
+disagree, so this is step one, not an afterthought. The tag must be exactly `v`
++ that version (`v0.5.1` for `VERSION 0.5.1`); `CMakeLists.txt` uses the same
+rule to decide whether a build reports a plain release version or a `-dev` one,
+so a mismatch silently produces `-dev` binaries in what looks like a release.
 
 ```bash
-# CMakeLists.txt line 2:  project(lsdtt3 VERSION 0.5.1 LANGUAGES CXX)
-git add CMakeLists.txt
+tools/set_version.py 0.5.1       # CMake, pyproject, plugin, conda, pixi, debian/changelog
+git add CMakeLists.txt python_bindings/pyproject.toml qgis_plugin/lsdtt_qgis/metadata.txt \
+        conda-recipe/meta.yaml pixi.toml debian/changelog
 git commit -m "Bump version to 0.5.1"
 git push
 git status                       # release from a clean tree: see step 6
@@ -208,8 +247,21 @@ gh run list --workflow "Build and release" --limit 3
 gh release view v0.5.1
 ```
 
-**5. Attach the Windows and macOS bundles**, built by hand on those machines
-(see [Attaching the Windows and macOS bundles](#attaching-the-windows-and-macos-bundles)).
+**5. Build and attach the rest.** Every tag gets every artefact, so `v0.5.1` is
+one consistent snapshot; while the repository is private only the Linux bundle
+is built by Actions, so a release is published in stages:
+
+```bash
+tools/make_all_packages.sh --clean --tag v0.5.1 --skip wheel   # .deb, conda, plugin zip
+gh release upload v0.5.1 dist/v0.5.1/*
+```
+
+then the Windows and macOS bundles, built by hand on those machines (see
+[Attaching the Windows and macOS bundles](#attaching-the-windows-and-macos-bundles)).
+Add the wheel only if this release supports the Python API
+(`docs/developer_notes/publishing_to_pypi.md`). Finally edit the release notes:
+the workflow writes a "Components" list (what changed since the previous
+release) and an "Artefacts" list; correct the latter to what is attached.
 
 **6. Sanity checks** — before step 3, and after step 4:
 
@@ -221,6 +273,64 @@ gh release view v0.5.1                 # what ended up attached, and the notes
 
 Went wrong? See [Undoing a mistake](#undoing-a-mistake) — and do not move a
 tag anyone may have pulled.
+
+### A fix while `main` holds work that should not ship yet
+
+Releases are normally tagged on `main`: work happens on branches, finished
+work is merged into `main` by pull request, so `main` is releasable. The one
+exception is a fix that must go out **while `main` already contains merged
+work that should not ship yet**. Then the fix goes out from a release branch.
+
+Worked example: `0.5.1` is out; `main` has a half-finished CLI merged; a bug
+needs fixing now.
+
+```bash
+# 1. fix on a branch and merge into main by PR, as usual
+
+# 2. create release/0.5 from the LATEST 0.5 tag (not necessarily v0.5.0),
+#    so it holds exactly what the last release shipped. Only the first time:
+#    later fixes for 0.5 reuse the branch.
+git switch -c release/0.5 v0.5.1
+
+# 3. cherry-pick only the fix
+git cherry-pick <fix-commit>
+
+# 4. bump on the branch and tag there, not on main
+tools/set_version.py 0.5.2
+git commit -am "Bump version to 0.5.2"
+git push -u origin release/0.5
+git tag -a v0.5.2 -m "lsdtt3 0.5.2"
+git push origin v0.5.2              # release.yml builds the Linux bundle
+
+# 5. build and publish the rest from that tag exactly as for any release
+tools/make_all_packages.sh --clean --tag v0.5.2 --skip wheel
+```
+
+`main` is left alone: **no merge back.** The fix is already on `main` from
+step 1, and the version-bump commit would conflict. `main`'s next release is
+the next minor version (`0.6.0`) and contains everything. One expected side
+effect: `main`'s `debian/changelog` has no entry for `0.5.2`, so `0.6.0`
+follows `0.5.1` there. That is harmless.
+
+### Releases that change one component
+
+lsdtt3 has one number, so a release moves it for the C++, the bundles, the
+Python package and the plugin together, and every artefact built from the tag
+contains everything on `main` at that point. The release notes list changes per
+component ("Python bindings: fix X. C++ core, QGIS plugin: no changes
+(rebuilt)") so a user of an unchanged component knows the update can be
+skipped; the workflow writes that list from the diff since the previous tag.
+
+When the **source did not change** and only an artefact was rebuilt, the
+version does not change:
+
+| Artefact | Rebuild |
+|---|---|
+| Python wheel | `X.Y.Z.postN`: `tools/set_version.py X.Y.Z --post N`, tag `vX.Y.Z.postN`, build with `--only wheel` (see `publishing_to_pypi.md`) |
+| conda | increment `build: number:` in `conda-recipe/meta.yaml` |
+| Debian | `X.Y.Z+pkgN`: `tools/set_version.py X.Y.Z --debian-revision N` |
+| Backend bundle | re-upload to the same release with `gh release upload --clobber`, and say so in the notes |
+| QGIS plugin zip | re-upload under the same version |
 
 ## Cutting a release from the command line
 
@@ -364,8 +474,8 @@ This produces `dist\lsdtt3-backend-win64-qgis-v<version>.zip`, with
 
 **Do not add a suffix** such as `-local-dirty` or `-rc1` to a bundle meant for
 QGIS. The script accepts it, but the plugin only accepts a plain `X.Y.Z`
-`backend_version` and refuses the bundle. The version must also be at least the
-plugin's `MINIMUM_BACKEND_VERSION`. See
+`backend_version` and refuses the bundle. The version must also have the
+plugin's major.minor version (plugin `X.Y.*` accepts backend `X.Y.*`). See
 [`docs/developer_notes/qgis_plugin_development.md`](../docs/developer_notes/qgis_plugin_development.md)
 for both checks. The binaries themselves still report a `-dirty` git
 description with `-v`, so a dirty build remains identifiable.
@@ -455,11 +565,19 @@ by GitHub Actions. In order it:
    `--version` it does not consult git for the version at all.
 2. **Checks it against `project(lsdtt3 VERSION ...)`** in CMakeLists.txt and
    aborts on a mismatch. A pre-release (`0.5.1-rc1`) compares only the `0.5.1`
-   stem and warns instead of failing.
+   stem and warns instead of failing. Then checks that every copy of the
+   version number agrees (`tests/scripts/check_version_consistency.py`).
 3. **Configures and builds** `build/release` (Release, Eigen on),
    unless `--skip-build`.
 4. **Smoke-checks every CLI in the profile** by running it with `-v`; a
-   non-zero exit fails the release.
+   non-zero exit fails the release. Then **builds the Python bindings once**
+   (pip, into a venv under the build directory, CLIs off) and runs the whole
+   `python_bindings/tests` suite against them
+   (`tests/scripts/check_python_bindings_smoke.sh`). A failure stops the
+   release: the wheel matrix is built only by hand, so this is the one check
+   that a C++ change has not broken the bindings. It needs a Python with the
+   `venv` module (`--smoke-python <exe>` to choose one) and network access or a
+   pip cache.
 5. **Packages** via `package_linux_backend.sh`.
 6. **Publishes** with `gh`, only if you pass `--publish`.
 

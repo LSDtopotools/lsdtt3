@@ -68,6 +68,8 @@ for the distinction from `lsdtt-synthetic-networks` and `lsdtt-lem`.
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: stable.**
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

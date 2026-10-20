@@ -16,6 +16,8 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
+import types
+import typing
 from typing import Any
 
 
@@ -73,10 +75,47 @@ def callable_signatures(value: Any) -> list[dict[str, Any]]:
         ]
 
     try:
-        signature = str(inspect.signature(value))
+        signature = stable_signature(inspect.signature(value))
     except (TypeError, ValueError):
         return []
     return [{"definition": normalize_text(signature), "defaults": []}]
+
+
+class _Rendered:
+    """An annotation already rendered as text; inspect prints its repr()."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def __repr__(self) -> str:
+        return self.text
+
+
+def format_annotation(annotation: Any) -> str:
+    """Render an annotation the same way on every supported Python.
+
+    A union is always written ``A | B``. Before 3.14, ``str | Callable[...]``
+    (a union containing a typing generic) evaluates to typing.Union and prints
+    as ``Union[str, Callable[...]]``; 3.14 prints it as ``str | Callable[...]``.
+    The manifest must not depend on the interpreter that generated it.
+    """
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        return " | ".join(format_annotation(arg) for arg in typing.get_args(annotation))
+    if annotation is type(None):
+        return "None"
+    return inspect.formatannotation(annotation)
+
+
+def stable_signature(signature: inspect.Signature) -> str:
+    parameters = [
+        parameter.replace(annotation=_Rendered(format_annotation(parameter.annotation)))
+        if parameter.annotation is not inspect.Parameter.empty else parameter
+        for parameter in signature.parameters.values()
+    ]
+    returned = signature.return_annotation
+    if returned is not inspect.Signature.empty:
+        returned = _Rendered(format_annotation(returned))
+    return str(signature.replace(parameters=parameters, return_annotation=returned))
 
 
 def public_class_members(cls: type[Any]) -> list[dict[str, Any]]:

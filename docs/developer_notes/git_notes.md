@@ -301,6 +301,15 @@ Start the next piece of work with a fresh `git switch -c` from the updated
 `main`. Reusing an old branch for new work is what puts you back into conflict
 territory.
 
+### Release branches
+
+Releases are tagged on `main`. The one exception, a fix that must ship while
+`main` holds merged work that should not, uses a `release/X.Y` branch cut from
+the latest `vX.Y.*` tag, with the fix cherry-picked onto it and no merge back.
+The worked example and the exact commands are in the repository's
+`tools/README.md`, under "A fix while `main` holds work that should not ship
+yet".
+
 ---
 
 ## Executable bits on a Windows checkout

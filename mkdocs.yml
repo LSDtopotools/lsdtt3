@@ -73,9 +73,12 @@ nav:
     - Hydrological modelling: design_and_algorithms/hydrological_modelling.md
     - Cosmogenic nuclides: design_and_algorithms/cosmogenic_nuclides.md
     - Landscape evolution modelling: design_and_algorithms/landscape_evolution_modelling.md
+    - Lithology and channel steepness statistics: design_and_algorithms/lithology_channel_statistics.md
+    - Channel-link bearing statistics: design_and_algorithms/channel_bearing_statistics.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
+      - Fetch erosion rates (OCTOPUS): cli_reference/cli_reference_lsdtt_fetch_erosion_rates.md
       - Raster preprocessing: cli_reference/cli_reference_lsdtt_raster_preprocessing.md
     - Surface analysis:
       - Surface metrics: cli_reference/cli_reference_lsdtt_surface_metrics.md
@@ -110,7 +113,6 @@ nav:
       - Bankfull width: cli_reference/cli_reference_lsdtt_bankfull_width.md
       - Ridgeline analysis: cli_reference/cli_reference_lsdtt_ridgeline_analysis.md
       - Divide migration: cli_reference/cli_reference_lsdtt_divide_migration.md
-      - Bearing comparison: cli_reference/cli_reference_lsdtt_bearing_comparison.md
     - Tidal / marsh:
       - Marsh topography: cli_reference/cli_reference_lsdtt_marsh_topography.md
     - Cosmogenic nuclides:
@@ -119,6 +121,8 @@ nav:
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
+      - Fetch lithology (Macrostrat): cli_reference/cli_reference_lsdtt_fetch_lithology.md
+      - Lithology to erodibility: cli_reference/cli_reference_lsdtt_lithology_erodibility.md
       - Synthetic surfaces: cli_reference/cli_reference_lsdtt_synthetic_surfaces.md
       - Synthetic networks: cli_reference/cli_reference_lsdtt_synthetic_networks.md
       - Cosmo landslides: cli_reference/cli_reference_lsdtt_cosmo_landslides.md

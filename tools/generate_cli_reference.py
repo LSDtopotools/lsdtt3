@@ -12,6 +12,13 @@ import sys
 
 BEGIN_MARKER = "<!-- BEGIN GENERATED CLI PARAMETERS -->"
 END_MARKER = "<!-- END GENERATED CLI PARAMETERS -->"
+# Each CLI's stability label (k_status). lsdtt3 has one version number, so the
+# label, not a per-CLI version, tells users which tools are fully tested.
+CLI_STATUSES = ("experimental", "stable")
+STATUS_TEXT = {
+    "stable": "**Status: stable.**",
+    "experimental": "**Status: experimental.** This CLI is not yet fully tested.",
+}
 PARAMETER_FIELDS = (
     "name",
     "type",
@@ -80,11 +87,16 @@ def load_help(executable: pathlib.Path, source: pathlib.Path) -> dict:
     except json.JSONDecodeError as error:
         fail(f"invalid JSON help for {executable.name}: {error}")
 
-    for field in ("tool", "version", "citation", "features", "parameters"):
+    for field in ("tool", "version", "status", "citation", "features", "parameters"):
         if field not in payload:
             fail(f"JSON help for {executable.name} lacks top-level field {field!r}")
     if not all(isinstance(payload[field], str) for field in ("tool", "version", "citation")):
         fail(f"JSON help for {executable.name} has invalid string metadata")
+    if payload["status"] not in CLI_STATUSES:
+        fail(
+            f"JSON help for {executable.name} has status {payload['status']!r}; "
+            f"expected one of {', '.join(CLI_STATUSES)}"
+        )
     if not isinstance(payload["features"], list) or not all(
         isinstance(value, str) for value in payload["features"]
     ):
@@ -123,6 +135,8 @@ def render(payload: dict) -> str:
         "## Parameters",
         "",
         "This section is generated from the executable's `-h json` registry. Do not edit it manually.",
+        "",
+        STATUS_TEXT[payload["status"]],
     ]
     groups = []
     for parameter in payload["parameters"]:

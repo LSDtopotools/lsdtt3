@@ -1,0 +1,12 @@
+# lsdtt-channel-network-analysis failure case: a reference file without the named column.
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+n_threads: 1
+threshold_contributing_pixels: 8
+write_vector_format: csv
+read_fname: cbs_trellis_dem.tif
+write_fname: cbsf
+boundary_conditions: nnon
+write_channel_bearing_statistics: true
+channel_bearing_reference_fname: ns_trunk_bearings.csv
+channel_bearing_reference_column: nope

@@ -41,7 +41,7 @@ The model runs on a regular raster grid and follows a column-based approach:
 
 The model combines **store-based hydrology** (deficits, depths) with **topographic routing** (drainage-area-based velocity, flow graph routing). Water is routed at every timestep; outputs include hydrographs, water-balance closures, and optional pixel-by-pixel diagnostics.
 
-**Experimental status:** This CLI is version 0.1.0 and has not yet been published in peer-reviewed literature. Use with caution and report issues via GitHub.
+**Experimental status:** This CLI is experimental and has not yet been published in peer-reviewed literature. Use with caution and report issues via GitHub.
 
 ---
 
@@ -556,7 +556,7 @@ write_hype_geodata: true
 
 ## Known limitations and workarounds
 
-1. **Experimental tool:** Version 0.1.0 has unit, smoke, water-balance, and reference-model tests, but it has not been calibrated or evaluated against an observed catchment hydrograph. Treat a study-site result as a model experiment until it has been independently evaluated.
+1. **Experimental tool:** It has unit, smoke, water-balance, and reference-model tests, but it has not been calibrated or evaluated against an observed catchment hydrograph. Treat a study-site result as a model experiment until it has been independently evaluated.
 
 2. **Index-mode assumption:** `saturated_zone_mode: index` follows TOPMODEL's quasi-steady topographic-index relation. Use `dynamic` when a per-cell prognostic deficit is needed, and test timestep sensitivity for the study site.
 
@@ -575,6 +575,8 @@ write_hype_geodata: true
 ## Parameters
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+**Status: experimental.** This CLI is not yet fully tested.
 
 ### File I/O
 

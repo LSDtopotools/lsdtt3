@@ -2487,16 +2487,17 @@ bool load_octopus_point_reference(const std::string& ref_path,
 // number must never be tuned toward EBEL.
 //
 // Why the comparison is DEM-FREE.  OCTOPUS does not compute LSDn from a DEM at
-// all.  Per Saktura et al. (2025, GChron 7:113), CAIRN implements only the
-// time-independent Stone-Lal scheme; for LSDn each basin is reduced to two
-// scalars -- CENTR_LAT (the basin centroid latitude) and ATM_PRESS (an effective
-// basin-averaged pressure, itself iterated so that it reproduces the spatially
-// averaged STONE-LAL production) -- which are then fed to the Balco et al.
-// (2008) v3 point calculator through RIVERSAND.  EBEL is that point result.  So
-// the matched test is: evaluate lsdn_scaling() at exactly (CENTR_LAT,
-// ATM_PRESS), invert the measured concentration, compare to EBEL.  No DEM, no
-// delineation, no COP30-vs-original confound - the residual isolates the
-// scaling kernel alone, which is what makes this cheap enough for default CI.
+// all.  CAIRN implements only the time-independent Stone-Lal scheme (Mudd et
+// al. 2016, ESurf 4:655); for LSDn, OCTOPUS reduces each basin (Codilean &
+// Munack 2025, GChron 7:113) to two scalars -- CENTR_LAT (the basin centroid
+// latitude) and ATM_PRESS (an effective basin-averaged pressure, itself
+// iterated so that it reproduces the spatially averaged STONE-LAL production)
+// -- which are then fed to the Balco et al. (2008) v3 point calculator through
+// RIVERSAND.  EBEL is that point result.  So the matched test is: evaluate
+// lsdn_scaling() at exactly (CENTR_LAT, ATM_PRESS), invert the measured
+// concentration, compare to EBEL.  No DEM, no delineation, no COP30-vs-original
+// confound - the residual isolates the scaling kernel alone, which is what
+// makes this cheap enough for default CI.
 //
 // THE LONGITUDE IS DERIVED, NOT HARVESTED.  OCTOPUS publishes CENTR_LAT and no
 // centroid longitude, yet lsdn_scaling() needs one because Holocene Rc is the
@@ -3200,7 +3201,7 @@ double l13_percentile(std::vector<double> v, double q)
 // reduction CAIRN performs to obtain OCTOPUS's ATM_PRESS ("the atmospheric
 // pressure is determined through an iterative process that identifies the
 // pressure value best matching the spatially averaged Stone-Lal production
-// rate", Saktura et al. 2025).  stone2000sp is strictly decreasing in pressure,
+// rate", Codilean & Munack 2025).  stone2000sp is strictly decreasing in pressure,
 // so bisection is unconditionally convergent; the bracket is the LSDn grid's own
 // pressure axis widened to [200, 1100] hPa so a recovered value that lands
 // outside the physical range shows up as a clamp rather than silently.
