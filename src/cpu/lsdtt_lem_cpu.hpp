@@ -112,6 +112,8 @@ struct lsdtt_lem_options
     float incision_threshold_area         = 0.0f;
     int   drainage_area_moving_average_kernel_size_pixels = 1;
     bool  divide_area_by_dx               = true;
+    bool  multiply_stream_power_term_by_w_over_dx = false;
+    float channel_width_w                 = 1.0f;
 
     // Which of the two couplings to run. `automatic` infers it from
     // incision_threshold_area, which is what the code has always done.

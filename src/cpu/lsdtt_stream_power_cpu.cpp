@@ -168,13 +168,21 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     float slope_clamp,
     int   drainage_area_moving_average_kernel_size_pixels,
     const std::string& boundary_conditions,
-    const std::vector<float>& erodibility_field)
+    const std::vector<float>& erodibility_field,
+    bool multiply_stream_power_term_by_w_over_dx,
+    float channel_width_w)
 {
     const lsdtt_raster_meta& meta       = dem.get_meta();
     check_erodibility_field_size(erodibility_field, meta, "compute_d8_stream_power_incision");
     const float*             Kp         = erodibility_field.empty() ? nullptr
                                                                     : erodibility_field.data();
     const float              dx         = static_cast<float>(meta.cell_size);
+    if (multiply_stream_power_term_by_w_over_dx &&
+        (!(channel_width_w > 0.0f) || !std::isfinite(channel_width_w)))
+        throw std::invalid_argument(
+            "channel_width_w must be finite and positive when the width correction is enabled");
+    const double width_factor = multiply_stream_power_term_by_w_over_dx
+        ? static_cast<double>(channel_width_w) / dx : 1.0;
     const float              dx_diag    = dx * grid::k_sqrt2_f;
     const std::int64_t       n_cells    = static_cast<std::int64_t>(meta.n_rows)
                                           * meta.n_cols;
@@ -248,7 +256,7 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 
         const double elev_tolerance = static_cast<double>(slope_clamp) * dx_eff;
         const float  K_i = Kp ? Kp[flat] : K;
-        const double kam = static_cast<double>(K_i) *
+        const double kam = static_cast<double>(K_i) * width_factor *
                            std::pow(area, static_cast<double>(m));
 
         if (n_is_one)
@@ -331,7 +339,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     int   n_threads,
     int   drainage_area_moving_average_kernel_size_pixels,
     const std::string& boundary_conditions,
-    const std::vector<float>& erodibility_field)
+    const std::vector<float>& erodibility_field,
+    bool multiply_stream_power_term_by_w_over_dx,
+    float channel_width_w)
 {
     // The thread count goes on the parallel loop (num_threads clause); the
     // process-wide OpenMP setting is left alone (decision D4).
@@ -345,6 +355,12 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     check_erodibility_field_size(erodibility_field, meta, "compute_dinf_stream_power_incision");
     const float* Kp = erodibility_field.empty() ? nullptr : erodibility_field.data();
     const float dx_cardinal  = static_cast<float>(meta.cell_size);
+    if (multiply_stream_power_term_by_w_over_dx &&
+        (!(channel_width_w > 0.0f) || !std::isfinite(channel_width_w)))
+        throw std::invalid_argument(
+            "channel_width_w must be finite and positive when the width correction is enabled");
+    const double width_factor = multiply_stream_power_term_by_w_over_dx
+        ? static_cast<double>(channel_width_w) / dx_cardinal : 1.0;
     const float dx_diagonal  = static_cast<float>(meta.cell_size) * grid::k_sqrt2_f;
     const std::int64_t n_cells = static_cast<std::int64_t>(meta.n_rows) * meta.n_cols;
 
@@ -435,7 +451,7 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
             const float z_e2 = recv_elev(1);   
 
             const float  K_i = Kp ? Kp[flat] : K;
-            const double kam = static_cast<double>(K_i) *
+            const double kam = static_cast<double>(K_i) * width_factor *
                                std::pow(area, static_cast<double>(m));
             const double elev_tolerance = static_cast<double>(slope_clamp) * dx_cardinal;
 

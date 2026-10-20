@@ -349,7 +349,9 @@ run_lem_step(
             opts.slope_clamp,
             opts.drainage_area_moving_average_kernel_size_pixels,
             opts.boundary_conditions,
-            opts.erodibility_field
+            opts.erodibility_field,
+            opts.multiply_stream_power_term_by_w_over_dx,
+            opts.channel_width_w
         );
     }
     else if (opts.enable_dinf_fluvial_erosion)
@@ -380,7 +382,9 @@ run_lem_step(
             opts.n_threads,
             opts.drainage_area_moving_average_kernel_size_pixels,
             opts.boundary_conditions,
-            opts.erodibility_field
+            opts.erodibility_field,
+            opts.multiply_stream_power_term_by_w_over_dx,
+            opts.channel_width_w
         );
     }
 

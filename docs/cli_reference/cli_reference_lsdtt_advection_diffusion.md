@@ -111,7 +111,20 @@ initial internal drainage is intentional.
 | `m_exponent` | float | — | Drainage-area exponent. |
 | `n_exponent` | float | — | Slope exponent. |
 | `use_specific_drainage_area` | bool | `false` | Use `A / dx` instead of total area `A`. |
+| `multiply_stream_power_term_by_w_over_dx` | bool | `false` | Multiply the stream-power incision term by `w / dx` to account for channel width. |
+| `channel_width_w` | float | `1` | Channel width `w` in the same length units as `dx`; used when the width correction is enabled. |
 | `drainage_area_moving_average_kernel_size_pixels` | int | `1` | Odd square smoothing-window size. |
+
+The optional `w / dx` multiplier is a flow-width correction proposed to reduce
+grid-resolution dependence by Perron et al. (2008), following Howard (1994);
+see also Hergarten (2020). It represents a fixed channel width `w` and is
+independent of the choice to use total or specific drainage area.
+
+This is distinct from the specific-area formulation discussed by Kargère et al.
+(2025): using `A / dx` with `m_exponent: 1` and `n_exponent: 1` is an alternative
+that implies channel concavity `theta = m / n = 1`. For `m_exponent: 0.5` and
+`n_exponent: 1`, the channel concavity is `theta = 0.5`; the new width option
+does not change the area or slope exponents.
 
 `K` has units `m^(1 - 2m) yr^-1` when total drainage area is used. If
 `use_specific_drainage_area` is true, it is interpreted as `K_a`, with units
@@ -168,6 +181,8 @@ fill_initial_surface: true
 fluvial_incision_model: dinf
 hillslope_model: adi
 use_specific_drainage_area: false
+multiply_stream_power_term_by_w_over_dx: false
+channel_width_w: 1
 drainage_area_moving_average_kernel_size_pixels: 9
 K: 0.00025
 D: 0.025
@@ -232,6 +247,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `m_exponent` | `float` | `0.45` | `param` | - | Drainage-area exponent m. | - |
 | `n_exponent` | `float` | `1` | `param` | - | Slope exponent n. | - |
 | `use_specific_drainage_area` | `bool` | `false` | `param` | - | Use A/dx rather than total drainage area A. | When false, normal drainage area is used and the model scales according to the nondimensionalised equations provided by Theodoratos et al., (2018, ESurf). When true, specific drainage area is used and the model scales according to the nondimensionalised equations in Litwin et al. (2025, ESurf). |
+| `multiply_stream_power_term_by_w_over_dx` | `bool` | `false` | `switch` | - | Multiply the stream-power incision term by channel_width_w / dx. | This flow-width correction was proposed to reduce grid-resolution dependence by Perron et al. (2008, doi:10.1029/2007JF000977), following Howard (1994, doi:10.1029/94WR00757); see also Hergarten (2020, doi:10.5194/esurf-8-367-2020). The fixed channel-width approach is that of Perron et al. (2008). This correction is separate from use_specific_drainage_area. An alternative is to use specific area A/dx with m=1 and n=1 (Kargere et al., 2025, doi:10.5194/esurf-13-403-2025); that formulation implies channel concavity theta=m/n=1, rather than theta=0.5 for m=0.5 and n=1. |
+| `channel_width_w` | `float` | `1` | `param` | - | Channel width w, in the same length units as dx. | Used only when multiply_stream_power_term_by_w_over_dx is true. The incision term is multiplied by w/dx. |
 | `drainage_area_moving_average_kernel_size_pixels` | `int` | `1` | `param` | - | Odd-sized square moving-average kernel for drainage area used by stream-power incision; 1 disables smoothing. | Only positive odd values are allowed. |
 
 ### Hillslope diffusion
