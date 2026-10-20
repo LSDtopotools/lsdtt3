@@ -19,6 +19,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     require_output,
@@ -27,7 +28,7 @@ from .support import (
 )
 
 
-class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
+class ChannelNetworkAnalysisAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -178,6 +179,7 @@ class ChannelNetworkAnalysisAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_network")
         )
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False)
         )

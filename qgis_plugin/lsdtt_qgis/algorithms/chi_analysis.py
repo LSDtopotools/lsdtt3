@@ -20,6 +20,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     require_output,
@@ -44,7 +45,7 @@ def _per_mn_outputs(output_folder, output_prefix, suffix, description):
     return matches
 
 
-class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
+class ChiAnalysisAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -171,6 +172,7 @@ class ChiAnalysisAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_chi"))
+        self.add_overwrite_parameter()
         self.addParameter(QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False))
         self.addParameter(
             QgsProcessingParameterNumber(

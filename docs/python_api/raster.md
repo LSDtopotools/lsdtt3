@@ -740,6 +740,38 @@ B. Gailleton
 
 ---
 
+## `absolute`
+
+absolute(raster: lsdtt3.Raster) -> lsdtt3.Raster
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+absolute(raster: lsdtt3.Raster) -> lsdtt3.Raster
+
+Absolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM of absolute difference).
+
+Authors
+-------
+B. Gailleton
+
+```python
+def absolute(raster: lsdtt3.Raster) -> lsdtt3.Raster
+```
+
+---
+
 ## `add`
 
 add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1143,6 +1175,88 @@ B. Gailleton
 
 ```python
 def clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority', crop: bool = True) -> lsdtt3.Raster
+```
+
+---
+
+## `coherence_diffusion`
+
+coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster
+
+Coherence-enhancing diffusion: smoothing along linear features.
+
+Smooths along the local feature orientation from the structure tensor and
+little across it, bridging and denoising ridges, valleys and scarps.
+time_step must be in (0, 0.25]. A radius of 0 means one cell
+(derivative_radius_metres) or three cells (integration_radius_metres).
+contrast sets how selective the along-feature smoothing is; min_diffusivity
+is the across-feature floor, in (0, 1). The same smoothing as
+smooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster
+```
+
+---
+
+## `coregister_dem`
+
+coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict
+
+Coregister a DEM to a reference with the Nuth and Kaab (2011) method.
+
+Iteratively fits the horizontal and vertical shift that best explains the
+elevation differences as a function of aspect, and applies it to moving.
+Both rasters must be on the same grid (use reproject_to_grid first). The same
+coregistration as run_dem_coregistration in lsdtt-raster-calculator, with
+its defaults.
+
+Returns a dict: raster (moving, shifted), dx_metres, dy_metres, dz_metres
+(the total shift), iterations, converged, and diagnostics (a pandas
+DataFrame with one row per iteration).
+
+Authors
+-------
+B. Gailleton
+
+```python
+def coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict
 ```
 
 ---
@@ -2176,6 +2290,49 @@ def pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
 
 ---
 
+## `perona_malik_smoothing`
+
+perona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.2, conductance: str = 'exponential', k_quantile: float = 0.9, k_metres_per_cell: float = 0.0, n_threads: int = 0) -> dict
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+perona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.2, conductance: str = 'exponential', k_quantile: float = 0.9, k_metres_per_cell: float = 0.0, n_threads: int = 0) -> dict
+
+Edge-preserving Perona-Malik smoothing of a DEM.
+
+Explicit anisotropic diffusion: a neighbour difference below the edge
+threshold K is smoothed, one above it is preserved. K is the k_quantile of the
+DEM's own neighbour-difference distribution (stencil_difference_magnitude),
+or k_metres_per_cell when k_quantile is 0. time_step must be in (0, 0.25];
+conductance is "exponential" or "quadratic". Nodata cells are untouched and
+never diffused into. The same smoothing as smooth_algorithm_choice:
+perona_malik in lsdtt-raster-preprocessing.
+
+Returns a dict: raster (the smoothed DEM), k_metres_per_cell (the K used),
+n_iterations.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def perona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.2, conductance: str = 'exponential', k_quantile: float = 0.9, k_metres_per_cell: float = 0.0, n_threads: int = 0) -> dict
+```
+
+---
+
 ## `plan_curvature`
 
 plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2635,6 +2792,42 @@ def spectral_available() -> bool
 
 ---
 
+## `stencil_difference_magnitude`
+
+stencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+stencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster
+
+Largest absolute elevation difference from each cell to a 4-neighbour.
+
+In metres; nodata where the cell is nodata or has no valid neighbour. This is
+the quantity Perona-Malik smoothing evaluates its conductance on, so its
+distribution is what k_quantile is a quantile of.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def stencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster
+```
+
+---
+
 ## `subtract`
 
 subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2888,6 +3081,42 @@ B. Gailleton
 
 ```python
 def total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raster
+```
+
+---
+
+## `vertical_units_to_metres`
+
+vertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster
+
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
+
+Returns
+-------
+object
+    Result described by the generated binding signature.
+
+Notes
+-----
+vertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster
+
+Convert DEM elevations to metres.
+
+vertical_units is "metres" (no change), "feet" (international foot, 0.3048 m)
+or "us_survey_feet" (1200/3937 m). Never applied automatically: establish the
+vertical unit from the data provider's metadata.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def vertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster
 ```
 
 ---

@@ -17,7 +17,7 @@ the command).
 
 | Algorithm | Backend CLI | What it does |
 |---|---|---|
-| Raster Preprocessing | `lsdtt-raster-preprocessing` | Reproject, mask, fill nodata, breach or fill depressions, hillshade |
+| Raster Preprocessing | `lsdtt-raster-preprocessing` | Reproject, mask, fill nodata, edge-preserving smoothing, pixel replacement, breach or fill depressions (with flat resolution and sink candidates), vertical-unit checks, hillshade |
 | Clip Raster to Polygon | `lsdtt-raster-preprocessing` | Crop a raster to a polygon, optionally masking outside it |
 | Clip Vector to Raster Extent | `lsdtt-raster-preprocessing` | Clip a vector layer to a raster's bounding box (any CRS) |
 | Mosaic Rasters | `lsdtt-raster-preprocessing` | Merge pixel-aligned rasters on the same grid into one |
@@ -27,7 +27,7 @@ the command).
 | Basin Extraction | `lsdtt-basin-extraction` | Basins by junction, outlet, nesting, order or crossing line, with filters |
 | Side Tributary Basins | `lsdtt-basin-extraction` | Basins draining into the side of one main channel |
 | Basin Statistics | `lsdtt-basin-stats` | Per-basin relief, hypsometry, shape and channel statistics |
-| Surface Metrics | `lsdtt-surface-metrics` | Hillshade, relief, polyfit slope, aspect and curvature, roughness |
+| Surface Metrics | `lsdtt-surface-metrics` | Hillshade, relief, polyfit slope, aspect and curvature, roughness; Frangi, Otsu, Hough, curvature skeletons and adaptive VEC thresholding |
 | Channel Network Analysis | `lsdtt-channel-network-analysis` | Link bearings, junction angles, Strahler and Tokunaga layers, area ratios |
 | Swath Profile | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline line |
 | Drainage Area | `lsdtt-drainage-analysis` | D8, D-infinity and/or MFD drainage area |
@@ -170,6 +170,31 @@ conditions. Each run writes only the outputs its own form asks for.
   data (Hutton series codes, SSKIB conductivities); see the
   `lsdtt-drainage-analysis` reference for their columns. The plugin says
   which table is missing before anything runs.
+
+## Re-running an analysis
+
+Every algorithm names its outputs `<prefix>_<suffix>` in the output folder, so
+running it again with the same folder and prefix writes the same files. The
+**Overwrite existing outputs with the same prefix** option (on by default)
+makes that work:
+
+- Before the run, the plugin closes any layer in the project that is loaded
+  from one of those files. QGIS keeps a loaded layer's file open, and on
+  Windows an open file cannot be replaced, so without this a re-run fails or
+  keeps the old file. The log names each layer it closed; the new results are
+  loaded in their place.
+- With the option off, a run whose folder already holds `<prefix>_...` files
+  stops before anything runs, so earlier results are never replaced by
+  accident. Use a new prefix to keep both.
+- An input that is itself one of this run's outputs (for example re-running
+  on `<prefix>_fill.tif` with the same prefix) is refused either way: choose
+  another prefix.
+- After the run, every output is checked to have been written by this run. A
+  file that another program still holds open, and so was not replaced, is
+  reported rather than loaded as if it were new.
+
+The run log (`<prefix>_<tool>.log`, replaced each run) and the numbered
+parameter file next to the input DEM never count as outputs.
 
 ## Updating to a new version
 

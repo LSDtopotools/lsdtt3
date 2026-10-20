@@ -283,7 +283,11 @@ Documentation:
 pixi run docs-build
 ```
 
-GitHub builds run only through the manually triggered Python version-increment
-workflow. Before requesting one, run these checks locally. Cibuildwheel then
+GitHub builds run only through the manually triggered wheel workflow
+(`python-wheels.yml`), which builds an existing release tag. Before requesting
+one, run these checks locally; `tests/scripts/check_python_bindings_smoke.sh`
+(also the opt-in CTest test `python_bindings_smoke`, and a step of every
+`tools/make_release.sh` run) builds the bindings once and runs the whole
+`python_bindings/tests` suite. Cibuildwheel then
 repeats the runtime contracts against installed platform wheels and additionally
 checks bundled executables and console scripts.

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 211,
+  "export_count": 217,
   "exports": [
     {
       "name": "BasinCollection",
@@ -4652,6 +4652,18 @@
       "signatures": []
     },
     {
+      "name": "absolute",
+      "kind": "function",
+      "doc": "absolute(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nabsolute(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nAbsolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM of absolute difference).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def absolute(raster: lsdtt3.Raster) -> lsdtt3.Raster",
+          "defaults": []
+        }
+      ]
+    },
+    {
       "name": "add",
       "kind": "function",
       "doc": "add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nadd(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nAdd two grid-compatible rasters.\n\nAuthors\n-------\nB. Gailleton",
@@ -4946,6 +4958,26 @@
       ]
     },
     {
+      "name": "coherence_diffusion",
+      "kind": "function",
+      "doc": "coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\ncoherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster\n\nCoherence-enhancing diffusion: smoothing along linear features.\n\nSmooths along the local feature orientation from the structure tensor and\nlittle across it, bridging and denoising ridges, valleys and scarps.\ntime_step must be in (0, 0.25]. A radius of 0 means one cell\n(derivative_radius_metres) or three cells (integration_radius_metres).\ncontrast sets how selective the along-feature smoothing is; min_diffusivity\nis the across-feature floor, in (0, 1). The same smoothing as\nsmooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = \\0, time_step: float = \\1, derivative_radius_metres: float = \\2, integration_radius_metres: float = \\3, contrast: float = \\4, min_diffusivity: float = \\5, n_threads: int = \\6) -> lsdtt3.Raster",
+          "defaults": [
+            10,
+            0.15,
+            0.0,
+            0.0,
+            0.2,
+            0.001,
+            0
+          ]
+        }
+      ]
+    },
+    {
       "name": "compare_bearings",
       "kind": "function",
       "doc": "compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\ncompare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict\n\nCompare two samples of bearings or axial orientations.\n\nNaN and infinite values are ignored. The result combines the existing native\nKuiper two-sample test with circular Wasserstein distance.\n\nParameters\n----------\nfirst, second : array-like of float\n    Bearing samples in degrees.\naxial : bool, default=False\n    Treat angles 180 degrees apart as equivalent orientations.\nrotation_invariant : bool, default=False\n    Allow a single global rotation of ``second`` when computing the\n    Wasserstein distance. The Kuiper statistic always retains absolute phase.\n\nReturns\n-------\ndict\n    Sample sizes, period, circular Wasserstein distance, optional optimal\n    rotation, and Kuiper statistic with its approximate p-value.\n\nAuthors\n-------\nB. Gailleton\n\nAuthors\n-------\nB. Gailleton",
@@ -4969,6 +5001,29 @@
         {
           "definition": "def cop30_tiles_for_bbox(west: float, south: float, east: float, north: float) -> list[str]",
           "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "coregister_dem",
+      "kind": "function",
+      "doc": "coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\ncoregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict\n\nCoregister a DEM to a reference with the Nuth and Kaab (2011) method.\n\nIteratively fits the horizontal and vertical shift that best explains the\nelevation differences as a function of aspect, and applies it to moving.\nBoth rasters must be on the same grid (use reproject_to_grid first). The same\ncoregistration as run_dem_coregistration in lsdtt-raster-calculator, with\nits defaults.\n\nReturns a dict: raster (moving, shifted), dx_metres, dy_metres, dz_metres\n(the total shift), iterations, converged, and diagnostics (a pandas\nDataFrame with one row per iteration).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = \\0, offset_threshold_pixels: float = \\1, aspect_bin_count: int = \\2, min_samples: int = \\3, subsample_count: int = \\4, apply_vertical_shift: bool = \\5, max_horizontal_step_metres: float = \\6, initial_dx_metres: float = \\7, initial_dy_metres: float = \\8, initial_dz_metres: float = \\9) -> dict",
+          "defaults": [
+            8,
+            0.001,
+            72,
+            500,
+            500000,
+            true,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
         }
       ]
     },
@@ -5229,7 +5284,7 @@
     {
       "name": "divide",
       "kind": "function",
-      "doc": "divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\ndivide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nDivide two grid-compatible rasters.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\ndivide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nDivide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.\n\nAuthors\n-------\nB. Gailleton",
       "members": [],
       "signatures": [
         {
@@ -6450,6 +6505,25 @@
       ]
     },
     {
+      "name": "perona_malik_smoothing",
+      "kind": "function",
+      "doc": "perona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.2, conductance: str = 'exponential', k_quantile: float = 0.9, k_metres_per_cell: float = 0.0, n_threads: int = 0) -> dict\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nperona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.2, conductance: str = 'exponential', k_quantile: float = 0.9, k_metres_per_cell: float = 0.0, n_threads: int = 0) -> dict\n\nEdge-preserving Perona-Malik smoothing of a DEM.\n\nExplicit anisotropic diffusion: a neighbour difference below the edge\nthreshold K is smoothed, one above it is preserved. K is the k_quantile of the\nDEM's own neighbour-difference distribution (stencil_difference_magnitude),\nor k_metres_per_cell when k_quantile is 0. time_step must be in (0, 0.25];\nconductance is \"exponential\" or \"quadratic\". Nodata cells are untouched and\nnever diffused into. The same smoothing as smooth_algorithm_choice:\nperona_malik in lsdtt-raster-preprocessing.\n\nReturns a dict: raster (the smoothed DEM), k_metres_per_cell (the K used),\nn_iterations.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def perona_malik_smoothing(raster: lsdtt3.Raster, n_iterations: int = \\0, time_step: float = \\1, conductance: str = \\2, k_quantile: float = \\3, k_metres_per_cell: float = \\4, n_threads: int = \\5) -> dict",
+          "defaults": [
+            10,
+            0.2,
+            "exponential",
+            0.9,
+            0.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
       "name": "plan_curvature",
       "kind": "function",
       "doc": "plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nplan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nCompute 3-by-3 plan curvature; concave-up is positive.\n\nAuthors\n-------\nB. Gailleton",
@@ -6911,6 +6985,18 @@
       ]
     },
     {
+      "name": "stencil_difference_magnitude",
+      "kind": "function",
+      "doc": "stencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nstencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster\n\nLargest absolute elevation difference from each cell to a 4-neighbour.\n\nIn metres; nodata where the cell is nodata or has no valid neighbour. This is\nthe quantity Perona-Malik smoothing evaluates its conductance on, so its\ndistribution is what k_quantile is a quantile of.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def stencil_difference_magnitude(raster: lsdtt3.Raster) -> lsdtt3.Raster",
+          "defaults": []
+        }
+      ]
+    },
+    {
       "name": "subtract",
       "kind": "function",
       "doc": "subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nsubtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster\n\nSubtract two grid-compatible rasters.\n\nAuthors\n-------\nB. Gailleton",
@@ -7133,6 +7219,18 @@
       "signatures": [
         {
           "definition": "def valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, sections: lsdtt3.ValleyCrossSections) -> lsdtt3.Raster",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "vertical_units_to_metres",
+      "kind": "function",
+      "doc": "vertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster\n\nParameters\n----------\n*args\n    Positional arguments described by the generated binding signature.\n**kwargs\n    Keyword arguments described by the generated binding signature.\n\nReturns\n-------\nobject\n    Result described by the generated binding signature.\n\nNotes\n-----\nvertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster\n\nConvert DEM elevations to metres.\n\nvertical_units is \"metres\" (no change), \"feet\" (international foot, 0.3048 m)\nor \"us_survey_feet\" (1200/3937 m). Never applied automatically: establish the\nvertical unit from the data provider's metadata.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def vertical_units_to_metres(dem: lsdtt3.Raster, vertical_units: str) -> lsdtt3.Raster",
           "defaults": []
         }
       ]

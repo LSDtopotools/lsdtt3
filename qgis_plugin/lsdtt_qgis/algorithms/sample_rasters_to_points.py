@@ -16,6 +16,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     layer_file_path,
@@ -25,7 +26,7 @@ from .support import (
 )
 
 
-class SampleRastersToPointsAlgorithm(QgsProcessingAlgorithm):
+class SampleRastersToPointsAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_POINTS = "INPUT_POINTS"
     RASTER_ATTRIBUTE_CSV = "RASTER_ATTRIBUTE_CSV"
@@ -71,6 +72,7 @@ class SampleRastersToPointsAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_sample"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.POINTS_FORMAT,

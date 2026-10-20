@@ -1262,7 +1262,7 @@ Notes
 -----
 divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-Divide two grid-compatible rasters.
+Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.
 
 Authors
 -------
