@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, distribution
 import inspect
 import os
 import re
+import textwrap
 from pathlib import Path
 
 from ._llm import helper_for_llm as _render_llm_api
@@ -538,6 +539,19 @@ def helper_for_llm(topic="index"):
     return _render_llm_api(topic, _namespace=globals())
 
 
+
+def _notes_block(doc):
+    """Re-indent a docstring for the Notes section of a generated docstring.
+
+    The generated docstrings are f-string templates whose lines carry four
+    spaces of indentation. Python 3.13+ strips the indentation of source
+    docstrings at compile time and earlier versions keep it, so pasting a
+    docstring in as it stands gives mixed indentation on 3.13+ that
+    inspect.getdoc() cannot clean. Normalise it, then indent it like the
+    template, so every Python version produces the same text.
+    """
+    return textwrap.indent(inspect.cleandoc(doc), "    ").lstrip()
+
 def _numpy_style_docstring(function):
     """Give an exported binding a consistent public Python docstring.
 
@@ -585,7 +599,7 @@ def _numpy_style_docstring(function):
 
     Notes
     -----
-    {original_doc.strip()}
+    {_notes_block(original_doc)}
 
     Authors
     -------
@@ -667,7 +681,7 @@ def _numpy_style_class_docstring(cls):
 
     Notes
     -----
-    {original_doc.strip()}
+    {_notes_block(original_doc)}
 
     Authors
     -------

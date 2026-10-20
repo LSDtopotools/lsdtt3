@@ -8,30 +8,29 @@ LandscapeModel thresholds use specific catchment area A/dx in metres. Flat relie
 
 Conservative cellular hillslope-transport result and mass-transfer diagnostics.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Conservative cellular hillslope-transport result and mass-transfer diagnostics.
+Notes
+-----
+Conservative cellular hillslope-transport result and mass-transfer diagnostics.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -69,30 +68,29 @@ B. Gailleton
 
 Steady hillslope-surface solution and convergence diagnostics.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Steady hillslope-surface solution and convergence diagnostics.
+Notes
+-----
+Steady hillslope-surface solution and convergence diagnostics.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -118,30 +116,29 @@ B. Gailleton
 
 Implicit hillslope-transport result and adaptive-solver diagnostics.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Implicit hillslope-transport result and adaptive-solver diagnostics.
+Notes
+-----
+Implicit hillslope-transport result and adaptive-solver diagnostics.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -179,21 +176,21 @@ B. Gailleton
 
 Stateful coupled fluvial-incision and hillslope-transport landscape model.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Stateful coupled fluvial-incision and hillslope-transport landscape model.
+Notes
+-----
+Stateful coupled fluvial-incision and hillslope-transport landscape model.
 
 The model owns its evolving elevation raster and reuses native hillslope solver
 workspaces between calls to ``step`` or ``run``.
@@ -202,10 +199,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `incision_threshold_area` -> `incision_threshold_specific_area`; earliest removal: following minor.
@@ -436,30 +432,29 @@ def step(self, compute_erosion_rate: bool = False) -> lsdtt3.LandscapeStepResult
 
 Diagnostics and surface produced by one or more landscape-evolution steps.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Diagnostics and surface produced by one or more landscape-evolution steps.
+Notes
+-----
+Diagnostics and surface produced by one or more landscape-evolution steps.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -509,21 +504,21 @@ B. Gailleton
 
 hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: str = 'roering', diffusivity: float = 0.0010000000474974513, uplift_rate: float = 9.999999747378752e-05, critical_slope: float = 0.800000011920929, nonlinear: bool = False, boundary_conditions: str = 'oooo', tolerance: float = 9.999999747378752e-05, max_iterations: int = 10000, sor_omega: float = 0.0, n_threads: int = 0) -> lsdtt3.HillslopeSteadyStateResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: str = 'roering', diffusivity: float = 0.0010000000474974513, uplift_rate: float = 9.999999747378752e-05, critical_slope: float = 0.800000011920929, nonlinear: bool = False, boundary_conditions: str = 'oooo', tolerance: float = 9.999999747378752e-05, max_iterations: int = 10000, sor_omega: float = 0.0, n_threads: int = 0) -> lsdtt3.HillslopeSteadyStateResult
+Notes
+-----
+hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: str = 'roering', diffusivity: float = 0.0010000000474974513, uplift_rate: float = 9.999999747378752e-05, critical_slope: float = 0.800000011920929, nonlinear: bool = False, boundary_conditions: str = 'oooo', tolerance: float = 9.999999747378752e-05, max_iterations: int = 10000, sor_omega: float = 0.0, n_threads: int = 0) -> lsdtt3.HillslopeSteadyStateResult
 
 Solve a channel-bounded linear or nonlinear steady hillslope surface.
 
@@ -558,10 +553,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: str = 'roering', diffusivity: float = 0.0010000000474974513, uplift_rate: float = 9.999999747378752e-05, critical_slope: float = 0.800000011920929, nonlinear: bool = False, boundary_conditions: str = 'oooo', tolerance: float = 9.999999747378752e-05, max_iterations: int = 10000, sor_omega: float = 0.0, n_threads: int = 0) -> lsdtt3.HillslopeSteadyStateResult
@@ -573,21 +567,21 @@ def hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: s
 
 hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_years: float, boundary_conditions: str = 'oooo') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_years: float, boundary_conditions: str = 'oooo') -> lsdtt3.Raster
+Notes
+-----
+hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_years: float, boundary_conditions: str = 'oooo') -> lsdtt3.Raster
 
 Advance unconstrained linear hillslope diffusion with Crank-Nicolson ADI sweeps.
 
@@ -611,10 +605,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_years: float, boundary_conditions: str = 'oooo') -> lsdtt3.Raster
@@ -626,21 +619,21 @@ def hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_yea
 
 hillslope_transport_cellular(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.001, uplift_rate: float = 0.0, critical_slope: float = 0.8, r_match: float = 0.85, cfl_safety: float = 0.8, nonlocal_fraction: float = 0.0, nonlocal_activation_ratio: float = 0.8, nonlocal_deposition_probability: float = 0.5, nonlocal_max_hops: int = 4, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.HillslopeCellularResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillslope_transport_cellular(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.001, uplift_rate: float = 0.0, critical_slope: float = 0.8, r_match: float = 0.85, cfl_safety: float = 0.8, nonlocal_fraction: float = 0.0, nonlocal_activation_ratio: float = 0.8, nonlocal_deposition_probability: float = 0.5, nonlocal_max_hops: int = 4, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.HillslopeCellularResult
+Notes
+-----
+hillslope_transport_cellular(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.001, uplift_rate: float = 0.0, critical_slope: float = 0.8, r_match: float = 0.85, cfl_safety: float = 0.8, nonlocal_fraction: float = 0.0, nonlocal_activation_ratio: float = 0.8, nonlocal_deposition_probability: float = 0.5, nonlocal_max_hops: int = 4, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.HillslopeCellularResult
 
 Advance conservative face-transfer cellular hillslope transport.
 
@@ -662,10 +655,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillslope_transport_cellular(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.001, uplift_rate: float = 0.0, critical_slope: float = 0.8, r_match: float = 0.85, cfl_safety: float = 0.8, nonlocal_fraction: float = 0.0, nonlocal_activation_ratio: float = 0.8, nonlocal_deposition_probability: float = 0.5, nonlocal_max_hops: int = 4, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.HillslopeCellularResult
@@ -677,21 +669,21 @@ def hillslope_transport_cellular(dem: lsdtt3.Raster, channels: lsdtt3.Raster, du
 
 hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, diffusivity: float, duration_years: float, nonlinear: bool = False, critical_slope: float = 0.800000011920929, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, diffusivity: float, duration_years: float, nonlinear: bool = False, critical_slope: float = 0.800000011920929, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, diffusivity: float, duration_years: float, nonlinear: bool = False, critical_slope: float = 0.800000011920929, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.Raster
 
 Advance linear or Roering nonlinear hillslope transport with explicit sub-cycling.
 
@@ -723,10 +715,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, diffusivity: float, duration_years: float, nonlinear: bool = False, critical_slope: float = 0.800000011920929, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.Raster
@@ -738,21 +729,21 @@ def hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, di
 
 hillslope_transport_implicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.0010000000474974513, uplift_rate: float = 0.0, critical_slope: float = 0.800000011920929, nonlinear: bool = True, boundary_conditions: str = 'oooo', picard_tolerance: float = 9.999999747378752e-05, picard_max_iterations: int = 50, slope_ratio_cap: float = 0.9900000095367432, n_threads: int = 0) -> lsdtt3.HillslopeTransportResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillslope_transport_implicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.0010000000474974513, uplift_rate: float = 0.0, critical_slope: float = 0.800000011920929, nonlinear: bool = True, boundary_conditions: str = 'oooo', picard_tolerance: float = 9.999999747378752e-05, picard_max_iterations: int = 50, slope_ratio_cap: float = 0.9900000095367432, n_threads: int = 0) -> lsdtt3.HillslopeTransportResult
+Notes
+-----
+hillslope_transport_implicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.0010000000474974513, uplift_rate: float = 0.0, critical_slope: float = 0.800000011920929, nonlinear: bool = True, boundary_conditions: str = 'oooo', picard_tolerance: float = 9.999999747378752e-05, picard_max_iterations: int = 50, slope_ratio_cap: float = 0.9900000095367432, n_threads: int = 0) -> lsdtt3.HillslopeTransportResult
 
 Advance hillslope transport with implicit backward-Euler integration.
 
@@ -778,10 +769,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillslope_transport_implicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.0010000000474974513, uplift_rate: float = 0.0, critical_slope: float = 0.800000011920929, nonlinear: bool = True, boundary_conditions: str = 'oooo', picard_tolerance: float = 9.999999747378752e-05, picard_max_iterations: int = 50, slope_ratio_cap: float = 0.9900000095367432, n_threads: int = 0) -> lsdtt3.HillslopeTransportResult

@@ -174,29 +174,28 @@ B. Gailleton
 
 An in-memory float raster with an explicit validity mask.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    An in-memory float raster with an explicit validity mask.
+Notes
+-----
+An in-memory float raster with an explicit validity mask.
 
 Instances are value objects: functions in this module return new rasters and
 do not modify their inputs.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -297,31 +296,30 @@ def write(self, path: str, format: str = 'cog') -> None
 
 Resolution hierarchy for one in-memory float Raster.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Resolution hierarchy for one in-memory float Raster.
+Notes
+-----
+Resolution hierarchy for one in-memory float Raster.
 
 Level 0 is finest. Standard levels are exact factor-two grids; explicit
 integer factors can be added over the same extent.
 The hierarchy stores no solver state and each call returning a Raster returns
 a copy, consistent with the rest of the Python Raster API.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def __init__(self, finest: lsdtt3.Raster, storage: str = 'retain_allocated', keep_finest: bool = True, levels: int = 0) -> None
@@ -451,28 +449,27 @@ def set_active(self, raster: lsdtt3.Raster) -> None
 
 Metadata describing a north-up, square-cell raster grid.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Metadata describing a north-up, square-cell raster grid.
+Notes
+-----
+Metadata describing a north-up, square-cell raster grid.
 
 Use ``RasterMeta.from_shape`` to construct an instance.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -605,29 +602,28 @@ B. Gailleton
 
 Results from a full DEM spectral analysis.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Results from a full DEM spectral analysis.
+Notes
+-----
+Results from a full DEM spectral analysis.
 
 Spectral arrays are returned as copied NumPy arrays. Frequencies are in
 cycles per metre and wavelengths are in metres.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -697,29 +693,28 @@ cycles per metre and wavelengths are in metres.
 
 Results from a corridor-based longitudinal swath profile.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Results from a corridor-based longitudinal swath profile.
+Notes
+-----
+Results from a corridor-based longitudinal swath profile.
 
 The distance rasters are Raster objects. ``table`` is a copied pandas
 DataFrame with one row per along-axis bin.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -749,28 +744,27 @@ DataFrame with one row per along-axis bin.
 
 add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 Add two grid-compatible rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -782,28 +776,27 @@ def add(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsdtt3.Raster
+Notes
+-----
+add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsdtt3.Raster
 
 Add reproducible uniform noise to valid pixels.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsdtt3.Raster
@@ -815,28 +808,27 @@ def add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsd
 
 aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> lsdtt3.Raster
+Notes
+-----
+aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> lsdtt3.Raster
 
 Compute polyfit aspect in degrees; lambda_metres defaults to three cells.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> lsdtt3.Raster
@@ -848,28 +840,27 @@ def aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0
 
 bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
 Return the DEM component between two wavelengths.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
@@ -881,21 +872,21 @@ def bandpass_filter(raster: lsdtt3.Raster, short_metres: float, long_metres: flo
 
 breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+Notes
+-----
+breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
 Breach depressions along least-cost paths (Lindsay 2020).
 
@@ -929,10 +920,9 @@ edge_policy : {"outlet", "whitebox"}, default="outlet"
 fill_min_slope : float, default=0.0001
     Gradient (m/m) imposed by the remainder fill.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
@@ -944,28 +934,27 @@ def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, ma
 
 carve_depth(raster: lsdtt3.Raster, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    carve_depth(raster: lsdtt3.Raster, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+carve_depth(raster: lsdtt3.Raster, n_threads: int = 0) -> lsdtt3.Raster
 
 Return the non-negative elevation removed by depression breaching.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def carve_depth(raster: lsdtt3.Raster, n_threads: int = 0) -> lsdtt3.Raster
@@ -977,31 +966,30 @@ def carve_depth(raster: lsdtt3.Raster, n_threads: int = 0) -> lsdtt3.Raster
 
 classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
+Notes
+-----
+classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
 
 Classify labelled flats as floodplain or terrace from HAND and channel IDs.
 
 ``channel_source_ids`` is a co-registered Raster containing non-negative
 source IDs on in-scope channel pixels and negative values elsewhere.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
@@ -1013,31 +1001,30 @@ def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_chann
 
 classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
+Notes
+-----
+classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
 
 Classify flat surfaces using a ``ChannelScope``.
 
 HAND, its nearest-channel donors, flow distance, channel mask, and source IDs
 are derived from the scope's retained D8 flow topology.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
@@ -1049,21 +1036,21 @@ def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: ls
 
 classify_surface_shape(raster: lsdtt3.Raster, lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, kt: float = 0.0) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    classify_surface_shape(raster: lsdtt3.Raster, lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, kt: float = 0.0) -> dict
+Notes
+-----
+classify_surface_shape(raster: lsdtt3.Raster, lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, kt: float = 0.0) -> dict
 classify_surface_shape(maximum_curvature: lsdtt3.Raster, minimum_curvature: lsdtt3.Raster, kt: float = 0.0) -> dict
 
 Overloaded function.
@@ -1076,10 +1063,9 @@ Compute polyfit principal curvatures, then classify surface shape.
 
 Classify surface shape from existing principal-curvature rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def classify_surface_shape(raster: lsdtt3.Raster, lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, kt: float = 0.0) -> dict
@@ -1092,28 +1078,27 @@ def classify_surface_shape(maximum_curvature: lsdtt3.Raster, minimum_curvature: 
 
 clip_to_maximum_rectangle(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    clip_to_maximum_rectangle(raster: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+clip_to_maximum_rectangle(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 Crop to the largest all-valid axis-aligned rectangle.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def clip_to_maximum_rectangle(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1125,21 +1110,21 @@ def clip_to_maximum_rectangle(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority', crop: bool = True) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority', crop: bool = True) -> lsdtt3.Raster
+Notes
+-----
+clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority', crop: bool = True) -> lsdtt3.Raster
 
 Crop to polygon bounds and set pixels outside polygons to nodata.
 
@@ -1152,10 +1137,9 @@ coverage : {"any", "majority", "full"}, default="majority"
 crop : bool, default=True
     Crop to polygon bounds before masking. False retains the source extent.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority', crop: bool = True) -> lsdtt3.Raster
@@ -1167,28 +1151,27 @@ def clip_to_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'm
 
 detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0) -> dict
+Notes
+-----
+detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0) -> dict
 
 Detect local regularly spaced parallel features with sliding-window FFTs.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0) -> dict
@@ -1200,28 +1183,27 @@ def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: in
 
 double_raster(source: lsdtt3.Raster, method: str = 'linear') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    double_raster(source: lsdtt3.Raster, method: str = 'linear') -> lsdtt3.Raster
+Notes
+-----
+double_raster(source: lsdtt3.Raster, method: str = 'linear') -> lsdtt3.Raster
 
 Double both raster dimensions over the same extent using the optimized path.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def double_raster(source: lsdtt3.Raster, method: str = 'linear') -> lsdtt3.Raster
@@ -1233,28 +1215,27 @@ def double_raster(source: lsdtt3.Raster, method: str = 'linear') -> lsdtt3.Raste
 
 fill_depth(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_depth(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+fill_depth(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0) -> lsdtt3.Raster
 
 Return the non-negative elevation added by pit filling.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_depth(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0) -> lsdtt3.Raster
@@ -1266,28 +1247,27 @@ def fill_depth(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, 
 
 fill_interior_nodata(raster: lsdtt3.Raster, method: str = 'laplacian', max_iter: int = 10000, tolerance: float = 9.999999974752427e-07, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_interior_nodata(raster: lsdtt3.Raster, method: str = 'laplacian', max_iter: int = 10000, tolerance: float = 9.999999974752427e-07, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+fill_interior_nodata(raster: lsdtt3.Raster, method: str = 'laplacian', max_iter: int = 10000, tolerance: float = 9.999999974752427e-07, n_threads: int = 0) -> lsdtt3.Raster
 
 Fill nodata regions that are not connected to the raster edge.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_interior_nodata(raster: lsdtt3.Raster, method: str = 'laplacian', max_iter: int = 10000, tolerance: float = 9.999999974752427e-07, n_threads: int = 0) -> lsdtt3.Raster
@@ -1299,28 +1279,27 @@ def fill_interior_nodata(raster: lsdtt3.Raster, method: str = 'laplacian', max_i
 
 fill_pits(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_pits(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
+Notes
+-----
+fill_pits(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
 Fill depressions while imposing an optional minimum drainage slope.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_pits(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
@@ -1332,28 +1311,27 @@ def fill_pits(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n
 
 fill_pits_boundary_aware(raster: lsdtt3.Raster, boundary_conditions: str = 'oooo', min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_pits_boundary_aware(raster: lsdtt3.Raster, boundary_conditions: str = 'oooo', min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
+Notes
+-----
+fill_pits_boundary_aware(raster: lsdtt3.Raster, boundary_conditions: str = 'oooo', min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
 Fill pits with NESW open, closed, periodic, or base-level boundaries.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_pits_boundary_aware(raster: lsdtt3.Raster, boundary_conditions: str = 'oooo', min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
@@ -1365,28 +1343,27 @@ def fill_pits_boundary_aware(raster: lsdtt3.Raster, boundary_conditions: str = '
 
 fill_pits_priority_flood(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, use_radix_heap: bool = False) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_pits_priority_flood(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, use_radix_heap: bool = False) -> lsdtt3.Raster
+Notes
+-----
+fill_pits_priority_flood(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, use_radix_heap: bool = False) -> lsdtt3.Raster
 
 Explicit Improved Priority-Flood; optionally use its radix-heap queue.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_pits_priority_flood(raster: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, use_radix_heap: bool = False) -> lsdtt3.Raster
@@ -1398,28 +1375,27 @@ def fill_pits_priority_flood(raster: lsdtt3.Raster, min_slope: float = 9.9999997
 
 fill_pits_with_outlets(raster: lsdtt3.Raster, outlet_mask: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_pits_with_outlets(raster: lsdtt3.Raster, outlet_mask: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
+Notes
+-----
+fill_pits_with_outlets(raster: lsdtt3.Raster, outlet_mask: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
 Fill pits using positive cells in outlet_mask as drainage outlets.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_pits_with_outlets(raster: lsdtt3.Raster, outlet_mask: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
@@ -1431,21 +1407,21 @@ def fill_pits_with_outlets(raster: lsdtt3.Raster, outlet_mask: lsdtt3.Raster, mi
 
 fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
+Notes
+-----
+fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: object, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
 
 Overloaded function.
@@ -1458,10 +1434,9 @@ Fill pits while retaining positive cells in sinks as declared sinks.
 
 Fill pits while retaining zero-based (row, col) sinks.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: lsdtt3.Raster, min_slope: float = 9.999999747378752e-05, n_threads: int = 0, priority_flood_backend: str = 'binary') -> lsdtt3.Raster
@@ -1474,28 +1449,27 @@ def fill_pits_with_sinks(raster: lsdtt3.Raster, sinks: object, min_slope: float 
 
 find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_radius_metres: float = 100.0, madk2_threshold_percentile: float = 25.0, use_residual_iqr: bool = True, iqr_method: str = 'fftw_highpass', iqr_fit_lambda_metres: float = 500.0, iqr_detrend_radius_metres: float = 500.0, iqr_window_radius_metres: float = 50.0, iqr_window_shape: str = 'circular', iqr_threshold_percentile: float = 25.0, use_nvd: bool = False, nvd_polyfit_lambda: float = 10.0, nvd_window_radius_metres: float = 100.0, nvd_window_shape: str = 'circular', nvd_threshold_percentile: float = 25.0, require_all_metrics_pass: bool = True, directional_close_line_length_pixels: int = 0, directional_close_n_angles: int = 18, min_component_pixels: int = 100, relief_window_side_pixels: int = 5, relief_threshold_metres: float = 1.0, remove_risers: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_radius_metres: float = 100.0, madk2_threshold_percentile: float = 25.0, use_residual_iqr: bool = True, iqr_method: str = 'fftw_highpass', iqr_fit_lambda_metres: float = 500.0, iqr_detrend_radius_metres: float = 500.0, iqr_window_radius_metres: float = 50.0, iqr_window_shape: str = 'circular', iqr_threshold_percentile: float = 25.0, use_nvd: bool = False, nvd_polyfit_lambda: float = 10.0, nvd_window_radius_metres: float = 100.0, nvd_window_shape: str = 'circular', nvd_threshold_percentile: float = 25.0, require_all_metrics_pass: bool = True, directional_close_line_length_pixels: int = 0, directional_close_n_angles: int = 18, min_component_pixels: int = 100, relief_window_side_pixels: int = 5, relief_threshold_metres: float = 1.0, remove_risers: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceResult
+Notes
+-----
+find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_radius_metres: float = 100.0, madk2_threshold_percentile: float = 25.0, use_residual_iqr: bool = True, iqr_method: str = 'fftw_highpass', iqr_fit_lambda_metres: float = 500.0, iqr_detrend_radius_metres: float = 500.0, iqr_window_radius_metres: float = 50.0, iqr_window_shape: str = 'circular', iqr_threshold_percentile: float = 25.0, use_nvd: bool = False, nvd_polyfit_lambda: float = 10.0, nvd_window_radius_metres: float = 100.0, nvd_window_shape: str = 'circular', nvd_threshold_percentile: float = 25.0, require_all_metrics_pass: bool = True, directional_close_line_length_pixels: int = 0, directional_close_n_angles: int = 18, min_component_pixels: int = 100, relief_window_side_pixels: int = 5, relief_threshold_metres: float = 1.0, remove_risers: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceResult
 
 Detect and label flat surfaces from texture and local relief.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `relief_window_pixels` -> `relief_window_side_pixels`; earliest removal: following minor.
@@ -1510,28 +1484,27 @@ def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_
 
 frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_metres: float = 5.0, n_scales: int = 4, beta: float = 0.5, c: float = 1.0, target: str = 'ridges', n_threads: int = 0) -> lsdtt3.FrangiResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_metres: float = 5.0, n_scales: int = 4, beta: float = 0.5, c: float = 1.0, target: str = 'ridges', n_threads: int = 0) -> lsdtt3.FrangiResult
+Notes
+-----
+frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_metres: float = 5.0, n_scales: int = 4, beta: float = 0.5, c: float = 1.0, target: str = 'ridges', n_threads: int = 0) -> lsdtt3.FrangiResult
 
 Run a multiscale Frangi ridge or valley filter.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_metres: float = 5.0, n_scales: int = 4, beta: float = 0.5, c: float = 1.0, target: str = 'ridges', n_threads: int = 0) -> lsdtt3.FrangiResult
@@ -1543,28 +1516,27 @@ def frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_ma
 
 fundamental_form_principal_curvatures(raster: lsdtt3.Raster, n_threads: int = 0) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fundamental_form_principal_curvatures(raster: lsdtt3.Raster, n_threads: int = 0) -> dict
+Notes
+-----
+fundamental_form_principal_curvatures(raster: lsdtt3.Raster, n_threads: int = 0) -> dict
 
 Compute differential-geometry maximum and minimum principal curvatures.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fundamental_form_principal_curvatures(raster: lsdtt3.Raster, n_threads: int = 0) -> dict
@@ -1576,28 +1548,27 @@ def fundamental_form_principal_curvatures(raster: lsdtt3.Raster, n_threads: int 
 
 halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster
+Notes
+-----
+halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster
 
 Halve both even raster dimensions over the same extent using the optimized path.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> lsdtt3.Raster
@@ -1609,28 +1580,27 @@ def halve_raster(source: lsdtt3.Raster, method: str = 'conservative_mean') -> ls
 
 highpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    highpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+highpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
 Return the short-wavelength DEM component.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def highpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
@@ -1642,28 +1612,27 @@ def highpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = '
 
 hillshade(raster: lsdtt3.Raster, azimuth: float = 315.0, altitude: float = 45.0, z_factor: float = 1.0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    hillshade(raster: lsdtt3.Raster, azimuth: float = 315.0, altitude: float = 45.0, z_factor: float = 1.0) -> lsdtt3.Raster
+Notes
+-----
+hillshade(raster: lsdtt3.Raster, azimuth: float = 315.0, altitude: float = 45.0, z_factor: float = 1.0) -> lsdtt3.Raster
 
 Compute a single-illumination hillshade in the range 0 to 255.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def hillshade(raster: lsdtt3.Raster, azimuth: float = 315.0, altitude: float = 45.0, z_factor: float = 1.0) -> lsdtt3.Raster
@@ -1675,31 +1644,30 @@ def hillshade(raster: lsdtt3.Raster, azimuth: float = 315.0, altitude: float = 4
 
 interpolate_to_nearest_power_of_two(source: lsdtt3.Raster, direction: str = 'nearest', method: str = 'linear') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    interpolate_to_nearest_power_of_two(source: lsdtt3.Raster, direction: str = 'nearest', method: str = 'linear') -> lsdtt3.Raster
+Notes
+-----
+interpolate_to_nearest_power_of_two(source: lsdtt3.Raster, direction: str = 'nearest', method: str = 'linear') -> lsdtt3.Raster
 
 Resize to lower, higher, or nearest power-of-two dimensions.
 
 The full extent is preserved. Rasters whose two dimension scale factors differ
 cannot be represented with square cells and are rejected.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def interpolate_to_nearest_power_of_two(source: lsdtt3.Raster, direction: str = 'nearest', method: str = 'linear') -> lsdtt3.Raster
@@ -1711,28 +1679,27 @@ def interpolate_to_nearest_power_of_two(source: lsdtt3.Raster, direction: str = 
 
 invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 Invert a binary raster mask while preserving nodata.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1744,28 +1711,27 @@ def invert_binary_mask(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+Notes
+-----
+least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
 
 Return the non-negative elevation removed by least-cost breaching (parameters as breach_least_cost).
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
@@ -1777,28 +1743,27 @@ def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = Non
 
 lowpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    lowpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+lowpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
 Return the long-wavelength DEM component.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def lowpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
@@ -1810,21 +1775,21 @@ def lowpass_filter(raster: lsdtt3.Raster, cutoff_metres: float, window: str = 'h
 
 make_boundary_conditions(north: str = 'open', east: str = 'open', south: str = 'open', west: str = 'open') -> str
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    make_boundary_conditions(north: str = 'open', east: str = 'open', south: str = 'open', west: str = 'open') -> str
+Notes
+-----
+make_boundary_conditions(north: str = 'open', east: str = 'open', south: str = 'open', west: str = 'open') -> str
 
 Create an LSDTopoTools NESW boundary-condition string.
 
@@ -1833,10 +1798,9 @@ Parameters
 north, east, south, west : {"open", "closed", "periodic", "base_level"}
     Boundary treatment. The returned string has NESW order.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def make_boundary_conditions(north: str = 'open', east: str = 'open', south: str = 'open', west: str = 'open') -> str
@@ -1848,28 +1812,27 @@ def make_boundary_conditions(north: str = 'open', east: str = 'open', south: str
 
 make_outlet_mask(raster: lsdtt3.Raster, north: bool = False, east: bool = False, south: bool = False, west: bool = False) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    make_outlet_mask(raster: lsdtt3.Raster, north: bool = False, east: bool = False, south: bool = False, west: bool = False) -> lsdtt3.Raster
+Notes
+-----
+make_outlet_mask(raster: lsdtt3.Raster, north: bool = False, east: bool = False, south: bool = False, west: bool = False) -> lsdtt3.Raster
 
 Create a valid binary mask with selected raster edges set to one.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def make_outlet_mask(raster: lsdtt3.Raster, north: bool = False, east: bool = False, south: bool = False, west: bool = False) -> lsdtt3.Raster
@@ -1881,28 +1844,27 @@ def make_outlet_mask(raster: lsdtt3.Raster, north: bool = False, east: bool = Fa
 
 mask_by_binary(values: lsdtt3.Raster, keep_mask: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    mask_by_binary(values: lsdtt3.Raster, keep_mask: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+mask_by_binary(values: lsdtt3.Raster, keep_mask: lsdtt3.Raster) -> lsdtt3.Raster
 
 Set values to nodata where keep_mask is false or nodata.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def mask_by_binary(values: lsdtt3.Raster, keep_mask: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1914,21 +1876,21 @@ def mask_by_binary(values: lsdtt3.Raster, keep_mask: lsdtt3.Raster) -> lsdtt3.Ra
 
 mask_from_points(raster: lsdtt3.Raster, points: object) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    mask_from_points(raster: lsdtt3.Raster, points: object) -> lsdtt3.Raster
+Notes
+-----
+mask_from_points(raster: lsdtt3.Raster, points: object) -> lsdtt3.Raster
 
 Create a binary mask from zero-based ``(row, col)`` point coordinates.
 
@@ -1937,10 +1899,9 @@ Parameters
 points : array-like, shape (n, 2)
     Row-major NumPy coordinates. Points must be valid raster cells.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def mask_from_points(raster: lsdtt3.Raster, points: object) -> lsdtt3.Raster
@@ -1952,28 +1913,27 @@ def mask_from_points(raster: lsdtt3.Raster, points: object) -> lsdtt3.Raster
 
 mask_to_nodata(raster: lsdtt3.Raster, threshold: float, below: bool = True) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    mask_to_nodata(raster: lsdtt3.Raster, threshold: float, below: bool = True) -> lsdtt3.Raster
+Notes
+-----
+mask_to_nodata(raster: lsdtt3.Raster, threshold: float, below: bool = True) -> lsdtt3.Raster
 
 Set valid pixels below (or above) a threshold to nodata.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def mask_to_nodata(raster: lsdtt3.Raster, threshold: float, below: bool = True) -> lsdtt3.Raster
@@ -1985,28 +1945,27 @@ def mask_to_nodata(raster: lsdtt3.Raster, threshold: float, below: bool = True) 
 
 masked_surface_recovery(raster: lsdtt3.Raster, mask: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    masked_surface_recovery(raster: lsdtt3.Raster, mask: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+masked_surface_recovery(raster: lsdtt3.Raster, mask: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', n_threads: int = 0) -> lsdtt3.Raster
 
 Recover a smooth surface from selected pixels.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def masked_surface_recovery(raster: lsdtt3.Raster, mask: lsdtt3.Raster, cutoff_metres: float, window: str = 'hann', n_threads: int = 0) -> lsdtt3.Raster
@@ -2018,21 +1977,21 @@ def masked_surface_recovery(raster: lsdtt3.Raster, mask: lsdtt3.Raster, cutoff_m
 
 mosaic(rasters: collections.abc.Sequence[lsdtt3.Raster]) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    mosaic(rasters: collections.abc.Sequence[lsdtt3.Raster]) -> lsdtt3.Raster
+Notes
+-----
+mosaic(rasters: collections.abc.Sequence[lsdtt3.Raster]) -> lsdtt3.Raster
 
 Mosaic loaded rasters into their union extent.
 
@@ -2047,10 +2006,9 @@ Returns
 Raster
     Mosaic covering the union extent.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def mosaic(rasters: collections.abc.Sequence[lsdtt3.Raster]) -> lsdtt3.Raster
@@ -2062,28 +2020,27 @@ def mosaic(rasters: collections.abc.Sequence[lsdtt3.Raster]) -> lsdtt3.Raster
 
 multidirectional_hillshade(raster: lsdtt3.Raster, n_directions: int = 8, altitude: float = 45.0, z_factor: float = 1.0, start_azimuth: float = 0.0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    multidirectional_hillshade(raster: lsdtt3.Raster, n_directions: int = 8, altitude: float = 45.0, z_factor: float = 1.0, start_azimuth: float = 0.0) -> lsdtt3.Raster
+Notes
+-----
+multidirectional_hillshade(raster: lsdtt3.Raster, n_directions: int = 8, altitude: float = 45.0, z_factor: float = 1.0, start_azimuth: float = 0.0) -> lsdtt3.Raster
 
 Compute an averaged multi-illumination hillshade in the range 0 to 255.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def multidirectional_hillshade(raster: lsdtt3.Raster, n_directions: int = 8, altitude: float = 45.0, z_factor: float = 1.0, start_azimuth: float = 0.0) -> lsdtt3.Raster
@@ -2095,28 +2052,27 @@ def multidirectional_hillshade(raster: lsdtt3.Raster, n_directions: int = 8, alt
 
 multiply(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    multiply(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+multiply(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 Multiply two grid-compatible rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def multiply(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2128,28 +2084,27 @@ def multiply(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 normalize_unit_interval(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    normalize_unit_interval(raster: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+normalize_unit_interval(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 Linearly rescale valid values to the closed interval [0, 1].
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def normalize_unit_interval(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2161,28 +2116,27 @@ def normalize_unit_interval(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 opentopography_datasets() -> list
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    opentopography_datasets() -> list
+Notes
+-----
+opentopography_datasets() -> list
 
 Return OpenTopography DEM catalogue records as dictionaries.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def opentopography_datasets() -> list
@@ -2194,28 +2148,27 @@ def opentopography_datasets() -> list
 
 pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
 
 Pad the north and east sides with nodata to the next power-of-two dimensions.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2227,28 +2180,27 @@ def pad_to_nearest_power_of_two(source: lsdtt3.Raster) -> lsdtt3.Raster
 
 plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 Compute 3-by-3 plan curvature; concave-up is positive.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2260,21 +2212,21 @@ def plan_curvature(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> dict
+Notes
+-----
+polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> dict
 
 Compute several quadratic-fit surface metrics in one shared fit.
 
@@ -2298,10 +2250,9 @@ Returns
 dict[str, Raster]
     One newly allocated raster for every requested metric.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> dict
@@ -2313,21 +2264,21 @@ def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str
 
 rasterize_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    rasterize_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority') -> lsdtt3.Raster
+Notes
+-----
+rasterize_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority') -> lsdtt3.Raster
 
 Rasterize GeoPandas polygon geometries onto a raster grid.
 
@@ -2348,10 +2299,9 @@ Raises
 ValueError
     If the GeoDataFrame CRS does not match the raster CRS.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def rasterize_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 'majority') -> lsdtt3.Raster
@@ -2363,21 +2313,21 @@ def rasterize_polygons(raster: lsdtt3.Raster, polygons: object, coverage: str = 
 
 reproject(raster: lsdtt3.Raster, epsg: int, cell_size: float = 0.0, resampling: str = 'bilinear') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    reproject(raster: lsdtt3.Raster, epsg: int, cell_size: float = 0.0, resampling: str = 'bilinear') -> lsdtt3.Raster
+Notes
+-----
+reproject(raster: lsdtt3.Raster, epsg: int, cell_size: float = 0.0, resampling: str = 'bilinear') -> lsdtt3.Raster
 
 Reproject a raster to an EPSG coordinate reference system.
 
@@ -2390,10 +2340,9 @@ cell_size : float, default=0
 resampling : str, default="bilinear"
     GDAL resampling method.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def reproject(raster: lsdtt3.Raster, epsg: int, cell_size: float = 0.0, resampling: str = 'bilinear') -> lsdtt3.Raster
@@ -2405,21 +2354,21 @@ def reproject(raster: lsdtt3.Raster, epsg: int, cell_size: float = 0.0, resampli
 
 reproject_to_grid(raster: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, resampling: str = 'bilinear') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    reproject_to_grid(raster: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, resampling: str = 'bilinear') -> lsdtt3.Raster
+Notes
+-----
+reproject_to_grid(raster: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, resampling: str = 'bilinear') -> lsdtt3.Raster
 
 Reproject and resample a raster onto an explicit target grid.
 
@@ -2436,10 +2385,9 @@ Returns
 Raster
     New raster on target_metadata's grid.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def reproject_to_grid(raster: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, resampling: str = 'bilinear') -> lsdtt3.Raster
@@ -2451,21 +2399,21 @@ def reproject_to_grid(raster: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta,
 
 resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, method: str = 'linear') -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, method: str = 'linear') -> lsdtt3.Raster
+Notes
+-----
+resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, method: str = 'linear') -> lsdtt3.Raster
 
 Resample an in-memory raster onto an explicit target grid without GDAL.
 
@@ -2473,10 +2421,9 @@ The source and target CRS must match. Sampling methods are ``nearest``,
 ``linear`` and ``cubic``. Aggregation methods are ``mean``, ``sum``, ``min``,
 ``max``, ``mode`` and the overlap-area-weighted ``conservative_mean``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, method: str = 'linear') -> lsdtt3.Raster
@@ -2488,21 +2435,21 @@ def resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, m
 
 sample_points(raster: lsdtt3.Raster, points: object, column: str = 'raster_value') -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    sample_points(raster: lsdtt3.Raster, points: object, column: str = 'raster_value') -> object
+Notes
+-----
+sample_points(raster: lsdtt3.Raster, points: object, column: str = 'raster_value') -> object
 
 Sample a raster at GeoPandas point geometries.
 
@@ -2518,10 +2465,9 @@ Returns
 geopandas.GeoDataFrame
     Copy of points with sampled values. Outside or nodata samples are None.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def sample_points(raster: lsdtt3.Raster, points: object, column: str = 'raster_value') -> object
@@ -2533,28 +2479,27 @@ def sample_points(raster: lsdtt3.Raster, points: object, column: str = 'raster_v
 
 scale(raster: lsdtt3.Raster, factor: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    scale(raster: lsdtt3.Raster, factor: float) -> lsdtt3.Raster
+Notes
+-----
+scale(raster: lsdtt3.Raster, factor: float) -> lsdtt3.Raster
 
 Multiply valid raster values by a scalar factor.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def scale(raster: lsdtt3.Raster, factor: float) -> lsdtt3.Raster
@@ -2566,28 +2511,27 @@ def scale(raster: lsdtt3.Raster, factor: float) -> lsdtt3.Raster
 
 set_nodata_rectangle(raster: lsdtt3.Raster, row_start: int, row_stop: int, col_start: int, col_stop: int) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    set_nodata_rectangle(raster: lsdtt3.Raster, row_start: int, row_stop: int, col_start: int, col_stop: int) -> lsdtt3.Raster
+Notes
+-----
+set_nodata_rectangle(raster: lsdtt3.Raster, row_start: int, row_stop: int, col_start: int, col_stop: int) -> lsdtt3.Raster
 
 Set a half-open row/column rectangle to nodata.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def set_nodata_rectangle(raster: lsdtt3.Raster, row_start: int, row_stop: int, col_start: int, col_stop: int) -> lsdtt3.Raster
@@ -2599,28 +2543,27 @@ def set_nodata_rectangle(raster: lsdtt3.Raster, row_start: int, row_stop: int, c
 
 slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 Compute 3-by-3 gradient-magnitude slope in rise/run units.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2632,28 +2575,27 @@ def slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
+Notes
+-----
+spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
 
 Run full FFT-based spectral analysis and return a SpectralResult.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
@@ -2665,28 +2607,27 @@ def spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_back
 
 spectral_available() -> bool
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    spectral_available() -> bool
+Notes
+-----
+spectral_available() -> bool
 
 Return whether this build includes FFTW spectral support.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def spectral_available() -> bool
@@ -2698,28 +2639,27 @@ def spectral_available() -> bool
 
 subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 Subtract two grid-compatible rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2731,21 +2671,21 @@ def subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 swath_distances(raster: lsdtt3.Raster, baseline: object, n_threads: int = 0) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    swath_distances(raster: lsdtt3.Raster, baseline: object, n_threads: int = 0) -> dict
+Notes
+-----
+swath_distances(raster: lsdtt3.Raster, baseline: object, n_threads: int = 0) -> dict
 
 Compute pixel distances relative to a GeoPandas baseline.
 
@@ -2762,10 +2702,9 @@ Returns
 dict[str, Raster]
     ``along_axis``, ``perpendicular``, and ``signed_perpendicular`` rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def swath_distances(raster: lsdtt3.Raster, baseline: object, n_threads: int = 0) -> dict
@@ -2777,21 +2716,21 @@ def swath_distances(raster: lsdtt3.Raster, baseline: object, n_threads: int = 0)
 
 swath_profile(reference: lsdtt3.Raster, baseline: object, values: object | None = None, half_width_metres: float = 0.0, bin_width_metres: float = 1000.0, n_threads: int = 0) -> lsdtt3.SwathProfile
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    swath_profile(reference: lsdtt3.Raster, baseline: object, values: object | None = None, half_width_metres: float = 0.0, bin_width_metres: float = 1000.0, n_threads: int = 0) -> lsdtt3.SwathProfile
+Notes
+-----
+swath_profile(reference: lsdtt3.Raster, baseline: object, values: object | None = None, half_width_metres: float = 0.0, bin_width_metres: float = 1000.0, n_threads: int = 0) -> lsdtt3.SwathProfile
 
 Summarise raster values in a corridor along a GeoPandas LineString.
 
@@ -2815,10 +2754,9 @@ Returns
 SwathProfile
     Distance rasters and per-bin mean and percentile statistics.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def swath_profile(reference: lsdtt3.Raster, baseline: object, values: object | None = None, half_width_metres: float = 0.0, bin_width_metres: float = 1000.0, n_threads: int = 0) -> lsdtt3.SwathProfile
@@ -2830,28 +2768,27 @@ def swath_profile(reference: lsdtt3.Raster, baseline: object, values: object | N
 
 threshold_above(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    threshold_above(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
+Notes
+-----
+threshold_above(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
 Return a binary mask that is True where valid values exceed threshold.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def threshold_above(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
@@ -2863,28 +2800,27 @@ def threshold_above(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
 threshold_below(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    threshold_below(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
+Notes
+-----
+threshold_below(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
 Return a binary mask that is True where valid values are below threshold.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def threshold_below(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
@@ -2896,28 +2832,27 @@ def threshold_below(raster: lsdtt3.Raster, threshold: float) -> lsdtt3.Raster
 
 topographic_wetness_index(drainage_area: lsdtt3.Raster, slope: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    topographic_wetness_index(drainage_area: lsdtt3.Raster, slope: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+topographic_wetness_index(drainage_area: lsdtt3.Raster, slope: lsdtt3.Raster) -> lsdtt3.Raster
 
 Compute ``log((A / cell_area) / slope)`` from drainage area and slope rasters.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def topographic_wetness_index(drainage_area: lsdtt3.Raster, slope: lsdtt3.Raster) -> lsdtt3.Raster
@@ -2929,28 +2864,27 @@ def topographic_wetness_index(drainage_area: lsdtt3.Raster, slope: lsdtt3.Raster
 
 total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raster
+Notes
+-----
+total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raster
 
 Compute moving-window total curvature at radius_metres.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raster
@@ -2962,28 +2896,27 @@ def total_curvature(raster: lsdtt3.Raster, radius_metres: float) -> lsdtt3.Raste
 
 wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
+Notes
+-----
+wiener_filter(raster: lsdtt3.Raster, signal_wavelength_long_metres: float = 1000.0, signal_wavelength_short_metres: float = 100.0, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.Raster
 
 Attenuate high-frequency white noise with an adaptive Wiener filter.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `signal_wavelength_long_m` -> `signal_wavelength_long_metres`; earliest removal: following minor.

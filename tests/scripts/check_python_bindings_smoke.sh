@@ -73,6 +73,19 @@ if ! "$PYTHON" -c "import venv, ensurepip" >/dev/null 2>&1; then
     exit 77
 fi
 
+# A pixi/conda interpreter with bindings built against the system GDAL loads
+# two C++ runtimes: the system libstdc++ (via GDAL) and the environment's
+# libraries (ICU, for example), which can need a newer one. Whichever loads
+# first wins, and _core then fails to import with "CXXABI_1.3.15 not found".
+# Preloading the environment's own libstdc++ (newer, and backward compatible)
+# resolves it. Nothing is installed or shipped: the file is already in the
+# environment, and release artefacts are built elsewhere (manylinux, bundles).
+PY_PREFIX="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')"
+if [[ -d "$PY_PREFIX/conda-meta" && -f "$PY_PREFIX/lib/libstdc++.so.6" ]]; then
+    export LD_PRELOAD="$PY_PREFIX/lib/libstdc++.so.6${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "== conda/pixi interpreter: preloading $PY_PREFIX/lib/libstdc++.so.6 =="
+fi
+
 start=$(date +%s)
 
 if [[ $REUSE -eq 0 || ! -x "$VENV/bin/python" ]]; then

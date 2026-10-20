@@ -6,21 +6,21 @@ This page is generated from the built Python runtime manifest. Do not edit signa
 
 compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
+Notes
+-----
+compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
 
 Compare two samples of bearings or axial orientations.
 
@@ -47,10 +47,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
@@ -107,21 +106,21 @@ B. Gailleton
 
 linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
+Notes
+-----
+linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
 
 Sample a raster along line geometries and append descriptive statistics.
 
@@ -144,10 +143,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
@@ -159,28 +157,27 @@ def linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 1
 
 relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster
+Notes
+-----
+relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster
 
 Return short-scale local relief divided by broad-scale local relief.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster

@@ -100,30 +100,29 @@ B. Gailleton
 
 DEM conditioned along mapped stream profiles.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    DEM conditioned along mapped stream profiles.
+Notes
+-----
+DEM conditioned along mapped stream profiles.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -449,30 +448,29 @@ B. Gailleton
 
 Vector water-area centreline output.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Vector water-area centreline output.
+Notes
+-----
+Vector water-area centreline output.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -490,30 +488,29 @@ Centreline, connector, and tributary GeoDataFrame.
 
 Repaired water-line output and diagnostics.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Repaired water-line output and diagnostics.
+Notes
+-----
+Repaired water-line output and diagnostics.
 
 Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -539,28 +536,27 @@ B. Gailleton
 
 analyse_tidal_skeleton(dem: lsdtt3.Raster, channel_mask: lsdtt3.Raster, skeleton: lsdtt3.Raster, outlet_mask: object | None = None, outlet_mode: str = 'edge_nodes', station_spacing_metres: float = 5.0, compute_cross_sections: bool = True, tangent_support_points: int = 2, cross_section_half_length_metres: float = 25.0, cross_section_sample_spacing_metres: float = 1.0, max_width_ratio: float = 3.0, compute_station_strip_metrics: bool = True, strip_values: object | None = None, n_threads: int = 0) -> lsdtt3.TidalSkeletonMetricsResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    analyse_tidal_skeleton(dem: lsdtt3.Raster, channel_mask: lsdtt3.Raster, skeleton: lsdtt3.Raster, outlet_mask: object | None = None, outlet_mode: str = 'edge_nodes', station_spacing_metres: float = 5.0, compute_cross_sections: bool = True, tangent_support_points: int = 2, cross_section_half_length_metres: float = 25.0, cross_section_sample_spacing_metres: float = 1.0, max_width_ratio: float = 3.0, compute_station_strip_metrics: bool = True, strip_values: object | None = None, n_threads: int = 0) -> lsdtt3.TidalSkeletonMetricsResult
+Notes
+-----
+analyse_tidal_skeleton(dem: lsdtt3.Raster, channel_mask: lsdtt3.Raster, skeleton: lsdtt3.Raster, outlet_mask: object | None = None, outlet_mode: str = 'edge_nodes', station_spacing_metres: float = 5.0, compute_cross_sections: bool = True, tangent_support_points: int = 2, cross_section_half_length_metres: float = 25.0, cross_section_sample_spacing_metres: float = 1.0, max_width_ratio: float = 3.0, compute_station_strip_metrics: bool = True, strip_values: object | None = None, n_threads: int = 0) -> lsdtt3.TidalSkeletonMetricsResult
 
 Analyse an existing tidal-channel skeleton into sections, orders, and station metrics.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def analyse_tidal_skeleton(dem: lsdtt3.Raster, channel_mask: lsdtt3.Raster, skeleton: lsdtt3.Raster, outlet_mask: object | None = None, outlet_mode: str = 'edge_nodes', station_spacing_metres: float = 5.0, compute_cross_sections: bool = True, tangent_support_points: int = 2, cross_section_half_length_metres: float = 25.0, cross_section_sample_spacing_metres: float = 1.0, max_width_ratio: float = 3.0, compute_station_strip_metrics: bool = True, strip_values: object | None = None, n_threads: int = 0) -> lsdtt3.TidalSkeletonMetricsResult
@@ -572,21 +568,21 @@ def analyse_tidal_skeleton(dem: lsdtt3.Raster, channel_mask: lsdtt3.Raster, skel
 
 burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt3.StreamBurnResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt3.StreamBurnResult
+Notes
+-----
+burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt3.StreamBurnResult
 
 Condition a copied DEM along mapped stream lines with monotone profiles.
 
@@ -612,10 +608,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt3.StreamBurnResult
@@ -627,21 +622,21 @@ def burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt
 
 extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult
+Notes
+-----
+extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult
 extract_valley_centrelines(dem: lsdtt3.Raster, channels: object, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult
 
 Overloaded function.
@@ -657,10 +652,9 @@ Route centrelines through a supplied valley mask from ordered channel paths.
 
 ``channels`` is a sequence of upstream-to-downstream ``(row, col)`` arrays.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `fallback_valley_hand_metres` -> `valley_mask`; earliest removal: following minor.
@@ -676,21 +670,21 @@ def extract_valley_centrelines(dem: lsdtt3.Raster, channels: object, corridor_wi
 
 extract_valley_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, spacing_metres: float = 500.0, half_length_multiplier: float = 1.5, min_half_length_metres: float = 0.0, max_half_length_metres: float = 5000.0, tangent_window_nodes: int = 8, sample_step_metres: float = 0.0, curved_sections: bool = False, curvature: object | None = None, hillshade: object | None = None, channel_mask: object | None = None, side_gap_tolerance_steps: int = 1, feature_peak_min_prominence_fraction: float = 0.15, feature_peak_edge_margin_samples: int = 2, clip_overlapping_sections: bool = True, neighbour_clip_window: int = 2, min_section_reach_fraction: float = 0.35, curved_wall_clearance_fraction: float = 0.1, curved_streamwise_smoothing_passes: int = 40, curved_coarse_spacing_metres: float = 700.0, hydraulic_stage_step_metres: float = 0.1, hydraulic_min_step_height_metres: float = 2.0, hydraulic_min_step_width_pixels: int = 3, hydraulic_midpoint_search_samples: int = 81, hydraulic_min_crossings_preferred: int = 2, compute_hydraulic_depth: bool = False) -> lsdtt3.ValleyCrossSections
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    extract_valley_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, spacing_metres: float = 500.0, half_length_multiplier: float = 1.5, min_half_length_metres: float = 0.0, max_half_length_metres: float = 5000.0, tangent_window_nodes: int = 8, sample_step_metres: float = 0.0, curved_sections: bool = False, curvature: object | None = None, hillshade: object | None = None, channel_mask: object | None = None, side_gap_tolerance_steps: int = 1, feature_peak_min_prominence_fraction: float = 0.15, feature_peak_edge_margin_samples: int = 2, clip_overlapping_sections: bool = True, neighbour_clip_window: int = 2, min_section_reach_fraction: float = 0.35, curved_wall_clearance_fraction: float = 0.1, curved_streamwise_smoothing_passes: int = 40, curved_coarse_spacing_metres: float = 700.0, hydraulic_stage_step_metres: float = 0.1, hydraulic_min_step_height_metres: float = 2.0, hydraulic_min_step_width_pixels: int = 3, hydraulic_midpoint_search_samples: int = 81, hydraulic_min_crossings_preferred: int = 2, compute_hydraulic_depth: bool = False) -> lsdtt3.ValleyCrossSections
+Notes
+-----
+extract_valley_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, spacing_metres: float = 500.0, half_length_multiplier: float = 1.5, min_half_length_metres: float = 0.0, max_half_length_metres: float = 5000.0, tangent_window_nodes: int = 8, sample_step_metres: float = 0.0, curved_sections: bool = False, curvature: object | None = None, hillshade: object | None = None, channel_mask: object | None = None, side_gap_tolerance_steps: int = 1, feature_peak_min_prominence_fraction: float = 0.15, feature_peak_edge_margin_samples: int = 2, clip_overlapping_sections: bool = True, neighbour_clip_window: int = 2, min_section_reach_fraction: float = 0.35, curved_wall_clearance_fraction: float = 0.1, curved_streamwise_smoothing_passes: int = 40, curved_coarse_spacing_metres: float = 700.0, hydraulic_stage_step_metres: float = 0.1, hydraulic_min_step_height_metres: float = 2.0, hydraulic_min_step_width_pixels: int = 3, hydraulic_midpoint_search_samples: int = 81, hydraulic_min_crossings_preferred: int = 2, compute_hydraulic_depth: bool = False) -> lsdtt3.ValleyCrossSections
 
 Extract straight or boundary-fitted valley cross sections.
 
@@ -698,10 +692,9 @@ Optional curvature, hillshade, and channel-mask rasters enable feature picks.
 Hydraulic break picks are always available; set ``compute_hydraulic_depth`` to
 retain the full per-stage hydraulic-geometry curve.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def extract_valley_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, spacing_metres: float = 500.0, half_length_multiplier: float = 1.5, min_half_length_metres: float = 0.0, max_half_length_metres: float = 5000.0, tangent_window_nodes: int = 8, sample_step_metres: float = 0.0, curved_sections: bool = False, curvature: object | None = None, hillshade: object | None = None, channel_mask: object | None = None, side_gap_tolerance_steps: int = 1, feature_peak_min_prominence_fraction: float = 0.15, feature_peak_edge_margin_samples: int = 2, clip_overlapping_sections: bool = True, neighbour_clip_window: int = 2, min_section_reach_fraction: float = 0.35, curved_wall_clearance_fraction: float = 0.1, curved_streamwise_smoothing_passes: int = 40, curved_coarse_spacing_metres: float = 700.0, hydraulic_stage_step_metres: float = 0.1, hydraulic_min_step_height_metres: float = 2.0, hydraulic_min_step_width_pixels: int = 3, hydraulic_midpoint_search_samples: int = 81, hydraulic_min_crossings_preferred: int = 2, compute_hydraulic_depth: bool = False) -> lsdtt3.ValleyCrossSections
@@ -713,28 +706,27 @@ def extract_valley_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.Valley
 
 find_marsh_platform(dem: lsdtt3.Raster, slope: object | None = None, slope_method: str = 'gradient_3x3', slope_polyfit_lambda_metres: float = 5.0, histogram_n_bins: int = 100, search_space_histogram_derivative_threshold: float = -2.0, max_scarp_growth_iterations: int = 50, max_platform_growth_iterations: int = 100, min_platform_component_pixels: int = 1, preserve_scarps_in_final_platform: bool = True, apply_scarp_closing: bool = False, scarp_closing_radius_metres: float = 0.0, n_threads: int = 0) -> lsdtt3.MarshPlatformResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_marsh_platform(dem: lsdtt3.Raster, slope: object | None = None, slope_method: str = 'gradient_3x3', slope_polyfit_lambda_metres: float = 5.0, histogram_n_bins: int = 100, search_space_histogram_derivative_threshold: float = -2.0, max_scarp_growth_iterations: int = 50, max_platform_growth_iterations: int = 100, min_platform_component_pixels: int = 1, preserve_scarps_in_final_platform: bool = True, apply_scarp_closing: bool = False, scarp_closing_radius_metres: float = 0.0, n_threads: int = 0) -> lsdtt3.MarshPlatformResult
+Notes
+-----
+find_marsh_platform(dem: lsdtt3.Raster, slope: object | None = None, slope_method: str = 'gradient_3x3', slope_polyfit_lambda_metres: float = 5.0, histogram_n_bins: int = 100, search_space_histogram_derivative_threshold: float = -2.0, max_scarp_growth_iterations: int = 50, max_platform_growth_iterations: int = 100, min_platform_component_pixels: int = 1, preserve_scarps_in_final_platform: bool = True, apply_scarp_closing: bool = False, scarp_closing_radius_metres: float = 0.0, n_threads: int = 0) -> lsdtt3.MarshPlatformResult
 
 Extract marsh platforms and scarps from a projected DEM.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_marsh_platform(dem: lsdtt3.Raster, slope: object | None = None, slope_method: str = 'gradient_3x3', slope_polyfit_lambda_metres: float = 5.0, histogram_n_bins: int = 100, search_space_histogram_derivative_threshold: float = -2.0, max_scarp_growth_iterations: int = 50, max_platform_growth_iterations: int = 100, min_platform_component_pixels: int = 1, preserve_scarps_in_final_platform: bool = True, apply_scarp_closing: bool = False, scarp_closing_radius_metres: float = 0.0, n_threads: int = 0) -> lsdtt3.MarshPlatformResult
@@ -746,28 +738,27 @@ def find_marsh_platform(dem: lsdtt3.Raster, slope: object | None = None, slope_m
 
 find_tidal_channels(dem: lsdtt3.Raster, use_flood_mask: bool = False, flood_elevation_metres: float = 0.0, median_window_radii_metres: collections.abc.Sequence[float] = [5.0, 10.0, 20.0], residual_thresholds_metres: collections.abc.Sequence[float] = [0.1], scale_mode: str = 'any', apply_binary_closing: bool = False, binary_closing_radius_metres: float = 0.0, fill_holes: bool = False, min_channel_component_pixels: int = 1, extract_skeleton: bool = True, skeleton_spur_max_pixels: int = 10, skeleton_terminal_loop_max_pixels: int = 10, skeleton_min_component_pixels: int = 1, connect_skeleton_segments: bool = False, connect_max_gap_pixels: float = 20.0, connect_max_facing_angle_degrees: float = 35.0, connect_max_heading_misalignment_degrees: float = 45.0, connect_max_candidate_score: float = 1.0, connect_route_corridor_half_width_pixels: float = 12.0, compute_upl: bool = True, n_threads: int = 0) -> lsdtt3.TidalChannelResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_tidal_channels(dem: lsdtt3.Raster, use_flood_mask: bool = False, flood_elevation_metres: float = 0.0, median_window_radii_metres: collections.abc.Sequence[float] = [5.0, 10.0, 20.0], residual_thresholds_metres: collections.abc.Sequence[float] = [0.1], scale_mode: str = 'any', apply_binary_closing: bool = False, binary_closing_radius_metres: float = 0.0, fill_holes: bool = False, min_channel_component_pixels: int = 1, extract_skeleton: bool = True, skeleton_spur_max_pixels: int = 10, skeleton_terminal_loop_max_pixels: int = 10, skeleton_min_component_pixels: int = 1, connect_skeleton_segments: bool = False, connect_max_gap_pixels: float = 20.0, connect_max_facing_angle_degrees: float = 35.0, connect_max_heading_misalignment_degrees: float = 45.0, connect_max_candidate_score: float = 1.0, connect_route_corridor_half_width_pixels: float = 12.0, compute_upl: bool = True, n_threads: int = 0) -> lsdtt3.TidalChannelResult
+Notes
+-----
+find_tidal_channels(dem: lsdtt3.Raster, use_flood_mask: bool = False, flood_elevation_metres: float = 0.0, median_window_radii_metres: collections.abc.Sequence[float] = [5.0, 10.0, 20.0], residual_thresholds_metres: collections.abc.Sequence[float] = [0.1], scale_mode: str = 'any', apply_binary_closing: bool = False, binary_closing_radius_metres: float = 0.0, fill_holes: bool = False, min_channel_component_pixels: int = 1, extract_skeleton: bool = True, skeleton_spur_max_pixels: int = 10, skeleton_terminal_loop_max_pixels: int = 10, skeleton_min_component_pixels: int = 1, connect_skeleton_segments: bool = False, connect_max_gap_pixels: float = 20.0, connect_max_facing_angle_degrees: float = 35.0, connect_max_heading_misalignment_degrees: float = 45.0, connect_max_candidate_score: float = 1.0, connect_route_corridor_half_width_pixels: float = 12.0, compute_upl: bool = True, n_threads: int = 0) -> lsdtt3.TidalChannelResult
 
 Extract tidal channels as multiscale local topographic lows or a flood mask.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_tidal_channels(dem: lsdtt3.Raster, use_flood_mask: bool = False, flood_elevation_metres: float = 0.0, median_window_radii_metres: collections.abc.Sequence[float] = [5.0, 10.0, 20.0], residual_thresholds_metres: collections.abc.Sequence[float] = [0.1], scale_mode: str = 'any', apply_binary_closing: bool = False, binary_closing_radius_metres: float = 0.0, fill_holes: bool = False, min_channel_component_pixels: int = 1, extract_skeleton: bool = True, skeleton_spur_max_pixels: int = 10, skeleton_terminal_loop_max_pixels: int = 10, skeleton_min_component_pixels: int = 1, connect_skeleton_segments: bool = False, connect_max_gap_pixels: float = 20.0, connect_max_facing_angle_degrees: float = 35.0, connect_max_heading_misalignment_degrees: float = 45.0, connect_max_candidate_score: float = 1.0, connect_route_corridor_half_width_pixels: float = 12.0, compute_upl: bool = True, n_threads: int = 0) -> lsdtt3.TidalChannelResult
@@ -779,28 +770,27 @@ def find_tidal_channels(dem: lsdtt3.Raster, use_flood_mask: bool = False, flood_
 
 find_valleys(raster: lsdtt3.Raster, smoothing_window_metres: float = 50.0, curvature_threshold: float = 0.0, include_basin: bool = True, include_synformal_saddle: bool = True, include_synform: bool = True, n_threads: int = 0) -> lsdtt3.ValleyResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_valleys(raster: lsdtt3.Raster, smoothing_window_metres: float = 50.0, curvature_threshold: float = 0.0, include_basin: bool = True, include_synformal_saddle: bool = True, include_synform: bool = True, n_threads: int = 0) -> lsdtt3.ValleyResult
+Notes
+-----
+find_valleys(raster: lsdtt3.Raster, smoothing_window_metres: float = 50.0, curvature_threshold: float = 0.0, include_basin: bool = True, include_synformal_saddle: bool = True, include_synform: bool = True, n_threads: int = 0) -> lsdtt3.ValleyResult
 
 Find broad concave valley forms from a smoothed surface-shape classification.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_valleys(raster: lsdtt3.Raster, smoothing_window_metres: float = 50.0, curvature_threshold: float = 0.0, include_basin: bool = True, include_synformal_saddle: bool = True, include_synform: bool = True, n_threads: int = 0) -> lsdtt3.ValleyResult
@@ -812,30 +802,29 @@ def find_valleys(raster: lsdtt3.Raster, smoothing_window_metres: float = 50.0, c
 
 fit_valley_baseline(along_distance: object, pin_elevation: object) -> list[float]
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    fit_valley_baseline(along_distance: object, pin_elevation: object) -> list[float]
+Notes
+-----
+fit_valley_baseline(along_distance: object, pin_elevation: object) -> list[float]
 
 Interpolate a non-increasing valley baseline through finite elevation pins.
 
 Use ``numpy.nan`` for unpinned centreline nodes.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def fit_valley_baseline(along_distance: object, pin_elevation: object) -> list[float]
@@ -847,21 +836,21 @@ def fit_valley_baseline(along_distance: object, pin_elevation: object) -> list[f
 
 repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres: float = 0.5, max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, road_intersection_tolerance_metres: float = 1.0, require_mutual_best: bool = True) -> lsdtt3.WaterLineRepairResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres: float = 0.5, max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, road_intersection_tolerance_metres: float = 1.0, require_mutual_best: bool = True) -> lsdtt3.WaterLineRepairResult
+Notes
+-----
+repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres: float = 0.5, max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, road_intersection_tolerance_metres: float = 1.0, require_mutual_best: bool = True) -> lsdtt3.WaterLineRepairResult
 
 Repair short broken water-line gaps, preferentially across roads.
 
@@ -881,10 +870,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres: float = 0.5, max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, road_intersection_tolerance_metres: float = 1.0, require_mutual_best: bool = True) -> lsdtt3.WaterLineRepairResult
@@ -896,30 +884,29 @@ def repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres
 
 valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, sections: lsdtt3.ValleyCrossSections) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, sections: lsdtt3.ValleyCrossSections) -> lsdtt3.Raster
+Notes
+-----
+valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, sections: lsdtt3.ValleyCrossSections) -> lsdtt3.Raster
 
 Build a valley-floor mask from the median lowest hydraulic break per channel.
 
 This complements the corridor/HAND mask returned by ``extract_valley_centrelines``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.ValleyCentrelineResult, sections: lsdtt3.ValleyCrossSections) -> lsdtt3.Raster
@@ -931,21 +918,21 @@ def valley_mask_from_cross_sections(dem: lsdtt3.Raster, centrelines: lsdtt3.Vall
 
 water_centrelines(areas: object, tributaries: object, epsg: int = 0, cell_size_metres: float = 1.0, padding_metres: float = 5.0, tributary_snap_tolerance_metres: float = 2.0, centreline_snap_max_metres: float = 100.0, simplify_tolerance_metres: float = 1.0, min_component_length_metres: float = 10.0) -> lsdtt3.WaterCentrelineResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    water_centrelines(areas: object, tributaries: object, epsg: int = 0, cell_size_metres: float = 1.0, padding_metres: float = 5.0, tributary_snap_tolerance_metres: float = 2.0, centreline_snap_max_metres: float = 100.0, simplify_tolerance_metres: float = 1.0, min_component_length_metres: float = 10.0) -> lsdtt3.WaterCentrelineResult
+Notes
+-----
+water_centrelines(areas: object, tributaries: object, epsg: int = 0, cell_size_metres: float = 1.0, padding_metres: float = 5.0, tributary_snap_tolerance_metres: float = 2.0, centreline_snap_max_metres: float = 100.0, simplify_tolerance_metres: float = 1.0, min_component_length_metres: float = 10.0) -> lsdtt3.WaterCentrelineResult
 
 Extract central flow paths from water polygons and connect tributary lines.
 
@@ -967,10 +954,9 @@ Authors
 -------
 B. Gailleton
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def water_centrelines(areas: object, tributaries: object, epsg: int = 0, cell_size_metres: float = 1.0, padding_metres: float = 5.0, tributary_snap_tolerance_metres: float = 2.0, centreline_snap_max_metres: float = 100.0, simplify_tolerance_metres: float = 1.0, min_component_length_metres: float = 10.0) -> lsdtt3.WaterCentrelineResult
