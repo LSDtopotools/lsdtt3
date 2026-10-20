@@ -27,8 +27,10 @@
 //   basin             the basin a record's junction drains to (see below);
 //                     category = the basin's junction id.
 //   region            per-pixel zone labels on the DEM grid. A junction takes
-//                     the label of its pixel; a link takes the majority label
-//                     of its full traced pixel chain, with its purity.
+//                     the label of its pixel; a link takes the length-weighted
+//                     majority label of the nodes its bearing was fitted on
+//                     (record.sampled_flats), with its purity: the same node
+//                     set and weighting as the lithology key.
 //
 // BASINS. Two definitions, both per junction:
 //   * outlet basins (channel_bearing_basin_order 0): the analysis-selection
@@ -116,8 +118,20 @@ channel_zone_majority majority_zone_of_flats(
     const std::vector<std::int64_t>&  flats,
     const std::vector<std::int32_t>&  value_index);
 
-// Zone of each link record: majority over the FULL traced link (re-traced
-// with trace_channel_link_between_junctions), with purity.
+// Length-weighted majority: each flat counts with its weight (ties keep the
+// lower index); fraction = winning weight / total weight. weights must match
+// flats in size. A zero total weight falls back to counting the flats.
+channel_zone_majority weighted_majority_zone_of_flats(
+    const std::vector<std::int64_t>&  flats,
+    const std::vector<double>&        weights,
+    const std::vector<std::int32_t>&  value_index);
+
+// Zone of each link record: length-weighted majority over the nodes its
+// bearing was fitted on (record.sampled_flats), each node weighted by its D8
+// step to its receiver (dx or dx sqrt2; 0 at an outlet), with purity. The
+// same nodes and weights as the lithology tag of a link, so region and
+// lithology purities are comparable. A record with no sampled nodes has no
+// zone (-1).
 struct channel_record_zone_assignment
 {
     std::vector<std::int32_t> value_index;   // per record; -1 = none
@@ -126,7 +140,6 @@ struct channel_record_zone_assignment
 
 channel_record_zone_assignment assign_zones_to_channel_links(
     const lsdtt_flow_base&                         flow,
-    const lsdtt_junction_network_base&             network,
     const std::vector<lsdtt_channel_link_bearing>& records,
     const channel_network_zone_labels&             labels);
 

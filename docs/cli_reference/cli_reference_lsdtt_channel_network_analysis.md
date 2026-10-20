@@ -144,6 +144,14 @@ One record is written per analysed compact downstream link. Attributes include: 
 | `write_channel_link_bearing_vectors` | bool | `false` | `<write_fname>_channel_link_bearing_vectors.<ext>` — short line features for visual QA in a GIS. CSV is not supported for vector outputs. |
 | `qa_write_vector_format` | string | `same_as_write_vector_format` | Override for line-based QA layers: `flatgeobuf` / `fgb` or `gpkg`. |
 
+The whole network can be written too, so maps can show analysed links and
+junctions against the rest:
+
+| Parameter | Type | Default | Output file |
+|---|---|---|---|
+| `write_channel_network_lines` | bool | `false` | `<write_fname>_channel_network_lines.<ext>` — every link of the network as a line (`junction_upstream, junction_downstream, stream_order, length, drainage_area`), in `qa_write_vector_format`. A link was analysed when its `junction_upstream` is an `up_junction` of the link-bearing outputs. |
+| `write_junction_network_points` | bool | `false` | `<write_fname>_junction_network_points.<ext>` — every junction as a point (`junction_number, receiver_junction, junction_stream_order`), in `write_vector_format`. A junction was analysed when its `junction_number` is in the `junction` column of `_junction_angles`. |
+
 ---
 
 ## Step 7: Junction-angle analysis
@@ -201,7 +209,7 @@ and [Lithology and channel steepness statistics](../design_and_algorithms/lithol
 | `strahler_order` | bearings and junctions | the link's own order (bearings) or the order at the confluence pixel (junctions). `channel_bearing_max_order_group` = k pools every order >= k into one group labelled `k+` (default 0 = no pooling). High orders are small, so pooling is usually needed. |
 | `donor_order_pair` | junctions only | the two donor orders, as `i_j`. Refused for bearings. |
 | `basin` | bearings and junctions | the basin holding the record. `channel_bearing_basin_order` = 0 uses the analysis-selection outlets (nested outlets resolve so the innermost wins). k > 0 uses the Strahler order-k basin; records of order above k have no such basin and are excluded and counted. |
-| `region` | bearings and junctions | the region in `channel_region_fname` (a polygon field or a code raster) at the record's pixel. |
+| `region` | bearings and junctions | the region in `channel_region_fname` (a polygon field or a code raster). A junction takes the region of its pixel; a link takes the length-weighted majority region of the nodes its bearing was fitted on, as for lithology, with its purity. |
 | `lithology` | bearings and junctions | the unit of the record, with `lithology_fname` (below). |
 | `lithology_interior` | junctions only | the unit of the junction's pixel, but only when all three sampled arms are in it. |
 
@@ -292,12 +300,13 @@ fewer than 100 assignments and the p-value is coarse.
   permutation p is nan, with the note `network too small for block permutation`,
   the descriptive statistics are still written, and a WARNING is printed.
 - **Records above the block order** (links of order above k, for the chosen k)
-  have no block. Their summary rows say so in `note`, and `n_unblocked` counts them.
+  have no block. Their summary rows say so in `note`, and `n_unblocked` counts them;
+  a comparison row that leaves them out of its permutation says so in its `note`.
   They are summarised and enter the iid comparisons, but take no part in the
   block permutation.
 - The counts per order are in `<write_fname>_channel_network_block_order_counts.csv`
-  (`strahler_order, n_basins_with_records, chosen`), so the automatic choice can be
-  checked.
+  (`strahler_order, n_basins_with_records, chosen, note`), so the automatic choice
+  can be checked; `note` marks the block order and the orders above it.
 
 **Permutation.** `channel_bearing_permutations` (default 999; 0 = off) and
 `channel_bearing_permutation_seed` (default 1) give each comparison a block
@@ -344,7 +353,7 @@ junction statistics two; the block-order counts file is written with either.
 | `_channel_bearing_group_membership.csv` | One row per record: its upstream and downstream junction, `stream_order, total_length_m, bearing_deg, axial_bearing_deg`, its `group_value` and `stratum_value`, `basin_id, block_id, region_value, region_purity`. |
 | `_junction_angle_group_summary.csv` | `measurand, group_key, group_value, stratum_key, stratum_value, n, n_blocks, mean_deg, median_deg, sd_deg, q25_deg, q75_deg, iqr_deg, meets_min_group_size, median_ci_low_deg, median_ci_high_deg, n_bootstrap, block_order, block_order_mode, min_blocks, n_unblocked, note`. The median interval is given only for lithology-keyed rows (one bootstrap stream per run). |
 | `_junction_angle_comparisons.csv` | `measurand, stratum_key, stratum_value, comparison_mode, group_a, group_b, n_a, n_b, n_blocks_a, n_blocks_b, ks_D, ks_p_iid_approx, ks_p_holm, n_comparisons_in_family, linear_wasserstein_deg, permutation_p, note, permutation_statistic`. For lithology rows the `note` carries `group_key=lithology` or `group_key=lithology_interior`. |
-| `_channel_network_block_order_counts.csv` | `strahler_order, n_basins_with_records, chosen`, one row per order. |
+| `_channel_network_block_order_counts.csv` | `strahler_order, n_basins_with_records, chosen, note`, one row per order. `note` marks the block order and the orders above it (no block: not in permutations). |
 
 With `lithology_fname` the record files gain columns at the end:
 
@@ -690,6 +699,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_junction_angle_bearing_vectors` | `bool` | `false` | `switch` | - | Write visual bearing vectors for junction-angle analysis. | This writes three short centred line features per analysed junction: donor_1, donor_2, and receiver. It is intended as a visual QA layer. |
 | `qa_write_vector_format` | `string` | `same_as_write_vector_format` | `param` | - | Output format override for line-based QA layers. | Allowed values: gpkg, flatgeobuf, fgb. CSV is not supported. |
 
+### Network outputs
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_channel_network_lines` | `bool` | `false` | `switch` | - | Write the complete channel network as one line per channel link. | Every link of the network, analysed or not, with junction_upstream, junction_downstream, stream_order, length and drainage_area (at the upstream junction). Join junction_upstream to the up_junction of the link-bearing outputs to tell analysed links from the rest. Written in qa_write_vector_format (no CSV). |
+| `write_junction_network_points` | `bool` | `false` | `switch` | - | Write every junction of the channel network as a point. | One point per junction with junction_number, receiver_junction and junction_stream_order. Join junction_number to the junction column of the junction-angle outputs to tell analysed junctions from the rest. Written in write_vector_format (CSV gives latitude/longitude). |
+
 ### Strahler outputs
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
@@ -768,7 +784,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `channel_region_source` | `string` | `auto` | `param` | `channel_region_fname` | auto, vector_map or code_raster. | auto decides from the file extension (.tif, .tiff, .asc, .bil, .img, .vrt, .flt, .nc are rasters). |
 | `channel_region_layer_name` | `string` | - | `param` | `channel_region_fname` | Vector layer to read. Empty (default) = the first layer. | - |
 | `channel_region_field_name` | `string` | - | `param` | `channel_region_fname` | Attribute of the vector layer whose values name the regions. | Required for a vector map; each distinct value is one region. Ignored for a code raster. |
-| `channel_region_min_purity` | `float` | `0.0` | `param` | `channel_region_fname` | (experimental) Minimum fraction of a link's pixels in its majority region. | A link takes the majority region of its traced pixels; links below this purity are excluded from region groups (counted). 0 keeps all; the purity is written to the membership CSV either way. |
+| `channel_region_min_purity` | `float` | `0.0` | `param` | `channel_region_fname` | (experimental) Minimum length fraction of a link in its majority region. | A link takes the length-weighted majority region of the nodes its bearing was fitted on (as for lithology); links below this purity are excluded from region groups (counted). 0 keeps all; the purity is written to the membership CSV either way. |
 
 ### Lithology input
 

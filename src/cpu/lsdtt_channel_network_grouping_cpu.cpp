@@ -271,20 +271,69 @@ channel_zone_majority majority_zone_of_flats(
     return out;
 }
 
+channel_zone_majority weighted_majority_zone_of_flats(
+    const std::vector<std::int64_t>&  flats,
+    const std::vector<double>&        weights,
+    const std::vector<std::int32_t>&  value_index)
+{
+    if (weights.size() != flats.size())
+        throw std::invalid_argument("weighted_majority_zone_of_flats: weights and flats differ in size");
+    double total = 0.0;
+    for (const double w : weights) total += w;
+    if (!(total > 0.0)) return majority_zone_of_flats(flats, value_index);
+
+    channel_zone_majority out;
+    out.n_flats = flats.size();
+    std::map<std::int32_t, double> sums;
+    for (std::size_t k = 0; k < flats.size(); ++k)
+    {
+        const std::int64_t f = flats[k];
+        const std::int32_t v =
+            (f >= 0 && static_cast<std::size_t>(f) < value_index.size())
+            ? value_index[static_cast<std::size_t>(f)] : -1;
+        sums[v < 0 ? -1 : v] += weights[k];
+    }
+    out.n_distinct = sums.size();
+    double best = -1.0;
+    for (const auto& [v, w] : sums)   // ascending, so ties keep the lower index
+    {
+        if (w > best)
+        {
+            best = w;
+            out.value_index = v;
+        }
+    }
+    out.fraction = best / total;
+    return out;
+}
+
 channel_record_zone_assignment assign_zones_to_channel_links(
     const lsdtt_flow_base&                         flow,
-    const lsdtt_junction_network_base&             network,
     const std::vector<lsdtt_channel_link_bearing>& records,
     const channel_network_zone_labels&             labels)
 {
     channel_record_zone_assignment out;
     out.value_index.assign(records.size(), -1);
     out.purity.assign(records.size(), quiet_nan());
+    const double dx = flow.cell_size();
     for (std::size_t i = 0; i < records.size(); ++i)
     {
-        const lsdtt_traced_channel_link link =
-            trace_channel_link_between_junctions(flow, network, records[i].upstream_junction);
-        const channel_zone_majority m = majority_zone_of_flats(link.flats, labels.value_index);
+        const std::vector<std::int64_t>& flats = records[i].sampled_flats;
+        if (flats.empty()) continue;
+        // D8 step of each node to its receiver; 0 at an outlet.
+        std::vector<double> step(flats.size(), 0.0);
+        for (std::size_t k = 0; k < flats.size(); ++k)
+        {
+            const std::int64_t f = flats[k];
+            if (!flow.is_valid_cell(f) || flow.is_outlet(f)) continue;
+            const std::int64_t rc = flow.receiver_of(f);
+            if (rc < 0 || rc == f) continue;
+            const bool diagonal = flow.row_from_flat(rc) != flow.row_from_flat(f) &&
+                                  flow.col_from_flat(rc) != flow.col_from_flat(f);
+            step[k] = diagonal ? dx * std::sqrt(2.0) : dx;
+        }
+        const channel_zone_majority m =
+            weighted_majority_zone_of_flats(flats, step, labels.value_index);
         out.value_index[i] = m.value_index;
         out.purity[i] = m.fraction;
     }
@@ -636,10 +685,22 @@ void write_channel_network_block_order_counts_csv(const channel_block_order_choi
 {
     std::ofstream os(out_path);
     if (!os) throw std::runtime_error("write_channel_network_block_order_counts_csv: could not open " + out_path);
-    os << "strahler_order,n_basins_with_records,chosen\n";
+    // note: why records of each order do or do not take part in permutations.
+    os << "strahler_order,n_basins_with_records,chosen,note\n";
     for (std::size_t i = 0; i < choice.n_basins_by_order.size(); ++i)
-        os << (i + 1) << ',' << choice.n_basins_by_order[i] << ','
-           << (static_cast<int>(i + 1) == choice.block_order ? 1 : 0) << '\n';
+    {
+        const int order = static_cast<int>(i + 1);
+        std::string note;
+        if (choice.block_order <= 0)
+            note = "no blocks defined: permutation p is nan for every order";
+        else if (order == choice.block_order)
+            note = "block order: each order-" + std::to_string(order) + " basin is one block";
+        else if (order > choice.block_order)
+            note = "above block order " + std::to_string(choice.block_order) +
+                   ": records have no block; summarised and in iid tests, not in permutations";
+        os << order << ',' << choice.n_basins_by_order[i] << ','
+           << (order == choice.block_order ? 1 : 0) << ',' << csv_field(note) << '\n';
+    }
 }
 
 } // namespace lsdtt

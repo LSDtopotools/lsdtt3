@@ -796,7 +796,7 @@ void run_grouping_checks()
         for (int c = 0; c < meta.n_cols; ++c)
             halves.value_index[static_cast<std::size_t>(r) * meta.n_cols + c] = r < 150 ? 0 : 1;
 
-    const auto zones = lsdtt::assign_zones_to_channel_links(*ns.flow, *ns.network, links, halves);
+    const auto zones = lsdtt::assign_zones_to_channel_links(*ns.flow, links, halves);
     const auto regions = lsdtt::categories_from_zone_assignment("region", zones, halves, 0.0);
     std::size_t n_north = 0, n_south = 0, n_none = 0;
     for (const std::int32_t c : regions.category)
@@ -808,23 +808,31 @@ void run_grouping_checks()
     check("GK1 n_north + n_south + n_none = n_links",
           n_north + n_south + n_none == links.size() && n_north > 0 && n_south > 0);
 
-    // Purity of the links crossing the split equals their pixel fraction.
+    // Purity of the links crossing the split equals the length fraction of
+    // their SAMPLED nodes (each weighted by its D8 step to its receiver).
     bool purity_ok = true;
     std::size_t n_crossing = 0;
     std::size_t n_crossing_below_06 = 0;
+    const double dx = ns.flow->cell_size();
     for (std::size_t i = 0; i < links.size(); ++i)
     {
-        const auto traced = lsdtt::trace_channel_link_between_junctions(
-            *ns.flow, *ns.network, links[i].upstream_junction);
-        std::size_t north = 0;
-        for (const std::int64_t f : traced.flats)
-            if (ns.flow->row_from_flat(f) < 150) ++north;
-        const std::size_t south = traced.flats.size() - north;
-        if (north > 0 && south > 0)
+        double north = 0.0, south = 0.0;
+        for (const std::int64_t f : links[i].sampled_flats)
+        {
+            double w = 0.0;
+            if (!ns.flow->is_outlet(f))
+            {
+                const std::int64_t rc = ns.flow->receiver_of(f);
+                const bool diag = ns.flow->row_from_flat(rc) != ns.flow->row_from_flat(f) &&
+                                  ns.flow->col_from_flat(rc) != ns.flow->col_from_flat(f);
+                w = rc == f ? 0.0 : (diag ? dx * std::sqrt(2.0) : dx);
+            }
+            (ns.flow->row_from_flat(f) < 150 ? north : south) += w;
+        }
+        if (north > 0.0 && south > 0.0)
         {
             ++n_crossing;
-            const double expected =
-                static_cast<double>(std::max(north, south)) / traced.flats.size();
+            const double expected = std::max(north, south) / (north + south);
             purity_ok = purity_ok && std::abs(zones.purity[i] - expected) < 1e-12;
             if (expected < 0.6) ++n_crossing_below_06;
         }
@@ -833,7 +841,7 @@ void run_grouping_checks()
             purity_ok = purity_ok && zones.purity[i] == 1.0;
         }
     }
-    check("GK2 purity = majority pixel fraction (" + std::to_string(n_crossing) +
+    check("GK2 purity = majority sampled length fraction (" + std::to_string(n_crossing) +
           " links cross the split)", purity_ok && n_crossing > 0);
     const auto regions_06 = lsdtt::categories_from_zone_assignment("region", zones, halves, 0.6);
     check("GK3 min purity 0.6 excludes exactly the crossing links below 0.6",

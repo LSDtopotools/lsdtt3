@@ -855,7 +855,12 @@ void add_permutation(Row& row, const std::vector<double>& values,
     row.permutation_statistic = pr.observed;
     std::string note = "permutation: " + pr.note;
     if (pr.n_unblocked > 0)
+    {
         note += ", " + std::to_string(pr.n_unblocked) + " record(s) without a block left out";
+        if (options.block_order > 0)
+            note += " (records above block order " + std::to_string(options.block_order) +
+                    " have no order-" + std::to_string(options.block_order) + " basin block)";
+    }
     join_note(row.note, note);
 }
 

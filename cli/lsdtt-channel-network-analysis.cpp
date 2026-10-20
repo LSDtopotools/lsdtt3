@@ -294,6 +294,26 @@ int main(int argc, char* argv[])
         "donor_1, donor_2, and receiver. It is intended as a visual QA layer.",
         "Junction-angle outputs", "switch", ""};
 
+    // the whole network, so maps can show what was and was not analysed
+    bool_default_map["write_channel_network_lines"] = false;
+    help_map["write_channel_network_lines"] = {"bool","false",
+        "Write the complete channel network as one line per channel link.",
+        "Every link of the network, analysed or not, with junction_upstream, "
+        "junction_downstream, stream_order, length and drainage_area (at the "
+        "upstream junction). Join junction_upstream to the up_junction of the "
+        "link-bearing outputs to tell analysed links from the rest. Written in "
+        "qa_write_vector_format (no CSV).",
+        "Network outputs", "switch", ""};
+
+    bool_default_map["write_junction_network_points"] = false;
+    help_map["write_junction_network_points"] = {"bool","false",
+        "Write every junction of the channel network as a point.",
+        "One point per junction with junction_number, receiver_junction and "
+        "junction_stream_order. Join junction_number to the junction column of "
+        "the junction-angle outputs to tell analysed junctions from the rest. "
+        "Written in write_vector_format (CSV gives latitude/longitude).",
+        "Network outputs", "switch", ""};
+
     string_default_map["qa_write_vector_format"] =
         lsdtt::inherit_write_vector_format;
     help_map["qa_write_vector_format"] = {"string","same_as_write_vector_format",
@@ -644,10 +664,11 @@ int main(int argc, char* argv[])
 
     float_default_map["channel_region_min_purity"] = 0.0f;
     help_map["channel_region_min_purity"] = {"float","0.0",
-        "(experimental) Minimum fraction of a link's pixels in its majority region.",
-        "A link takes the majority region of its traced pixels; links below this "
-        "purity are excluded from region groups (counted). 0 keeps all; the purity "
-        "is written to the membership CSV either way.",
+        "(experimental) Minimum length fraction of a link in its majority region.",
+        "A link takes the length-weighted majority region of the nodes its bearing "
+        "was fitted on (as for lithology); links below this purity are excluded from "
+        "region groups (counted). 0 keeps all; the purity is written to the "
+        "membership CSV either way.",
         "Channel region input", "param", "channel_region_fname"};
 
 
@@ -734,6 +755,8 @@ int main(int argc, char* argv[])
     const bool do_junction_angle_bearing_vectors = bf["write_junction_angle_bearing_vectors"];
     const bool do_bearing_statistics = bf["write_channel_bearing_statistics"];
     const bool do_angle_statistics   = bf["write_junction_angle_statistics"];
+    const bool do_network_lines      = bf["write_channel_network_lines"];
+    const bool do_junction_points    = bf["write_junction_network_points"];
 
     const bool only_complete_basins = bf["only_complete_basins"];
     const std::size_t minimum_basin_pixels =
@@ -755,7 +778,9 @@ int main(int argc, char* argv[])
         do_area_scaling                   ||
         do_com_bearings                   ||
         do_bearing_statistics             ||
-        do_angle_statistics;
+        do_angle_statistics               ||
+        do_network_lines                  ||
+        do_junction_points;
 
 
     if (!do_any_output)
@@ -775,7 +800,9 @@ int main(int argc, char* argv[])
                   << "  write_area_scaling_summary\n"
                   << "  write_junction_centre_of_mass_bearings\n"
                   << "  write_channel_bearing_statistics\n"
-                  << "  write_junction_angle_statistics\n";
+                  << "  write_junction_angle_statistics\n"
+                  << "  write_channel_network_lines\n"
+                  << "  write_junction_network_points\n";
         return 1;
     }
 
@@ -1069,6 +1096,14 @@ int main(int argc, char* argv[])
                 lsdtt::resolve_output_format_override(
                     sf["qa_write_vector_format"], sf["write_vector_format"]))
         );
+
+    lsdtt::vector_output_format channel_network_lines_format =
+        lsdtt::resolve_vector_output_format(
+            lsdtt::resolve_output_format_override(
+                sf["qa_write_vector_format"], sf["write_vector_format"]));
+
+    lsdtt::point_output_format junction_network_points_format =
+        lsdtt::resolve_point_output_format(sf["write_vector_format"]);
 
     lsdtt::vector_output_format junction_angle_bearing_vectors_format =
         lsdtt::resolve_vector_output_format(
@@ -1519,6 +1554,42 @@ int main(int argc, char* argv[])
     std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
     std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
     std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
+
+    if (do_network_lines)
+    {
+        const std::string output_file = pp.make_output_path(
+            "_channel_network_lines", lsdtt::output_extension(channel_network_lines_format));
+        std::cout << "Writing: " << output_file << "\n";
+        try
+        {
+            channel_network->write_channel_network_lines(
+                output_file, channel_network_lines_format, "channel_network_lines",
+                bf["calculate_spatial_index"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing channel network lines failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (do_junction_points)
+    {
+        const std::string output_file = pp.make_output_path(
+            "_junction_network_points", lsdtt::output_extension(junction_network_points_format));
+        std::cout << "Writing: " << output_file << "\n";
+        try
+        {
+            channel_network->write_junction_network_points(
+                output_file, junction_network_points_format, "junction_network_points",
+                bf["calculate_spatial_index"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing junction network points failed: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // Predicate: keep a junction iff its upslope basin is "complete" (no pixel
     // influenced by nodata / the DEM edge) and meets the minimum-pixel size.
@@ -2178,7 +2249,7 @@ int main(int argc, char* argv[])
             if (use_region)
             {
                 zones = lsdtt::assign_zones_to_channel_links(
-                    *flow, *channel_network, bearing_records, region_labels);
+                    *flow, bearing_records, region_labels);
             }
 
             auto bearing_key = [&](const std::string& key)
