@@ -36,12 +36,18 @@
 #include <stdexcept>
 
 // Package-level version injected by CMake (release: "X.Y.Z"; development
-// build: "X.Y.Z-dev, git <describe>"). Distinct from each CLI's k_version.
+// build: "X.Y.Z-dev, git <describe>"). lsdtt3 has one version number; each
+// CLI passes only its stability status ("experimental" / "stable").
 #ifndef LSDTT3_VERSION
 #define LSDTT3_VERSION "unknown"
 #endif
 
 namespace lsdtt {
+
+std::string lsdtt3_package_version()
+{
+    return LSDTT3_VERSION;
+}
 
 // -----------------------------------------------------------------------------
 // Construction
@@ -1056,11 +1062,11 @@ void write_topic_help(std::ostream& os,
 // Grouped overview for plain "-h".
 void write_overview_help(std::ostream& os,
                          const std::string& tool_name,
-                         const std::string& version,
+                         const std::string& status,
                          const std::string& citation,
                          const lsdtt_help_registry& help)
 {
-    os << tool_name << " " << version << "\n";
+    os << tool_name << " (lsdtt3 " << LSDTT3_VERSION << ", " << status << ")\n";
     os << "Citation: " << citation << "\n\n";
     write_parameter_file_guide(os, tool_name, &help);
     os << "\nParameters accepted in the parameter file "
@@ -1240,14 +1246,15 @@ std::string json_escape(const std::string& s)
 // capability gating.
 void write_json_help(std::ostream& os,
                      const std::string& tool_name,
-                     const std::string& version,
+                     const std::string& status,
                      const std::string& citation,
                      const lsdtt_help_registry& help,
                      const std::vector<std::string>& features)
 {
     os << "{\n";
     os << "  \"tool\": \"" << json_escape(tool_name) << "\",\n";
-    os << "  \"version\": \"" << json_escape(version) << "\",\n";
+    os << "  \"version\": \"" << json_escape(LSDTT3_VERSION) << "\",\n";
+    os << "  \"status\": \"" << json_escape(status) << "\",\n";
     os << "  \"citation\": \"" << json_escape(citation) << "\",\n";
 
     os << "  \"features\": [";
@@ -1304,7 +1311,7 @@ std::string csv_quote(const std::string& s)
 lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
     int argc, char* argv[],
     const std::string& tool_name,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation)
 {
     auto is_flag = [](const std::string& s,
@@ -1349,8 +1356,8 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
         }
         if (is_flag(a, {"-v", "--version", "version", "-V"}))
         {
-            std::cout << tool_name << " version " << version
-                      << " (lsdtt3 " << LSDTT3_VERSION << ")\n";
+            std::cout << tool_name << " (lsdtt3 " << LSDTT3_VERSION
+                      << ", " << status << ")\n";
 
             // Report the geospatial runtime as well. A mismatched proj.db can
             // return coordinates that are plausible and wrong rather than
@@ -1418,7 +1425,7 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
 
 void lsdtt_param_parser::print_terminal_help(
     const std::string& tool_name,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation,
     const lsdtt_help_registry& help,
     const lsdtt_cli_args& args,
@@ -1429,13 +1436,13 @@ void lsdtt_param_parser::print_terminal_help(
 
     if (args.help_json)
     {
-        write_json_help(os, tool_name, version, citation, full, features);
+        write_json_help(os, tool_name, status, citation, full, features);
         return;
     }
 
     if (args.help_html)
     {
-        write_reference_files(tool_name, version, citation, full,
+        write_reference_files(tool_name, status, citation, full,
                               "./" + tool_name + "_help");
         os << "Reference files written to:\n"
            << "  ./" << tool_name << "_help.html\n"
@@ -1449,24 +1456,24 @@ void lsdtt_param_parser::print_terminal_help(
         return;
     }
 
-    write_overview_help(os, tool_name, version, citation, full);
+    write_overview_help(os, tool_name, status, citation, full);
 }
 
 void lsdtt_param_parser::print_terminal_help(
     const std::string& tool_name,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation,
     const lsdtt_help_registry& help,
     const lsdtt_cli_args& args,
     const std::vector<std::string>& features)
 {
-    print_terminal_help(tool_name, version, citation, help, args,
+    print_terminal_help(tool_name, status, citation, help, args,
                         std::cout, features);
 }
 
 void lsdtt_param_parser::write_reference_files(
     const std::string& tool_name,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation,
     const lsdtt_help_registry& help,
     const std::string& out_prefix)
@@ -1481,8 +1488,9 @@ void lsdtt_param_parser::write_reference_files(
         if (csv.is_open())
         {
             csv << "name,type,default,description,guidance,group,role,parent\n";
-            csv << "version," << csv_quote(version) << ",citation,"
-                << csv_quote(citation) << ",,,,\n";
+            csv << "version," << csv_quote(LSDTT3_VERSION) << ",citation,"
+                << csv_quote(citation) << ",status," << csv_quote(status)
+                << ",,\n";
             for (const auto& key : order)
             {
                 const auto& e = entries.at(key);
@@ -1510,7 +1518,8 @@ void lsdtt_param_parser::write_reference_files(
          << "</head>\n<body>\n";
 
     html << "<h1>Help: " << html_escape(tool_name) << "</h1>\n";
-    html << "<p>Version: " << html_escape(version) << "</p>\n";
+    html << "<p>Version: lsdtt3 " << html_escape(LSDTT3_VERSION) << "</p>\n";
+    html << "<p>Status: " << html_escape(status) << "</p>\n";
     html << "<p>Citation: " << html_escape(citation) << "</p>\n";
     html << "<h2>Usage</h2>\n"
          << "<p><code>" << html_escape(tool_name)
@@ -1669,7 +1678,7 @@ void lsdtt_param_parser::print_parameters(const std::string& fname_prefix) const
 void lsdtt_param_parser::print_help(
     const std::map<std::string, std::vector<std::string>>& help_map,
     const std::string& file_prefix,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation
 ) const
 {
@@ -1718,9 +1727,10 @@ void lsdtt_param_parser::print_help(
         // fragments and every column after it shifted. The sibling writer above
         // already quoted; this one did not.
         csv << "name,type,default,description,guidance,group,role,parent\n";
-        csv << "version," << csv_quote(version) << ",citation,"
+        csv << "version," << csv_quote(LSDTT3_VERSION) << ",citation,"
             << csv_quote(citation)
-            << ",see code output for additional algorithm citations,,,\n";
+            << ",see code output for additional algorithm citations,status,"
+            << csv_quote(status) << ",\n";
 
         for (const auto& key : all_keys)
         {
@@ -1760,7 +1770,8 @@ void lsdtt_param_parser::print_help(
              << "</head>\n<body>\n";
 
         html << "<h1>Help: " << prog << "</h1>\n";
-        html << "<p>Version: " << version << "</p>\n";
+        html << "<p>Version: lsdtt3 " << LSDTT3_VERSION << "</p>\n";
+        html << "<p>Status: " << status << "</p>\n";
         html << "<p>Citation: <a href=\"" << citation << "\">"
              << citation << "</a></p>\n";
 
@@ -1808,11 +1819,11 @@ void lsdtt_param_parser::print_help(
 void lsdtt_param_parser::print_help(
     const lsdtt_help_registry& help,
     const std::string& file_prefix,
-    const std::string& version,
+    const std::string& status,
     const std::string& citation
 ) const
 {
-    print_help(help.entries(), file_prefix, version, citation);
+    print_help(help.entries(), file_prefix, status, citation);
 }
 
 void lsdtt_param_parser::replace_and_print_parameter_file(

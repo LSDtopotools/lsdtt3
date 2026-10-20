@@ -119,6 +119,8 @@ erodibility: 2e-5
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: experimental.** This CLI is not yet fully tested.
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

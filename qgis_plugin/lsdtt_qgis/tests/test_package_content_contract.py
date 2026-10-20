@@ -1,6 +1,7 @@
 import configparser
 import io
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 import zipfile
@@ -45,7 +46,13 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         (PLUGIN_DIR / "metadata.txt").read_text(encoding="utf-8")
     )
     assert source_metadata["name"] == "lsdtt3"
-    assert source_metadata["version"] == "0.4.0"
+    # One version number for the repository: the plugin carries the CMake one.
+    cmake_version = re.search(
+        r"^project\(lsdtt3\s+VERSION\s+(\d+\.\d+\.\d+)",
+        (PLUGIN_DIR.parents[1] / "CMakeLists.txt").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    ).group(1)
+    assert source_metadata["version"] == cmake_version
     assert source_metadata["hasProcessingProvider"] == "yes"
 
     subprocess.run(
@@ -98,5 +105,5 @@ def test_distributable_matches_plugin_source_contract(tmp_path):
         manifest = archive.read(
             PLUGIN_DIR.name + "/backend/manifest.py"
         ).decode("utf-8")
-        assert 'MINIMUM_BACKEND_VERSION = "0.6.0"' in manifest
-        assert "normalised parameter names and least-cost breach options" in manifest
+        assert "def _series(version):" in manifest
+        assert "Upgrade the plugin to" in manifest

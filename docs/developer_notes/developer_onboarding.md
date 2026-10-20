@@ -38,7 +38,7 @@ Every CLI uses `lsdtt_param_parser`. The full required layout is the
 "CLI design rule" in [`lsdtt3_architecture.md`](lsdtt3_architecture.md#cli-design-rule).
 In outline:
 
-1. file header, includes, and `k_tool_name` / `k_version` / `k_citation`
+1. file header, includes, and `k_tool_name` / `k_status` / `k_citation`
 2. `print_banner()`
 3. `lsdtt_param_parser::parse_args_deferred()`, which handles `-v`, `-c`, no
    arguments and bad arguments, and records `-h`

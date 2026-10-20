@@ -1,16 +1,23 @@
 name: Build Python wheels
 
+# Builds the 20-wheel matrix for ONE existing lsdtt3 tag. Run by hand, and only
+# for releases where the Python API is supported: lsdtt3 has one version number,
+# but not every vX.Y.Z gets wheels. This workflow never bumps a version, commits
+# or tags; tags are made by the maintainer (vX.Y.Z, or vX.Y.Z.postN for a
+# wheel-only rebuild of the same source).
+
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: Python package version increment
+      tag:
+        description: Tag to build (vX.Y.Z or vX.Y.Z.postN)
         required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+        type: string
+      upload:
+        description: Upload the wheels to the GitHub release vX.Y.Z (otherwise they stay workflow artefacts)
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -21,63 +28,43 @@ concurrency:
 
 jobs:
   prepare-release:
-    name: Calculate Python release version
+    name: Check the tag and the API contracts
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
       sha: ${{ steps.source.outputs.sha }}
+      release: ${{ steps.source.outputs.release }}
 
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
 
-      - name: Require the default branch
+      # The 'v' belongs to the tag only; every file stores the bare number.
+      # CMake holds X.Y.Z; pyproject.toml holds X.Y.Z or X.Y.Z.postN.
+      - name: Check the tag against the version files
+        id: source
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/${{ github.event.repository.default_branch }}" ]]; then
-            echo "Run Python releases from ${{ github.event.repository.default_branch }}." >&2
+          if [[ ! "${TAG}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(\.post[0-9]+)?$ ]]; then
+            echo "Tag '${TAG}' is not vX.Y.Z or vX.Y.Z.postN." >&2
             exit 1
           fi
-
-      - name: Record the release source commit
-        id: source
-        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-
-      - name: Calculate the Python package version
-        id: version
-        env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          python - <<'PY'
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-
-          path = Path("python_bindings/pyproject.toml")
-          text = path.read_text()
-          current = tomllib.loads(text)["project"]["version"]
-          major, minor, patch = map(int, current.split("."))
-
-          match os.environ["BUMP"]:
-              case "patch":
-                  patch += 1
-              case "minor":
-                  minor += 1
-                  patch = 0
-              case "major":
-                  major += 1
-                  minor = patch = 0
-              case _:
-                  raise ValueError("Unsupported version increment")
-
-          version = f"{major}.{minor}.{patch}"
-          github_output = Path(os.environ["GITHUB_OUTPUT"])
-          with github_output.open("a") as output:
-              output.write(f"version={version}\n")
-              output.write(f"tag=python-v{version}\n")
-          PY
+          stem="${BASH_REMATCH[1]}"
+          cmake_version="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          py_version="$(sed -n '/^\[project\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' python_bindings/pyproject.toml)"
+          if [[ "${stem}" != "${cmake_version}" ]]; then
+            echo "Tag ${TAG} has stem ${stem}, but its CMakeLists.txt says ${cmake_version}." >&2
+            exit 1
+          fi
+          if [[ "${TAG#v}" != "${py_version}" ]]; then
+            echo "Tag ${TAG} does not match its pyproject.toml version ${py_version}." >&2
+            exit 1
+          fi
+          python3 tests/scripts/check_version_consistency.py --repo-root .
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "release=v${stem}" >> "${GITHUB_OUTPUT}"
 
       - name: Check API contracts and documentation
         run: |
@@ -136,26 +123,6 @@ jobs:
           key: windows-vcpkg-x64-${{ hashFiles('.github/workflows/python-wheels.yml') }}
           restore-keys: windows-vcpkg-x64-
 
-      - name: Set the wheel package version
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          python - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          path = Path("python_bindings/pyproject.toml")
-          text = path.read_text()
-          path.write_text(re.sub(
-              r'(?m)^version = "[^"]+"$',
-              f'version = "{os.environ["VERSION"]}"',
-              text,
-              count=1,
-          ))
-          PY
-
       - name: Install Windows native dependencies
         if: runner.os == 'Windows'
         shell: pwsh
@@ -190,62 +157,28 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
-  publish-release:
-    name: Create Python GitHub Release
+  upload-release:
+    name: Upload wheels to the GitHub release
+    if: inputs.upload
     needs:
       - prepare-release
       - build-wheels
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.prepare-release.outputs.sha }}
-          fetch-depth: 0
-
-      - name: Commit the validated Python package version
-        env:
-          TAG: ${{ needs.prepare-release.outputs.tag }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}"; then
-            echo "Tag ${TAG} already exists." >&2
-            exit 1
-          fi
-          python - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          path = Path("python_bindings/pyproject.toml")
-          text = path.read_text()
-          path.write_text(re.sub(
-              r'(?m)^version = "[^"]+"$',
-              f'version = "{os.environ["VERSION"]}"',
-              text,
-              count=1,
-          ))
-          PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add python_bindings/pyproject.toml
-          git commit -m "Release Python ${VERSION}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
       - uses: actions/download-artifact@v5
         with:
           pattern: wheels-*
           merge-multiple: true
           path: release-assets
 
-      - name: Tag and publish the validated wheel release
+      # A .postN wheel goes to the release of its X.Y.Z stem. The release must
+      # already exist (release.yml creates it from the vX.Y.Z tag).
+      - name: Upload to the existing release
         env:
-          TAG: ${{ needs.prepare-release.outputs.tag }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
+          RELEASE: ${{ needs.prepare-release.outputs.release }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          git tag -a "${TAG}" -m "lsdtt3 Python ${VERSION}"
-          git push origin "${TAG}"
-          gh release create "${TAG}" release-assets/*.whl \
-            --title "lsdtt3 Python ${VERSION}" \
-            --generate-notes
+          gh release view "${RELEASE}" >/dev/null
+          gh release upload "${RELEASE}" release-assets/*.whl

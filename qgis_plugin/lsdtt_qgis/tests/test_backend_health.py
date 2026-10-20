@@ -1,7 +1,9 @@
+import configparser
+from pathlib import Path
+
 import pytest
 
 from lsdtt_qgis.backend.manifest import (
-    MINIMUM_BACKEND_VERSION,
     backend_compatibility_error,
     current_plugin_version,
     manifest_supports_plugin,
@@ -31,49 +33,83 @@ def test_manifest_rejects_malformed_version_ranges(version_range):
 
 
 def test_current_plugin_version_comes_from_metadata():
-    assert current_plugin_version() == "0.4.0"
+    parser = configparser.ConfigParser()
+    parser.read(Path(__file__).parents[1] / "metadata.txt", encoding="utf-8")
+    assert current_plugin_version() == parser.get("general", "version")
 
 
-def test_current_wrappers_require_versioned_phase_4_backend():
-    assert MINIMUM_BACKEND_VERSION == "0.6.0"
-    assert "no manifest.json" in backend_compatibility_error(None)
-    assert "not a JSON object" in backend_compatibility_error([])
-    assert "no backend_version" in backend_compatibility_error({})
-    assert "version 0.6.0 or newer" in backend_compatibility_error(
-        {"backend_version": "0.5.9"}
-    )
-    compatible = {
-        "backend_version": "0.6.0",
-        "plugin_version_range": ">=0.1.0 <0.3.0",
+def _bundle(version):
+    """A manifest as the packaging scripts write it for backend `version`."""
+    major, minor, _ = (int(part) for part in version.split("."))
+    return {
+        "backend_version": version,
+        "plugin_version_range": ">={}.{}.0 <{}.{}.0".format(major, minor, major, minor + 1),
     }
-    assert backend_compatibility_error(compatible, "0.1.0") is None
-    compatible["backend_version"] = "1.0.0"
-    assert backend_compatibility_error(compatible, "0.1.0") is None
 
 
-def test_current_wrappers_reject_invalid_backend_version():
+def test_missing_manifest_or_version_is_refused():
+    assert "no manifest.json" in backend_compatibility_error(None, "0.7.0")
+    assert "Install the lsdtt3 0.7 backend bundle" in backend_compatibility_error(
+        None, "0.7.0"
+    )
+    assert "not a JSON object" in backend_compatibility_error([], "0.7.0")
+    assert "no backend_version" in backend_compatibility_error({}, "0.7.0")
+
+
+def test_same_major_minor_is_accepted_at_any_patch_level():
+    assert backend_compatibility_error(_bundle("0.7.0"), "0.7.0") is None
+    assert backend_compatibility_error(_bundle("0.7.3"), "0.7.0") is None
+    assert backend_compatibility_error(_bundle("0.7.0"), "0.7.5") is None
+    assert backend_compatibility_error(_bundle("1.2.0"), "1.2.9") is None
+
+
+def test_older_backend_asks_for_the_matching_backend():
+    error = backend_compatibility_error(_bundle("0.6.0"), "0.7.0")
+    assert "backend is version 0.6.0" in error
+    assert "Install the lsdtt3 0.7 backend bundle" in error
+
+
+def test_newer_backend_asks_for_a_plugin_upgrade():
+    error = backend_compatibility_error(_bundle("0.8.1"), "0.7.0")
+    assert "newer than this plugin" in error
+    assert "Upgrade the plugin to 0.8.x" in error
+    assert "Upgrade the plugin to 1.0.x" in backend_compatibility_error(
+        _bundle("1.0.0"), "0.7.0"
+    )
+
+
+def test_installed_plugin_accepts_its_own_series():
+    version = current_plugin_version()
+    assert backend_compatibility_error(_bundle(version)) is None
+
+
+def test_current_wrappers_reject_invalid_versions():
     assert "invalid backend_version" in backend_compatibility_error(
-        {"backend_version": "development"}
+        {"backend_version": "development"}, "0.7.0"
+    )
+    assert "invalid version" in backend_compatibility_error(
+        _bundle("0.7.0"), "0.7.0-rc1"
     )
 
 
 def test_current_wrappers_reject_missing_or_malformed_plugin_range():
     assert "invalid plugin_version_range" in backend_compatibility_error(
-        {"backend_version": "0.6.0"}, "0.1.0"
+        {"backend_version": "0.7.0"}, "0.7.0"
     )
     assert "invalid plugin_version_range" in backend_compatibility_error(
-        {"backend_version": "0.6.0", "plugin_version_range": ">=banana"},
-        "0.1.0",
+        {"backend_version": "0.7.0", "plugin_version_range": ">=banana"},
+        "0.7.0",
     )
 
 
-def test_current_wrappers_reject_incompatible_plugin_version():
+def test_current_wrappers_reject_plugin_outside_bundle_range():
+    # Same series, but a bundle packaged with a narrower --plugin-version-range.
     error = backend_compatibility_error(
-        {"backend_version": "0.6.0", "plugin_version_range": ">=0.2.0 <0.3.0"},
-        "0.1.0",
+        {"backend_version": "0.7.2", "plugin_version_range": ">=0.7.2 <0.8.0"},
+        "0.7.0",
     )
     assert "supports plugin versions" in error
-    assert "current plugin version is 0.1.0" in error
+    assert "current plugin version is 0.7.0" in error
 
 
 # --- every backend CLI the plugin uses -------------------------------------

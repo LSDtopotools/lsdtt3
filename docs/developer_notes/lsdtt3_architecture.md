@@ -1104,15 +1104,18 @@ CLI source files follow this layout, in order:
 
 1. file-header comment block (copyright, brief description, outputs, usage)
 2. `#include` block
-3. `static const` version, citation, and tool-name strings
+3. `static const` status, citation, and tool-name strings (`k_status`,
+   `k_citation`, `k_tool_name`)
 4. `print_banner()` — fixed-width box to stdout. Required content: a
    brief summary of what the CLI does; then a versioning box, directly
-   below the summary, containing a line pointing to `-v` / `--version`
-   for the full lsdtt3 release version, `|| This CLI's version : <k_version>`
-   (the CLI's own version, not the package version), and the note that a
-   CLI version below 1.0.0 means the CLI is still experimental and not
-   fully tested; then the citation and a line pointing to `-h` for
-   parameter help. Bump `k_version` to 1.0.0 only once a CLI is tested
+   below the summary, containing `|| lsdtt3 version : ` followed by
+   `lsdtt::lsdtt3_package_version()`, and `|| Status         : <k_status>`,
+   with " -- not yet fully tested" appended when the status is not
+   `stable`; then the citation and a line pointing to `-h` for
+   parameter help. CLIs have no version of their own: lsdtt3 has one
+   version number. `k_status` is `"experimental"` or `"stable"`; set it to
+   `"stable"` only once a CLI is tested (a review decision; the guard in
+   `unit_cli_parameter_conventions` checks only the value)
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
    a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`
@@ -1226,7 +1229,7 @@ At the end of every successful run:
 
 ```cpp
 pp.print_help(help_map, pp.get_write_fname() + "_README",
-              k_version, k_citation);
+              k_status, k_citation);
 pp.print_parameters();
 ```
 
@@ -1610,14 +1613,14 @@ unchanged, so `inputs/sites.csv` was read relative to the working directory.
 `get_full_write_path()` returns `write_path + write_fname` (no extension).
 
 **Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext),
-`parse_args_deferred(argc, argv, tool_name, version, citation)` — handles
+`parse_args_deferred(argc, argv, tool_name, status, citation)` — handles
 `-v`/`-c` (print and exit) and records `-h` variants in the returned
 `lsdtt_cli_args` struct so the CLI can render help from its parameter
 declarations via `print_terminal_help()` (see the CLI design rule above).
 Every CLI uses this instead of a per-file
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
-alongside `k_version` and `k_citation`.
+alongside `k_status` and `k_citation`.
 
 **Command-line contract.** A CLI accepts only `<parameter_file>`,
 `<path> <parameter_file>`, or one of the flags `-h` (with an optional
@@ -1661,16 +1664,21 @@ When editing the guide:
   help tests. For example, `rigorous_fetch_raster_no_credential_parameters`
   fails if `lsdtt-fetch-raster -h` contains the word `token`.
 
-**Version reporting (`-v` / `--version`):** prints both the CLI's own
-`k_version` and the package-level version, e.g.
-`lsdtt-chi-analysis version 1.0.0 (lsdtt3 0.5.1)`. The package version is
-injected by CMake as the `LSDTT3_VERSION` compile definition on
-`lsdtt3_core` (used only in `lsdtt_param_parser.cpp`). A build made exactly
-on the release tag `v<PROJECT_VERSION>` reports the plain version; any
-other build reports a development string derived from `git describe`, e.g.
-`0.5.1-dev, git v0.5.1-14-g04460f4-dirty` — so distributed development
+**Version reporting (`-v` / `--version`):** prints the package version and
+the CLI's status, e.g. `lsdtt-chi-analysis (lsdtt3 0.7.0, stable)`, then the
+GDAL/PROJ lines. `--help-json` carries the same two values as `"version"` and
+`"status"`, and `-h html` / the end-of-run `_README` files record both. The
+package version is injected by CMake as the `LSDTT3_VERSION` compile
+definition on `lsdtt3_core` (used only in `lsdtt_param_parser.cpp`, and
+exposed as `lsdtt::lsdtt3_package_version()`). A build made exactly on the
+release tag `v<PROJECT_VERSION>` reports the plain version; any other build
+reports a development string derived from `git describe`, e.g.
+`0.7.0-dev, git v0.7.0-14-g04460f4-dirty` — so distributed development
 builds self-identify. Captured at configure time (rerun cmake to refresh).
-Per-CLI `k_version` numbers are versioned independently of the package.
+The Python wheel compiles `lsdtt_param_parser.cpp` in its own CMake project,
+which sets `LSDTT3_VERSION` to the package version scikit-build-core passes
+(`X.Y.Z`, or `X.Y.Z.postN` for a rebuilt wheel); `_core.lsdtt3_version()`
+returns it.
 
 ### Deprecated, removed and unknown parameter keys
 
@@ -2328,7 +2336,7 @@ first and then pass the resulting flat sample into `src/utils/` routines.
 
 ## lsdtt-raster-preprocessing CLI
 
-File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_version`: 1.0.0
+File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_status`: stable
 
 **Preprocessing pipeline (in order):**
 1. **Projection** — detect and reproject geographic / Web Mercator rasters

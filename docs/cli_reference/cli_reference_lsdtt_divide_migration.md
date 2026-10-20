@@ -28,7 +28,7 @@ key: value
 
 ## Status of this tool
 
-`lsdtt-divide-migration` is at version 0.1.0. **Every parameter it accepts is live** — there are no declared‑but‑inert parameters. The four pair‑summary controls (`write_pair_summary_csv`, `pair_uncertainty_method`, `bootstrap_replicates`, `bootstrap_seed`) became active on 2026‑07‑31 and are documented under *Pair‑summary statistics* below.
+`lsdtt-divide-migration` is experimental. **Every parameter it accepts is live** — there are no declared‑but‑inert parameters. The four pair‑summary controls (`write_pair_summary_csv`, `pair_uncertainty_method`, `bootstrap_replicates`, `bootstrap_seed`) became active on 2026‑07‑31 and are documented under *Pair‑summary statistics* below.
 
 Divide fragments **are** merged into continuous polylines (see *Outputs* below). Two units that meet along two genuinely separate stretches of divide still produce two features sharing one `pair_id` — that is correct, not a failure to merge.
 
@@ -425,6 +425,8 @@ No head was matched to any divide, so there was nothing to summarise. The file i
 ## Parameters
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
+
+**Status: experimental.** This CLI is not yet fully tested.
 
 ### File I/O
 

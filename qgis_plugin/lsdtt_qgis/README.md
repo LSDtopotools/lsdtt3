@@ -15,9 +15,8 @@ The algorithms and what they need are listed in `qgis_plugin/README.md`.
 
 Backend requirements:
 
-- set backend path to a versioned bundle with `backend_version >= 0.6.0` in
-  `manifest.json`; older and unversioned backends are rejected because the
-  wrappers emit the normalised parameter names (older backends do not
-  recognise them) and the least-cost breach keys `breach_lc_edge_policy` and
-  `breach_lc_minimize_dist`
+- set backend path to a versioned bundle whose `backend_version` in
+  `manifest.json` has the plugin's major.minor version (plugin `X.Y.*` accepts
+  backend `X.Y.*`); other series and unversioned backends are rejected,
+  because the wrappers emit parameter names the backend must recognise
 - for Windows backend bundles, use the packaged `bin/` and `share/` layout

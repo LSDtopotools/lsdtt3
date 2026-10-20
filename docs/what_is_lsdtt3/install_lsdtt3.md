@@ -358,7 +358,7 @@ lsdtt-raster-preprocessing -v
 ```
 
 ```
-lsdtt-raster-preprocessing version 1.0.0 (lsdtt3 0.6.0)
+lsdtt-raster-preprocessing (lsdtt3 0.7.0, stable)
 GDAL 3.8.4, PROJ 9.3.1
   proj data: bundled: /home/you/lsdtt3/share/proj
   GDAL data: bundled: /home/you/lsdtt3/share/gdal

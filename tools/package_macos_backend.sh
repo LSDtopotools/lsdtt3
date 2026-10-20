@@ -29,13 +29,20 @@ Usage:
 Options:
   --version <ver>              Backend version (required)
   --build-dir <path>           Build directory (default: build/macos-core)
+  --tag <vX.Y.Z>               Build the tag instead of packaging an existing
+                               build: export it with git archive into a
+                               scratch tree, configure and build there
+                               (Release, tests off, Eigen on), then package
+                               that build. Must match --version. --build-dir
+                               is ignored.
   --out-dir <path>             Output directory (default: dist)
   --arch <name>                Architecture label (default: uname -m)
   --cli-profile <name>         CLI set: qgis / core / all (default: core).
                                Defined in tools/cli_profiles.txt; all = every
                                lsdtt-* executable in the build directory
   --profile <name>             Manifest profile label (default: <cli-profile>-macos)
-  --plugin-version-range <rng> Plugin compatibility range (default: >=0.1.0 <0.5.0)
+  --plugin-version-range <rng> Plugin compatibility range (default: the
+                               version's X.Y series, >=X.Y.0 <X.(Y+1).0)
   --cli <name>                 Package exactly this CLI (repeatable; overrides
                                --cli-profile, bundle is labelled 'custom')
   --help                       Show this help
@@ -43,10 +50,12 @@ Options:
 Examples:
   tools/package_macos_backend.sh --version 0.2.0
   tools/package_macos_backend.sh --version 0.2.0 --build-dir build/other-macos
+  tools/package_macos_backend.sh --version 0.7.0 --tag v0.7.0
 EOF
 }
 
 VERSION=""
+TAG=""
 # Per-platform build directory, mirroring build/windows-qgis on Windows: the
 # macOS tree is configured separately from the Linux one, so they must not
 # share a build dir. See tools/README.md.
@@ -55,13 +64,17 @@ OUT_DIR="dist"
 ARCH="$(uname -m)"
 CLI_PROFILE="core"
 PROFILE=""
-PLUGIN_VERSION_RANGE=">=0.1.0 <0.5.0"
+PLUGIN_VERSION_RANGE=""
 CLI_NAMES=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version)
             VERSION="${2:-}"
+            shift 2
+            ;;
+        --tag)
+            TAG="${2:-}"
             shift 2
             ;;
         --build-dir)
@@ -110,6 +123,17 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
+# One version number: a plugin X.Y.* accepts a backend X.Y.*, so the default
+# plugin range is the bundle's own major.minor series.
+if [[ -z "$PLUGIN_VERSION_RANGE" ]]; then
+    if [[ "${VERSION%%-*}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+        PLUGIN_VERSION_RANGE=">=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0 <${BASH_REMATCH[1]}.$((BASH_REMATCH[2] + 1)).0"
+    else
+        echo "ERROR: cannot derive --plugin-version-range from version '$VERSION' (expected X.Y.Z)" >&2
+        exit 1
+    fi
+fi
+
 # Resolve the CLI list: explicit --cli wins; otherwise the profile decides.
 # qgis / core come from cli_profiles.txt; all = every lsdtt-* executable in
 # the build directory (resolved after the build dir is validated below).
@@ -142,6 +166,37 @@ if [[ -z "$PROFILE" ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Outputs always land in the checkout this script was run from.
+OUTPUT_ROOT="$REPO_ROOT"
+
+# --tag: build exactly what the tag contains, as make_all_packages.sh --clean
+# does on Linux. git archive cannot pick up anything from the working tree, and
+# the export has no .git, so the binaries report the plain release version.
+# From here on REPO_ROOT is the exported tree: the version check, the CLI list
+# and the bundled data files all come from the tag.
+if [[ -n "$TAG" ]]; then
+    if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+        echo "ERROR: --tag must look like vX.Y.Z, got '$TAG'" >&2
+        exit 1
+    fi
+    if [[ "${BASH_REMATCH[1]}" != "$VERSION" ]]; then
+        echo "ERROR: --tag $TAG does not match --version $VERSION" >&2
+        exit 1
+    fi
+    if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+        echo "ERROR: no such tag: $TAG" >&2
+        exit 1
+    fi
+    TAG_SRC="$(mktemp -d "${TMPDIR:-/tmp}/lsdtt3-macos-XXXXXX")/src"
+    mkdir -p "$TAG_SRC"
+    echo "Exporting $TAG to $TAG_SRC"
+    git -C "$REPO_ROOT" archive --format=tar "$TAG" | tar -x -C "$TAG_SRC"
+    cmake -S "$TAG_SRC" -B "$TAG_SRC/build/macos-core" \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLSDTT_EIGEN=ON
+    cmake --build "$TAG_SRC/build/macos-core" -j"$(sysctl -n hw.ncpu)"
+    REPO_ROOT="$TAG_SRC"
+    BUILD_DIR="$TAG_SRC/build/macos-core"
+fi
 
 # The version is typed by hand here, unlike the Linux path where
 # make_release.sh derives and checks it. Mislabelling a bundle is silent and
@@ -184,7 +239,7 @@ fi
 if [[ "$OUT_DIR" = /* ]]; then
     OUT_ABS="$(realpath_py "$OUT_DIR")"
 else
-    OUT_ABS="$(realpath_py "$REPO_ROOT/$OUT_DIR")"
+    OUT_ABS="$(realpath_py "$OUTPUT_ROOT/$OUT_DIR")"
 fi
 
 if [[ ! -d "$BUILD_ABS" ]]; then

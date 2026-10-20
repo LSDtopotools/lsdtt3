@@ -253,6 +253,8 @@ write_channel_network_points: true
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: stable.**
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

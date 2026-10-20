@@ -34,6 +34,7 @@
 #include <nanobind/stl/string.h>
 
 #include <core/lsdtt_gdal_init.hpp>
+#include <core/lsdtt_param_parser.hpp>
 
 namespace nb = nanobind;
 
@@ -77,6 +78,16 @@ failing.
         "gdal_data_description",
         []() { return lsdtt::gdal_data_description(); },
         "As proj_data_description(), for GDAL's own data directory.");
+
+    module.def(
+        "lsdtt3_version",
+        []() { return lsdtt::lsdtt3_package_version(); },
+        R"doc(lsdtt3 version the bundled C++ library was built as, e.g. "0.7.0".
+
+In an installed wheel this is the package version (it can end in .postN for a
+rebuilt wheel); a direct CMake build of the bindings reports the
+project(lsdtt3 VERSION ...) number from the root CMakeLists.txt.
+)doc");
 
     module.def(
         "gdal_version",

@@ -2,7 +2,7 @@
 name=lsdtt3
 qgisMinimumVersion=3.22
 description=Processing algorithms for selected lsdtt3 command-line workflows.
-version=0.4.0
+version=0.7.0
 author=LSDTopoTools
 email=team@lsdtopotools.org
 about=Wraps lsdtt3 CLI tools as QGIS Processing algorithms.

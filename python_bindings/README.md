@@ -47,6 +47,20 @@ See [Python bindings architecture and API contracts](../docs/developer_notes/pyt
 for the backend/API distinction, contract manifests, extension workflow, and
 verification commands.
 
+## Versioning
+
+The Python package shares its version number with lsdtt3: `lsdtt3` 0.7.0 on
+PyPI is built from the lsdtt3 `v0.7.0` release, the same source as the 0.7.0
+command-line tools and backend bundles.
+
+Wheels are not published for every lsdtt3 release, because the Python API is
+not supported for every version of the C++ core. A version missing from PyPI is
+expected; it is not a withdrawn release. `pip install lsdtt3` installs the
+newest version that has wheels.
+
+A version ending in `.postN` (for example `0.7.0.post1`) is the same source as
+`0.7.0`, rebuilt or repackaged.
+
 ## Authors
 
 Boris Gailleton — boris.gailleton@univ-rennes.fr

@@ -110,21 +110,26 @@ wheel can import cleanly and still be missing a symbol or a data file.
 The release is **manual by design** — the workflow is `workflow_dispatch` only
 and never fires on a push.
 
-1. Go to Actions → *Build Python wheels* → Run workflow.
-2. Choose the version increment: `patch`, `minor` or `major`.
-3. It must be run from the default branch; the workflow refuses otherwise.
+1. Tag the release first (`vX.Y.Z`, or `vX.Y.Z.postN` for a wheel-only
+   rebuild). The workflow builds an existing tag; it never creates one.
+2. Go to Actions → *Build Python wheels* → Run workflow, and give the tag.
+3. Tick *upload* to attach the wheels to the `vX.Y.Z` GitHub release (which
+   `release.yml` created); otherwise they stay as workflow artefacts.
 
-The workflow then calculates the new version from
-`python_bindings/pyproject.toml`, builds and tests all four legs, commits the
-validated version bump, and tags and publishes the release. Version calculation
-happens *before* the build and the commit happens *after* it, so a failed build
-does not leave a bumped version behind.
+Before building anything the workflow checks the tag against the tagged tree:
+the `X.Y.Z` stem must equal `CMakeLists.txt`, the tag minus its `v` must equal
+`pyproject.toml`, and every version copy must agree. A mismatched tag fails in
+seconds rather than after the matrix.
 
-!!! note "The Python package version is independent of the lsdtt3 version"
+!!! note "The Python package shares the lsdtt3 version number"
 
-    `python_bindings/pyproject.toml` carries its own version, separate from
-    `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`. A Python
-    release does not imply a new lsdtt3 release, or the reverse.
+    `python_bindings/pyproject.toml` carries the same `X.Y.Z` as
+    `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`
+    (`tools/set_version.py` sets both). Wheels are built only for releases
+    where the Python API is supported, so not every lsdtt3 version is on PyPI.
+    Between wheel builds, `tools/make_release.sh` builds the bindings once on
+    Linux and runs the whole `python_bindings/tests` suite at every release
+    (also available as the opt-in CTest test `python_bindings_smoke`).
 
 ---
 

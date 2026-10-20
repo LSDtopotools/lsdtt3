@@ -1,5 +1,6 @@
 import importlib
 import os
+import re
 import sys
 import types
 
@@ -245,7 +246,7 @@ def test_phase4_backend_version_gate_runs_before_execution(monkeypatch):
     monkeypatch.setattr(
         support, "load_manifest", lambda path: {"backend_version": "0.5.2"}
     )
-    with pytest.raises(RuntimeError, match="requires version 0.6.0 or newer"):
+    with pytest.raises(RuntimeError, match="backend is version 0.5.2"):
         support.run_lsdtt_tool("lsdtt-basin-extraction", {}, "/out", "run", None)
 
 
@@ -256,16 +257,23 @@ def test_backend_plugin_version_gate_runs_before_execution(monkeypatch):
         def backend_path(self):
             return "/incompatible-backend"
 
+    plugin_version = importlib.import_module(
+        "lsdtt_qgis.backend.manifest"
+    ).current_plugin_version()
     monkeypatch.setattr(support, "BackendManager", Backend)
     monkeypatch.setattr(
         support,
         "load_manifest",
         lambda path: {
-            "backend_version": "0.6.0",
-            "plugin_version_range": ">=0.1.0 <0.2.0",
+            # Same series as the plugin, so only the bundle's range refuses it.
+            "backend_version": plugin_version,
+            "plugin_version_range": ">=0.0.1 <0.0.2",
         },
     )
-    with pytest.raises(RuntimeError, match="current plugin version is 0.4.0"):
+    with pytest.raises(
+        RuntimeError,
+        match="current plugin version is " + re.escape(plugin_version),
+    ):
         support.run_lsdtt_tool("lsdtt-basin-extraction", {}, "/out", "run", None)
 
 

@@ -14,19 +14,25 @@
 #
 # The repository is private and lsdtt3 takes a long time to compile, so running
 # the release and wheel workflows on GitHub Actions burns the CI minute
-# allowance quickly. This script produces the same three artefacts on a local
-# machine, costing nothing but wall-clock time:
+# allowance quickly. This script produces every Linux-side release artefact on
+# a local machine, costing nothing but wall-clock time:
 #
 #   a) the backend tarball      - what .github/workflows/release.yml uploads
 #   b) the Debian package       - built from debian/ via dpkg-buildpackage
 #   c) the Python wheel         - what .github/workflows/python-wheels.yml ships
+#   d) the conda package        - conda-build conda-recipe (not conda-forge)
+#   e) the QGIS plugin zip      - qgis_plugin/package_plugin.py (pure Python)
 #
-# EACH TARGET COMPILES THE C++ SEPARATELY. There is no shared object cache
-# between them: the tarball builds with the release CMake preset, the .deb
-# builds under debian/rules with its own flags and its own build directory, and
-# the wheel builds the bundled runtime inside python_bindings. Building all
-# three is therefore roughly three full compiles. Use --only to build just the
-# one you need while iterating.
+# lsdtt3 has ONE version number, so every artefact built from a tag carries
+# that tag's X.Y.Z. The Windows and macOS bundles are built on their own
+# platforms; the summary ends with the commands for them and for the upload.
+#
+# EACH COMPILED TARGET COMPILES THE C++ SEPARATELY. There is no shared object
+# cache between them: the tarball builds with the release CMake preset, the
+# .deb builds under debian/rules with its own flags and its own build
+# directory, the wheel builds the bundled runtime inside python_bindings, and
+# conda-build uses its own environment. Use --only to build just the one you
+# need while iterating.
 #
 # -----------------------------------------------------------------------------
 # THE WHEEL IS THE ONE CAVEAT
@@ -129,26 +135,31 @@ usage() {
 Usage:
   tools/make_all_packages.sh [--clean | --dirty] [options]
 
-Builds the backend tarball, the Debian package and the Python wheel locally,
-so a private repository does not spend GitHub Actions minutes on them.
+Builds the backend tarball, the Debian package, the Python wheel, the conda
+package and the QGIS plugin zip locally, so a private repository does not
+spend GitHub Actions minutes on them.
 
 Source selection (choose one; --clean is the default):
-  --clean          Build the latest tagged version. The tree is exported with
-                   `git archive <tag>` into a scratch directory, so the build
-                   sees exactly what the tag contains. Your working tree is
-                   not touched and uncommitted changes are NOT included.
+  --clean          Build a tagged version (the latest tag, or --tag). The tree
+                   is exported with `git archive <tag>` into a scratch
+                   directory, so the build sees exactly what the tag contains.
+                   Your working tree is not touched and uncommitted changes
+                   are NOT included.
+  --tag <vX.Y.Z>   With --clean: build this tag instead of the latest one
+                   (a patch release on a release/X.Y branch, or a
+                   vX.Y.Z.postN wheel-only rebuild, which needs --only wheel).
   --dirty          Build the current working tree, uncommitted changes and
                    all. Versions get a suffix derived from `git describe`, so
                    a dirty artefact can never be mistaken for a release.
 
-Target selection (default: all three):
+Target selection (default: all five):
   --only <target>  Build only this target. Repeatable.
   --skip <target>  Skip this target. Repeatable.
-                   Targets: tarball, deb, wheel
+                   Targets: tarball, deb, wheel, conda, plugin
 
 Options:
   --out-dir <path> Where finished artefacts are collected.
-                   Default: dist/
+                   Default: dist/vX.Y.Z/ for --clean, dist/ for --dirty.
   --jobs <N>       Parallel compile jobs. Default: nproc.
   --profile <name> CLI profile for the tarball: qgis / core / all.
                    Default: core (what the official Linux release ships).
@@ -160,11 +171,15 @@ Options:
 Examples:
   tools/make_all_packages.sh --check-only
   tools/make_all_packages.sh --clean
+  tools/make_all_packages.sh --clean --tag v0.7.1
+  tools/make_all_packages.sh --clean --tag v0.7.0.post1 --only wheel
   tools/make_all_packages.sh --dirty --only wheel
   tools/make_all_packages.sh --dirty --skip deb --jobs 4
 
 Notes:
-  * Each target compiles the C++ independently; all three is ~3 full builds.
+  * Each compiled target compiles the C++ independently; the plugin zip is
+    pure Python. The tarball stage also builds the Python bindings once for
+    make_release.sh's mandatory bindings smoke check.
   * Without podman the wheel is a host wheel, not a distributable manylinux
     wheel. See the header comment. Docker is never used.
 EOF
@@ -174,6 +189,7 @@ EOF
 # Argument parsing
 # ----------------------------------------------------------------------------
 MODE="clean"
+TAG=""
 OUT_DIR=""
 JOBS=""
 CLI_PROFILE="core"
@@ -186,6 +202,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --clean)        MODE="clean"; shift ;;
         --dirty)        MODE="dirty"; shift ;;
+        --tag)          TAG="${2:-}"; shift 2 ;;
         --only)         ONLY+=("${2:-}"); shift 2 ;;
         --skip)         SKIP+=("${2:-}"); shift 2 ;;
         --out-dir)      OUT_DIR="${2:-}"; shift 2 ;;
@@ -199,18 +216,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
-OUT_DIR="${OUT_DIR:-${REPO_ROOT}/dist}"
-[[ "$OUT_DIR" = /* ]] || OUT_DIR="${REPO_ROOT}/${OUT_DIR}"
+[[ -z "$TAG" || "$MODE" == "clean" ]] || fail "--tag only applies to --clean builds"
 
 # Resolve which targets to build.
-want_tarball=1; want_deb=1; want_wheel=1
+want_tarball=1; want_deb=1; want_wheel=1; want_conda=1; want_plugin=1
 if ((${#ONLY[@]})); then
-    want_tarball=0; want_deb=0; want_wheel=0
+    want_tarball=0; want_deb=0; want_wheel=0; want_conda=0; want_plugin=0
     for t in "${ONLY[@]}"; do
         case "$t" in
             tarball) want_tarball=1 ;;
             deb)     want_deb=1 ;;
             wheel)   want_wheel=1 ;;
+            conda)   want_conda=1 ;;
+            plugin)  want_plugin=1 ;;
             *)       fail "unknown target for --only: $t" ;;
         esac
     done
@@ -221,17 +239,20 @@ for t in "${SKIP[@]-}"; do
         tarball) want_tarball=0 ;;
         deb)     want_deb=0 ;;
         wheel)   want_wheel=0 ;;
+        conda)   want_conda=0 ;;
+        plugin)  want_plugin=0 ;;
         *)       fail "unknown target for --skip: $t" ;;
     esac
 done
-(( want_tarball || want_deb || want_wheel )) || fail "every target was skipped"
+(( want_tarball || want_deb || want_wheel || want_conda || want_plugin )) \
+    || fail "every target was skipped"
 
 cd "$REPO_ROOT"
 
 # ----------------------------------------------------------------------------
 # Version resolution
 #
-# Three artefacts, three version grammars, one git state:
+# One version number, several grammars, one git state:
 #
 #   tarball  make_release.sh compares the part before the first '-' against
 #            project(lsdtt3 VERSION ...) and treats the rest as a pre-release
@@ -239,35 +260,73 @@ cd "$REPO_ROOT"
 #   deb      debian/source/format is '3.0 (native)', so the version must NOT
 #            contain a hyphen - a hyphen would be read as separating a Debian
 #            revision. Use '+git...' instead.
-#   wheel    PEP 440. python_bindings/pyproject.toml carries its own version,
-#            independent of the lsdtt3 version, so the dev suffix is appended
-#            to THAT as a local version identifier.
+#   wheel    PEP 440. pyproject.toml carries the shared X.Y.Z (X.Y.Z.postN
+#            for a wheel-only rebuild); a dev build appends a local version
+#            identifier.
+#   conda,   take the version from their own files (meta.yaml, metadata.txt),
+#   plugin   which tools/set_version.py keeps equal to CMake.
+#
+# In --clean mode every number is read from the TAGGED tree, and the tag must
+# agree with it: vX.Y.Z needs CMake X.Y.Z, and the tag minus its 'v' must equal
+# the tagged pyproject.toml version. A mismatched tag fails here, before any
+# compile.
 # ----------------------------------------------------------------------------
 git rev-parse --git-dir >/dev/null 2>&1 || fail "not a git repository: $REPO_ROOT"
 
-LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-[[ -n "$LATEST_TAG" ]] || fail "no git tags found; cannot determine a version"
-BASE_VERSION="${LATEST_TAG#v}"
+if [[ -n "$TAG" ]]; then
+    git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null \
+        || fail "no such tag: ${TAG} (git tag --list 'v*')"
+    LATEST_TAG="$TAG"
+else
+    # .postN tags are wheel-only rebuilds, never "the latest release".
+    LATEST_TAG="$(git describe --tags --abbrev=0 --match 'v*' --exclude '*.post*' 2>/dev/null || true)"
+    [[ -n "$LATEST_TAG" ]] || fail "no git tags found; cannot determine a version"
+fi
 
-CMAKE_VERSION="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
-[[ -n "$CMAKE_VERSION" ]] || fail "could not read project version from CMakeLists.txt"
+# read_version <tree-ish or ''> : print "CMAKE PYPROJECT" from a tag or the tree
+read_version_files() {
+    local ref="$1" cmake_text py_text
+    if [[ -n "$ref" ]]; then
+        cmake_text="$(git show "${ref}:CMakeLists.txt")"
+        py_text="$(git show "${ref}:python_bindings/pyproject.toml")"
+    else
+        cmake_text="$(cat CMakeLists.txt)"
+        py_text="$(cat python_bindings/pyproject.toml)"
+    fi
+    CMAKE_VERSION="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' <<<"$cmake_text")"
+    PY_BASE_VERSION="$(sed -n '/^\[project\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' <<<"$py_text" | head -1)"
+    [[ -n "$CMAKE_VERSION" ]] || fail "could not read project version from ${ref:-the working tree}'s CMakeLists.txt"
+    [[ -n "$PY_BASE_VERSION" ]] || fail "could not read version from ${ref:-the working tree}'s python_bindings/pyproject.toml"
+}
 
-PY_BASE_VERSION="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' python_bindings/pyproject.toml | head -1)"
-[[ -n "$PY_BASE_VERSION" ]] || fail "could not read version from python_bindings/pyproject.toml"
-
+IS_POST=0
 if [[ "$MODE" == "clean" ]]; then
+    read_version_files "$LATEST_TAG"
+    [[ "$LATEST_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(\.post[0-9]+)?$ ]] \
+        || fail "tag ${LATEST_TAG} is not vX.Y.Z or vX.Y.Z.postN"
+    BASE_VERSION="${BASH_REMATCH[1]}"
+    [[ -n "${BASH_REMATCH[2]}" ]] && IS_POST=1
+    [[ "$BASE_VERSION" == "$CMAKE_VERSION" ]] || fail \
+        "tag ${LATEST_TAG} has stem ${BASE_VERSION}, but its own CMakeLists.txt says ${CMAKE_VERSION}."
+    if [[ "${LATEST_TAG#v}" != "$PY_BASE_VERSION" ]]; then
+        # Tags cut before lsdtt3 had one version number (<= v0.6.0) carried an
+        # independent Python version. Only a wheel built from them is affected.
+        if (( want_wheel )); then
+            fail "tag ${LATEST_TAG} does not match its pyproject.toml version ${PY_BASE_VERSION}.
+Tags up to v0.6.0 predate the shared version number; build them with --skip wheel."
+        fi
+        warn "tag ${LATEST_TAG} predates the shared version (pyproject.toml ${PY_BASE_VERSION})."
+    fi
+    if (( IS_POST )) && (( want_tarball || want_deb || want_conda || want_plugin )); then
+        fail "${LATEST_TAG} is a wheel-only rebuild (.postN): build it with --only wheel.
+The other artefacts of ${BASE_VERSION} come from tag v${BASE_VERSION}."
+    fi
     TARBALL_VERSION="$BASE_VERSION"
     DEB_VERSION="$BASE_VERSION"
     WHEEL_VERSION="$PY_BASE_VERSION"
     SOURCE_DESC="tag ${LATEST_TAG}"
-
-    if [[ "$BASE_VERSION" != "$CMAKE_VERSION" ]]; then
-        warn "tag ${LATEST_TAG} implies ${BASE_VERSION} but CMakeLists.txt says ${CMAKE_VERSION}."
-        warn "In --clean mode the TAGGED CMakeLists.txt is what gets built, so this"
-        warn "mismatch reflects the working tree having moved on. That is expected"
-        warn "between releases and is not an error."
-    fi
 else
+    read_version_files ""
     DESCRIBE="$(git describe --tags --dirty --always 2>/dev/null || echo "$LATEST_TAG")"
     # e.g. v0.5.1-14-g04460f4-dirty  ->  14-g04460f4-dirty
     SUFFIX="${DESCRIBE#"$LATEST_TAG"}"
@@ -287,6 +346,15 @@ else
     SOURCE_DESC="working tree (${DESCRIBE})"
 fi
 
+if [[ -z "$OUT_DIR" ]]; then
+    if [[ "$MODE" == "clean" ]]; then
+        OUT_DIR="${REPO_ROOT}/dist/v${BASE_VERSION}"
+    else
+        OUT_DIR="${REPO_ROOT}/dist"
+    fi
+fi
+[[ "$OUT_DIR" = /* ]] || OUT_DIR="${REPO_ROOT}/${OUT_DIR}"
+
 # ----------------------------------------------------------------------------
 # Tooling checks - fail fast, and say exactly what is missing
 # ----------------------------------------------------------------------------
@@ -300,6 +368,14 @@ need cmake "compiling lsdtt3"
 
 if (( want_tarball )); then
     [[ -x tools/make_release.sh ]] || MISSING+=("tools/make_release.sh -- not executable")
+fi
+
+if (( want_conda )); then
+    need conda-build "building the conda package (or --skip conda)"
+fi
+
+if (( want_plugin )); then
+    need python3 "packaging the QGIS plugin zip"
 fi
 
 if (( want_deb )); then
@@ -410,6 +486,8 @@ printf '  %-22s %s\n' "Jobs:"        "$JOBS"
 echo
 printf '  %-22s %s\n' "Tarball:" "$( ((want_tarball)) && echo "yes  (version ${TARBALL_VERSION}, profile ${CLI_PROFILE})" || echo "skipped" )"
 printf '  %-22s %s\n' "Debian package:" "$( ((want_deb)) && echo "yes  (version ${DEB_VERSION})" || echo "skipped" )"
+printf '  %-22s %s\n' "conda package:" "$( ((want_conda)) && echo "yes  (version from conda-recipe/meta.yaml)" || echo "skipped" )"
+printf '  %-22s %s\n' "QGIS plugin zip:" "$( ((want_plugin)) && echo "yes  (version from metadata.txt)" || echo "skipped" )"
 if (( want_wheel )); then
     if [[ "$WHEEL_ENGINE" == "podman" ]]; then
         printf '  %-22s %s\n' "Python wheel:" "yes  (version ${WHEEL_VERSION}, manylinux via podman)"
@@ -432,10 +510,10 @@ if (( want_wheel )) && [[ "$WHEEL_ENGINE" != "podman" ]]; then
     warn "Docker is deliberately not used by this project, and is never invoked."
 fi
 
-n_targets=$(( want_tarball + want_deb + want_wheel ))
+n_targets=$(( want_tarball + want_deb + want_wheel + want_conda ))
 if (( n_targets > 1 )); then
     echo
-    info "${n_targets} targets selected; each compiles the C++ separately."
+    info "${n_targets} compiled targets selected; each compiles the C++ separately."
 fi
 
 if (( CHECK_ONLY )); then
@@ -468,6 +546,13 @@ if [[ "$MODE" == "clean" ]]; then
     info "exporting ${LATEST_TAG} to a scratch tree"
     git archive --format=tar "$LATEST_TAG" | tar -x -C "$SRC_DIR"
     [[ -f "${SRC_DIR}/CMakeLists.txt" ]] || fail "export produced no CMakeLists.txt"
+    # Every copy of the version number in the exported tree must agree.
+    if [[ -f "${SRC_DIR}/tests/scripts/check_version_consistency.py" ]]; then
+        python3 "${SRC_DIR}/tests/scripts/check_version_consistency.py" --repo-root "$SRC_DIR" \
+            || fail "the version copies in ${LATEST_TAG} disagree (above)"
+    else
+        warn "${LATEST_TAG} predates tests/scripts/check_version_consistency.py; not checked"
+    fi
 else
     SRC_DIR="$REPO_ROOT"
 fi
@@ -489,6 +574,12 @@ if (( want_deb )) && [[ ! -f "${SRC_DIR}/debian/control" ]]; then
 fi
 if (( want_wheel )) && [[ ! -f "${SRC_DIR}/python_bindings/pyproject.toml" ]]; then
     missing_in_source+=("wheel needs python_bindings/pyproject.toml")
+fi
+if (( want_conda )) && [[ ! -f "${SRC_DIR}/conda-recipe/meta.yaml" ]]; then
+    missing_in_source+=("conda needs conda-recipe/meta.yaml")
+fi
+if (( want_plugin )) && [[ ! -f "${SRC_DIR}/qgis_plugin/package_plugin.py" ]]; then
+    missing_in_source+=("plugin needs qgis_plugin/package_plugin.py")
 fi
 
 if ((${#missing_in_source[@]})); then
@@ -701,6 +792,55 @@ or
 fi
 
 # ----------------------------------------------------------------------------
+# d) conda package
+#
+# conda-build copies the recipe's source (path: ..) into its own work tree, so
+# point it at a staged copy: in --clean mode that is the exported tag, which has
+# no .git, so the binaries report the plain release version.
+# ----------------------------------------------------------------------------
+if (( want_conda )); then
+    step "d) conda package"
+    t0=$SECONDS
+    CONDA_SRC="${SCRATCH}/conda-src"
+    copy_source "$SRC_DIR" "$CONDA_SRC"
+    (
+        cd "$CONDA_SRC"
+        conda-build conda-recipe --output-folder "${SCRATCH}/conda-out" --no-anaconda-upload
+    ) || fail "conda-build failed"
+    shopt -s nullglob
+    pkgs=( "${SCRATCH}/conda-out"/*/lsdtt3-*.conda "${SCRATCH}/conda-out"/*/lsdtt3-*.tar.bz2 )
+    shopt -u nullglob
+    ((${#pkgs[@]})) || fail "conda-build reported success but produced no package"
+    for f in "${pkgs[@]}"; do
+        collect "$f" "${OUT_DIR}/$(basename "$f")" || fail "could not collect $(basename "$f")"
+        record "conda: $(basename "$f")"
+    done
+    timing "conda: $((SECONDS - t0))s"
+    ok "conda stage finished"
+fi
+
+# ----------------------------------------------------------------------------
+# e) QGIS plugin zip
+# ----------------------------------------------------------------------------
+if (( want_plugin )); then
+    step "e) QGIS plugin zip"
+    t0=$SECONDS
+    python3 "${SRC_DIR}/qgis_plugin/package_plugin.py" \
+        --plugin-dir "${SRC_DIR}/qgis_plugin/lsdtt_qgis" \
+        --out-dir "${SCRATCH}/plugin-out" || fail "plugin packaging failed"
+    shopt -s nullglob
+    zips=( "${SCRATCH}/plugin-out"/lsdtt3-qgis-plugin-*.zip )
+    shopt -u nullglob
+    ((${#zips[@]})) || fail "package_plugin.py produced no zip"
+    for f in "${zips[@]}"; do
+        collect "$f" "${OUT_DIR}/$(basename "$f")" || fail "could not collect $(basename "$f")"
+        record "plugin: $(basename "$f")"
+    done
+    timing "plugin: $((SECONDS - t0))s"
+    ok "plugin stage finished"
+fi
+
+# ----------------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------------
 step "Summary"
@@ -729,6 +869,30 @@ if [[ "$MODE" == "dirty" ]]; then
     echo
     warn "These artefacts were built from an untagged tree and are versioned"
     warn "accordingly (${TARBALL_VERSION}). They are for testing, not release."
+fi
+
+# What a release still needs after this script. The order follows the release
+# checklist in docs/developer_notes/making_release_packages.md.
+if [[ "$MODE" == "clean" ]]; then
+    RELEASE="v${BASE_VERSION}"
+    echo
+    step "Still to do for ${RELEASE}"
+    if (( IS_POST )); then
+        echo "  - upload the wheel to the ${RELEASE} release:"
+        echo "      gh release upload ${RELEASE} ${OUT_DIR}/*.whl"
+        echo "  - publish it to PyPI (docs/developer_notes/publishing_to_pypi.md)"
+    else
+        echo "  - Linux backend bundle: built by release.yml when ${RELEASE} is pushed"
+        echo "  - Windows bundle, on Windows:"
+        echo "      tools/package_windows_backend.ps1 -Version ${BASE_VERSION} -Tag ${RELEASE}"
+        echo "  - macOS bundle, on a Mac:"
+        echo "      tools/package_macos_backend.sh --version ${BASE_VERSION} --tag ${RELEASE}"
+        (( want_wheel )) || echo "  - Python wheel: only if this release supports the Python API (--only wheel)"
+        echo "  - upload what was built here:"
+        echo "      gh release upload ${RELEASE} ${OUT_DIR}/*"
+        echo "  - edit the release notes: say which artefacts are attached, and"
+        echo "    \"Python wheel: not built for this release\" if none is"
+    fi
 fi
 
 echo

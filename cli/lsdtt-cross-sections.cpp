@@ -54,7 +54,7 @@
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
-static const std::string k_version  = "0.1.0";
+static const std::string k_status   = "experimental";
 static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
 static const std::string k_tool_name = "lsdtt-cross-sections";
 
@@ -69,10 +69,9 @@ static void print_banner()
         << "|| I am going to extract channel cross sections         ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                      ||\n"
         << "=========================================================\n"
-        << "|| -v or --version    : full lsdtt3 release version\n"
-        << "|| This CLI's version : " << k_version << "\n"
-        << "|| If CLI version number is lower than 1.0.0 it means\n"
-        << "|| this CLI is still experimental and not fully tested.\n"
+        << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"
+        << "|| Status         : " << k_status
+        << (k_status == "stable" ? "" : " -- not yet fully tested") << "\n"
         << "=========================================================\n"
         << "|| Citation : " << k_citation << "\n"
         << "|| -h       : help explaining the parameters\n"
@@ -87,7 +86,7 @@ int main(int argc, char* argv[])
     print_banner();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
-        argc, argv, k_tool_name, k_version, k_citation);
+        argc, argv, k_tool_name, k_status, k_citation);
 
     // -------------------------------------------------------------------------
     // Parameter file
@@ -337,7 +336,7 @@ int main(int argc, char* argv[])
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
-            k_tool_name, k_version, k_citation, help_map, cli_args);
+            k_tool_name, k_status, k_citation, help_map, cli_args);
         return 0;
     }
 
@@ -942,7 +941,7 @@ int main(int argc, char* argv[])
     // Parameter echo
     // -------------------------------------------------------------------------
     pp.print_help(help_map, pp.get_write_fname() + "_README",
-                  k_version, k_citation);
+                  k_status, k_citation);
     pp.print_parameters();
 
     std::cout << "\nlsdtt-cross-sections: done.\n";

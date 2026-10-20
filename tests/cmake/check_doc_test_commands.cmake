@@ -37,9 +37,13 @@ set(_docs
 # Declared options.
 set(_options "")
 foreach(_cm CMakeLists.txt tests/CMakeLists.txt)
-    file(STRINGS "${SOURCE_DIR}/${_cm}" _lines REGEX "option\\((LSDTT_[A-Z0-9_]+)")
+    # option(LSDTT_X ...) and cache variables, set(LSDTT_X <value> CACHE ...).
+    file(STRINGS "${SOURCE_DIR}/${_cm}" _lines
+        REGEX "(option|set)\\((LSDTT_[A-Z0-9_]+)")
     foreach(_l IN LISTS _lines)
         if(_l MATCHES "option\\((LSDTT_[A-Z0-9_]+)")
+            list(APPEND _options "${CMAKE_MATCH_1}")
+        elseif(_l MATCHES "set\\((LSDTT_[A-Z0-9_]+)[ \t].* CACHE ")
             list(APPEND _options "${CMAKE_MATCH_1}")
         endif()
     endforeach()
