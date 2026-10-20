@@ -46,6 +46,27 @@ def test_runtime_exposes_package_version():
     assert lsdtt3.__version__ == expected
 
 
+def test_core_reports_the_shared_lsdtt3_version():
+    # One version number for the repository: the C++ library inside the
+    # package must report the version the package was built as.
+    import lsdtt3
+    from lsdtt3 import _core
+
+    reported = _core.lsdtt3_version()
+    if lsdtt3.__version__ == "0.0.0":
+        # Source tree or direct CMake build: no wheel metadata, so the binding
+        # build read project(lsdtt3 VERSION ...) itself.
+        cmake = (Path(__file__).parents[2] / "CMakeLists.txt").read_text(encoding="utf-8")
+        expected = re.search(
+            r"^project\(lsdtt3\s+VERSION\s+(\d+\.\d+\.\d+)", cmake, re.MULTILINE
+        ).group(1)
+        assert reported == expected
+    else:
+        assert reported == lsdtt3.__version__
+        # X.Y.Z, .postN for a rebuilt wheel, +git... for a local dev wheel.
+        assert re.fullmatch(r"\d+\.\d+\.\d+(\.post\d+)?(\+[A-Za-z0-9.]+)?", reported)
+
+
 def test_graphflood_backend_option_schema_matches_runtime_manifest():
     root = Path(__file__).parents[1]
     manifest = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))

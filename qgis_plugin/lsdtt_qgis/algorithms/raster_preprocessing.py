@@ -13,18 +13,21 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
     QgsProcessingParameterString,
+    QgsProcessingParameterVectorLayer,
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
+    layer_file_path,
     require_output,
     run_lsdtt_tool,
     split_layer_source,
 )
 
 
-class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
+class RasterPreprocessingAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -69,6 +72,40 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     FILL_MIN_SLOPE = "FILL_MIN_SLOPE"
     WRITE_FILL_DIFF = "WRITE_FILL_DIFF"
 
+    # Advanced: flat resolution and fill-spill-merge
+    PRIORITY_FLOOD_QUEUE = "PRIORITY_FLOOD_QUEUE"
+    FLAT_RESOLUTION = "FLAT_RESOLUTION"
+    FSM_RAINFALL_RATE = "FSM_RAINFALL_RATE"
+    FSM_BOUNDARY_CONDITIONS = "FSM_BOUNDARY_CONDITIONS"
+
+    # Advanced: vertical units
+    VERTICAL_UNITS = "VERTICAL_UNITS"
+    CHECK_VERTICAL_UNITS_USGS = "CHECK_VERTICAL_UNITS_USGS"
+
+    # Advanced: edge-preserving smoothing (applied before breaching and filling)
+    SMOOTH_ALGORITHM = "SMOOTH_ALGORITHM"
+    PM_ITERATIONS = "PM_ITERATIONS"
+    PM_LAMBDA = "PM_LAMBDA"
+    PM_CONDUCTANCE = "PM_CONDUCTANCE"
+    PM_K_QUANTILE = "PM_K_QUANTILE"
+    PM_K_METRES_PER_CELL = "PM_K_METRES_PER_CELL"
+    WRITE_STENCIL_DIFF = "WRITE_STENCIL_DIFF"
+    COHERENCE_ITERATIONS = "COHERENCE_ITERATIONS"
+    COHERENCE_TIME_STEP = "COHERENCE_TIME_STEP"
+    COHERENCE_DERIVATIVE_RADIUS = "COHERENCE_DERIVATIVE_RADIUS"
+    COHERENCE_INTEGRATION_RADIUS = "COHERENCE_INTEGRATION_RADIUS"
+    COHERENCE_CONTRAST = "COHERENCE_CONTRAST"
+    COHERENCE_MIN_DIFFUSIVITY = "COHERENCE_MIN_DIFFUSIVITY"
+
+    # Advanced: pixel replacement
+    REPLACE_PIXELS = "REPLACE_PIXELS"
+    REPLACE_PIXELS_VALUE_FIELD = "REPLACE_PIXELS_VALUE_FIELD"
+    WRITE_REPLACED_PIXELS = "WRITE_REPLACED_PIXELS"
+
+    # Advanced: sink candidates
+    WRITE_SINK_CANDIDATES = "WRITE_SINK_CANDIDATES"
+    SINK_CANDIDATE_MIN_PIXELS = "SINK_CANDIDATE_MIN_PIXELS"
+
     # Advanced: depression polygons
     WRITE_DEPRESSION_POLYGONS = "WRITE_DEPRESSION_POLYGONS"
     DEPRESSION_MIN_PIXELS = "DEPRESSION_MIN_PIXELS"
@@ -93,6 +130,10 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_CARVE_DIFF = "OUTPUT_CARVE_DIFF"
     OUTPUT_BINARY_MASKED = "OUTPUT_BINARY_MASKED"
     OUTPUT_DEPRESSIONS = "OUTPUT_DEPRESSIONS"
+    OUTPUT_SMOOTHED = "OUTPUT_SMOOTHED"
+    OUTPUT_STENCIL_DIFF = "OUTPUT_STENCIL_DIFF"
+    OUTPUT_REPLACED_PIXELS = "OUTPUT_REPLACED_PIXELS"
+    OUTPUT_SINK_CANDIDATES = "OUTPUT_SINK_CANDIDATES"
 
     OUTPUT_FORMAT_OPTIONS = ["cog", "gtiff"]
     RESAMPLING_OPTIONS = [
@@ -104,6 +145,11 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
     BREACH_LC_EDGE_POLICY_OPTIONS = ["outlet", "whitebox"]
     FILL_ALGORITHM_OPTIONS = ["barnes2014", "barnesetal2021"]
     VECTOR_FORMAT_OPTIONS = ["flatgeobuf", "gpkg"]
+    PRIORITY_FLOOD_QUEUE_OPTIONS = ["binary", "radix"]
+    FLAT_RESOLUTION_OPTIONS = ["inline_gradient", "barnes2014b_gradient", "barnes2014b_float_step"]
+    VERTICAL_UNITS_OPTIONS = ["metres", "feet", "us_survey_feet"]
+    SMOOTH_ALGORITHM_OPTIONS = ["none", "perona_malik", "coherence_diffusion"]
+    PM_CONDUCTANCE_OPTIONS = ["exponential", "quadratic"]
 
     def _add_advanced(self, param):
         param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
@@ -119,6 +165,7 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_preprocess"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.OUTPUT_FORMAT,
@@ -351,6 +398,217 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.PRIORITY_FLOOD_QUEUE,
+                "Barnes 2014 fill: priority-flood queue",
+                options=self.PRIORITY_FLOOD_QUEUE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.FLAT_RESOLUTION,
+                "Flat resolution (how filled flats are made drainable)",
+                options=self.FLAT_RESOLUTION_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.FSM_RAINFALL_RATE,
+                "Fill-spill-merge: uniform rainfall depth per cell (elevation units)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.1,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.FSM_BOUNDARY_CONDITIONS,
+                "Fill-spill-merge: boundary conditions N E S W (o open, b baselevel, n no-flux, p periodic)",
+                "oooo",
+            )
+        )
+
+        # --- Advanced: vertical units ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.VERTICAL_UNITS,
+                "Vertical units of the input elevations",
+                options=self.VERTICAL_UNITS_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.CHECK_VERTICAL_UNITS_USGS,
+                "If the DEM looks like feet, check against USGS 3DEP (sends 5 coordinates)",
+                True,
+            )
+        )
+
+        # --- Advanced: edge-preserving smoothing ---
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.SMOOTH_ALGORITHM,
+                "Edge-preserving smoothing before breaching and filling",
+                options=self.SMOOTH_ALGORITHM_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.PM_ITERATIONS,
+                "Perona-Malik: iterations",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=10,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.PM_LAMBDA,
+                "Perona-Malik: timestep lambda (0 < lambda <= 0.25)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=0.25,
+                defaultValue=0.2,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterEnum(
+                self.PM_CONDUCTANCE,
+                "Perona-Malik: conductance function",
+                options=self.PM_CONDUCTANCE_OPTIONS,
+                defaultValue=0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.PM_K_QUANTILE,
+                "Perona-Malik: edge threshold K as a quantile of neighbour differences (0 = state K below)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=1.0,
+                defaultValue=0.9,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.PM_K_METRES_PER_CELL,
+                "Perona-Malik: edge threshold K in metres per cell (used when the quantile is 0)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_STENCIL_DIFF,
+                "Perona-Malik: write the neighbour-difference raster K was read from",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_ITERATIONS,
+                "Coherence diffusion: iterations",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=10,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_TIME_STEP,
+                "Coherence diffusion: timestep tau (0 < tau <= 0.25)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=0.25,
+                defaultValue=0.15,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_DERIVATIVE_RADIUS,
+                "Coherence diffusion: gradient pre-smoothing radius in metres (0 = one cell)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_INTEGRATION_RADIUS,
+                "Coherence diffusion: structure-tensor integration radius in metres (0 = three cells)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.0,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_CONTRAST,
+                "Coherence diffusion: contrast C",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                defaultValue=0.2,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.COHERENCE_MIN_DIFFUSIVITY,
+                "Coherence diffusion: across-feature diffusivity floor (0 to 1)",
+                type=QgsProcessingParameterNumber.Double,
+                minValue=0.0,
+                maxValue=1.0,
+                defaultValue=0.001,
+            )
+        )
+
+        # --- Advanced: pixel replacement ---
+        self._add_advanced(
+            QgsProcessingParameterVectorLayer(
+                self.REPLACE_PIXELS,
+                "Pixel replacement: point layer of pixels to overwrite",
+                [QgsProcessing.TypeVectorPoint],
+                optional=True,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterString(
+                self.REPLACE_PIXELS_VALUE_FIELD,
+                "Pixel replacement: field holding the new value",
+                "value",
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_REPLACED_PIXELS,
+                "Pixel replacement: write the DEM after replacement",
+                False,
+            )
+        )
+
+        # --- Advanced: sink candidates ---
+        self._add_advanced(
+            QgsProcessingParameterBoolean(
+                self.WRITE_SINK_CANDIDATES,
+                "Write candidate internally drained sinks (point layer)",
+                False,
+            )
+        )
+        self._add_advanced(
+            QgsProcessingParameterNumber(
+                self.SINK_CANDIDATE_MIN_PIXELS,
+                "Sink candidates: minimum sink size (pixels)",
+                type=QgsProcessingParameterNumber.Integer,
+                minValue=1,
+                defaultValue=1,
+            )
+        )
+
         # --- Advanced: depression polygons ---
         self._add_advanced(
             QgsProcessingParameterBoolean(
@@ -452,6 +710,10 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_CARVE_DIFF, "Carve difference raster"))
         self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_BINARY_MASKED, "Binary-masked raster"))
         self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_DEPRESSIONS, "Depression polygons"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_SMOOTHED, "Smoothed DEM"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_STENCIL_DIFF, "Neighbour-difference raster"))
+        self.addOutput(QgsProcessingOutputRasterLayer(self.OUTPUT_REPLACED_PIXELS, "DEM after pixel replacement"))
+        self.addOutput(QgsProcessingOutputVectorLayer(self.OUTPUT_SINK_CANDIDATES, "Sink candidates"))
 
         attach_backend_help(
             self,
@@ -465,6 +727,20 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
                 self.DEPRESSION_FORMAT: "write_vector_format",
                 self.MD_N_DIRECTIONS: "multidirectional_hillshade_n_directions",
                 self.MD_START_AZIMUTH: "multidirectional_hillshade_start_azimuth",
+                self.FLAT_RESOLUTION: "fill_flat_resolution_choice",
+                self.FSM_RAINFALL_RATE: "fill_spill_merge_rainfall_rate",
+                self.CHECK_VERTICAL_UNITS_USGS: "check_vertical_units_against_usgs",
+                self.SMOOTH_ALGORITHM: "smooth_algorithm_choice",
+                self.PM_ITERATIONS: "perona_malik_iterations",
+                self.PM_LAMBDA: "perona_malik_lambda",
+                self.PM_CONDUCTANCE: "perona_malik_conductance",
+                self.PM_K_QUANTILE: "perona_malik_k_quantile",
+                self.PM_K_METRES_PER_CELL: "perona_malik_k_metres_per_cell",
+                self.WRITE_STENCIL_DIFF: "write_stencil_difference_raster",
+                self.COHERENCE_DERIVATIVE_RADIUS: "coherence_derivative_radius_metres",
+                self.COHERENCE_INTEGRATION_RADIUS: "coherence_integration_radius_metres",
+                self.REPLACE_PIXELS: "replace_pixels_fname",
+                self.WRITE_REPLACED_PIXELS: "write_replaced_pixels_raster",
             },
         )
 
@@ -505,6 +781,31 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             )
 
         mask_layer = self.parameterAsRasterLayer(parameters, self.BINARY_MASK, context)
+
+        smooth_algorithm = self.SMOOTH_ALGORITHM_OPTIONS[
+            self.parameterAsEnum(parameters, self.SMOOTH_ALGORITHM, context)
+        ]
+        write_stencil_diff = self.parameterAsBool(parameters, self.WRITE_STENCIL_DIFF, context)
+        if write_stencil_diff and smooth_algorithm != "perona_malik":
+            raise QgsProcessingException(
+                "The neighbour-difference raster is written by Perona-Malik smoothing; "
+                "choose perona_malik or turn the option off."
+            )
+        fsm_boundary_conditions = self.parameterAsString(
+            parameters, self.FSM_BOUNDARY_CONDITIONS, context
+        ).strip().lower()
+        if len(fsm_boundary_conditions) != 4 or any(c not in "obnp" for c in fsm_boundary_conditions):
+            raise QgsProcessingException(
+                "Fill-spill-merge boundary conditions must be four letters from o, b, n, p "
+                "(north, east, south, west), e.g. oooo."
+            )
+        replace_layer = self.parameterAsVectorLayer(parameters, self.REPLACE_PIXELS, context)
+        write_replaced = self.parameterAsBool(parameters, self.WRITE_REPLACED_PIXELS, context)
+        if write_replaced and replace_layer is None:
+            raise QgsProcessingException(
+                "Writing the replaced-pixel DEM needs a pixel-replacement point layer."
+            )
+        write_sink_candidates = self.parameterAsBool(parameters, self.WRITE_SINK_CANDIDATES, context)
 
         depression_format = self.VECTOR_FORMAT_OPTIONS[
             self.parameterAsEnum(parameters, self.DEPRESSION_FORMAT, context)
@@ -581,7 +882,61 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             "multidirectional_hillshade_start_azimuth": self.parameterAsDouble(
                 parameters, self.MD_START_AZIMUTH, context
             ),
+            # flat resolution and fill-spill-merge
+            "priority_flood_queue": self.PRIORITY_FLOOD_QUEUE_OPTIONS[
+                self.parameterAsEnum(parameters, self.PRIORITY_FLOOD_QUEUE, context)
+            ],
+            "fill_flat_resolution_choice": self.FLAT_RESOLUTION_OPTIONS[
+                self.parameterAsEnum(parameters, self.FLAT_RESOLUTION, context)
+            ],
+            "fill_spill_merge_rainfall_rate": self.parameterAsDouble(
+                parameters, self.FSM_RAINFALL_RATE, context
+            ),
+            "fsm_boundary_conditions": fsm_boundary_conditions,
+            # vertical units
+            "vertical_units": self.VERTICAL_UNITS_OPTIONS[
+                self.parameterAsEnum(parameters, self.VERTICAL_UNITS, context)
+            ],
+            "check_vertical_units_against_usgs": self.parameterAsBool(
+                parameters, self.CHECK_VERTICAL_UNITS_USGS, context
+            ),
+            # smoothing
+            "smooth_algorithm_choice": smooth_algorithm,
+            "perona_malik_iterations": self.parameterAsInt(parameters, self.PM_ITERATIONS, context),
+            "perona_malik_lambda": self.parameterAsDouble(parameters, self.PM_LAMBDA, context),
+            "perona_malik_conductance": self.PM_CONDUCTANCE_OPTIONS[
+                self.parameterAsEnum(parameters, self.PM_CONDUCTANCE, context)
+            ],
+            "perona_malik_k_quantile": self.parameterAsDouble(parameters, self.PM_K_QUANTILE, context),
+            "perona_malik_k_metres_per_cell": self.parameterAsDouble(
+                parameters, self.PM_K_METRES_PER_CELL, context
+            ),
+            "write_stencil_difference_raster": write_stencil_diff,
+            "coherence_iterations": self.parameterAsInt(parameters, self.COHERENCE_ITERATIONS, context),
+            "coherence_time_step": self.parameterAsDouble(parameters, self.COHERENCE_TIME_STEP, context),
+            "coherence_derivative_radius_metres": self.parameterAsDouble(
+                parameters, self.COHERENCE_DERIVATIVE_RADIUS, context
+            ),
+            "coherence_integration_radius_metres": self.parameterAsDouble(
+                parameters, self.COHERENCE_INTEGRATION_RADIUS, context
+            ),
+            "coherence_contrast": self.parameterAsDouble(parameters, self.COHERENCE_CONTRAST, context),
+            "coherence_min_diffusivity": self.parameterAsDouble(
+                parameters, self.COHERENCE_MIN_DIFFUSIVITY, context
+            ),
+            # sink candidates (a point layer in write_vector_format)
+            "write_sink_candidates": write_sink_candidates,
+            "sink_candidate_min_pixels": self.parameterAsInt(
+                parameters, self.SINK_CANDIDATE_MIN_PIXELS, context
+            ),
         }
+
+        if replace_layer is not None:
+            param_values["replace_pixels_fname"] = layer_file_path(replace_layer.source())
+            param_values["replace_pixels_value_field"] = self.parameterAsString(
+                parameters, self.REPLACE_PIXELS_VALUE_FIELD, context
+            )
+            param_values["write_replaced_pixels_raster"] = write_replaced
 
         # The CLI default for breach_lc_max_cost is unlimited (float max);
         # only pass the key when the user sets a positive limit.
@@ -641,6 +996,25 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
             outputs[self.OUTPUT_BINARY_MASKED] = require_output(
                 output_folder, output_prefix, "_binary_masked.tif", "binary-masked"
             )
+        if smooth_algorithm != "none":
+            outputs[self.OUTPUT_SMOOTHED] = require_output(
+                output_folder, output_prefix, "_smoothed.tif", "smoothed DEM"
+            )
+        if write_stencil_diff:
+            outputs[self.OUTPUT_STENCIL_DIFF] = require_output(
+                output_folder, output_prefix, "_stencil_difference.tif",
+                "neighbour-difference",
+            )
+        if write_replaced:
+            outputs[self.OUTPUT_REPLACED_PIXELS] = require_output(
+                output_folder, output_prefix, "_pixels_replaced.tif", "replaced-pixel DEM"
+            )
+        if write_sink_candidates:
+            outputs[self.OUTPUT_SINK_CANDIDATES] = require_output(
+                output_folder, output_prefix,
+                "_sink_candidates.{}".format(extension_for_format(depression_format)),
+                "sink candidates",
+            )
         if write_depressions:
             outputs[self.OUTPUT_DEPRESSIONS] = require_output(
                 output_folder, output_prefix,
@@ -665,9 +1039,11 @@ class RasterPreprocessingAlgorithm(QgsProcessingAlgorithm):
         return (
             "Runs lsdtt-raster-preprocessing using a generated parameter file. "
             "Covers reprojection, elevation and binary masking, interior nodata "
-            "filling, depression breaching and pit filling (with difference "
-            "rasters and depression polygons), and single or multidirectional "
-            "hillshade. Backend path is managed in plugin settings."
+            "filling, edge-preserving smoothing (Perona-Malik or coherence "
+            "diffusion), pixel replacement, depression breaching and pit filling "
+            "(with flat resolution, difference rasters, depression polygons and "
+            "sink candidates), vertical-unit checks, and single or "
+            "multidirectional hillshade. Backend path is managed in plugin settings."
         )
 
     def createInstance(self):

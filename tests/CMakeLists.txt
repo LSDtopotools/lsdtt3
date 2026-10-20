@@ -8926,6 +8926,51 @@ lsdtt_set_tests_properties(unit_wheel_cli_inventory PROPERTIES
     LABELS "unit;cli;packaging"
     TIMEOUT 60)
 
+# One version number for the whole repository: project(lsdtt3 VERSION ...) is
+# the truth, and pyproject.toml, the QGIS metadata.txt, the conda recipe,
+# pixi.toml and debian/changelog carry checked copies (tools/set_version.py
+# rewrites them together). Also checks that the PyPI README explains the
+# versions that have no wheel. Reads source files only; needs no build.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_version_consistency
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_version_consistency.py"
+            --repo-root "${CMAKE_SOURCE_DIR}")
+    lsdtt_mark_test_runtime(python unit_version_consistency)
+else()
+    lsdtt_mark_test_unregistered(python unit_version_consistency)
+endif()
+lsdtt_set_tests_properties(unit_version_consistency PROPERTIES
+    LABELS "unit;packaging"
+    TIMEOUT 60)
+
+# Builds the Python bindings once (pip, CLIs off) into a venv and runs the
+# whole python_bindings/tests suite against them: the cheap Linux check between
+# manual runs of the full wheel matrix. tools/make_release.sh runs the same
+# script on every release. Compiles all of src/ and needs network access (or a
+# pip cache) for nanobind, numpy, geopandas and friends, hence heavy and
+# serial. The interpreter needs the venv module (Debian/Ubuntu: python3-venv);
+# without it the test is skipped. Point LSDTT_PYTHON_SMOKE_PYTHON at another
+# interpreter to use that one instead.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    set(LSDTT_PYTHON_SMOKE_PYTHON "${Python3_EXECUTABLE}" CACHE FILEPATH
+        "Interpreter for the python_bindings_smoke test (needs the venv module)")
+    add_test(NAME python_bindings_smoke
+        COMMAND bash
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_python_bindings_smoke.sh"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+            --work-dir "${CMAKE_BINARY_DIR}/python_smoke"
+            --python "${LSDTT_PYTHON_SMOKE_PYTHON}"
+            --reuse)
+    lsdtt_mark_test_runtime(python python_bindings_smoke)
+else()
+    lsdtt_mark_test_unregistered(python python_bindings_smoke)
+endif()
+lsdtt_set_tests_properties(python_bindings_smoke PROPERTIES
+    LABELS "python;packaging"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 3600)
+
 # =============================================================================
 # COMPARTMENTALISATION: domain and cost labels
 #
@@ -9011,7 +9056,7 @@ set(LSDTT_DOMAIN_RULES
     # because "fill" would otherwise claim breach tests that mention filling.
     "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret|cli_reference|wheel_cli_inventory|test_env|configure_contract" "core"
+    "param|secret|cli_reference|wheel_cli_inventory|version_consistency|python_bindings_smoke|test_env|configure_contract" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
@@ -9072,6 +9117,7 @@ set(LSDTT_HEAVY_TESTS
     cosmo_realworld_dibiase2010_lsdn
     cosmo_realworld_lsdn_pixel_vs_lumped
     cosmo_realworld_production_isolation
+    python_bindings_smoke
 )
 
 # Tests that use every core they can get. Under `ctest -j` these must not share
@@ -9080,6 +9126,7 @@ set(LSDTT_HEAVY_TESTS
 # taking 9 minutes when run alone.
 set(LSDTT_SERIAL_TESTS
     unit_hillslope_implicit
+    python_bindings_smoke
 )
 
 get_property(_lsdtt_tests DIRECTORY PROPERTY TESTS)

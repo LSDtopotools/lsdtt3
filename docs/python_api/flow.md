@@ -6,29 +6,28 @@ This page is generated from the built Python runtime manifest. Do not edit signa
 
 Selected nested D8 drainage basins retaining their parent ``FlowInfo`` topology.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Selected nested D8 drainage basins retaining their parent ``FlowInfo`` topology.
+Notes
+-----
+Selected nested D8 drainage basins retaining their parent ``FlowInfo`` topology.
 
 Each basin is defined by an outlet pixel and stores an efficient native
 upslope slice; no raster-sized copy is retained per basin.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -175,28 +174,27 @@ B. Gailleton
 
 Channel-head locations resolved from a D8 flow topology.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Channel-head locations resolved from a D8 flow topology.
+Notes
+-----
+Channel-head locations resolved from a D8 flow topology.
 
 Use ``pixels`` as explicit ``FlowInfo.channel_scope(..., sources=...)`` input.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -574,29 +572,28 @@ B. Gailleton
 
 Fractional D-infinity or MFD flow-routing graph.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Fractional D-infinity or MFD flow-routing graph.
+Notes
+-----
+Fractional D-infinity or MFD flow-routing graph.
 
 Use ``FlowInfo`` for single-receiver D8 channel trees. Use ``FlowGraph`` for
 distributed-flow drainage area and later TWI/connectivity calculations.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def __init__(self, dem: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, mfd_exponent: float = 1.0, n_threads: int = 0) -> None
@@ -706,29 +703,28 @@ def slope(self) -> lsdtt3.Raster
 
 Immutable D8 drainage topology derived from a conditioned raster.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Immutable D8 drainage topology derived from a conditioned raster.
+Notes
+-----
+Immutable D8 drainage topology derived from a conditioned raster.
 
 ``FlowInfo`` owns routing topology, not elevations. Prepare depressions before
 construction; later operations explicitly receive rasters where needed.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `threshold_pixels` -> `threshold_contributing_pixels`; earliest removal: following minor.
@@ -1047,29 +1043,28 @@ def upslope_sum(self, values: lsdtt3.Raster, include_self: bool = True) -> lsdtt
 
 Junction-aware D8 basins selected from a ``ChannelNetwork``.
 
-    Parameters
-    ----------
-    *args
-        Constructor arguments described by the generated binding signature.
-    **kwargs
-        Constructor keyword arguments described by the generated binding
-        signature.
+Parameters
+----------
+*args
+    Constructor arguments described by the generated binding signature.
+**kwargs
+    Constructor keyword arguments described by the generated binding
+    signature.
 
-    Attributes
-    ----------
-    See the generated binding signature for available properties and methods.
+Attributes
+----------
+See the generated binding signature for available properties and methods.
 
-    Notes
-    -----
-    Junction-aware D8 basins selected from a ``ChannelNetwork``.
+Notes
+-----
+Junction-aware D8 basins selected from a ``ChannelNetwork``.
 
 The collection retains the channel-network stream order and supports in-place
 selection filters. It is created with :func:`junction_basins`.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ### Members
 
@@ -1187,30 +1182,29 @@ B. Gailleton
 
 basin_channel_lengths(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, max_stream_order: int = 6) -> object
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    basin_channel_lengths(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, max_stream_order: int = 6) -> object
+Notes
+-----
+basin_channel_lengths(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, max_stream_order: int = 6) -> object
 
 Return total in-basin D8 channel length by Strahler stream order.
 
 ``basins`` and ``network`` must have been created from the same ``FlowInfo``.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def basin_channel_lengths(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, max_stream_order: int = 6) -> object
@@ -1252,28 +1246,27 @@ def basin_surface_metrics(basins: lsdtt3.BasinCollection, dem: lsdtt3.Raster, sc
 
 divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
+Notes
+-----
+divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
-Divide two grid-compatible rasters.
+Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1285,28 +1278,27 @@ def divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
 
 divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object, clusters: object | None = None, source_pixels: int = 1000, snapping: str = 'downstream', outlet_control: str = 'complete_only', min_outlet_elevation: float = -inf, m_over_n: float = 0.45, reference_area: float = 1.0, uncertainty: str = 'std_err', bootstrap_replicates: int = 1000, seed: int = 5489) -> lsdtt3.DivideMigrationResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object, clusters: object | None = None, source_pixels: int = 1000, snapping: str = 'downstream', outlet_control: str = 'complete_only', min_outlet_elevation: float = -inf, m_over_n: float = 0.45, reference_area: float = 1.0, uncertainty: str = 'std_err', bootstrap_replicates: int = 1000, seed: int = 5489) -> lsdtt3.DivideMigrationResult
+Notes
+-----
+divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object, clusters: object | None = None, source_pixels: int = 1000, snapping: str = 'downstream', outlet_control: str = 'complete_only', min_outlet_elevation: float = -inf, m_over_n: float = 0.45, reference_area: float = 1.0, uncertainty: str = 'std_err', bootstrap_replicates: int = 1000, seed: int = 5489) -> lsdtt3.DivideMigrationResult
 
 Compare channel-head elevation, chi, relief, and gradient across adjacent outlet-defined basin divides.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object, clusters: object | None = None, source_pixels: int = 1000, snapping: str = 'downstream', outlet_control: str = 'complete_only', min_outlet_elevation: float = '-inf', m_over_n: float = 0.45, reference_area: float = 1.0, uncertainty: str = 'std_err', bootstrap_replicates: int = 1000, seed: int = 5489) -> lsdtt3.DivideMigrationResult
@@ -1318,21 +1310,21 @@ def divide_migration(flow: lsdtt3.FlowInfo, dem: lsdtt3.Raster, outlets: object,
 
 extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
+Notes
+-----
+extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str = 'threshold', threshold_contributing_pixels: int = 1000, pruning_drainage_area_m2: float = 1000.0, surface_fitting_radius_metres: float = 6.0, connected_components_threshold_pixels: int = 100, diagnostics: bool = False) -> lsdtt3.ChannelHeads
 
 Extract D8 channel heads by drainage threshold or Wiener curvature.
 
@@ -1340,10 +1332,9 @@ Extract D8 channel heads by drainage threshold or Wiener curvature.
 ``diagnostics=True``, the result retains the filtered DEM, tangential
 curvature, candidate channel mask, skeleton, and QQ table.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 **Deprecated compatibility names:**
 - `surface_fitting_radius_m` -> `surface_fitting_radius_metres`; earliest removal: following minor.
@@ -1359,28 +1350,27 @@ def extract_channel_heads(dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, method: str
 
 find_channel_candidates(raster: lsdtt3.Raster, lambda_min_metres: float = 3.0, lambda_max_metres: float = 20.0, n_scales: int = 5, curvature_metric: str = 'plan_curvature', positive_curvature_is_good: bool = True, depth_window_radius_metres: float = 12.0, depth_window_shape: str = 'circular', weight_persistent: float = 0.7, weight_depth: float = 0.3, weight_slope: float = 0.0, score_threshold: float = 0.5, use_hessian_filter: bool = True, hessian_elongation_threshold: float = 0.6, n_threads: int = 0) -> lsdtt3.ChannelCandidatesResult
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    find_channel_candidates(raster: lsdtt3.Raster, lambda_min_metres: float = 3.0, lambda_max_metres: float = 20.0, n_scales: int = 5, curvature_metric: str = 'plan_curvature', positive_curvature_is_good: bool = True, depth_window_radius_metres: float = 12.0, depth_window_shape: str = 'circular', weight_persistent: float = 0.7, weight_depth: float = 0.3, weight_slope: float = 0.0, score_threshold: float = 0.5, use_hessian_filter: bool = True, hessian_elongation_threshold: float = 0.6, n_threads: int = 0) -> lsdtt3.ChannelCandidatesResult
+Notes
+-----
+find_channel_candidates(raster: lsdtt3.Raster, lambda_min_metres: float = 3.0, lambda_max_metres: float = 20.0, n_scales: int = 5, curvature_metric: str = 'plan_curvature', positive_curvature_is_good: bool = True, depth_window_radius_metres: float = 12.0, depth_window_shape: str = 'circular', weight_persistent: float = 0.7, weight_depth: float = 0.3, weight_slope: float = 0.0, score_threshold: float = 0.5, use_hessian_filter: bool = True, hessian_elongation_threshold: float = 0.6, n_threads: int = 0) -> lsdtt3.ChannelCandidatesResult
 
 Find multiscale channel-bottom candidates and return score and diagnostics.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def find_channel_candidates(raster: lsdtt3.Raster, lambda_min_metres: float = 3.0, lambda_max_metres: float = 20.0, n_scales: int = 5, curvature_metric: str = 'plan_curvature', positive_curvature_is_good: bool = True, depth_window_radius_metres: float = 12.0, depth_window_shape: str = 'circular', weight_persistent: float = 0.7, weight_depth: float = 0.3, weight_slope: float = 0.0, score_threshold: float = 0.5, use_hessian_filter: bool = True, hessian_elongation_threshold: float = 0.6, n_threads: int = 0) -> lsdtt3.ChannelCandidatesResult
@@ -1392,31 +1382,30 @@ def find_channel_candidates(raster: lsdtt3.Raster, lambda_min_metres: float = 3.
 
 junction_basins(network: lsdtt3.ChannelNetwork, selection: str = 'all', outlets: object | None = None) -> lsdtt3.JunctionBasinCollection
 
-    Parameters
-    ----------
-    *args
-        Positional arguments described by the generated binding signature.
-    **kwargs
-        Keyword arguments described by the generated binding signature.
+Parameters
+----------
+*args
+    Positional arguments described by the generated binding signature.
+**kwargs
+    Keyword arguments described by the generated binding signature.
 
-    Returns
-    -------
-    object
-        Result described by the generated binding signature.
+Returns
+-------
+object
+    Result described by the generated binding signature.
 
-    Notes
-    -----
-    junction_basins(network: lsdtt3.ChannelNetwork, selection: str = 'all', outlets: object | None = None) -> lsdtt3.JunctionBasinCollection
+Notes
+-----
+junction_basins(network: lsdtt3.ChannelNetwork, selection: str = 'all', outlets: object | None = None) -> lsdtt3.JunctionBasinCollection
 
 Select junction-aware basins from a channel network.
 
 ``selection`` is ``"all"``, ``"outlets"``, or ``"nested"``. The latter two
 require outlet pixels as an N-by-2 ``(row, col)`` array.
 
-    Authors
-    -------
-    B. Gailleton
-
+Authors
+-------
+B. Gailleton
 
 ```python
 def junction_basins(network: lsdtt3.ChannelNetwork, selection: str = 'all', outlets: object | None = None) -> lsdtt3.JunctionBasinCollection

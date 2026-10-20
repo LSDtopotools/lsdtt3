@@ -136,6 +136,8 @@ for the outputs and the caveats on reading the contrasts.
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: experimental.** This CLI is not yet fully tested.
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

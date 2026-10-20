@@ -55,22 +55,33 @@ Linux executables.
 
 ---
 
-## Versions: three numbers, two checks
+## Versions: one number, one rule
 
-| Number | Where it is set | What reads it |
+lsdtt3 has one version number. The plugin, the backend bundles, the C++ package
+and the Python package all carry the `X.Y.Z` in `project(lsdtt3 VERSION ...)`
+on line 2 of `CMakeLists.txt`.
+
+| Copy | Where it is set | What reads it |
 |---|---|---|
-| **Plugin version** | `qgis_plugin/lsdtt_qgis/metadata.txt` (`[general] version=`) | the zip filename; the plugin's range check |
-| **Backend version** | the `-Version` / `--version` you pass to the packaging script | the bundle filename; `manifest.json` → `backend_version` |
-| **CLI version** | `k_version` in each `cli/lsdtt-*.cpp`, printed in the banner | people — below 1.0.0 means the CLI is still experimental. The plugin does not check it |
+| **Plugin version** | `qgis_plugin/lsdtt_qgis/metadata.txt` (`[general] version=`), a checked copy | the zip filename; the compatibility check |
+| **Backend version** | the `-Version` / `--version` you pass to the packaging script, which must equal `CMakeLists.txt` | the bundle filename; `manifest.json` → `backend_version` |
+
+`tools/set_version.py X.Y.Z` changes every copy together, and the CTest test
+`unit_version_consistency` fails if they differ. CLIs have no version of their
+own: each carries a stability label, `k_status` (`experimental` or `stable`),
+which the banner, `-v` and `--help-json` report. The plugin does not read it.
 
 When QGIS loads a backend, `qgis_plugin/lsdtt_qgis/backend/manifest.py` rejects
 it unless **both** of these hold:
 
-1. **`backend_version` ≥ `MINIMUM_BACKEND_VERSION`** (a constant in
-   `manifest.py`). The minimum is raised when the wrappers start depending on
-   a CLI behaviour older backends lack.
+1. **The backend has the plugin's major.minor version.** A plugin `X.Y.*`
+   accepts a backend `X.Y.*`; the patch level is free, so a plugin-only or
+   backend-only patch release still works with the other. A backend from an
+   older series gets "install the lsdtt3 X.Y backend bundle"; a newer one gets
+   "upgrade the plugin".
 2. **The plugin version satisfies the bundle's `plugin_version_range`.** The
-   packaging scripts write this into `manifest.json`; override the default with
+   packaging scripts write this into `manifest.json`. The default is the
+   bundle's own series, `>=X.Y.0 <X.(Y+1).0`; override it with
    `-PluginVersionRange` (PowerShell) or `--plugin-version-range` (bash).
 
 > [!WARNING]
@@ -82,16 +93,14 @@ it unless **both** of these hold:
 
 Rules of thumb:
 
-- Change the plugin code or UI → bump the plugin version.
-- Change what the bundle contains → bump the backend version.
-- Make an old backend unusable (a wrapper now emits a parameter older CLIs do
-  not understand) → raise `MINIMUM_BACKEND_VERSION`, and update the pinned
-  value in `qgis_plugin/lsdtt_qgis/tests/test_backend_health.py` and
-  `test_package_content_contract.py`.
-- Keep `plugin_version_range` wide enough to cover the plugin versions you
-  intend to support.
-- Check before packaging: `CMakeLists.txt` line 2 has the release version, and
-  a backend packaged at that version must still clear `MINIMUM_BACKEND_VERSION`.
+- A wrapper change that needs a new CLI behaviour (a renamed parameter, a new
+  key) is a **minor** version bump. That is what keeps an older backend from
+  being accepted: the bump moves the plugin into a series the old backend is
+  not in.
+- A fix that needs no change on the other side is a **patch** bump.
+- Plugins up to 0.4.0 predate this rule. Faced with a 0.7 backend they report
+  that it "supports plugin versions '>=0.7.0 <0.8.0'"; the fix is to upgrade
+  the plugin.
 
 ---
 

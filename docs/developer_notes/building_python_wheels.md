@@ -39,8 +39,15 @@ first. On Ubuntu:
 sudo apt install cmake g++ pkg-config libgdal-dev libfftw3-dev \
                  libnetcdf-dev libeigen3-dev
 python -m pip install --upgrade pip cibuildwheel
-python -m cibuildwheel python_bindings --output-dir wheelhouse
+CIBW_CONTAINER_ENGINE=podman CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28 \
+    python -m cibuildwheel python_bindings --output-dir wheelhouse
 ```
+
+On Linux `cibuildwheel` builds inside the manylinux container, and it uses
+Docker unless told otherwise. This project does not use Docker: set
+`CIBW_CONTAINER_ENGINE=podman` (`sudo apt install podman`).
+`tools/make_all_packages.sh --only wheel` does all of this for you, for one
+Python version, from a tag.
 
 `cibuildwheel` will build one wheel per supported Python version, which takes
 a while. To build a single wheel for the interpreter you already have, bypass
@@ -63,7 +70,9 @@ Configured in `python_bindings/pyproject.toml` under `[tool.cibuildwheel]`:
 - **Python versions:** CPython 3.10 through 3.14 (`cp310-*` … `cp314-*`).
 - **Skipped:** PyPy, and musllinux.
 
-The four platform legs, from `.github/workflows/python-wheels.yml`:
+The four platform legs, from `.github/workflows/python-wheels.yml`. A run builds
+either the Linux leg alone or all four (the workflow's `platforms` input; see
+[Releasing](#releasing)):
 
 | Leg | Runner | Arch | Notes |
 |---|---|---|---|
@@ -110,21 +119,60 @@ wheel can import cleanly and still be missing a symbol or a data file.
 The release is **manual by design** — the workflow is `workflow_dispatch` only
 and never fires on a push.
 
-1. Go to Actions → *Build Python wheels* → Run workflow.
-2. Choose the version increment: `patch`, `minor` or `major`.
-3. It must be run from the default branch; the workflow refuses otherwise.
+1. Tag the release first (`vX.Y.Z`, or `vX.Y.Z.postN` for a wheel-only
+   rebuild). The workflow builds an existing tag; it never creates one.
+2. Go to Actions → *Build Python wheels* → Run workflow, give the tag, and
+   choose **platforms** (see below).
+3. Tick *upload* to attach the wheels to the `vX.Y.Z` GitHub release (which
+   `release.yml` created); otherwise they stay as workflow artefacts.
 
-The workflow then calculates the new version from
-`python_bindings/pyproject.toml`, builds and tests all four legs, commits the
-validated version bump, and tags and publishes the release. Version calculation
-happens *before* the build and the commit happens *after* it, so a failed build
-does not leave a bumped version behind.
+### A Linux-only wheel build (the cheap one)
 
-!!! note "The Python package version is independent of the lsdtt3 version"
+While the repository is private, Actions minutes are metered, and runners are
+billed at a multiple of the Linux rate: **macOS at 10×, Windows at 2×**. Two of
+the four legs are macOS, so a full run costs many times a Linux-only one. The
+`platforms` input therefore defaults to `linux`, which builds only the Linux
+x86_64 leg: five wheels (CPython 3.10–3.14), each tested as above, on one
+`ubuntu-24.04` runner.
 
-    `python_bindings/pyproject.toml` carries its own version, separate from
-    `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`. A Python
-    release does not imply a new lsdtt3 release, or the reverse.
+From the Actions tab: *Build Python wheels* → **Run workflow** → tag
+`v0.7.0`, platforms **linux**, upload ticked or not. Or from a terminal with an
+authenticated `gh`:
+
+```bash
+gh workflow run python-wheels.yml -f tag=v0.7.0 -f platforms=linux -f upload=true
+gh run watch                       # follow it; or: gh run list --workflow python-wheels.yml
+```
+
+`gh workflow run` dispatches the workflow file as it is on the default branch,
+and that version checks out and builds the tag you name.
+
+**What a Linux-only release means for users.** There is no source
+distribution, so `pip install lsdtt3` on macOS or native Windows finds no
+wheel and fails with "no matching distribution". Linux users, including WSL2
+and Google Colab, are covered. Choose `all` when a release should reach
+macOS and Windows Python users. You can start with `linux` and run `all` for
+the same tag later; with *upload* ticked, the second run replaces the Linux
+wheels the first one attached.
+
+The local alternative costs no minutes at all: `tools/make_all_packages.sh
+--clean --tag v0.7.0 --only wheel` builds one Linux manylinux wheel, for the
+interpreter it runs under, inside `podman` (see [Building locally](#building-locally)).
+
+Before building anything the workflow checks the tag against the tagged tree:
+the `X.Y.Z` stem must equal `CMakeLists.txt`, the tag minus its `v` must equal
+`pyproject.toml`, and every version copy must agree. A mismatched tag fails in
+seconds rather than after the matrix.
+
+!!! note "The Python package shares the lsdtt3 version number"
+
+    `python_bindings/pyproject.toml` carries the same `X.Y.Z` as
+    `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`
+    (`tools/set_version.py` sets both). Wheels are built only for releases
+    where the Python API is supported, so not every lsdtt3 version is on PyPI.
+    Between wheel builds, `tools/make_release.sh` builds the bindings once on
+    Linux and runs the whole `python_bindings/tests` suite at every release
+    (also available as the opt-in CTest test `python_bindings_smoke`).
 
 ---
 

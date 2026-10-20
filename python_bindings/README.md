@@ -4,10 +4,20 @@
 
 ## Install
 
-From the repository root:
+```bash
+python -m pip install lsdtt3
+```
+
+Wheels bundle GDAL and PROJ, and also install the lsdtt3 command-line tools as
+commands. Install into a virtual, conda or pixi environment rather than your
+system Python. See "Versioning" below for why some lsdtt3 versions have no
+wheel.
+
+To install from a clone of the repository instead (needs a C++17 compiler,
+CMake and the GDAL development files), from the repository root:
 
 ```bash
-python -m pip install --no-build-isolation --force-reinstall -e ./python_bindings
+python -m pip install ./python_bindings
 ```
 
 ## Quickstart
@@ -43,9 +53,23 @@ grid metadata, values, and nodata masks. Analysis is deliberately functional:
 operations accept rasters and return new rasters rather than wrapping CLI
 parameter files or mutating inputs.
 
-See [Python bindings architecture and API contracts](../docs/developer_notes/python_bindings_architecture.md)
+See [Python bindings architecture and API contracts](https://github.com/LSDtopotools/lsdtt3/blob/main/docs/developer_notes/python_bindings_architecture.md)
 for the backend/API distinction, contract manifests, extension workflow, and
 verification commands.
+
+## Versioning
+
+The Python package shares its version number with lsdtt3: `lsdtt3` 0.7.0 on
+PyPI is built from the lsdtt3 `v0.7.0` release, the same source as the 0.7.0
+command-line tools and backend bundles.
+
+Wheels are not published for every lsdtt3 release, because the Python API is
+not supported for every version of the C++ core. A version missing from PyPI is
+expected; it is not a withdrawn release. `pip install lsdtt3` installs the
+newest version that has wheels.
+
+A version ending in `.postN` (for example `0.7.0.post1`) is the same source as
+`0.7.0`, rebuilt or repackaged.
 
 ## Authors
 

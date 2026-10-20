@@ -17,6 +17,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     export_baseline_line,
     layer_file_path,
@@ -26,7 +27,7 @@ from .support import (
 )
 
 
-class SwathProfileAlgorithm(QgsProcessingAlgorithm):
+class SwathProfileAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_BASELINE = "INPUT_BASELINE"
     VALUE_RASTER = "VALUE_RASTER"
@@ -84,6 +85,7 @@ class SwathProfileAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_swath"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.HALF_WIDTH_METRES,

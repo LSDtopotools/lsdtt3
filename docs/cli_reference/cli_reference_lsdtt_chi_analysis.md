@@ -790,6 +790,8 @@ Mudd, S.M., et al. (2018). A statistical framework to quantify spatial variation
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: stable.**
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

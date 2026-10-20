@@ -4,7 +4,12 @@ import os
 import re
 
 
-MINIMUM_BACKEND_VERSION = "0.6.0"
+# lsdtt3 has one version number for the backend, the plugin and the Python
+# package. A plugin X.Y.* accepts a backend X.Y.*: same major and minor, any
+# patch level. A minor bump is how a release marks a change one component
+# depends on (a parameter rename, a removed output, a new CLI behaviour the
+# wrappers rely on), so a mismatch there means the wrappers may emit
+# parameters the backend does not understand.
 _VERSION_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+){0,2}$")
 _RANGE_OPERATORS = (">=", "<=", "==", ">", "<")
 
@@ -75,41 +80,54 @@ def manifest_supports_plugin(manifest_data, plugin_version):
 
 
 def backend_compatibility_error(manifest_data, plugin_version=None):
-    """Return why a backend cannot run current wrappers, or None."""
+    """Return why a backend cannot run current wrappers, or None.
+
+    The backend must have the plugin's major.minor version, and the bundle's
+    own plugin_version_range must include the plugin.
+    """
+    if plugin_version is None:
+        try:
+            plugin_version = current_plugin_version()
+        except (OSError, configparser.Error, ValueError) as exc:
+            return "Could not determine the current plugin version: {}.".format(exc)
+    try:
+        plugin_series = _series(_parse_version(plugin_version))
+    except (TypeError, ValueError):
+        return "The plugin has an invalid version: {!r}.".format(plugin_version)
+
     if manifest_data is None:
         return (
             "The configured backend has no manifest.json, so its version cannot "
-            "be verified. Install an lsdtt3 backend bundle version {} or newer."
-        ).format(MINIMUM_BACKEND_VERSION)
+            "be verified. Install the lsdtt3 {} backend bundle."
+        ).format(plugin_series)
     if not isinstance(manifest_data, dict):
         return "The configured backend manifest is not a JSON object."
 
     backend_version = manifest_data.get("backend_version")
     if not backend_version:
         return (
-            "The configured backend manifest has no backend_version. Install an "
-            "lsdtt3 backend bundle version {} or newer."
-        ).format(MINIMUM_BACKEND_VERSION)
-
+            "The configured backend manifest has no backend_version. Install the "
+            "lsdtt3 {} backend bundle."
+        ).format(plugin_series)
     try:
-        compatible = _parse_version(backend_version) >= _parse_version(
-            MINIMUM_BACKEND_VERSION
-        )
+        backend = _parse_version(backend_version)
     except (TypeError, ValueError):
         return "The configured backend has an invalid backend_version: {!r}.".format(
             backend_version
         )
-    if not compatible:
-        return (
-            "The configured lsdtt3 backend is version {}, but this plugin requires "
-            "version {} or newer (normalised parameter names and least-cost breach options)."
-        ).format(backend_version, MINIMUM_BACKEND_VERSION)
 
-    if plugin_version is None:
-        try:
-            plugin_version = current_plugin_version()
-        except (OSError, configparser.Error, ValueError) as exc:
-            return "Could not determine the current plugin version: {}.".format(exc)
+    plugin = _parse_version(plugin_version)
+    if backend[:2] < plugin[:2]:
+        return (
+            "The configured lsdtt3 backend is version {}, but this plugin is version "
+            "{} and needs a {} backend. Install the lsdtt3 {} backend bundle."
+        ).format(backend_version, plugin_version, plugin_series, plugin_series)
+    if backend[:2] > plugin[:2]:
+        return (
+            "The configured lsdtt3 backend is version {}, which is newer than this "
+            "plugin (version {}). Upgrade the plugin to {}.x."
+        ).format(backend_version, plugin_version, _series(backend))
+
     try:
         supported = manifest_supports_plugin(manifest_data, plugin_version)
     except (TypeError, ValueError) as exc:
@@ -122,6 +140,11 @@ def backend_compatibility_error(manifest_data, plugin_version=None):
             "plugin version is {}. Install a compatible backend bundle."
         ).format(manifest_data.get("plugin_version_range"), plugin_version)
     return None
+
+
+def _series(version):
+    """The major.minor series of a parsed version, as text: (0, 7, 2) -> '0.7'."""
+    return "{}.{}".format(version[0], version[1])
 
 
 def _parse_version(value):

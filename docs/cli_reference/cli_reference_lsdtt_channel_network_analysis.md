@@ -608,6 +608,8 @@ junction_area_ratio_seed:          1
 
 This section is generated from the executable's `-h json` registry. Do not edit it manually.
 
+**Status: stable.**
+
 ### File I/O
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

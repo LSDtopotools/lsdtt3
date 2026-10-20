@@ -182,3 +182,44 @@ def source_layer_name(source):
         if key.strip().lower() == "layername" and value.strip():
             return value.strip()
     return os.path.splitext(os.path.basename(strip_layer_suffix(source)))[0]
+
+
+# Files the plugin writes itself on every run and versions or replaces on its
+# own: the run log and the reproducible parameter file. They never count as
+# results that a re-run would clobber.
+_BOOKKEEPING_EXTENSIONS = (".log", ".driver")
+
+
+def normalised_path(path):
+    """A path in a form that compares equal for the same file on any OS."""
+    return os.path.normcase(os.path.abspath(strip_layer_suffix(path)))
+
+
+def existing_prefixed_outputs(output_folder, output_prefix):
+    """Existing files a run with this folder and prefix would overwrite.
+
+    Every lsdtt output is named <prefix>_<suffix>, so these are the files in
+    output_folder whose name starts with "<prefix>_", less the plugin's own
+    run logs and parameter files. Returns sorted normalised paths; an empty
+    list when the folder does not exist yet.
+    """
+    if not output_folder or not output_prefix or not os.path.isdir(output_folder):
+        return []
+    stem = output_prefix + "_"
+    found = []
+    for name in os.listdir(output_folder):
+        path = os.path.join(output_folder, name)
+        if (name.startswith(stem) and os.path.isfile(path)
+                and not name.lower().endswith(_BOOKKEEPING_EXTENSIONS)):
+            found.append(normalised_path(path))
+    return sorted(found)
+
+
+def written_since(path, started, tolerance_seconds=2.0):
+    """True if the file at path was modified at or after `started`.
+
+    `started` is a time.time() value. The tolerance allows for filesystems
+    with coarse timestamps (FAT keeps 2 s). A file left over from an earlier
+    run, because the new run could not replace it, fails this test.
+    """
+    return os.path.getmtime(path) >= started - tolerance_seconds

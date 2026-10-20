@@ -18,6 +18,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     export_points_as_latlon_csv,
     extension_for_format,
@@ -27,7 +28,7 @@ from .support import (
 )
 
 
-class BasinStatsAlgorithm(QgsProcessingAlgorithm):
+class BasinStatsAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_OUTLETS = "INPUT_OUTLETS"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
@@ -93,6 +94,7 @@ class BasinStatsAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_basin_stats"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.CALCULATE_CHANNEL_STATS,

@@ -14,10 +14,10 @@ from qgis.core import (
     QgsProcessingParameterVectorLayer,
 )
 
-from .support import attach_backend_help, layer_file_path, require_output, run_lsdtt_tool, split_layer_source
+from .support import OutputOverwriteMixin, attach_backend_help, layer_file_path, require_output, run_lsdtt_tool, split_layer_source
 
 
-class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
+class ClipRasterToPolygonAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_POLYGON = "INPUT_POLYGON"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
@@ -49,6 +49,7 @@ class ClipRasterToPolygonAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_clip"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.FORCE_RECTANGULAR,

@@ -22,6 +22,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     layer_file_path,
@@ -56,7 +57,7 @@ def _grouped_outline_outputs(output_folder, output_prefix, suffix, output_format
     return sorted(matches, key=lambda path: (order_number(path), path))
 
 
-class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
+class BasinExtractionAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -144,6 +145,7 @@ class BasinExtractionAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_basin"))
+        self.add_overwrite_parameter()
         self.addParameter(QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False))
         self.addParameter(
             QgsProcessingParameterNumber(

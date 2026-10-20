@@ -2,11 +2,10 @@
   "schema_version": 1,
   "api_release_status": "shipped",
   "release_evidence": {
-    "declared_version": "0.2.0",
     "local_python_release_tags": [],
     "remote_release_query": "unavailable: GitHub credentials rejected",
     "published_installation_contract": "docs/python/index.md instructs users to pip install lsdtt3",
-    "version_ownership": "Python SemVer is independent and released under python-vX.Y.Z tags",
+    "version_ownership": "shared with the C++ package (project(lsdtt3 VERSION) in CMakeLists.txt); released under vX.Y.Z tags; wheels are not built for every release",
     "compatibility_policy": "deprecated keywords remain for at least one published minor release"
   },
   "approved_name_differences": [

@@ -19,7 +19,10 @@ their platform, and link back here for everything else.
 
 Once you have a build, turning it into something other people can install is
 covered in [Making release packages](making_release_packages.md), and the QGIS
-plugin workflow in [QGIS plugin development](qgis_plugin_development.md).
+plugin workflow in [QGIS plugin development](qgis_plugin_development.md). The
+Python package is a separate build of the same source, in `python_bindings/`:
+see [Building the Python wheels](building_python_wheels.md) and
+[Python bindings architecture](python_bindings_architecture.md).
 
 ---
 
@@ -116,6 +119,7 @@ change them.
 | Test only the landscape evolution model | `-DLSDTT_ENABLE_PYTHON_TESTS=ON` (without it, only the LEM's C++ unit tests are registered) | `python3`, `gdal-bin` | `ctest --test-dir build -L '^lem_component$' --output-on-failure` |
 | Test everything except the landscape evolution model | *(any)* | — | `ctest --test-dir build -LE '^lem_component$' --output-on-failure` |
 | Test one part of the code, e.g. cosmogenic nuclides | `-DLSDTT_ENABLE_PYTHON_TESTS=ON` | `python3`, `gdal-bin` | `ctest --test-dir build -L '^cosmo$' -LE '^heavy$' --output-on-failure` |
+| Check the Python bindings still build and pass their tests | `-DLSDTT_ENABLE_PYTHON_TESTS=ON` (optionally `-DLSDTT_PYTHON_SMOKE_PYTHON=<python>`; a pixi Python works) | a Python with the `venv` module; a network connection or pip cache | `ctest --test-dir build -R '^python_bindings_smoke$' --output-on-failure` (about 15 minutes: it compiles all of `src/`) |
 | Run the tests that download data (e.g. the `cosmo_realworld` erosion-rate validations) | `-DLSDTT_ENABLE_PYTHON_TESTS=ON -DLSDTT_ENABLE_NETWORK_TESTS=ON` | `python3`, `gdal-bin`; a network connection | `ctest --test-dir build -L '^needs_network$' --output-on-failure` |
 | Benchmark against RichDEM, TopoToolbox and Whitebox | `-DLSDTT_ENABLE_BENCHMARKS=ON` | Pixi, then `pixi install -e benchmark`; a network connection | `ctest --test-dir build -L '^benchmark$' --output-on-failure` |
 | Time lsdtt3 on this machine | in a separate directory: `cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DLSDTT_ENABLE_PERF_TESTS=ON` | — | `ctest --test-dir build-perf -L '^performance$' --output-on-failure` |

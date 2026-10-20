@@ -11,12 +11,15 @@ import csv
 import datetime
 import os
 import tempfile
+import time
 
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsGeometry,
     QgsProcessingException,
+    QgsProcessingParameterBoolean,
+    QgsProject,
 )
 
 from ..backend.manager import BackendManager
@@ -24,18 +27,117 @@ from ..backend.manifest import backend_compatibility_error, load_manifest
 from ..backend.runner import run_cli, write_log
 from ..naming import (
     build_backend_help_index,
+    existing_prefixed_outputs,
     expected_output_path,
     extension_for_format,
     lookup_param_help,
     next_qgis_driver_name,
+    normalised_path,
     source_layer_name,
     split_source,
     strip_layer_suffix,
     write_line_geojson,
+    written_since,
 )
 from ..templates.lsdtt_params import write_parameter_file
 
+OVERWRITE_OUTPUTS = "OVERWRITE_OUTPUTS"
+
+# When each (output folder, prefix) last started a backend run, so
+# require_output can tell a file this run wrote from one an earlier run left.
+_RUN_STARTED = {}
+
+
+def _run_key(output_folder, output_prefix):
+    return (normalised_path(output_folder), output_prefix)
+
+
+class OutputOverwriteMixin:
+    """Lets an algorithm re-run into the same folder and prefix.
+
+    The lsdtt CLIs overwrite their outputs, but QGIS keeps every loaded layer's
+    file open, and on Windows an open file cannot be replaced. Before a run
+    (in prepareAlgorithm, which QGIS always calls on the main thread, where
+    the project may be changed) this removes from the project the layers
+    backed by files the run is about to write, so the CLI can replace them.
+    With the option off, a run that would overwrite anything stops instead.
+    Algorithms call add_overwrite_parameter() in initAlgorithm and list this
+    class before QgsProcessingAlgorithm.
+    """
+
+    def add_overwrite_parameter(self):
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                OVERWRITE_OUTPUTS,
+                "Overwrite existing outputs with the same prefix (closes those layers first)",
+                True,
+            )
+        )
+
+    def _input_paths(self, parameters, context):
+        paths = set()
+        for pdef in self.parameterDefinitions():
+            name, kind = pdef.name(), pdef.type()
+            try:
+                if kind in ("raster", "vector", "source", "layer", "mesh"):
+                    layer = self.parameterAsLayer(parameters, name, context)
+                    sources = [layer.source()] if layer is not None else []
+                elif kind == "multilayer":
+                    sources = [l.source() for l in self.parameterAsLayerList(parameters, name, context)]
+                elif kind == "file":
+                    value = self.parameterAsFile(parameters, name, context)
+                    sources = [value] if value else []
+                else:
+                    continue
+            except Exception:  # an unresolvable optional input is not ours to judge
+                continue
+            paths.update(normalised_path(source) for source in sources if source)
+        return paths
+
+    def prepareAlgorithm(self, parameters, context, feedback):
+        folder = self.parameterAsString(parameters, self.OUTPUT_FOLDER, context)
+        prefix = self.parameterAsString(parameters, self.OUTPUT_PREFIX, context)
+        existing = existing_prefixed_outputs(folder, prefix)
+        if not existing:
+            return True
+
+        inputs = self._input_paths(parameters, context)
+        clobbered = sorted(set(existing) & inputs)
+        if clobbered:
+            raise QgsProcessingException(
+                "An input of this run would be overwritten by its own outputs "
+                "(same folder and prefix): {}. Choose another output prefix.".format(
+                    ", ".join(os.path.basename(p) for p in clobbered)
+                )
+            )
+
+        if not self.parameterAsBool(parameters, OVERWRITE_OUTPUTS, context):
+            shown = ", ".join(os.path.basename(p) for p in existing[:5])
+            more = " and {} more".format(len(existing) - 5) if len(existing) > 5 else ""
+            raise QgsProcessingException(
+                "{} already holds outputs with the prefix '{}' ({}{}). Choose "
+                "another prefix or folder, or tick 'Overwrite existing outputs'.".format(
+                    folder, prefix, shown, more
+                )
+            )
+
+        project = context.project() or QgsProject.instance()
+        targets = set(existing)
+        released = [
+            layer for layer in project.mapLayers().values()
+            if normalised_path(layer.source()) in targets
+        ]
+        for layer in released:
+            feedback.pushInfo(
+                "Closing layer '{}' so its file can be overwritten.".format(layer.name())
+            )
+        if released:
+            project.removeMapLayers([layer.id() for layer in released])
+        return True
+
 __all__ = [
+    "OVERWRITE_OUTPUTS",
+    "OutputOverwriteMixin",
     "attach_backend_help",
     "export_baseline_line",
     "export_points_as_latlon_csv",
@@ -229,6 +331,7 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
         )
 
     log_stem = tool_name.replace("lsdtt-", "").replace("-", "_")
+    _RUN_STARTED[_run_key(output_folder, output_prefix)] = time.time()
 
     driver_dir = param_values.get("read_path")
     dem_fname = param_values.get("read_fname")
@@ -283,7 +386,12 @@ def run_lsdtt_tool(tool_name, param_values, output_folder, output_prefix, feedba
 
 
 def require_output(output_folder, output_prefix, suffix, description):
-    """Return the expected output path, raising if the file was not created."""
+    """Return the expected output path, raising if this run did not write it.
+
+    A file that exists but predates the run is a failure too: it is left over
+    from an earlier run that this one could not replace (typically because the
+    file is open in another program), and loading it would show stale results.
+    """
     path = expected_output_path(output_folder, output_prefix, suffix)
     if not os.path.exists(path):
         raise QgsProcessingException(
@@ -291,5 +399,12 @@ def require_output(output_folder, output_prefix, suffix, description):
             "Check the run log in the output folder for warnings.".format(
                 description, path
             )
+        )
+    started = _RUN_STARTED.get(_run_key(output_folder, output_prefix))
+    if started is not None and not written_since(path, started):
+        raise QgsProcessingException(
+            "The {} output was not rewritten by this run: {} is from an earlier "
+            "run. It is probably open in another program; close it there, or "
+            "choose another output prefix, and run again.".format(description, path)
         )
     return path

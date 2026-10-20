@@ -185,6 +185,11 @@ Raster multiply(const Raster& a, const Raster& b)
     return Raster(lsdtt::algebra::raster_multiply(a.native(), b.native()));
 }
 
+Raster absolute(const Raster& raster)
+{
+    return Raster(lsdtt::algebra::raster_abs(raster.native()));
+}
+
 Raster divide(const Raster& a, const Raster& b)
 {
     return Raster(lsdtt::algebra::raster_divide(a.native(), b.native()));
@@ -228,7 +233,10 @@ void bind_raster_basic_ops(nb::module_& m)
     m.def("add", &add, nb::arg("a"), nb::arg("b"), "Add two grid-compatible rasters.");
     m.def("subtract", &subtract, nb::arg("a"), nb::arg("b"), "Subtract two grid-compatible rasters.");
     m.def("multiply", &multiply, nb::arg("a"), nb::arg("b"), "Multiply two grid-compatible rasters.");
-    m.def("divide", &divide, nb::arg("a"), nb::arg("b"), "Divide two grid-compatible rasters.");
+    m.def("absolute", &absolute, nb::arg("raster"),
+        "Absolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM of absolute difference).");
+    m.def("divide", &divide, nb::arg("a"), nb::arg("b"),
+        "Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.");
     m.def("scale", &scale, nb::arg("raster"), nb::arg("factor"),
         "Multiply valid raster values by a scalar factor.");
     m.def("normalize_unit_interval", &normalize_unit_interval, nb::arg("raster"),

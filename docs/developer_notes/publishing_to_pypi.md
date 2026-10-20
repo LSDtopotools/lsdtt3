@@ -198,31 +198,73 @@ password = pypi-AgEIcHlwaS5vcmc...
 `chmod 600 ~/.pypirc`. **Never commit it** — it is a credential with upload
 rights to the project.
 
-### Keep the GitHub release in step
+### Which tag a wheel comes from
 
-Route A does not create a git tag or a GitHub release; route B does both. If
-you publish by hand, tag and release by hand too, so the PyPI version and the
-repository history agree:
+lsdtt3 has one version number. `python_bindings/pyproject.toml` carries the
+same `X.Y.Z` as `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` (checked by
+`unit_version_consistency`; set both with `tools/set_version.py`), and a wheel
+is built from the release tag `vX.Y.Z`, never from an untagged commit:
 
 ```bash
-# Use the SAME tag convention CI uses: python-v<version>
-# (python-wheels.yml builds it as f"python-v{version}")
-git tag -a python-v0.2.0 -m "lsdtt3 Python 0.2.0"
-git push origin python-v0.2.0
-gh release create python-v0.2.0 wheelhouse/*.whl \
-    --title "lsdtt3 Python 0.2.0" --generate-notes
+tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel   # needs podman for manylinux
+gh release upload v0.7.0 dist/v0.7.0/*.whl                     # attach to the lsdtt3 release
 ```
 
-Note this is a *different* tag series from the `v<version>` tags that mark
-lsdtt3 releases. `python-v0.2.0` and `v0.5.2` are independent.
+There is no separate Python tag series. Before the version numbers were
+unified the wheel workflow would have tagged `python-vX.Y.Z`; none was ever
+pushed, and the workflow no longer creates tags.
+
+**Not every release gets a wheel.** Wheels are built only for releases where
+the Python API is supported; a version missing from PyPI is expected, and
+`python_bindings/README.md` (the PyPI project page) says so in its
+"Versioning" section. When a release has no wheel, its GitHub release notes say
+"Python wheel: not built for this release".
+
+### A rebuilt wheel of the same source: `.postN`
+
+PyPI never accepts the same file twice and never frees a version, so a broken
+wheel (built against the wrong GDAL, missing a data file) cannot be replaced
+in place. When the **source is unchanged** and only the build was wrong,
+publish a post-release:
+
+```bash
+git switch -c release/0.7 v0.7.0      # or stay on main if it has not moved on
+# ... commit the packaging fix ...
+tools/set_version.py 0.7.0 --post 1   # pyproject.toml -> 0.7.0.post1, nothing else
+git commit -am "Python wheel 0.7.0.post1"
+git tag -a v0.7.0.post1 -m "lsdtt3 Python wheel 0.7.0.post1"
+git push origin v0.7.0.post1          # release.yml ignores .post tags
+tools/make_all_packages.sh --clean --tag v0.7.0.post1 --only wheel
+```
+
+`lsdtt3.__version__` and the bundled CLIs then report `0.7.0.post1`. A source
+change, even a Python-only fix, is never a `.postN`: it is a new patch release
+for everything (`0.7.1`), because PEP 440 reserves post-releases for changes
+that do not alter the distributed software.
+
+If the broken wheel is actively harmful, also **yank** `0.7.0` on PyPI (the
+project's release page → Options → Yank). pip then skips it unless a user pins
+it exactly.
+
+### Release candidates: TestPyPI only
+
+No pre-release versions are published to PyPI or in backend bundles (the QGIS
+plugin cannot parse a suffixed `backend_version`). To try a wheel before the
+real upload, edit `pyproject.toml` to `0.7.0rc1` locally, **do not commit or
+tag it**, build, and upload to TestPyPI (step 5 above). That catches most
+"uploaded a broken wheel, now need `.post1`" mistakes.
 
 ---
 
 ## Route B: publishing from GitHub Actions
 
-`.github/workflows/python-wheels.yml` already builds and tests wheels on four
-platform legs and creates a GitHub release. **It does not upload to PyPI** —
-there is no `twine` step and no token. Adding one is a small change.
+`.github/workflows/python-wheels.yml` builds and tests wheels for one existing
+tag (its `tag` input: `vX.Y.Z` or `vX.Y.Z.postN`), on Linux only or on all four
+platform legs (its `platforms` input, `linux` by default; see
+[A Linux-only wheel build](building_python_wheels.md#a-linux-only-wheel-build-the-cheap-one)), and
+can upload them to the `vX.Y.Z` GitHub release (its `upload` input). It never
+bumps a version, commits or tags. **It does not upload to PyPI** — there is no
+`twine` step and no token. Adding one is a small change.
 
 ### The preferred mechanism: trusted publishing
 
@@ -283,16 +325,18 @@ building the wheels does.
 
 | | Route A (twine) | Route B (Actions) |
 |---|---|---|
-| Actions minutes | none | the full wheel matrix |
-| Platforms | Linux only, unless you own Macs and Windows boxes | Linux, macOS ARM, macOS Intel, Windows |
+| Actions minutes | none | one Linux runner (`platforms: linux`), or the full matrix with macOS at 10× and Windows at 2× (`all`) |
+| Platforms | Linux only, unless you own Macs and Windows boxes | Linux only, or Linux, macOS ARM, macOS Intel, Windows |
 | Python versions | whatever you tell cibuildwheel to build | cp310–cp314 |
 | Credentials | a token on your machine | OIDC, nothing stored |
-| Tag and GitHub release | you do it | automatic |
+| Tag and GitHub release | you tag; `gh release upload` | you tag; the workflow can upload |
 | Pre-upload testing | you run it | `test-command` runs against every wheel |
 
-**Route B for real releases**, because Linux-only wheels leave most users
-building from source, and because the per-wheel test suite runs there. **Route
-A when you want a Linux release without spending minutes**, or to rehearse on
+**Route B with `platforms: all` for releases that should reach every user**:
+with no source distribution, a Linux-only release leaves macOS and Windows
+users with nothing to install. **Route B with `platforms: linux`** is the cheap
+middle ground, with the per-wheel test suite still run on GitHub. **Route A when
+you want a Linux release without spending minutes**, or to rehearse on
 TestPyPI.
 
 ---
@@ -322,11 +366,11 @@ TestPyPI.
 **A version can never be reused.** Deleting a release on PyPI does not free
 the version number. Rehearse on TestPyPI.
 
-**The Python package version is independent of the lsdtt3 version.**
-`python_bindings/pyproject.toml` carries its own, separate from
-`project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`. Publishing
-Python 0.2.0 says nothing about which lsdtt3 version it wraps — worth stating
-in the README so users can tell.
+**The Python package shares the lsdtt3 version number.** `lsdtt3` 0.7.0 on
+PyPI is built from tag `v0.7.0`, and `lsdtt3._core.lsdtt3_version()` reports
+the version the bundled C++ was built as. A user pinning a version that has no
+wheel gets "no matching distribution"; the README's "Versioning" section is
+there to explain that.
 
 **`pip install` pulls numpy and geopandas.** They are real dependencies
 (`[project] dependencies`), and geopandas is a heavy solve. A user in a

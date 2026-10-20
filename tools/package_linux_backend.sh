@@ -21,7 +21,8 @@ Options:
                                Defined in tools/cli_profiles.txt; all = every
                                lsdtt-* executable in the build directory
   --profile <name>             Manifest profile label (default: <cli-profile>-linux)
-  --plugin-version-range <rng> Plugin compatibility range (default: >=0.1.0 <0.5.0)
+  --plugin-version-range <rng> Plugin compatibility range (default: the
+                               version's X.Y series, >=X.Y.0 <X.(Y+1).0)
   --cli <name>                 Package exactly this CLI (repeatable; overrides
                                --cli-profile, bundle is labelled 'custom')
   --help                       Show this help
@@ -38,7 +39,7 @@ OUT_DIR="dist"
 ARCH="x86_64"
 CLI_PROFILE="core"
 PROFILE=""
-PLUGIN_VERSION_RANGE=">=0.1.0 <0.5.0"
+PLUGIN_VERSION_RANGE=""
 CLI_NAMES=()
 
 while [[ $# -gt 0 ]]; do
@@ -91,6 +92,17 @@ if [[ -z "$VERSION" ]]; then
     echo "ERROR: --version is required" >&2
     usage
     exit 1
+fi
+
+# One version number: a plugin X.Y.* accepts a backend X.Y.*, so the default
+# plugin range is the bundle's own major.minor series.
+if [[ -z "$PLUGIN_VERSION_RANGE" ]]; then
+    if [[ "${VERSION%%-*}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+        PLUGIN_VERSION_RANGE=">=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0 <${BASH_REMATCH[1]}.$((BASH_REMATCH[2] + 1)).0"
+    else
+        echo "ERROR: cannot derive --plugin-version-range from version '$VERSION' (expected X.Y.Z)" >&2
+        exit 1
+    fi
 fi
 
 # Resolve the CLI list: explicit --cli wins; otherwise the profile decides.

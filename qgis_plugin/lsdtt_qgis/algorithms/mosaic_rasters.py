@@ -13,10 +13,10 @@ from qgis.core import (
     QgsProcessingParameterString,
 )
 
-from .support import attach_backend_help, layer_file_path, require_output, run_lsdtt_tool
+from .support import OutputOverwriteMixin, attach_backend_help, layer_file_path, require_output, run_lsdtt_tool
 
 
-class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
+class MosaicRastersAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_RASTERS = "INPUT_RASTERS"
     OUTPUT_FOLDER = "OUTPUT_FOLDER"
     OUTPUT_PREFIX = "OUTPUT_PREFIX"
@@ -37,6 +37,7 @@ class MosaicRastersAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_mosaic"))
+        self.add_overwrite_parameter()
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.OUTPUT_FORMAT,

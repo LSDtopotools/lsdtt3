@@ -277,21 +277,29 @@ user why.
 
 ## Versioning
 
-`debian/changelog` is the authoritative version for the package, and it should
-track `project(lsdtt3 VERSION ...)` in `CMakeLists.txt`. Bump both together.
+`debian/changelog` is the authoritative version for the package. Its top entry
+is a checked copy of `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` (the
+CTest test `unit_version_consistency` compares them), and
+`tools/set_version.py X.Y.Z` adds it together with every other copy of the
+version number. It writes the entry in the format `dch` produces, copying the
+distribution and maintainer from the previous entry (or from `DEBFULLNAME` /
+`DEBEMAIL` if both are set).
 
 The packaging is **native format** (`debian/source/format` is `3.0 (native)`),
 because it lives in the upstream tree rather than being applied to a separate
 upstream tarball. That means the version has no Debian revision: `0.5.1`, not
 `0.5.1-1`. To re-release the same code with changed packaging, append a
-packaging suffix — `0.5.1+pkg2`.
-
-Add a new entry with `dch` rather than editing the file by hand; the format is
-strict:
+packaging suffix — `0.5.1+pkg2`:
 
 ```bash
-dch --newversion 0.5.2 --distribution jammy "Release 0.5.2."
-dch --release ""
+tools/set_version.py 0.5.1 --debian-revision 2   # adds a 0.5.1+pkg2 entry, nothing else
+```
+
+The format is strict, so never edit the file by hand. To change the
+distribution of an entry, `dch` still works on what the script wrote:
+
+```bash
+dch --distribution jammy --release ""
 ```
 
 **The distribution field must name the Ubuntu series you are building for**, not

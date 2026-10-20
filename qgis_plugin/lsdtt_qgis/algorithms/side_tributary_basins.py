@@ -16,6 +16,7 @@ from qgis.core import (
 )
 
 from .support import (
+    OutputOverwriteMixin,
     attach_backend_help,
     extension_for_format,
     layer_file_path,
@@ -25,7 +26,7 @@ from .support import (
 )
 
 
-class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
+class SideTributaryBasinsAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
     INPUT_DEM = "INPUT_DEM"
     INPUT_POINTS = "INPUT_POINTS"
     POINTS_LAYER_NAME = "POINTS_LAYER_NAME"
@@ -94,6 +95,7 @@ class SideTributaryBasinsAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, "Output folder"))
         self.addParameter(QgsProcessingParameterString(self.OUTPUT_PREFIX, "Output prefix", "lsdtt_side_trib"))
+        self.add_overwrite_parameter()
         self.addParameter(QgsProcessingParameterBoolean(self.RASTER_IS_FILLED, "Raster already filled", False))
         self.addParameter(
             QgsProcessingParameterNumber(

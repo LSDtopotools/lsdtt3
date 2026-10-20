@@ -29,7 +29,10 @@ Can also be used as a developer guide.
 lsdtt3/
 ├── apptainer_def/
 │   └── apptainer_setup.md
+├── .github/workflows/                     — release.yml (Linux bundle on v* tags), python-wheels.yml (manual), docs.yml
 ├── cli/                                   — command-line executables (lsdtt-* dashed names)
+│   ├── lsdtt-advection-diffusion.cpp
+│   ├── lsdtt-bankfull-width.cpp
 │   ├── lsdtt-basin-extraction.cpp
 │   ├── lsdtt-basin-stats.cpp
 │   ├── lsdtt-basin-surface-metrics.cpp
@@ -55,6 +58,7 @@ lsdtt3/
 │   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
 │   ├── lsdtt-linear-stats.cpp
+│   ├── lsdtt-lithology-erodibility.cpp
 │   ├── lsdtt-marsh-topography.cpp
 │   ├── lsdtt-mountain-front.cpp
 │   ├── lsdtt-outlet-matching.cpp
@@ -62,39 +66,56 @@ lsdtt3/
 │   ├── lsdtt-raster-preprocessing.cpp
 │   ├── lsdtt-ridgeline-analysis.cpp
 │   ├── lsdtt-sediment-routing.cpp
+│   ├── lsdtt-slope-area.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
 │   ├── lsdtt-stream-burning.cpp
 │   ├── lsdtt-surface-metrics.cpp
 │   ├── lsdtt-swath-profile.cpp
-│   ├── lsdtt-lithology-erodibility.cpp
 │   ├── lsdtt-synthetic-networks.cpp
 │   ├── lsdtt-synthetic-surfaces.cpp
 │   ├── lsdtt-valley-centreline.cpp
 │   ├── lsdtt-water-centreline.cpp
 │   └── lsdtt-water-line-repair.cpp
+├── conda-recipe/                           — conda-build recipe (local builds; conda-forge once public)
+├── data/                                   — runtime data shipped with the tools (crn_parameters.nc)
 ├── debian/                                 — Debian package definition (see debian_packaging.md)
 ├── docs/                                   — MkDocs source, organised by purpose
 │   ├── index.md                            — documentation site root
 │   ├── what_is_lsdtt3/                     — overview, install, data, routing, workflows
 │   ├── design_and_algorithms/              — scientific design and algorithms
 │   ├── cli_reference/                      — one parameter reference per CLI
-│   ├── developer_notes/                    — architecture, building, packaging, testing
+│   ├── developer_notes/                    — how to work on the code: architecture, building, packaging, testing
 │   │   ├── lsdtt3_architecture.md          — this file
-│   │   ├── developer_onboarding.md
-│   │   ├── building_from_source.md          — build hub + reference Linux build
-│   │   ├── building_on_windows.md           — WSL2 and native (QGIS backend)
-│   │   ├── building_on_macos.md             — native and Multipass
-│   │   ├── making_release_packages.md
+│   │   ├── developer_onboarding.md         — start here as a new contributor
+│   │   ├── building_from_source.md         — build hub + reference Linux build
+│   │   ├── building_on_windows.md          — WSL2 and native (QGIS backend)
+│   │   ├── building_on_macos.md            — native and Multipass
+│   │   ├── building_the_docs.md
+│   │   ├── building_python_wheels.md       — wheel builds, local and on GitHub (Linux-only or all platforms)
+│   │   ├── python_bindings_architecture.md — bindings layers, API contract files, adding a binding
+│   │   ├── publishing_to_pypi.md
+│   │   ├── making_release_packages.md      — one version number, what is built where
 │   │   ├── qgis_plugin_development.md
 │   │   ├── debian_packaging.md
-│   │   ├── lsdtt_utils_guide.md
-│   │   ├── using_lsdtt_flowinfo.md
-│   │   ├── cli_parameter_conventions.md
+│   │   ├── beta_testing_notes.md
+│   │   ├── git_notes.md
+│   │   ├── backend_abstraction_rules.md, basin_object_architecture.md, gpu_compute.md
+│   │   ├── lsdtt_utils_guide.md, using_lsdtt_flowinfo.md, cli_parameter_conventions.md
 │   │   └── testing_and_benchmarking.md
+│   ├── python/                             — Python package guides
+│   ├── python_api/                         — generated Python API reference (do not edit)
+│   ├── qgis.md                             — the QGIS plugin, for users
 │   └── tex_technical/                      — LaTeX method write-ups (untracked)
-├── python_helpers/
-│   ├── dem_downloader_instructions.md
-│   └── download_dem_tiles.py
+├── mkdocs.yml                              — documentation site configuration
+├── pixi.toml                               — Python environments for tests, docs, packaging and benchmarks
+├── python_bindings/                        — the lsdtt3 Python package (nanobind)
+│   ├── bindings/                           — C++ adapters building the _core extension
+│   ├── src/lsdtt3/                         — public package, wrappers, console-script dispatch
+│   ├── api/                                — public_api.json, decisions.json: reviewed API contracts
+│   ├── tools/, tests/
+│   └── pyproject.toml, CMakeLists.txt      — a standalone CMake project compiling ../src
+├── python_helpers/                         — stand-alone download, data-preparation and plotting scripts
+├── qgis_plugin/                            — QGIS Processing plugin (lsdtt_qgis/) and package_plugin.py
 ├── src/
 │   ├── core/
 │   │   ├── lsdtt_types.hpp                  — all lightweight shared primitive types (see below)
@@ -107,6 +128,10 @@ lsdtt3/
 │   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
 │   │   ├── lsdtt_backend_factory.hpp/.cpp   — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp      — parameter file parser
+│   │   ├── lsdtt_common_parameters.hpp/.cpp — shared parameter declarations reused across CLIs
+│   │   ├── lsdtt_csv_table.hpp/.cpp         — minimal header-keyed CSV reader for CLI input tables
+│   │   ├── lsdtt_secret.hpp/.cpp            — credential resolution and masking (API keys never in parameter files)
+│   │   ├── lsdtt_exe_path.hpp/.cpp          — locating the running executable and its bundled data files
 │   │   ├── lsdtt_basin_base.hpp             — abstract basin interface
 │   │   ├── lsdtt_junction_network_base.hpp  — abstract channel network interface + lsdtt_junction_network_options
 │   │   ├── lsdtt_flow_base.hpp              — abstract D8 flow interface + lsdtt_flowinfo_options
@@ -116,12 +141,18 @@ lsdtt3/
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_outlet_bounds_discovery.hpp/.cpp— WGS84 outlet points to fetch bounds
+│   │   ├── lsdtt_outlet_clusters.hpp/.cpp   — grouping outlets into fetch clusters
+│   │   ├── lsdtt_dem_grouping.hpp/.cpp      — grouping bounding boxes for higher-resolution re-fetching
+│   │   ├── lsdtt_coastal_mask.hpp/.cpp      — stops bulk tile downloads over the ocean (with dem_grouping)
+│   │   ├── lsdtt_raster_fetch.hpp/.cpp      — native DEM fetching: WGS84 box to analysis-ready raster
 │   │   ├── lsdtt_http_fetch.hpp/.cpp        — HTTP GET/POST through GDAL's curl (timeouts, retries)
 │   │   ├── lsdtt_macrostrat_fetch.hpp/.cpp  — Macrostrat map units for a box (vector tiles + API)
 │   │   ├── lsdtt_octopus_fetch.hpp/.cpp     — OCTOPUS basin erosion rates for a box (keyless WFS)
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
+│   │   ├── lsdtt_distributed_hydrology_forcing.hpp/.cpp— per-timestep CSV forcing readers for lsdtt-distributed-hydrology
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
-│   ├── cpu/                                   — 99 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
+│   ├── cpu/                                   — 154 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
 │   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
@@ -135,6 +166,11 @@ lsdtt3/
 │   │   ├── lsdtt_junction_basin_cpu.hpp/.cpp                 — junction-based basin extraction
 │   │   ├── lsdtt_junction_basin_manager_cpu.hpp/.cpp         — basin selection and management
 │   │   ├── lsdtt_basin_outline_cpu.hpp/.cpp                  — basin outline/polygon extraction
+│   │   ├── lsdtt_basin_outline_metrics_cpu.hpp/.cpp              — outline curvature flips and slope-area scale metrics on basin outlines
+│   │   ├── lsdtt_basin_stats_cpu.hpp/.cpp                        — per-basin statistics for a set of outlet points
+│   │   ├── lsdtt_zero_order_basin_manager_cpu.hpp/.cpp           — basins whose outlets are channel-head source pixels
+│   │   ├── lsdtt_outlet_resolution_cpu.hpp/.cpp                  — turning a request for basin outlets into flat indices
+│   │   ├── lsdtt_outlet_basin_verification_cpu.hpp/.cpp          — checking outlet basins fit inside a fetched DEM
 │   │   ├── lsdtt_raster_algebra.hpp/.cpp                     — element-wise raster algebra
 │   │   ├── lsdtt_raster_surface_metrics_cpu.hpp/.cpp         — hillshade, moving window, polyfit metrics, surface-shape (SMAP) classification
 │   │   ├── lsdtt_surface_texture_cpu.hpp/.cpp                — MADk2, moving_window_iqr, NVD roughness metrics
@@ -143,6 +179,13 @@ lsdtt3/
 │   │   ├── lsdtt_raster_breach_least_cost_cpu.hpp/.cpp       — least-cost breaching (Lindsay 2020; bitwise port of Whitebox 2.0.6)
 │   │   ├── lsdtt_raster_flat_resolution_cpu.hpp/.cpp         — Barnes 2014b flat resolution (mask, rounds, final pass)
 │   │   ├── lsdtt_raster_nodata_filling_cpu.hpp/.cpp          — interior void filling
+│   │   ├── lsdtt_fill_flat_resolution_reporting_cpu.hpp/.cpp     — fill_flat_resolution_choice checks and reporting shared by the CLIs
+│   │   ├── lsdtt_raster_resampling_cpu.hpp/.cpp                  — GDAL-free resampling of in-memory rasters
+│   │   ├── lsdtt_raster_hierarchy_cpu.hpp/.cpp                   — in-memory resolution hierarchy (restrict / prolong)
+│   │   ├── lsdtt_raster_sampling_cpu.hpp/.cpp                    — sampling a raster at a map coordinate
+│   │   ├── lsdtt_raster_cell_predicates_cpu.hpp/.cpp             — per-cell predicates and index helpers for flat raster data
+│   │   ├── lsdtt_raster_central_difference_cpu.hpp/.cpp          — four-cardinal centred-difference gradient at one cell
+│   │   ├── lsdtt_usgs_elevation.hpp/.cpp                         — settling a DEM's vertical unit against USGS 3DEP
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
 │   │   ├── lsdtt_raster_image_ops_cpu.hpp/.cpp               — Otsu, adaptive threshold, Canny, probabilistic Hough (native; replaced OpenCV)
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp          — feature-specific raster workflows
@@ -167,9 +210,13 @@ lsdtt3/
 │   │   ├── lsdtt_mountain_front_cpu.hpp/.cpp                 — mountain front identification from DEM
 │   │   ├── lsdtt_streamlines_cpu.hpp/.cpp                    — kinematic streamline tracing (Lea 1992)
 │   │   ├── lsdtt_lem_cpu.hpp/.cpp                            — LEM step orchestrator (fluvial + hillslope + uplift)
+│   │   ├── lsdtt_lem_timestep_cpu.hpp/.cpp                       — timestep control for the coupled LEM
 │   │   ├── lsdtt_lem_parameter_rasters_cpu.hpp/.cpp          — per-pixel LEM parameters: K calibration, conversion, validation, forcing scaling
 │   │   ├── lsdtt_lem_input_grid_cpu.hpp/.cpp                 — LEM model grid and input-raster placement (clip / relabel / warp)
 │   │   ├── lsdtt_lithology_map_cpu.hpp/.cpp                  — lithology maps to erodibility: property table, crosswalk, K raster
+│   │   ├── lsdtt_lithology_channel_stats_cpu.hpp/.cpp            — channel statistics (k_sn) by lithologic unit
+│   │   ├── lsdtt_lithology_relative_erodibility_cpu.hpp/.cpp     — relative erodibility of lithologic units from channel steepness
+│   │   ├── lsdtt_erodibility_calibration_cpu.hpp/.cpp            — stream-power K (and n) from basin-averaged erosion rates
 │   │   ├── lsdtt_stream_power_cpu.hpp/.cpp                   — implicit stream-power incision (D8 + D-inf)
 │   │   ├── lsdtt_steady_state_cpu.hpp/.cpp                   — analytical chi-based fluvial steady state (shared core compute_fluvial_steady_state_on_tree, reused by the OCN generator)
 │   │   ├── lsdtt_hillslope_transport_cpu.hpp/.cpp             — transient hillslope transport (cidre, roering, linear, adi)
@@ -177,6 +224,11 @@ lsdtt3/
 │   │   ├── lsdtt_hillslope_steady_state_cpu.hpp/.cpp          — steady-state hillslope solver (SOR + pseudo-transient Cidre)
 │   │   ├── lsdtt_hillslope_newton_cpu.hpp/.cpp                — steady/transient Newton Roering solver
 │   │   ├── lsdtt_hillslope_cellular_cpu.hpp/.cpp              — soft-critical face transport, nonlocal routing, sparse particles
+│   │   ├── lsdtt_hillslope_operator_cpu.hpp/.cpp                 — THE shared discrete hillslope operator every solver uses
+│   │   ├── lsdtt_hillslope_length_search_cpu.hpp/.cpp            — channel threshold for a target hillslope length
+│   │   ├── lsdtt_hillslope_peclet_cpu.hpp/.cpp                   — K and D from a target relief and hillslope length
+│   │   ├── lsdtt_perron_qimp_cpu.hpp/.cpp                        — independent reference implementation of Perron (2011) Q-imp
+│   │   ├── lsdtt_ren_modular_implicit_cpu.hpp/.cpp               — independent port of the Ren et al. (2026) modular implicit method
 │   │   ├── lsdtt_hillslope_particle_io.hpp/.cpp               — particle CSV restart/output
 │   │   ├── lsdtt_landscape_drape_cpu.hpp/.cpp                — Verlet cloth drape: upper envelope surface and incision depth
 │   │   ├── lsdtt_landscape_equilibration_cpu.hpp/.cpp        — divide equilibration and landscape relaxation
@@ -185,12 +237,35 @@ lsdtt3/
 │   │   ├── lsdtt_flat_surface_channel_classify_cpu.hpp/.cpp  — classify flat surfaces against a channel; shared surface/patch/ladder CSV writers
 │   │   ├── lsdtt_reference_field_ladder_cpu.hpp/.cpp        — reference-field ladder: band a height field, label components WITHIN each band
 │   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
+│   │   ├── lsdtt_graphflood_optimised_cpu.hpp/.cpp               — native coarse-to-fine coordinator for the v2 GraphFlood solver
+│   │   ├── lsdtt_manning_formula_cpu.hpp/.cpp                    — Manning's equation for mean flow velocity
+│   │   ├── lsdtt_manning_hydraulics_cpu.hpp/.cpp                 — Manning's-equation bankfull width estimation
+│   │   ├── lsdtt_hydro_roughness_cpu.hpp/.cpp                    — the roughness (n) field
+│   │   ├── lsdtt_hydro_routing_cpu.hpp/.cpp                      — routing ladder: translation, storage, kinematic wave
+│   │   ├── lsdtt_hydro_velocity_field_cpu.hpp/.cpp               — distributed velocity, travel time, width-function IUH
+│   │   ├── lsdtt_wetness_index_cpu.hpp/.cpp                      — topographic wetness index
+│   │   ├── lsdtt_internal_drainage_cpu.hpp/.cpp                  — closed-depression detection and the review round-trip
+│   │   ├── lsdtt_subbasin_partition_cpu.hpp/.cpp                 — incremental sub-basin partition and per-sub-basin set-up
+│   │   ├── lsdtt_topmodel_cpu.hpp/.cpp                           — TOPMODEL column physics, index mode
+│   │   ├── lsdtt_topmodel_dynamic_cpu.hpp/.cpp                   — TOPMODEL with a prognostic saturated zone
+│   │   ├── lsdtt_canopy_interception_cpu.hpp/.cpp                — canopy interception store
+│   │   ├── lsdtt_infiltration_excess_cpu.hpp/.cpp                — Green-Ampt infiltration excess
+│   │   ├── lsdtt_landcover_scenario_cpu.hpp/.cpp                 — land-cover scenarios: class raster to derived fields
+│   │   ├── lsdtt_hype_parameters.hpp/.cpp                        — HYPE parameter tables and sub-basin set-up struct
+│   │   ├── lsdtt_hype_column_cpu.hpp/.cpp                        — HYPE land column for one (sub-basin, class) unit
+│   │   ├── lsdtt_hype_routing_cpu.hpp/.cpp                       — HYPE river routing
+│   │   ├── lsdtt_hype_raster_setup_cpu.hpp/.cpp                  — HYPE set-up from rasters (sub-basins, GeoData, class fractions)
+│   │   ├── lsdtt_hype_model_cpu.hpp/.cpp                         — the HYPE model of lsdtt-distributed-hydrology
+│   │   ├── lsdtt_distributed_hydrology_argument_checks_cpu.hpp/.cpp— argument checks shared by the distributed-hydrology kernels
 │   │   ├── lsdtt_chi_extraction_cpu.hpp/.cpp                 — chi coordinate extraction (full raster, outlet-seeded, inherited-base)
 │   │   ├── lsdtt_chi_network_analysis_cpu.hpp/.cpp           — piecewise-linear fitting of chi channel networks
 │   │   ├── lsdtt_chi_disorder_cpu.hpp/.cpp                   — chi disorder metric, jackknife, bootstrap, m/n sweep
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
+│   │   ├── lsdtt_channel_network_grouping_cpu.hpp/.cpp           — grouping keys for link and junction records (Strahler, basin, region, lithology)
+│   │   ├── lsdtt_channel_bearing_statistics_cpu.hpp/.cpp         — grouped bearing and junction-angle distributions and comparisons
+│   │   ├── lsdtt_channel_extent_cpu.hpp/.cpp                     — channel extent: where the channels are
 │   │   ├── lsdtt_channel_sources_wiener_cpu.hpp/.cpp         — channel source detection via Wiener filtering
 │   │   ├── lsdtt_channel_scope_cpu.hpp/.cpp                  — channel scope resolution; shared CLI plumbing (point loading, scope diagnostics, network-layer writer)
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
@@ -198,6 +273,7 @@ lsdtt3/
 │   │   ├── lsdtt_ridgeline_cpu.hpp/.cpp                      — ridgeline extraction and analysis
 │   │   ├── lsdtt_valley_centreline_cpu.hpp/.cpp              — valley centreline extraction and tracing
 │   │   ├── lsdtt_valley_cross_sections_cpu.hpp/.cpp          — valley cross-section analysis
+│   │   ├── lsdtt_valley_spacing_cpu.hpp/.cpp                     — characteristic valley spacing (spectral and two other measures)
 │   │   ├── lsdtt_water_area_centreline_cpu.hpp/.cpp          — water/floodplain centreline extraction
 │   │   ├── lsdtt_marsh_platform_cpu.hpp/.cpp                 — marsh and tidal platform analysis
 │   │   ├── lsdtt_tidal_channel_cpu.hpp/.cpp                  — tidal channel analysis and metrics
@@ -233,6 +309,8 @@ lsdtt3/
 │   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
 │   │   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
 │   │   └── lsdtt_synthetic_domain_cpu.hpp/.cpp               — island domain masks (EFD, red-noise, polygon import) for the OCN generator
+│   ├── gpu/
+│   │   └── lsdtt_surface_gpu.hpp/.cu        — selective-dispatch GPU surface-fitting kernels (LSDTT_GPU_KERNELS)
 │   └── utils/
 │       ├── lsdtt_array2d.hpp                — header-only 2D array
 │       ├── lsdtt_raster_geometry.hpp        — header-only raster geometry helpers
@@ -247,9 +325,23 @@ lsdtt3/
 │       ├── lsdtt_histogram.hpp/.cpp         — histogram, PDF, CDF
 │       ├── lsdtt_statistical_tests.hpp/.cpp — nonparametric tests, KS, circular statistics
 │       ├── lsdtt_splines.hpp/.cpp           — 1D spline interpolation
-│       └── lsdtt_regression.hpp/.cpp        — linear and polynomial regression helpers
-├── CMakeLists.txt
-├── diagnose_fftw.sh
+│       ├── lsdtt_regression.hpp/.cpp        — linear and polynomial regression helpers
+│       ├── lsdtt_natural_breaks.hpp/.cpp    — Jenks natural-break thresholds
+│       ├── lsdtt_signal1d.hpp/.cpp          — 1-D profile signal processing (moving average, LOWESS, derivative)
+│       ├── lsdtt_boundary_conditions.hpp    — header-only: parsing the four-character N E S W boundary-condition string
+│       ├── lsdtt_connected_components.hpp   — header-only: connected-component labelling on a row-major grid
+│       ├── lsdtt_grid_geodesic.hpp          — header-only: Dijkstra on an 8-connected grid
+│       ├── lsdtt_grid_neighbours.hpp        — header-only: neighbour offset tables for row-major rasters
+│       ├── lsdtt_junction_graph_orders.hpp  — header-only: traversal orders on a compact junction graph
+│       ├── lsdtt_numeric_utils.hpp          — header-only: inclusive numeric sweeps
+│       ├── lsdtt_output_file.hpp            — header-only: open_output_file(): open for writing or throw with a caller's message
+│       ├── lsdtt_string_utils.hpp           — header-only: string helpers shared by CLIs and library
+│       └── lsdtt_statistics_detail.hpp      — internal helpers shared by the statistics implementation
+├── tests/                                  — CTest suite: cpp/ drivers, scripts/, data/, cmake/
+├── tools/                                  — release and packaging scripts, set_version.py, generate_cli_reference.py
+├── workflows/                              — Snakemake layer for multi-stage pipelines
+├── CMakeLists.txt                          — project(lsdtt3 VERSION ...): the one version number
+├── LICENSE                                 — AGPL-3.0-or-later
 └── README.md
 ```
 
@@ -273,14 +365,14 @@ the utility-layer numerical functions.
 modules by subsystem so you can find your way around; they are not maintained
 line-by-line against the build. To see exactly what is compiled, read
 `LSDTT3_CORE_SOURCES`, `LSDTT3_UTILS_SOURCES` and `LSDTT3_CPU_SOURCES` in
-`CMakeLists.txt`. At the time of writing that is 21 core, 10 utils and 129 CPU
-translation units.
+`CMakeLists.txt`. At the time of writing that is 25 core, 10 utils and 148 CPU
+translation units, plus `lsdtt_chi_ksn_inversion_cpu` when Eigen3 is found.
 
 
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`
+`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`, `lsdtt_distributed_hydrology_forcing`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -292,16 +384,16 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 **`lsdtt3_cpu` sources** (`src/cpu/`), by subsystem:
 
 
-*Raster core and algebra*: `lsdtt_raster_cpu`, `lsdtt_raster_algebra`, `lsdtt_raster_hierarchy_cpu`, `lsdtt_raster_resampling_cpu`, `lsdtt_raster_mosaic_cpu`, `lsdtt_raster_coregistration_cpu`, `lsdtt_raster_nodata_filling_cpu`, `lsdtt_raster_image_ops_cpu`, `lsdtt_labelled_raster_stats_cpu`
+*Raster core and algebra*: `lsdtt_raster_cpu`, `lsdtt_raster_algebra`, `lsdtt_raster_hierarchy_cpu`, `lsdtt_raster_resampling_cpu`, `lsdtt_raster_mosaic_cpu`, `lsdtt_raster_coregistration_cpu`, `lsdtt_raster_nodata_filling_cpu`, `lsdtt_raster_image_ops_cpu`, `lsdtt_labelled_raster_stats_cpu`, `lsdtt_raster_sampling_cpu`
 
 
 *Surface metrics and texture*: `lsdtt_raster_surface_metrics_cpu`, `lsdtt_raster_surface_fitting_cpu`, `lsdtt_surface_texture_cpu`, `lsdtt_raster_spectral_cpu`, `lsdtt_critical_slope_cpu`, `lsdtt_slope_break_finder_cpu`
 
 
-*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
+*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_fill_flat_resolution_reporting_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
 
 
-*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`
+*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_network_grouping_cpu`, `lsdtt_channel_bearing_statistics_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`
 
 
 *Basins*: `lsdtt_basin_cpu`, `lsdtt_basin_outline_cpu`, `lsdtt_basin_outline_metrics_cpu`, `lsdtt_basin_stats_cpu`, `lsdtt_junction_basin_cpu`, `lsdtt_junction_basin_manager_cpu`, `lsdtt_zero_order_basin_manager_cpu`, `lsdtt_side_tributary_basins_cpu`, `lsdtt_outlet_basin_verification_cpu`, `lsdtt_outlet_resolution_cpu`
@@ -313,7 +405,10 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lithology_map_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
 
 
-*Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`
+*Hydrology and hydraulics*: `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`, `lsdtt_hydro_routing_cpu`, `lsdtt_hydro_velocity_field_cpu`, `lsdtt_hydro_roughness_cpu`, `lsdtt_hydraulic_graph_cpu`, `lsdtt_infiltration_excess_cpu`, `lsdtt_canopy_interception_cpu`, `lsdtt_giuh_cpu`, `lsdtt_graphflood_optimised_cpu`, `lsdtt_sti_cpu`, `lsdtt_manning_hydraulics_cpu`, `lsdtt_subbasin_partition_cpu`, `lsdtt_hype_parameters`, `lsdtt_hype_column_cpu`, `lsdtt_hype_routing_cpu`, `lsdtt_hype_raster_setup_cpu`, `lsdtt_hype_model_cpu`
+
+
+*Lithology and erodibility*: `lsdtt_lithology_channel_stats_cpu`, `lsdtt_lithology_relative_erodibility_cpu`, `lsdtt_erodibility_calibration_cpu` (the lithology-map reader, `lsdtt_lithology_map_cpu`, is listed under landscape evolution)
 
 
 *Cosmogenic nuclides*: `lsdtt_cosmo_raster_cpu`, `lsdtt_cosmo_site_cpu`, `lsdtt_crn_parameters`, `lsdtt_crn_column`, `lsdtt_crn_diagnostics`, `lsdtt_cronus_v3_input`, `lsdtt_quartz_fertility_cpu`, `lsdtt_niemi_ensemble_cpu`
@@ -1104,15 +1199,18 @@ CLI source files follow this layout, in order:
 
 1. file-header comment block (copyright, brief description, outputs, usage)
 2. `#include` block
-3. `static const` version, citation, and tool-name strings
+3. `static const` status, citation, and tool-name strings (`k_status`,
+   `k_citation`, `k_tool_name`)
 4. `print_banner()` — fixed-width box to stdout. Required content: a
    brief summary of what the CLI does; then a versioning box, directly
-   below the summary, containing a line pointing to `-v` / `--version`
-   for the full lsdtt3 release version, `|| This CLI's version : <k_version>`
-   (the CLI's own version, not the package version), and the note that a
-   CLI version below 1.0.0 means the CLI is still experimental and not
-   fully tested; then the citation and a line pointing to `-h` for
-   parameter help. Bump `k_version` to 1.0.0 only once a CLI is tested
+   below the summary, containing `|| lsdtt3 version : ` followed by
+   `lsdtt::lsdtt3_package_version()`, and `|| Status         : <k_status>`,
+   with " -- not yet fully tested" appended when the status is not
+   `stable`; then the citation and a line pointing to `-h` for
+   parameter help. CLIs have no version of their own: lsdtt3 has one
+   version number. `k_status` is `"experimental"` or `"stable"`; set it to
+   `"stable"` only once a CLI is tested (a review decision; the guard in
+   `unit_cli_parameter_conventions` checks only the value)
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
    a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`
@@ -1226,7 +1324,7 @@ At the end of every successful run:
 
 ```cpp
 pp.print_help(help_map, pp.get_write_fname() + "_README",
-              k_version, k_citation);
+              k_status, k_citation);
 pp.print_parameters();
 ```
 
@@ -1610,14 +1708,14 @@ unchanged, so `inputs/sites.csv` was read relative to the working directory.
 `get_full_write_path()` returns `write_path + write_fname` (no extension).
 
 **Static helpers:** `stem(filename)`, `extension(filename)` (returns dot + ext),
-`parse_args_deferred(argc, argv, tool_name, version, citation)` — handles
+`parse_args_deferred(argc, argv, tool_name, status, citation)` — handles
 `-v`/`-c` (print and exit) and records `-h` variants in the returned
 `lsdtt_cli_args` struct so the CLI can render help from its parameter
 declarations via `print_terminal_help()` (see the CLI design rule above).
 Every CLI uses this instead of a per-file
 `parse_args` free function. Each CLI declares
 `static const std::string k_tool_name = "lsdtt-foo";`
-alongside `k_version` and `k_citation`.
+alongside `k_status` and `k_citation`.
 
 **Command-line contract.** A CLI accepts only `<parameter_file>`,
 `<path> <parameter_file>`, or one of the flags `-h` (with an optional
@@ -1661,16 +1759,21 @@ When editing the guide:
   help tests. For example, `rigorous_fetch_raster_no_credential_parameters`
   fails if `lsdtt-fetch-raster -h` contains the word `token`.
 
-**Version reporting (`-v` / `--version`):** prints both the CLI's own
-`k_version` and the package-level version, e.g.
-`lsdtt-chi-analysis version 1.0.0 (lsdtt3 0.5.1)`. The package version is
-injected by CMake as the `LSDTT3_VERSION` compile definition on
-`lsdtt3_core` (used only in `lsdtt_param_parser.cpp`). A build made exactly
-on the release tag `v<PROJECT_VERSION>` reports the plain version; any
-other build reports a development string derived from `git describe`, e.g.
-`0.5.1-dev, git v0.5.1-14-g04460f4-dirty` — so distributed development
+**Version reporting (`-v` / `--version`):** prints the package version and
+the CLI's status, e.g. `lsdtt-chi-analysis (lsdtt3 0.7.0, stable)`, then the
+GDAL/PROJ lines. `--help-json` carries the same two values as `"version"` and
+`"status"`, and `-h html` / the end-of-run `_README` files record both. The
+package version is injected by CMake as the `LSDTT3_VERSION` compile
+definition on `lsdtt3_core` (used only in `lsdtt_param_parser.cpp`, and
+exposed as `lsdtt::lsdtt3_package_version()`). A build made exactly on the
+release tag `v<PROJECT_VERSION>` reports the plain version; any other build
+reports a development string derived from `git describe`, e.g.
+`0.7.0-dev, git v0.7.0-14-g04460f4-dirty` — so distributed development
 builds self-identify. Captured at configure time (rerun cmake to refresh).
-Per-CLI `k_version` numbers are versioned independently of the package.
+The Python wheel compiles `lsdtt_param_parser.cpp` in its own CMake project,
+which sets `LSDTT3_VERSION` to the package version scikit-build-core passes
+(`X.Y.Z`, or `X.Y.Z.postN` for a rebuilt wheel); `_core.lsdtt3_version()`
+returns it.
 
 ### Deprecated, removed and unknown parameter keys
 
@@ -2328,7 +2431,7 @@ first and then pass the resulting flat sample into `src/utils/` routines.
 
 ## lsdtt-raster-preprocessing CLI
 
-File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_version`: 1.0.0
+File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_status`: stable
 
 **Preprocessing pipeline (in order):**
 1. **Projection** — detect and reproject geographic / Web Mercator rasters

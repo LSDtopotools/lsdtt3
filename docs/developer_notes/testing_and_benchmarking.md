@@ -193,7 +193,14 @@ suite runs before a commit.
 
 #### What is `heavy`, and why `RUN_SERIAL` matters
 
-`heavy` is `unit_hillslope_implicit` and the eight `cosmo_realworld_*` tiers.
+`heavy` is `unit_hillslope_implicit`, the eight `cosmo_realworld_*` tiers,
+and `python_bindings_smoke`. The last builds the Python bindings once through
+pip into a venv under the build directory (CLIs off, all of `src/` compiled)
+and runs the whole `python_bindings/tests` suite against them; it needs
+`LSDTT_ENABLE_PYTHON_TESTS=ON`, network access or a pip cache, and an
+interpreter with the `venv` module (`-DLSDTT_PYTHON_SMOKE_PYTHON=<exe>` picks
+one; without `venv` the test is skipped). `tools/make_release.sh` runs the
+same script at every release, where a failure stops the release.
 The implicit hillslope test **saturates every core**: 9 min 24 s wall for
 73 min of CPU, a parallelism of 7.8 on 8 cores (2026-08-04).
 `smoke_lem_roering_implicit_strip` was also `heavy` until 2026-09-18, when it

@@ -136,6 +136,29 @@ target_compile_options(lsdtt3_runtime PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Wno-unused-parameter>
 )
 
+# The lsdtt3 version reported by the wheel's CLIs (-v) and by
+# _core.lsdtt3_version(). lsdtt3 has one version number: under pip,
+# scikit-build-core passes the pyproject.toml version (the shared X.Y.Z, plus
+# .postN for a rebuilt wheel). A direct CMake build reads
+# project(lsdtt3 VERSION ...) from the root CMakeLists.txt instead.
+if(DEFINED SKBUILD_PROJECT_VERSION_FULL)
+    set(LSDTT3_PYTHON_PACKAGE_VERSION "${SKBUILD_PROJECT_VERSION_FULL}")
+elseif(DEFINED SKBUILD_PROJECT_VERSION)
+    set(LSDTT3_PYTHON_PACKAGE_VERSION "${SKBUILD_PROJECT_VERSION}")
+else()
+    file(STRINGS "${LSDTT3_SOURCE_DIR}/CMakeLists.txt" _lsdtt3_project_line
+        REGEX "^project\\(lsdtt3[ \t]+VERSION[ \t]+[0-9]+\\.[0-9]+\\.[0-9]+")
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+"
+        LSDTT3_PYTHON_PACKAGE_VERSION "${_lsdtt3_project_line}")
+    if(NOT LSDTT3_PYTHON_PACKAGE_VERSION)
+        message(FATAL_ERROR "Could not read project(lsdtt3 VERSION ...) from "
+                            "${LSDTT3_SOURCE_DIR}/CMakeLists.txt")
+    endif()
+endif()
+message(STATUS "lsdtt3 package version (bindings): ${LSDTT3_PYTHON_PACKAGE_VERSION}")
+set_property(SOURCE "${LSDTT3_SRC_DIR}/core/lsdtt_param_parser.cpp" APPEND PROPERTY
+    COMPILE_DEFINITIONS "LSDTT3_VERSION=\"${LSDTT3_PYTHON_PACKAGE_VERSION}\"")
+
 if(OpenMP_CXX_FOUND)
     target_link_libraries(lsdtt3_runtime PUBLIC OpenMP::OpenMP_CXX)
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_OPENMP=1)
