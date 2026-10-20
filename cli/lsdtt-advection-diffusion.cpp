@@ -254,6 +254,28 @@ int main(int argc, char* argv[])
         "equations in Litwin et al. (2025, ESurf).",
         "Fluvial incision", "param", ""};
 
+    bool_default_map["multiply_stream_power_term_by_w_over_dx"] = false;
+    help_map["multiply_stream_power_term_by_w_over_dx"] = {
+        "bool", "false",
+        "Multiply the stream-power incision term by channel_width_w / dx.",
+        "This flow-width correction was proposed to reduce grid-resolution "
+        "dependence by Perron et al. (2008, doi:10.1029/2007JF000977), "
+        "following Howard (1994, doi:10.1029/94WR00757); see also Hergarten "
+        "(2020, doi:10.5194/esurf-8-367-2020). The fixed channel-width "
+        "approach is that of Perron et al. (2008). This correction is separate "
+        "from use_specific_drainage_area. An alternative is to use specific "
+        "area A/dx with m=1 and n=1 (Kargere et al., 2025, "
+        "doi:10.5194/esurf-13-403-2025); that formulation implies channel "
+        "concavity theta=m/n=1, rather than theta=0.5 for m=0.5 and n=1.",
+        "Fluvial incision", "switch", ""};
+
+    float_default_map["channel_width_w"] = 1.0f;
+    help_map["channel_width_w"] = {
+        "float", "1", "Channel width w, in the same length units as dx.",
+        "Used only when multiply_stream_power_term_by_w_over_dx is true. "
+        "The incision term is multiplied by w/dx.",
+        "Fluvial incision", "param", ""};
+
     int_default_map["drainage_area_moving_average_kernel_size_pixels"] = 1;
     help_map["drainage_area_moving_average_kernel_size_pixels"] = {
         "int", "1", "Odd-sized square moving-average kernel for drainage area "
@@ -382,6 +404,8 @@ int main(int argc, char* argv[])
                 "n_rows and n_cols must be positive");
         require(ff.at("cell_size_metres") > 0.0f,
                 "cell_size_metres must be positive");
+        require(ff.at("channel_width_w") > 0.0f,
+                "channel_width_w must be positive");
         require(ff.at("timestep") > 0.0f,
                 "timestep must be positive");
         require(ifs.at("number_of_iterations") > 0,
@@ -419,6 +443,9 @@ int main(int argc, char* argv[])
     options.hillslope_diffusivity = ff.at("D");
     options.uplift_rate = ff.at("uplift_rate");
     options.divide_area_by_dx = bf.at("use_specific_drainage_area");
+    options.multiply_stream_power_term_by_w_over_dx =
+        bf.at("multiply_stream_power_term_by_w_over_dx");
+    options.channel_width_w = ff.at("channel_width_w");
     options.hillslope_transport_model = "adi";
     options.coupling_regime = lsdtt::hillslope_coupling_regime::coupled;
     options.enable_d8_fluvial_erosion =

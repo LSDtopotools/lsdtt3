@@ -63,6 +63,9 @@ namespace lsdtt
 //                           n_rows*n_cols values (std::invalid_argument if not)
 //                           and pixel i uses erodibility_field[i]. Only the size
 //                           is checked here; values are the caller's contract.
+//   multiply_stream_power_term_by_w_over_dx
+//                           if true multiply the incision term by w/dx
+//   channel_width_w         channel width w, in the same units as dx
 //
 //  There is no threading/parallelism here since it uses the depth-first 
 //  Braun & Willett (2013) stack in the flowinfo, which is not easily
@@ -80,7 +83,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
     float slope_clamp,
     int   drainage_area_moving_average_kernel_size_pixels = 1,
     const std::string& boundary_conditions = "",
-    const std::vector<float>& erodibility_field = {}
+    const std::vector<float>& erodibility_field = {},
+    bool multiply_stream_power_term_by_w_over_dx = false,
+    float channel_width_w = 1.0f
 );
 
 // Returns a new elevation raster after one implicit stream-power timestep of
@@ -102,6 +107,9 @@ lsdtt_raster_cpu compute_d8_stream_power_incision(
 //                           odd square smoothing kernel; 1 disables smoothing
 //   boundary_conditions      four characters in N,E,S,W order; p enables wrapping
 //   erodibility_field       optional per-pixel K, as for the D8 kernel above
+//   multiply_stream_power_term_by_w_over_dx
+//                           if true multiply the incision term by w/dx
+//   channel_width_w         channel width w, in the same units as dx
 lsdtt_raster_cpu compute_dinf_stream_power_incision(
     const lsdtt_raster_cpu&    dem,
     const lsdtt_flowgraph_cpu& flow,
@@ -115,7 +123,9 @@ lsdtt_raster_cpu compute_dinf_stream_power_incision(
     int   n_threads = 0,
     int   drainage_area_moving_average_kernel_size_pixels = 1,
     const std::string& boundary_conditions = "",
-    const std::vector<float>& erodibility_field = {}
+    const std::vector<float>& erodibility_field = {},
+    bool multiply_stream_power_term_by_w_over_dx = false,
+    float channel_width_w = 1.0f
 );
 
 // -----------------------------------------------------------------------------
