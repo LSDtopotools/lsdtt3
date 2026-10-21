@@ -25,6 +25,13 @@
 //                 would give atan2(8, 4) = 63.43 deg, not 45.
 //   --seed        The same background_seed gives bit-identical background
 //                 spectra at 1 and 4 threads; a different seed does not.
+//   --edges       A wave at the north Nyquist frequency: its two peak cells
+//                 both sit on row 0 of the shifted spectrum, at bearings
+//                 theta and 360 - theta, not theta + 180 (the documented
+//                 Nyquist-edge exception to the point-symmetric pairing).
+//   --align       spectral_align_bin_trace matches per-bin values by log bin,
+//                 so a bin missing from one grid does not shift the others.
+//                 Needs no FFTW.
 //
 // Row 0 of a raster is its northern edge, so northing increases as the row
 // index decreases. A wave exp(2 pi i (kx col - ky row) / N) therefore has a
@@ -288,6 +295,102 @@ void run_seed_checks()
           s1.normalised_psd == s4.normalised_psd);
 }
 
+// -----------------------------------------------------------------------------
+// --edges
+// -----------------------------------------------------------------------------
+void run_edge_checks()
+{
+    // 128 x 128, 1 m cells, ky = 64 = N/2: the wave sits at the north Nyquist
+    // frequency (0.5 cycles/m), kx = 8 east (0.0625 cycles/m). +Nyquist and
+    // -Nyquist are the same frequency, so the point-symmetric twin of the
+    // peak (east -kx, north -Nyquist) wraps back onto row 0.
+    const int n = 128;
+    const int kx = 8;
+    const lsdtt::lsdtt_raster_cpu dem = make_wave_dem(n, n, kx, n / 2, 0.2);
+
+    lsdtt::lsdtt_spectral_analysis_options opts;
+    opts.log_bin_width           = 0.05;
+    opts.n_background_iterations = 5;
+    opts.background_seed         = 7;
+    opts.n_threads               = 1;
+    const lsdtt::lsdtt_spectral_analysis_result res =
+        lsdtt::full_spectral_analysis(dem, opts);
+    const lsdtt::lsdtt_spectral_significant_2d sig =
+        lsdtt::find_significant_frequencies_2d(
+            res, lsdtt::spectral_normalised_psd_threshold(0.9999));
+
+    check("north Nyquist wave: some cells significant", sig.frequency.size() >= 2,
+          num(static_cast<double>(sig.frequency.size())) + " cells");
+    if (sig.frequency.size() < 2) return;
+
+    std::size_t i1 = 0;
+    for (std::size_t i = 1; i < sig.normalised_psd.size(); ++i)
+        if (sig.normalised_psd[i] > sig.normalised_psd[i1]) i1 = i;
+    std::size_t i2 = (i1 == 0) ? 1 : 0;
+    for (std::size_t i = 0; i < sig.normalised_psd.size(); ++i)
+        if (i != i1 && sig.normalised_psd[i] > sig.normalised_psd[i2]) i2 = i;
+
+    const double theta = std::atan2(static_cast<double>(kx) / n, 0.5) * 180.0 / k_pi;
+    const double b_a = std::min(sig.bearing_deg[i1], sig.bearing_deg[i2]);
+    const double b_b = std::max(sig.bearing_deg[i1], sig.bearing_deg[i2]);
+    check("north Nyquist wave: peak pair at theta and 360 - theta (" +
+              num(theta) + ", " + num(360.0 - theta) + ")",
+          angular_difference_deg(b_a, theta) < 1e-6 &&
+          angular_difference_deg(b_b, 360.0 - theta) < 1e-6,
+          "got " + num(b_a) + ", " + num(b_b));
+    check("north Nyquist wave: neither peak is the theta + 180 twin",
+          angular_difference_deg(b_a, theta + 180.0) > 1.0 &&
+          angular_difference_deg(b_b, theta + 180.0) > 1.0);
+    for (std::size_t i : {i1, i2})
+    {
+        const double f_north = sig.frequency[i] * std::cos(sig.bearing_rad[i]);
+        check("north Nyquist wave: peak cell has f_north = +Nyquist (row 0)",
+              std::fabs(f_north - 0.5) < 1e-9, "f_north " + num(f_north));
+    }
+    check("north Nyquist wave: the pair has equal power",
+          std::fabs(sig.normalised_psd[i1] - sig.normalised_psd[i2]) <=
+              1e-9 * sig.normalised_psd[i1]);
+}
+
+// -----------------------------------------------------------------------------
+// --align
+// -----------------------------------------------------------------------------
+void run_align_checks()
+{
+    const double w = 0.1;
+    // Source: one point in each of bins 0..4 (bin k covers [10^(kw), 10^((k+1)w))).
+    std::vector<double> src_f, src_v;
+    for (int k = 0; k < 5; ++k)
+    {
+        src_f.push_back(std::pow(10.0, (k + 0.5) * w));
+        src_v.push_back(100.0 + k);
+    }
+    // Target: bin 2 missing, bins at slightly different positions inside their
+    // bins (as a mean over a different point set would be), and bin 7, which
+    // the source lacks.
+    const std::vector<double> tgt_f = {
+        std::pow(10.0, 0.02), std::pow(10.0, 0.19), std::pow(10.0, 0.31),
+        std::pow(10.0, 0.45), std::pow(10.0, 0.75)};
+    const std::vector<double> got =
+        lsdtt::spectral_align_bin_trace(src_f, src_v, tgt_f, w);
+
+    check("align: output has one value per target bin", got.size() == tgt_f.size());
+    if (got.size() != tgt_f.size()) return;
+    check("align: bins 0 and 1 keep their values", got[0] == 100.0 && got[1] == 101.0,
+          num(got[0]) + ", " + num(got[1]));
+    check("align: bins after the missing bin 2 are not shifted",
+          got[2] == 103.0 && got[3] == 104.0, num(got[2]) + ", " + num(got[3]));
+    check("align: a target bin absent from the source is NaN", std::isnan(got[4]));
+
+    check("align: identical grids reproduce the source",
+          lsdtt::spectral_align_bin_trace(src_f, src_v, src_f, w) == src_v);
+
+    bool threw = false;
+    try { lsdtt::spectral_align_bin_trace(src_f, {1.0}, tgt_f, w); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check("align: mismatched source sizes throw invalid_argument", threw);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -298,10 +401,12 @@ int main(int argc, char* argv[])
         if      (mode == "--threshold") run_threshold_checks();
         else if (mode == "--bearings")  run_bearing_checks();
         else if (mode == "--seed")      run_seed_checks();
+        else if (mode == "--edges")     run_edge_checks();
+        else if (mode == "--align")     run_align_checks();
         else
         {
             std::cerr << "usage: lsdtt-test-spectral-significant-2d "
-                         "--threshold | --bearings | --seed\n";
+                         "--threshold | --bearings | --seed | --edges | --align\n";
             return 2;
         }
         return finish();

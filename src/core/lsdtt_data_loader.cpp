@@ -869,9 +869,9 @@ void lsdtt_data_loader::create_output_raster(
         meta.x_min,
         meta.cell_size,
         0.0,
-        meta.y_min + meta.n_rows * meta.cell_size,  // y_max (top-left northing)
+        meta.y_max(),        // top-left northing
         0.0,
-        -meta.cell_size
+        -meta.pixel_height() // = -cell_size unless cell_size_y is set
     };
     raw->SetGeoTransform(gt);
 
@@ -1009,9 +1009,9 @@ void lsdtt_data_loader::write_png(
         meta.x_min,
         meta.cell_size,
         0.0,
-        meta.y_max(),        // = y_min + n_rows * cell_size
+        meta.y_max(),        // = y_min + n_rows * pixel_height()
         0.0,
-        -meta.cell_size
+        -meta.pixel_height()
     };
     mem_ds->SetGeoTransform(gt);
 

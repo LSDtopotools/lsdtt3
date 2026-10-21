@@ -150,8 +150,8 @@ of the detrended field,
 ```
 
 The division by the frequency spacing that would turn this into a density per
-(cycles/m)² is not applied. Section 8 notes that the library header labels the
-PSD as m²/(cycles/m), which does not match this formula.
+(cycles/m)² is not applied, so the PSD is a variance per DFT cell (m² for an
+elevation input), not a density per unit frequency.
 
 ### 2.5 Frequency axes and the fftshift layout
 
@@ -310,8 +310,8 @@ independent exponential variables. That distribution has a much heavier upper ta
 than the exponential, and it gives many false detections (section 2.12).
 
 Averaging `N` realisations reduces the relative scatter of the background estimate
-in each cell to about `1/√N`. That is roughly 22 % for the CLI default of 20
-iterations and 10 % for 100 iterations. The scatter does not vanish, so the
+in each cell to about `1/√N`. That is roughly 10 % for the default of 100
+iterations, and 22 % for 20 iterations (the CLI default before 2026-10-21). The scatter does not vanish, so the
 significance threshold depends on `N` as well (section 2.12).
 
 ### 2.10 Normalised PSD
@@ -356,6 +356,26 @@ the window, so the effective count per bin is smaller than the number of cells.
 The 95 % label records where the constant came from.
 
 #### (b) Per-cell 2D test
+
+!!! note "Where 9.21 comes from"
+
+    9.21 is the value a single cell's normalised PSD exceeds by chance with
+    probability 1 in 10,000 when the surface has no characteristic scale.
+    For such a surface each periodogram cell is the squared magnitude of a
+    complex Fourier coefficient whose real and imaginary parts are independent
+    Gaussians of equal variance. A sum of two squared standard Gaussians is
+    χ² with 2 degrees of freedom; dividing by its mean (2) gives an exponential
+    distribution with mean 1. So the normalised PSD `S` of a cell satisfies
+
+        P(S > t) = exp(-t)
+
+    Setting this chance to `1 - p` gives the threshold `t = -ln(1 - p)`. At the
+    default confidence `p = 0.9999`, `t = -ln(10⁻⁴) = 4 ln 10 = 9.2103`. The
+    legacy LSDTopoTools code wrote the same number as half the χ²₂ value at
+    99.99 %, `18.42185 / 2 = 9.21093`. The binned test's 2.9955 is the same
+    construction at 95 %: `5.991 / 2`, or `-ln(0.05) = 2.9957`. The derivation
+    and the correction for a background averaged from a finite number of
+    synthetic surfaces follow below.
 
 `_significant_frequencies_2d.csv` (section 6) reports each 2D cell whose ratio
 exceeds
@@ -407,15 +427,17 @@ which tends to `-ln(1 - p)` as `N` grows. At p = 0.9999:
 |---|---|
 | 1 | 9999 |
 | 5 | 26.55 |
-| 20 (CLI default) | 11.70 |
-| 100 | 9.65 |
+| 20 | 11.70 |
+| 100 (default) | 9.65 |
 | infinite | 9.21 |
 
 These values come from the formula above. A Monte Carlo check with 2 × 10⁶ draws
 reproduced them to within about 2 % (the tail at p = 0.9999 contains only about 200
 draws, so the sampling error is of that order). In that idealised model, a threshold of
-9.21 at `N = 20` gives a per-cell false-alarm rate near 5 × 10⁻⁴, five times the
-nominal 10⁻⁴. The model ignores the window correlations between cells, any
+9.21 gives a per-cell false-alarm rate of `(1 + 9.21/N)^(-N)`: about 5 × 10⁻⁴ at
+`N = 20`, five times the nominal 10⁻⁴, and about 1.5 × 10⁻⁴ at the default
+`N = 100`. The default was raised from 20 to 100 for this reason. The reported
+threshold stays at `-ln(1 - p)`, so it matches the legacy output. The model ignores the window correlations between cells, any
 departure from Gaussian statistics, and the mismatch between the fitted power law
 and the real spectrum. The actual false-alarm rate on a real tile may differ.
 
@@ -427,7 +449,8 @@ count includes both members of each mirror pair (section 3), so the number of
 independent chance passes is about half of it.
 
 For the default `p = 0.9999` on a 128 × 128 padded grid, that expectation is about
-1.6 entries per tile. At `p = 0.95` it is about 800 entries, so most passes at that
+1.6 entries per tile in the infinite-`N` limit, and about 2.4 with the default
+`N = 100` (false-alarm rate 1.5 × 10⁻⁴, section 2.11). At `p = 0.95` it is about 800 entries, so most passes at that
 level are expected by chance under the idealised null.
 
 ---
@@ -626,9 +649,14 @@ pixel centre at column `c` has east frequency `(c - P_c/2) · dfx`, and the pixe
 centre at row `r` has north frequency `(P_r/2 - r) · dfy`. Row 0 is at the top, so
 the rasters are north-up. Values are float32.
 
-For a padded grid whose row and column counts differ, the code writes both axes
-with the single cell size `dfx`. The north axis therefore does not match `dfy`
-(section 8). The bearing CSV is not affected.
+The pixel width is `dfx` and the pixel height `dfy`. They differ when the padded
+row and column counts differ, which happens whenever the input's rows and
+columns round up to different powers of two (for example 200 × 500 pads to
+256 × 512, so `dfy = 2 dfx`), even though the input pixels are square. The
+rasters are then written with non-square pixels, so both axes read in true
+cycles/m in a GIS or in lsdviztools3. These are the only lsdtt3 outputs with
+non-square pixels; lsdtt3 itself refuses non-square pixels on input, so they
+cannot be fed back into another lsdtt3 tool.
 
 ### `_radial_spectrum.csv`
 
@@ -645,8 +673,10 @@ with the single cell size `dfx`. The north axis therefore does not match `dfy`
 The `beta_by_bin` and `r_sq_by_bin` columns come from the rollover binning of the
 observed spectrum. The rows come from the shared-valid binning (section 2.10),
 which can drop a bin if none of its points has a positive background or ratio.
-The two columns are matched to the rows by position, so a dropped bin shifts them.
-Section 8 records this.
+The two columns are matched to the rows by log bin (`spectral_align_bin_trace`),
+so a dropped bin leaves the other rows' values in place. A row whose bin has no
+rollover fit (the highest-frequency fifth of the bins, which the suffix
+regression does not start from) holds `nan`.
 
 ### `_significant_frequencies.csv`
 
@@ -837,30 +867,35 @@ LSDTopoTools implementation, or that a user could reasonably misread.
   (section 2.11). It is not applied to individual cells.
 - **Corner cells.** The 2D output includes corner cells outside the Nyquist circle,
   which the radial spectrum omits (section 2.6).
-- **Default iterations and bin width.** The library default for
-  `n_background_iterations` is 100, and the CLI default is 20. The library default
-  bin width is 0.1, and the CLI default is 0.05. The CLI values are the ones used in
-  a command-line run.
+- **Default iterations and bin width.** `n_background_iterations` defaults to 100
+  in both the CLI and the library (the CLI default was 20 before 2026-10-21). The
+  library default bin width is 0.1, and the CLI default is 0.05. The CLI values are
+  the ones used in a command-line run.
 - **PSD units.** The PSD is the variance per DFT cell (section 2.4). No division by
   the frequency spacing is applied.
 - **Finite-N threshold.** The per-cell threshold `-ln(1 - p)` is the limit for an
   infinite number of background iterations. For finite `N`, the F-distribution
   quantile in section 2.11 applies.
-- **Non-square 2D rasters.** The written rasters use `dfx` for both axes (section 6).
-- **Radial bin alignment.** The `beta_by_bin` and `r_sq_by_bin` columns of
-  `_radial_spectrum.csv` are matched to the output rows by position, but they come
-  from a different binning than the rows (section 6). If a bin is dropped by the
-  shared-valid binning, the columns after it are offset by one row.
+- **Non-square 2D rasters.** Before 2026-10-21 the 2D spectrum rasters used `dfx`
+  for both axes, so when the padded grid was not square their north axis was
+  scaled by `dfx / dfy`. They now carry a separate pixel height (section 6).
+- **Radial bin alignment.** Before 2026-10-21 the `beta_by_bin` and `r_sq_by_bin`
+  columns of `_radial_spectrum.csv` were copied to the rows by position, so a bin
+  dropped by the shared-valid binning shifted every later value by one row. They
+  are now matched by log bin (section 6).
 
 ---
 
 ## 9. Relation to the published method
 
-The method is the spectral approach of Perron et al. (2008). The ridge-and-valley
-context is Perron et al. (2009). The equations on this page describe the
-implementation. Where the code cites an equation of the 2008 paper (the per-cell
-threshold, cited as its equation 9), the citation is kept as the code gives it.
-The page has not been checked line by line against either paper.
+The method is the spectral approach of Perron, Kirchner and Dietrich (2008): the
+2D periodogram of a detrended, windowed DEM, normalised by the spectrum of
+synthetic fractal surfaces, with significance judged from the chi-squared
+distribution of periodogram values. The ridge-and-valley context is Perron et al.
+(2009). The equations on this page describe the lsdtt3 implementation. Where the
+code cites an equation of the 2008 paper (the per-cell threshold, cited as its
+equation 9), the citation is kept as the code gives it; the page has not been
+checked equation by equation against the paper.
 
 **Perron, J. T., Kirchner, J. W., & Dietrich, W. E. (2008).** Spectral signatures of
 characteristic spatial scales and nonfractal structure in landscapes. *Journal of

@@ -11,10 +11,17 @@
 // Spectral raster analysis - FFTW-based CPU free functions.
 //
 // Current contents:
-//   wavelet_quadratic_fit
-//   various spectral filters
+//   wavelet_quadratic_fit             - Gaussian-weighted quadratic surface fit
+//   fftw2D_lowpass/highpass/bandpass/wiener_filter, fftw2D_masked_surface_recovery
+//   full_spectral_analysis            - Perron et al. (2008) spectral analysis
+//   find_significant_frequencies_2d   - significant 2D cells with bearings
+//   spectral_align_bin_trace          - match per-bin traces between bin grids
+//   detect_directional_periodicity
 //
-// The fitted quadratic surface is:
+// The method of full_spectral_analysis is described in
+// docs/design_and_algorithms/spectral_analysis.md.
+//
+// wavelet_quadratic_fit: the fitted quadratic surface is:
 //
 //   z(x,y) = a*x^2 + b*y^2 + c*x*y + d*x + e*y + f
 //
@@ -119,8 +126,8 @@ poly_fit_coeffs wavelet_quadratic_fit(
 // smaller than the input; the caller is responsible for mosaicking or
 // interpreting the cropped extent.
 //
-// For spectral analysis (Perron et al. 2008) see lsdtt_spectral_analysis_result
-// which is in this same file (to be added alongside full_spectral_analysis).
+// For spectral analysis (Perron et al. 2008) see full_spectral_analysis and
+// lsdtt_spectral_analysis_result below.
 //
 // If lsdtt3 is built without FFTW, all filter functions throw at runtime with
 // a clear message.
@@ -145,8 +152,12 @@ enum class spectral_window_type { none, hann, hamming };
 // Units:
 //   frequency      - cycles/m  (= 1/m)
 //   wavelength     - metres    (= 1/frequency)
-//   psd            - m^2 / (cycles/m)
-//   background_psd - m^2 / (cycles/m)
+//   psd            - squared input units per DFT cell (m^2 for an elevation
+//                    raster): the 2D periodogram is |X|^2 / (P_r P_c WSS), so
+//                    it sums to the window-weighted variance (Parseval). It is
+//                    NOT divided by the frequency-cell area, so it is not a
+//                    density per (cycles/m)^2.
+//   background_psd - same units as psd
 //   normalised_psd - dimensionless  (psd / background_psd)
 //   beta_by_bin    - dimensionless spectral slope from rollover suffix regression
 //   r_sq_by_bin    - R^2 of that regression (dimensionless, 0-1)
@@ -155,8 +166,8 @@ struct lsdtt_spectral_binned_result
 {
     std::vector<double> frequency;       // cycles/m
     std::vector<double> wavelength;      // m
-    std::vector<double> psd;             // m^2/(cycles/m)
-    std::vector<double> background_psd;  // m^2/(cycles/m)
+    std::vector<double> psd;             // input units^2 per DFT cell
+    std::vector<double> background_psd;  // input units^2 per DFT cell
     std::vector<double> normalised_psd;  // dimensionless
     std::vector<double> beta_by_bin;     // spectral slope
     std::vector<double> r_sq_by_bin;     // R^2
@@ -167,6 +178,9 @@ struct lsdtt_spectral_binned_result
 //
 // Options controlling the Perron-style full spectral analysis workflow.
 // -----------------------------------------------------------------------------
+// The library defaults below are not the CLI defaults: lsdtt-spectral-analysis
+// sets log_bin_width = 0.05 (spectral_log_bin_width) and passes its own
+// n_background_iterations (default 100, the same as here).
 struct lsdtt_spectral_analysis_options
 {
     double               log_bin_width           = 0.1;
@@ -194,7 +208,9 @@ struct lsdtt_spectral_analysis_options
 //   - Col index c has x-frequency (c - padded_cols/2) * dfx  [cycles/m].
 //   - When written as a GeoTIFF via lsdtt_data_loader::write_full(), set the
 //     origin so that the DC pixel centre maps to coordinate (0, 0) in
-//     cycles/m. See lsdtt-spectral-analysis CLI for the derivation.
+//     cycles/m, with cell_size = dfx and cell_size_y = dfy (they differ when
+//     padded_rows != padded_cols). See lsdtt-spectral-analysis CLI for the
+//     derivation.
 //
 // Radial vectors (radial_frequency, radial_psd, etc.):
 //   - One entry per non-redundant (row, col) pair in the left half of the
@@ -204,7 +220,10 @@ struct lsdtt_spectral_analysis_options
 //   dfx, dfy, nyquist_frequency  - cycles/m
 //   radial_frequency             - cycles/m
 //   radial_wavelength            - m
-//   radial_psd, background_psd   - m^2/(cycles/m)
+//   psd_2d, background_psd_2d,
+//   radial_psd, background_psd   - input units^2 per DFT cell (m^2 for an
+//                                  elevation raster; see
+//                                  lsdtt_spectral_binned_result)
 //   normalised_psd               - dimensionless
 //   rollover_frequency           - cycles/m
 //   rollover_beta, sub_rollover_beta - dimensionless spectral slope
@@ -294,10 +313,22 @@ double spectral_normalised_psd_threshold(double confidence);
 //   wavelength                - 1 / frequency, m
 //   normalised_psd            - psd_2d / background_psd_2d, dimensionless
 //
-// The spectrum of a real surface is point-symmetric, so every significant
-// frequency appears twice, at bearings theta and theta + 180 deg. Both are
-// kept, matching the legacy LSDRasterSpectral::print_significant_freq_99p99
-// output. The DC cell (zero frequency) is never included.
+// The spectrum of a real surface is point-symmetric, so a significant cell
+// at (f_east, f_north) has a twin at (-f_east, -f_north): bearing theta + 180
+// deg, same frequency and power. Both are kept, matching the legacy
+// LSDRasterSpectral::print_significant_freq_99p99 output. The DC cell (zero
+// frequency) is never included.
+//
+// The exception is the Nyquist edges of the padded grid (always even-sized).
+// Row 0 holds f_north = +Nyquist and column 0 f_east = -Nyquist; the twin of
+// such a cell wraps back onto the same edge, because +Nyquist and -Nyquist
+// are the same frequency. So:
+//   - a row-0 cell pairs with the row-0 cell at bearing 360 - theta;
+//   - a column-0 cell pairs with the column-0 cell at bearing 180 - theta;
+//   - (0, 0), (0, padded_cols/2) and (padded_rows/2, 0) are their own twins
+//     and appear once.
+// The edge cells lie at or beyond the Nyquist frequency of one axis, i.e. at
+// wavelengths near two cells.
 // -----------------------------------------------------------------------------
 struct lsdtt_spectral_significant_2d
 {
@@ -322,6 +353,26 @@ struct lsdtt_spectral_significant_2d
 lsdtt_spectral_significant_2d find_significant_frequencies_2d(
     const lsdtt_spectral_analysis_result& result,
     double                                normalised_psd_threshold
+);
+
+// -----------------------------------------------------------------------------
+// spectral_align_bin_trace
+//
+// Re-indexes a per-bin trace onto a second log-binned frequency grid. Both
+// grids must come from log_bin_mean_xy with the same log_bin_width, which puts
+// frequency f in bin floor(log10(f) / log_bin_width). Entry i of the result is
+// the source value from the bin that holds target_frequency[i], or NaN when
+// the source grid has no point in that bin.
+//
+// full_spectral_analysis uses it to attach the rollover traces (beta_by_bin,
+// r_sq_by_bin), binned from the full observed spectrum, to the binned rows,
+// which are binned from the shared-valid points and can lack a bin.
+// -----------------------------------------------------------------------------
+std::vector<double> spectral_align_bin_trace(
+    const std::vector<double>& source_frequency,
+    const std::vector<double>& source_values,
+    const std::vector<double>& target_frequency,
+    double                     log_bin_width
 );
 
 

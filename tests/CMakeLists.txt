@@ -6774,12 +6774,14 @@ lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
 # 2D significant frequencies with bearings (the legacy _significant_freq.csv)
 # and background_seed reproducibility. Known-answer sinusoids pin the bearing
 # convention, including a non-square grid where dfx != dfy; the seed mode pins
-# bit-identical backgrounds across thread counts. --threshold needs no FFTW.
+# bit-identical backgrounds across thread counts; --edges pins the Nyquist-edge
+# pairing; --align pins the bin matching of the radial CSV's beta and R^2
+# columns. --threshold and --align need no FFTW.
 add_executable(lsdtt-test-spectral-significant-2d cpp/test_spectral_significant_2d.cpp)
 target_link_libraries(lsdtt-test-spectral-significant-2d PRIVATE lsdtt3_cpu)
-set(_sss2d_modes "threshold")
+set(_sss2d_modes "threshold" "align")
 if(LSDTT_HAS_FFTW)
-    list(APPEND _sss2d_modes "bearings" "seed")
+    list(APPEND _sss2d_modes "bearings" "seed" "edges")
 endif()
 foreach(_sss2d_mode IN LISTS _sss2d_modes)
     add_test(NAME unit_spectral_analysis_significant_2d_${_sss2d_mode}

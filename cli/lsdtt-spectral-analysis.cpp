@@ -116,12 +116,17 @@ int main(int argc, char* argv[])
         "Smaller values give finer frequency resolution. Default is 0.05.",
         "Spectral options", "param", ""};
 
-    int_default_map["n_background_iterations"] = 20;
-    help_map["n_background_iterations"] = {"int","20",
-        "Number of iterations for synthetic background spectrum estimation.",
-        "Each iteration generates a random phase spectrum with the same "
-        "amplitude envelope. More iterations give a smoother background. "
-        "Default is 20.",
+    int_default_map["n_background_iterations"] = 100;
+    help_map["n_background_iterations"] = {"int","100",
+        "Number of synthetic fractal surfaces averaged into the background spectrum.",
+        "Each iteration makes a synthetic surface (white noise filtered to a "
+        "power-law spectrum with the fitted exponent beta, scaled to the "
+        "tile's standard deviation) and takes its periodogram with the same "
+        "window and padding; the background is their mean. Its scatter in "
+        "each cell is about 1/sqrt(N), and the 2D test's threshold assumes "
+        "the background is exact: at 9.21 the per-cell false-alarm rate is "
+        "(1 + 9.21/N)^-N, about 1.5e-4 at the default N = 100 (nominal 1e-4) "
+        "and 5e-4 at N = 20. Default is 100.",
         "Spectral options", "param", ""};
 
     int_default_map["background_seed"] = -1;
@@ -222,7 +227,10 @@ int main(int argc, char* argv[])
         "The bearing is the direction of the wave vector, clockwise from north; "
         "the crests run perpendicular to it. The spectrum of a real surface is "
         "point-symmetric, so each significant frequency appears twice, at "
-        "bearings theta and theta + 180. Equivalent to the legacy "
+        "bearings theta and theta + 180, except cells on the Nyquist edges of "
+        "the padded grid (wavelengths near two cells), whose twin is at "
+        "360 - theta (first row) or 180 - theta (first column), or which "
+        "appear once. Equivalent to the legacy "
         "_significant_freq.csv. The threshold is set by "
         "significant_frequencies_2d_confidence. Lines starting with # record the "
         "confidence, threshold, seed, iterations and n_significant_frequencies; "
@@ -479,8 +487,8 @@ int main(int argc, char* argv[])
     // row = padded_rows/2, col = padded_cols/2 (integer division).
     //
     // Coordinate convention:
-    //   - Raster pixel size = dfx (cycles/m in x; dfy may differ for
-    //     non-square rasters but lsdtt_raster_meta assumes square pixels).
+    //   - Raster pixel width = dfx and height = dfy (cycles/m); they differ
+    //     when the padded grid is not square.
     //   - Origin is set so that the DC pixel centre is at (0, 0) in the
     //     output coordinate system (units: cycles/m).
     //   - x increases to the right  (positive = eastward spatial frequency).
@@ -499,22 +507,26 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Writing 2D spectrum ---\n";
         std::cout << "  Units: cycles/m (both axes). DC centred at (0, 0).\n";
 
-        // Cell size in x (cycles/m). For square DEMs dfx == dfy; for
-        // rectangular DEMs dfy differs but lsdtt_raster_meta only supports
-        // square pixels - x is exact, y may have a small scale error.
-        const double cell_size = result.dfx;
+        // Pixel width dfx and height dfy (cycles/m). The padding rounds each
+        // axis to its own power of two, so when padded_rows != padded_cols
+        // the two spacings differ even though the input pixels are square
+        // (dfy = dfx * padded_cols / padded_rows). The raster is written with
+        // a separate pixel height (cell_size_y), so both axes are exact.
+        const double cell_x = result.dfx;
+        const double cell_y = result.dfy;
 
         // Origin so that the DC pixel centre (row padded_rows/2, col
-        // padded_cols/2) maps to geographic coordinate (0, 0).
-        // Derivation: pixel centre at row r = y_min + (n_rows - r - 0.5)*cs
-        // Setting r = padded_rows/2 -> y_min = (padded_rows/2 + 0.5 - padded_rows)*cs
+        // padded_cols/2) maps to coordinate (0, 0).
+        // Derivation: pixel centre at row r = y_min + (n_rows - r - 0.5)*dfy
+        // Setting r = padded_rows/2 -> y_min = (padded_rows/2 + 0.5 - padded_rows)*dfy
         lsdtt::lsdtt_raster_meta freq_meta;
         freq_meta.n_rows        = result.padded_rows;
         freq_meta.n_cols        = result.padded_cols;
-        freq_meta.cell_size     = cell_size;
-        freq_meta.x_min         = -(result.padded_cols / 2 + 0.5) * cell_size;
+        freq_meta.cell_size     = cell_x;
+        freq_meta.cell_size_y   = cell_y;
+        freq_meta.x_min         = -(result.padded_cols / 2 + 0.5) * cell_x;
         freq_meta.y_min         = (result.padded_rows / 2 + 0.5 - result.padded_rows)
-                                   * cell_size;
+                                   * cell_y;
         freq_meta.no_data_value = -9999.0;
 
         try
@@ -570,7 +582,8 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("Cannot open file for writing: " + o);
             }
 
-            // frequency: cycles/m   wavelength: m   psd/background_psd: m^2/(cycles/m)
+            // frequency: cycles/m   wavelength: m
+            // psd/background_psd: input units^2 per DFT cell (m^2 for elevation)
             // normalised_psd: dimensionless (psd / background_psd)
             // beta_by_bin: spectral slope estimate from rollover-fit suffix regression
             // r_sq_by_bin: R^2 of that regression
