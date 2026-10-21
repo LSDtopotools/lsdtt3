@@ -1,0 +1,66 @@
+Bootstrap: docker
+From: quay.io/pypa/manylinux_2_28_x86_64
+
+# manylinux_wheel.def
+#
+# The manylinux_2_28 image cibuildwheel uses for the Linux wheels, with the
+# system dependencies already installed. It lets the Linux wheels be built
+# with Apptainer instead of podman, for example on a server where you have
+# Apptainer but no sudo.
+#
+# Do not build this by hand: tools/build_manylinux_wheel_apptainer.sh builds it
+# (once, then reuses it) and runs the wheel build inside it. The script runs
+# `apptainer build` from a staging directory that holds a copy of
+# python_bindings/pyproject.toml, which is what the %files line below copies.
+#
+# The dependency list is NOT repeated here. %post runs the
+# [tool.cibuildwheel.linux] before-all command from that pyproject.toml, the
+# same command cibuildwheel runs in CI and under podman, so the two routes
+# cannot drift apart. The script names the image after a hash of this file and
+# of that command, so changing either produces a new image.
+#
+# The base image carries every CPython the wheels target (/opt/python/cp3XX-*)
+# and auditwheel.
+
+%labels
+    Maintainer Simon M. Mudd
+    Description lsdtt3 manylinux_2_28 wheel build image (Apptainer route)
+
+%files
+    pyproject.toml /opt/lsdtt3/pyproject.toml
+
+%post
+    set -eu
+
+    # Any CPython >= 3.11 in the image has tomllib.
+    PY=""
+    for candidate in /opt/python/cp312-cp312/bin/python /opt/python/cp311-cp311/bin/python /opt/python/cp313-cp313/bin/python; do
+        if [ -x "$candidate" ]; then PY="$candidate"; break; fi
+    done
+    [ -n "$PY" ] || { echo "no CPython >= 3.11 found in /opt/python" >&2; exit 1; }
+
+    BEFORE_ALL="$("$PY" - <<'EOF'
+import tomllib
+with open("/opt/lsdtt3/pyproject.toml", "rb") as f:
+    print(tomllib.load(f)["tool"]["cibuildwheel"]["linux"]["before-all"])
+EOF
+)"
+    echo "Running before-all from pyproject.toml:"
+    echo "    $BEFORE_ALL"
+    bash -c "$BEFORE_ALL"
+
+    dnf clean all >/dev/null 2>&1 || yum clean all >/dev/null 2>&1 || true
+    rm -rf /var/cache/dnf /var/cache/yum
+
+%runscript
+    echo "lsdtt3 manylinux_2_28 wheel build image"
+    echo "  Pythons: $(ls /opt/python | tr '\n' ' ')"
+    echo "  GDAL:    $(gdal-config --version)"
+    echo "  CMake:   $(cmake --version | head -1)"
+
+%test
+    gdal-config --version
+    cmake --version | head -1
+    pkg-config --modversion fftw3
+    pkg-config --modversion netcdf
+    command -v auditwheel

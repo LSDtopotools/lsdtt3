@@ -39,17 +39,22 @@
 #
 # A DISTRIBUTABLE Linux wheel must be a manylinux wheel, which means compiling
 # inside the manylinux container image so the wheel does not depend on this
-# machine's glibc and GDAL. cibuildwheel drives that, and it needs a container
-# engine.
+# machine's glibc and GDAL. That needs a container engine. This project does
+# not use Docker (see docs/developer_notes/), so the engine is chosen in this
+# order (or forced with --wheel-engine):
 #
-# This project does not use Docker (see docs/developer_notes/). If podman is
-# installed, this script uses it and produces a real manylinux wheel identical
-# in kind to the CI artefact. If podman is absent it falls back to building a
-# HOST wheel: correct, importable, fine for local testing, and NOT
-# distributable, because it links whatever GDAL this machine has. The script
-# says which one it built, and names the wheel accordingly.
+#   podman     cibuildwheel drives podman: the same route as CI.
+#   apptainer  tools/build_manylinux_wheel_apptainer.sh runs cibuildwheel's
+#              build / auditwheel repair / test steps inside the same
+#              manylinux_2_28 image under Apptainer. Needs no sudo, so it is
+#              the route on a server where podman is not available.
+#   host       neither is installed: a HOST wheel, correct, importable, fine
+#              for local testing, and NOT distributable, because it links
+#              whatever GDAL this machine has.
 #
-# Docker is never invoked, even if present.
+# The first two produce real manylinux wheels identical in kind to the CI
+# artefact. The script says which one it built, and names a host wheel
+# LOCAL-ONLY-. Docker is never invoked, even if present.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -163,6 +168,18 @@ Options:
   --jobs <N>       Parallel compile jobs. Default: nproc.
   --profile <name> CLI profile for the tarball: qgis / core / all.
                    Default: core (what the official Linux release ships).
+  --wheel-engine <auto|podman|apptainer|host>
+                   How the wheel is built. Default: auto, which picks podman,
+                   then apptainer, then a (non-distributable) host wheel.
+  --wheel-python <X.Y[,X.Y...]|all>
+                   Python versions to build wheels for, or "all" for every
+                   version in pyproject.toml's [tool.cibuildwheel] build list.
+                   Default: the version of the Python this script found.
+                   podman and apptainer only; a host wheel is always for the
+                   Python found.
+  --wheel-sif <path>
+                   apptainer only: the image to use or create. Default: the
+                   build_manylinux_wheel_apptainer.sh default (~/.cache/lsdtt3).
   --keep-scratch   Keep the scratch build trees for inspection.
   --check-only     Check tooling and print the plan, then exit without
                    building. Use this first.
@@ -180,8 +197,12 @@ Notes:
   * Each compiled target compiles the C++ independently; the plugin zip is
     pure Python. The tarball stage also builds the Python bindings once for
     make_release.sh's mandatory bindings smoke check.
-  * Without podman the wheel is a host wheel, not a distributable manylinux
-    wheel. See the header comment. Docker is never used.
+  * Without podman or apptainer the wheel is a host wheel, not a
+    distributable manylinux wheel. See the header comment. Docker is never
+    used.
+  * On a server with Apptainer and no sudo, for a release:
+      tools/make_all_packages.sh --clean --tag vX.Y.Z --only wheel \
+          --wheel-engine apptainer --wheel-python all
 EOF
 }
 
@@ -195,6 +216,9 @@ JOBS=""
 CLI_PROFILE="core"
 KEEP_SCRATCH=0
 CHECK_ONLY=0
+WHEEL_ENGINE_REQ="auto"
+WHEEL_PYTHONS=""
+WHEEL_SIF=""
 ONLY=()
 SKIP=()
 
@@ -208,6 +232,9 @@ while [[ $# -gt 0 ]]; do
         --out-dir)      OUT_DIR="${2:-}"; shift 2 ;;
         --jobs)         JOBS="${2:-}"; shift 2 ;;
         --profile)      CLI_PROFILE="${2:-}"; shift 2 ;;
+        --wheel-engine) WHEEL_ENGINE_REQ="${2:-}"; shift 2 ;;
+        --wheel-python) WHEEL_PYTHONS="${2:-}"; shift 2 ;;
+        --wheel-sif)    WHEEL_SIF="${2:-}"; shift 2 ;;
         --keep-scratch) KEEP_SCRATCH=1; shift ;;
         --check-only)   CHECK_ONLY=1; shift ;;
         --help|-h)      usage; exit 0 ;;
@@ -217,6 +244,10 @@ done
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 [[ -z "$TAG" || "$MODE" == "clean" ]] || fail "--tag only applies to --clean builds"
+case "$WHEEL_ENGINE_REQ" in
+    auto|podman|apptainer|host) ;;
+    *) fail "--wheel-engine must be auto, podman, apptainer or host (got '${WHEEL_ENGINE_REQ}')" ;;
+esac
 
 # Resolve which targets to build.
 want_tarball=1; want_deb=1; want_wheel=1; want_conda=1; want_plugin=1
@@ -397,7 +428,7 @@ fi
 # already present - so prefer one of those and fall back to the system python.
 # This also keeps the wheel build inside the environment tooling the project
 # already uses, rather than depending on what happens to be installed globally.
-WHEEL_ENGINE="none"
+WHEEL_ENGINE="host"
 WHEEL_PYTHON=""
 if (( want_wheel )); then
     # Probe from a directory that is NOT the repository root. Python puts the
@@ -427,7 +458,30 @@ sys.exit(1 if missing else 0)
         fi
     done
 
-    if [[ -z "$WHEEL_PYTHON" ]]; then
+    # The container engine (see the header comment): podman, then apptainer,
+    # then a host wheel, unless --wheel-engine forces one.
+    case "$WHEEL_ENGINE_REQ" in
+        auto)
+            if have podman; then WHEEL_ENGINE="podman"
+            elif have apptainer; then WHEEL_ENGINE="apptainer"
+            else WHEEL_ENGINE="host"
+            fi ;;
+        podman)
+            have podman || MISSING+=("podman (--wheel-engine podman)")
+            WHEEL_ENGINE="podman" ;;
+        apptainer)
+            have apptainer || MISSING+=("apptainer (--wheel-engine apptainer)")
+            WHEEL_ENGINE="apptainer" ;;
+        host)
+            WHEEL_ENGINE="host" ;;
+    esac
+    if [[ "$WHEEL_ENGINE" == "apptainer" && ! -f "${SCRIPT_DIR}/build_manylinux_wheel_apptainer.sh" ]]; then
+        MISSING+=("tools/build_manylinux_wheel_apptainer.sh (the apptainer wheel route)")
+    fi
+
+    # The apptainer route runs entirely inside the image, which has its own
+    # Pythons, so it needs no build-capable Python on the host.
+    if [[ -z "$WHEEL_PYTHON" && "$WHEEL_ENGINE" != "apptainer" ]]; then
         MISSING+=("a Python with BOTH ensurepip and the 'build' module.
       Checked: .pixi/envs/default, .pixi/envs/docs, and the system python3.
       As things stand neither side has both:
@@ -455,8 +509,20 @@ sys.exit(1 if missing else 0)
       isolated build is the only supported route.")
     fi
 
-    if have podman; then
-        WHEEL_ENGINE="podman"
+    # Which Python versions to build. Default: the version of the Python
+    # found above (one compile), or of python3 for the apptainer route when
+    # no build-capable Python was found.
+    if [[ "$WHEEL_ENGINE" == "host" && -n "$WHEEL_PYTHONS" ]]; then
+        MISSING+=("--wheel-python applies to podman and apptainer only; a host wheel is
+      always built for the Python this script finds")
+    fi
+    if [[ -z "$WHEEL_PYTHONS" ]]; then
+        version_py="${WHEEL_PYTHON:-$(command -v python3 || true)}"
+        if [[ -n "$version_py" ]]; then
+            WHEEL_PYTHONS="$("$version_py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+        elif [[ "$WHEEL_ENGINE" == "apptainer" ]]; then
+            MISSING+=("--wheel-python (no python3 found to take a default version from)")
+        fi
     fi
 fi
 
@@ -489,24 +555,35 @@ printf '  %-22s %s\n' "Debian package:" "$( ((want_deb)) && echo "yes  (version 
 printf '  %-22s %s\n' "conda package:" "$( ((want_conda)) && echo "yes  (version from conda-recipe/meta.yaml)" || echo "skipped" )"
 printf '  %-22s %s\n' "QGIS plugin zip:" "$( ((want_plugin)) && echo "yes  (version from metadata.txt)" || echo "skipped" )"
 if (( want_wheel )); then
-    if [[ "$WHEEL_ENGINE" == "podman" ]]; then
-        printf '  %-22s %s\n' "Python wheel:" "yes  (version ${WHEEL_VERSION}, manylinux via podman)"
-    else
-        printf '  %-22s %s\n' "Python wheel:" "yes  (version ${WHEEL_VERSION}, HOST wheel - not distributable)"
-    fi
+    case "$WHEEL_ENGINE" in
+        podman|apptainer)
+            printf '  %-22s %s\n' "Python wheel:" "yes  (version ${WHEEL_VERSION}, manylinux via ${WHEEL_ENGINE}, Python ${WHEEL_PYTHONS})" ;;
+        *)
+            printf '  %-22s %s\n' "Python wheel:" "yes  (version ${WHEEL_VERSION}, HOST wheel - not distributable)" ;;
+    esac
 else
     printf '  %-22s %s\n' "Python wheel:" "skipped"
 fi
 
-if (( want_wheel )) && [[ "$WHEEL_ENGINE" != "podman" ]]; then
+if (( want_wheel )) && [[ "$WHEEL_ENGINE" == "apptainer" ]]; then
+    echo
+    sif_args=()
+    [[ -n "$WHEEL_SIF" ]] && sif_args=(--sif "$WHEEL_SIF")
+    bash "${SCRIPT_DIR}/build_manylinux_wheel_apptainer.sh" --check-only \
+        --python "$WHEEL_PYTHONS" ${sif_args[@]+"${sif_args[@]}"} | sed -n 's/^ *Image: *\(.*\)$/  Wheel image:           \1/p' \
+        || fail "the apptainer wheel route is not usable: run tools/build_manylinux_wheel_apptainer.sh --check-only"
+fi
+
+if (( want_wheel )) && [[ "$WHEEL_ENGINE" == "host" ]]; then
     echo
     warn "PYTHON WHEEL ONLY -- this does not affect the tarball or the .deb,"
     warn "which build fully and correctly on this machine with no container."
     warn ""
-    warn "podman is not installed, so the WHEEL will be built against this"
-    warn "machine's libraries. It will import and run here, but it is not a"
-    warn "manylinux wheel and must not be published. For a distributable wheel:"
-    warn "    sudo apt install podman"
+    warn "Neither podman nor apptainer is installed (or --wheel-engine host was"
+    warn "given), so the WHEEL will be built against this machine's libraries."
+    warn "It will import and run here, but it is not a manylinux wheel and must"
+    warn "not be published. For a distributable wheel install podman, or use"
+    warn "apptainer (no sudo needed): docs/developer_notes/building_python_wheels.md"
     warn "Docker is deliberately not used by this project, and is never invoked."
 fi
 
@@ -737,23 +814,54 @@ PY
 
     if [[ "$WHEEL_ENGINE" == "podman" ]]; then
         info "building a manylinux wheel with cibuildwheel (podman)"
-        have cibuildwheel || "$WHEEL_PYTHON" -c 'import cibuildwheel' >/dev/null 2>&1 || \
+        # cibuildwheel runs on the host and only drives the container, so any
+        # install of it will do: importable by the Python found above (e.g. in
+        # the pixi packaging environment), or a cibuildwheel command on PATH
+        # (pipx).
+        if "$WHEEL_PYTHON" -c 'import cibuildwheel' >/dev/null 2>&1; then
+            CIBW_CMD=("$WHEEL_PYTHON" -m cibuildwheel)
+        elif have cibuildwheel; then
+            CIBW_CMD=(cibuildwheel)
+        else
             fail "cibuildwheel is not installed, and this script does not install
 into your interpreter. Install it in an environment you manage:
     pipx install cibuildwheel
-or
-    pip install --user cibuildwheel"
+or add it to the pixi packaging environment."
+        fi
+        # By default only the found interpreter's version, to keep this to one
+        # compile rather than one per supported Python; --wheel-python widens it.
+        # "all" leaves CIBW_BUILD unset, so pyproject.toml's build list applies.
+        CIBW_BUILD_SEL=""
+        if [[ "$WHEEL_PYTHONS" != "all" ]]; then
+            IFS=',' read -r -a wheel_versions <<< "$WHEEL_PYTHONS"
+            for v in "${wheel_versions[@]}"; do
+                [[ "$v" =~ ^3\.[0-9]+$ ]] || fail "--wheel-python expects versions like 3.12, got '$v'"
+                CIBW_BUILD_SEL+="${CIBW_BUILD_SEL:+ }cp${v/./}-*"
+            done
+        fi
         (
             cd "$WHEEL_SRC"
-            # Only the running interpreter's version, to keep this to one
-            # compile rather than one per supported Python.
-            py_tag="cp$("$WHEEL_PYTHON" -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')-*"
+            [[ -n "$CIBW_BUILD_SEL" ]] && export CIBW_BUILD="$CIBW_BUILD_SEL"
             CIBW_CONTAINER_ENGINE=podman \
-            CIBW_BUILD="$py_tag" \
             CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28 \
             CIBW_ENVIRONMENT='CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"' \
-                "$WHEEL_PYTHON" -m cibuildwheel python_bindings --output-dir wheelhouse
+                "${CIBW_CMD[@]}" python_bindings --output-dir wheelhouse
         ) || fail "cibuildwheel failed"
+        WHEEL_GLOB="${WHEEL_SRC}/wheelhouse/*.whl"
+        WHEEL_KIND="manylinux"
+    elif [[ "$WHEEL_ENGINE" == "apptainer" ]]; then
+        info "building manylinux wheels with Apptainer (tools/build_manylinux_wheel_apptainer.sh)"
+        # The script and the image definition come from THIS checkout, not
+        # from the staged tag, so the route works for tags that predate it.
+        sif_args=()
+        [[ -n "$WHEEL_SIF" ]] && sif_args=(--sif "$WHEEL_SIF")
+        bash "${SCRIPT_DIR}/build_manylinux_wheel_apptainer.sh" \
+            --source "$WHEEL_SRC" \
+            --out-dir "${WHEEL_SRC}/wheelhouse" \
+            --python "$WHEEL_PYTHONS" \
+            --jobs "$JOBS" \
+            ${sif_args[@]+"${sif_args[@]}"} \
+            || fail "the apptainer wheel build failed"
         WHEEL_GLOB="${WHEEL_SRC}/wheelhouse/*.whl"
         WHEEL_KIND="manylinux"
     else
@@ -858,11 +966,11 @@ echo "  Time:"
 printf '    %s\n' "${TIMINGS[@]}"
 printf '    %-12s %ss\n' "total:" "$((SECONDS - OVERALL_START))"
 
-if (( want_wheel )) && [[ "$WHEEL_ENGINE" != "podman" ]]; then
+if (( want_wheel )) && [[ "$WHEEL_ENGINE" == "host" ]]; then
     echo
     warn "The wheel is prefixed LOCAL-ONLY- because it links this machine's"
-    warn "libraries. Do not upload it. Install podman, or use the GitHub"
-    warn "workflow, for a publishable manylinux wheel."
+    warn "libraries. Do not upload it. Install podman, use apptainer, or use"
+    warn "the GitHub workflow, for a publishable manylinux wheel."
 fi
 
 if [[ "$MODE" == "dirty" ]]; then

@@ -189,6 +189,17 @@ For development, use `lsdtt3.def`.
 
 ---
 
+## The wheel build image
+
+`manylinux_wheel.def` is different from the two above: it is the manylinux_2_28
+image the Python wheels are built in, used by
+`tools/build_manylinux_wheel_apptainer.sh` to build distributable wheels
+without podman or sudo. Do not build it by hand; the script builds and reuses
+it. See `docs/developer_notes/building_python_wheels.md`, section "Building the
+manylinux wheels with Apptainer".
+
+---
+
 ## Compiling lsdtt3
 
 ### Configure and build

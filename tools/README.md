@@ -124,17 +124,32 @@ cache between the tarball, the `.deb`, the wheel and the conda package; the
 plugin zip is pure Python. The tarball stage also builds the Python bindings
 once, for `make_release.sh`'s bindings check. While iterating, use `--only`.
 
-**Without podman the wheel is not distributable.** A publishable Linux wheel
-must be a manylinux wheel, built inside the manylinux image so it does not
-depend on this machine's glibc and GDAL. That needs a container engine, and
-this project does not use Docker. If `podman` is installed the script uses it
-and produces a real manylinux wheel; otherwise it builds a **host** wheel,
-prefixes the file `LOCAL-ONLY-`, and says so. A host wheel is fine for testing
-locally and must not be uploaded.
+**Without podman or Apptainer the wheel is not distributable.** A publishable
+Linux wheel must be a manylinux wheel, built inside the manylinux image so it
+does not depend on this machine's glibc and GDAL. That needs a container
+engine, and this project does not use Docker. The script picks one in this
+order (force one with `--wheel-engine podman|apptainer|host`):
+
+| Engine | How | Needs |
+|---|---|---|
+| `podman` | cibuildwheel drives podman, the same route as CI | podman, cibuildwheel, a Python with `build` |
+| `apptainer` | `tools/build_manylinux_wheel_apptainer.sh` runs cibuildwheel's build, `auditwheel repair` and test steps in the same manylinux_2_28 image | Apptainer >= 1.1 only; **no sudo**, no host Python |
+| `host` | neither is installed: a **host** wheel, prefixed `LOCAL-ONLY-` | a Python with `build` |
+
+A host wheel is fine for testing locally and must not be uploaded.
+`--wheel-python 3.12`, `3.11,3.12` or `all` chooses the Python versions for the
+first two engines (default: the version of the Python the script finds).
 
 ```bash
-sudo apt install podman     # for a publishable wheel
+sudo apt install podman     # the podman route, if you have sudo
+# or, with only Apptainer (e.g. on a server without sudo), for a release:
+tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
+    --wheel-engine apptainer --wheel-python all
 ```
+
+The Apptainer route builds its image once (a few GB under `~/.cache/lsdtt3`
+plus Apptainer's cache) and reuses it. See
+`docs/developer_notes/building_python_wheels.md` for the server steps.
 
 ### The wheel builds in a pixi environment
 
