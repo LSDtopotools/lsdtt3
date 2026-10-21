@@ -206,8 +206,8 @@ same `X.Y.Z` as `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` (checked by
 is built from the release tag `vX.Y.Z`, never from an untagged commit:
 
 ```bash
-tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel   # needs podman for manylinux
-gh release upload v0.7.0 dist/v0.7.0/*.whl                     # attach to the lsdtt3 release
+tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel   # needs podman for manylinux
+gh release upload v0.7.1 dist/v0.7.1/*.whl                     # attach to the lsdtt3 release
 ```
 
 There is no separate Python tag series. Before the version numbers were
@@ -228,21 +228,21 @@ in place. When the **source is unchanged** and only the build was wrong,
 publish a post-release:
 
 ```bash
-git switch -c release/0.7 v0.7.0      # or stay on main if it has not moved on
+git switch -c release/0.7 v0.7.1      # or stay on main if it has not moved on
 # ... commit the packaging fix ...
-tools/set_version.py 0.7.0 --post 1   # pyproject.toml -> 0.7.0.post1, nothing else
-git commit -am "Python wheel 0.7.0.post1"
-git tag -a v0.7.0.post1 -m "lsdtt3 Python wheel 0.7.0.post1"
-git push origin v0.7.0.post1          # release.yml ignores .post tags
-tools/make_all_packages.sh --clean --tag v0.7.0.post1 --only wheel
+tools/set_version.py 0.7.1 --post 1   # pyproject.toml -> 0.7.1.post1, nothing else
+git commit -am "Python wheel 0.7.1.post1"
+git tag -a v0.7.1.post1 -m "lsdtt3 Python wheel 0.7.1.post1"
+git push origin v0.7.1.post1          # release.yml ignores .post tags
+tools/make_all_packages.sh --clean --tag v0.7.1.post1 --only wheel
 ```
 
-`lsdtt3.__version__` and the bundled CLIs then report `0.7.0.post1`. A source
+`lsdtt3.__version__` and the bundled CLIs then report `0.7.1.post1`. A source
 change, even a Python-only fix, is never a `.postN`: it is a new patch release
 for everything (`0.7.1`), because PEP 440 reserves post-releases for changes
 that do not alter the distributed software.
 
-If the broken wheel is actively harmful, also **yank** `0.7.0` on PyPI (the
+If the broken wheel is actively harmful, also **yank** `0.7.1` on PyPI (the
 project's release page → Options → Yank). pip then skips it unless a user pins
 it exactly.
 
@@ -250,7 +250,7 @@ it exactly.
 
 No pre-release versions are published to PyPI or in backend bundles (the QGIS
 plugin cannot parse a suffixed `backend_version`). To try a wheel before the
-real upload, edit `pyproject.toml` to `0.7.0rc1` locally, **do not commit or
+real upload, edit `pyproject.toml` to `0.7.1rc1` locally, **do not commit or
 tag it**, build, and upload to TestPyPI (step 5 above). That catches most
 "uploaded a broken wheel, now need `.post1`" mistakes.
 
@@ -366,8 +366,8 @@ TestPyPI.
 **A version can never be reused.** Deleting a release on PyPI does not free
 the version number. Rehearse on TestPyPI.
 
-**The Python package shares the lsdtt3 version number.** `lsdtt3` 0.7.0 on
-PyPI is built from tag `v0.7.0`, and `lsdtt3._core.lsdtt3_version()` reports
+**The Python package shares the lsdtt3 version number.** `lsdtt3` 0.7.1 on
+PyPI is built from tag `v0.7.1`, and `lsdtt3._core.lsdtt3_version()` reports
 the version the bundled C++ was built as. A user pinning a version that has no
 wheel gets "no matching distribution"; the README's "Versioning" section is
 there to explain that.

@@ -24,9 +24,9 @@ Both of these hold the same files. Use whichever you can reach.
 File names look like this:
 
 ```
-lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.6.0.zip               Windows (native)
-lsdtt3-qgis-plugin-0.7.0.zip                       QGIS plugin (shares the number from 0.7.0)
+lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
+lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native)
+lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 
 `core` and `qgis` are **profiles** — which set of command-line tools the
@@ -346,7 +346,7 @@ release has wheels, they are attached to its GitHub release; install the one
 for your Python and platform:
 
 ```bash
-python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
 ```
 
 The wheel is self-contained: it bundles GDAL and PROJ, and also installs the
@@ -426,7 +426,7 @@ lsdtt-raster-preprocessing -v
 ```
 
 ```
-lsdtt-raster-preprocessing (lsdtt3 0.7.0, stable)
+lsdtt-raster-preprocessing (lsdtt3 0.7.1, stable)
 GDAL 3.8.4, PROJ 9.3.1
   proj data: bundled: /home/you/lsdtt3/share/proj
   GDAL data: bundled: /home/you/lsdtt3/share/gdal

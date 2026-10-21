@@ -34,7 +34,7 @@ release, and you install the file for your Python and platform into a virtual,
 conda or pixi environment:
 
 ```bash
-python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
 ```
 
 The [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)

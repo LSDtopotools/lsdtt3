@@ -130,7 +130,7 @@ leak into it.
 git clone <lsdtt3 repo> && cd lsdtt3      # or git fetch --tags in an existing clone
 
 # 1. Check: apptainer found, image path, Python versions.
-tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
+tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
     --wheel-engine apptainer --wheel-python all --check-only
 
 # 2. Build the image once (optional: step 3 does it if it is missing).
@@ -139,11 +139,11 @@ tools/build_manylinux_wheel_apptainer.sh --image-only
 apptainer cache clean                      # reclaim the cache once the .sif exists
 
 # 3. Build, repair and test one wheel per Python version, from the tag.
-tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
+tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
     --wheel-engine apptainer --wheel-python all
 ```
 
-The wheels land in `dist/v0.7.0/`, five of them for CPython 3.10 to 3.14,
+The wheels land in `dist/v0.7.1/`, five of them for CPython 3.10 to 3.14,
 each with a `manylinux` platform tag in its name (`auditwheel` picks the
 exact tag). Upload them as
 described in [`publishing_to_pypi.md`](publishing_to_pypi.md).
@@ -246,11 +246,11 @@ x86_64 leg: five wheels (CPython 3.10–3.14), each tested as above, on one
 `ubuntu-24.04` runner.
 
 From the Actions tab: *Build Python wheels* → **Run workflow** → tag
-`v0.7.0`, platforms **linux**, upload ticked or not. Or from a terminal with an
+`v0.7.1`, platforms **linux**, upload ticked or not. Or from a terminal with an
 authenticated `gh`:
 
 ```bash
-gh workflow run python-wheels.yml -f tag=v0.7.0 -f platforms=linux -f upload=true
+gh workflow run python-wheels.yml -f tag=v0.7.1 -f platforms=linux -f upload=true
 gh run watch                       # follow it; or: gh run list --workflow python-wheels.yml
 ```
 
@@ -266,7 +266,7 @@ the same tag later; with *upload* ticked, the second run replaces the Linux
 wheels the first one attached.
 
 The local alternative costs no minutes at all: `tools/make_all_packages.sh
---clean --tag v0.7.0 --only wheel` builds one Linux manylinux wheel, for the
+--clean --tag v0.7.1 --only wheel` builds one Linux manylinux wheel, for the
 interpreter it runs under, inside `podman` (see [Building locally](#building-locally)).
 
 Before building anything the workflow checks the tag against the tagged tree:
