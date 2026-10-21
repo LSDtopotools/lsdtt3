@@ -11,11 +11,15 @@
 // Spectral raster analysis - FFTW-based free functions operating on
 // lsdtt_raster_base objects.
 //
-// Current contents:
-//   wavelet_quadratic_fit
-//   various specral filters
+// Current contents (see the header for each function's contract):
+//   wavelet_quadratic_fit             - Gaussian-weighted quadratic surface fit
+//   fftw2D_lowpass/highpass/bandpass/wiener_filter, masked surface recovery
+//   full_spectral_analysis            - Perron et al. (2008) spectral analysis
+//   find_significant_frequencies_2d   - significant 2D cells with bearings
+//   spectral_align_bin_trace          - match per-bin traces between bin grids
+//   detect_directional_periodicity
 //
-// Notes:
+// Notes (wavelet_quadratic_fit):
 //   - Gaussian kernel only.
 //   - Uses the double-precision FFTW API (fftw_*).
 //   - Does not use FFTW thread-planning routines.
@@ -43,6 +47,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _OPENMP
@@ -3156,8 +3161,16 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
     result.binned.psd = binned_obs.second;
     result.binned.background_psd = binned_bg.second;
     result.binned.normalised_psd = binned_norm.second;
-    result.binned.beta_by_bin = rollover.beta_by_bin;
-    result.binned.r_sq_by_bin = rollover.r_sq_by_bin;
+    // The rollover traces come from binning the full observed radial
+    // spectrum; the rows above come from binning only the shared-valid
+    // points, which can leave a bin out. Match the traces by bin, not by
+    // position, so a dropped bin cannot shift every later value.
+    result.binned.beta_by_bin = spectral_align_bin_trace(
+        rollover.binned_frequency, rollover.beta_by_bin,
+        result.binned.frequency, opts.log_bin_width);
+    result.binned.r_sq_by_bin = spectral_align_bin_trace(
+        rollover.binned_frequency, rollover.r_sq_by_bin,
+        result.binned.frequency, opts.log_bin_width);
 
     result.binned.wavelength.resize(result.binned.frequency.size(), 0.0);
     for (std::size_t i = 0; i < result.binned.frequency.size(); ++i)
@@ -3609,5 +3622,148 @@ directional_periodicity_result detect_directional_periodicity(
 
 
 #endif  // LSDTT_HAS_FFTW
+
+// -----------------------------------------------------------------------------
+// spectral_normalised_psd_threshold
+// -----------------------------------------------------------------------------
+double spectral_normalised_psd_threshold(double confidence)
+{
+    if (!std::isfinite(confidence) || confidence <= 0.0 || confidence >= 1.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt::spectral_normalised_psd_threshold: confidence must lie in "
+            "(0, 1), got " + std::to_string(confidence)
+        );
+    }
+    return -std::log1p(-confidence);
+}
+
+// -----------------------------------------------------------------------------
+// find_significant_frequencies_2d
+// -----------------------------------------------------------------------------
+lsdtt_spectral_significant_2d find_significant_frequencies_2d(
+    const lsdtt_spectral_analysis_result& result,
+    double                                normalised_psd_threshold)
+{
+    const int n_rows = result.padded_rows;
+    const int n_cols = result.padded_cols;
+
+    if (n_rows <= 0 || n_cols <= 0 ||
+        result.psd_2d.n_rows() != n_rows || result.psd_2d.n_cols() != n_cols ||
+        result.background_psd_2d.n_rows() != n_rows ||
+        result.background_psd_2d.n_cols() != n_cols)
+    {
+        throw std::invalid_argument(
+            "lsdtt::find_significant_frequencies_2d: the 2D PSD arrays do not "
+            "match the padded dimensions in the result"
+        );
+    }
+
+    // DC sits at (n_rows/2, n_cols/2). A positive column offset is an eastward
+    // frequency; row 0 of the DEM is its northern edge, so a positive row
+    // offset is a SOUTHWARD frequency and the north component is its negative.
+    const int centre_row = n_rows / 2;
+    const int centre_col = n_cols / 2;
+    constexpr double two_pi = 2.0 * 3.14159265358979323846;
+    constexpr double rad_to_deg = 180.0 / 3.14159265358979323846;
+
+    lsdtt_spectral_significant_2d out;
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            if (row == centre_row && col == centre_col)
+                continue;
+
+            const double background = result.background_psd_2d(row, col);
+            if (!std::isfinite(background) || background <= 0.0)
+                continue;
+
+            const double norm = result.psd_2d(row, col) / background;
+            if (!(norm > normalised_psd_threshold))
+                continue;
+
+            const double f_east  = (col - centre_col) * result.dfx;
+            const double f_north = (centre_row - row) * result.dfy;
+            const double f = std::hypot(f_east, f_north);
+
+            double bearing = std::atan2(f_east, f_north);
+            if (bearing < 0.0)
+                bearing += two_pi;
+
+            out.bearing_rad.push_back(bearing);
+            out.bearing_deg.push_back(bearing * rad_to_deg);
+            out.frequency.push_back(f);
+            out.wavelength.push_back(1.0 / f);
+            out.normalised_psd.push_back(norm);
+        }
+    }
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// spectral_align_bin_trace
+// -----------------------------------------------------------------------------
+std::vector<double> spectral_align_bin_trace(
+    const std::vector<double>& source_frequency,
+    const std::vector<double>& source_values,
+    const std::vector<double>& target_frequency,
+    double                     log_bin_width)
+{
+    if (source_frequency.size() != source_values.size())
+    {
+        throw std::invalid_argument(
+            "lsdtt::spectral_align_bin_trace: source_frequency and "
+            "source_values must have the same size"
+        );
+    }
+    if (!std::isfinite(log_bin_width) || log_bin_width <= 0.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt::spectral_align_bin_trace: log_bin_width must be finite and > 0"
+        );
+    }
+
+    // log_bin_mean_xy puts frequency f in bin floor(log10(f) / w), and each
+    // binned frequency is the mean of the frequencies in its bin, so it lies
+    // inside that bin: the same expression recovers the bin index.
+    const auto bin_of = [log_bin_width](double f) -> std::int64_t
+    {
+        return static_cast<std::int64_t>(std::floor(std::log10(f) / log_bin_width));
+    };
+
+    std::vector<std::pair<std::int64_t, double>> source_bins;
+    source_bins.reserve(source_frequency.size());
+    for (std::size_t i = 0; i < source_frequency.size(); ++i)
+    {
+        const double f = source_frequency[i];
+        if (std::isfinite(f) && f > 0.0)
+        {
+            source_bins.emplace_back(bin_of(f), source_values[i]);
+        }
+    }
+    std::sort(source_bins.begin(), source_bins.end(),
+              [](const std::pair<std::int64_t, double>& a,
+                 const std::pair<std::int64_t, double>& b)
+              { return a.first < b.first; });
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> out(target_frequency.size(), nan);
+    for (std::size_t i = 0; i < target_frequency.size(); ++i)
+    {
+        const double f = target_frequency[i];
+        if (!std::isfinite(f) || f <= 0.0) continue;
+        const std::int64_t k = bin_of(f);
+        const auto it = std::lower_bound(
+            source_bins.begin(), source_bins.end(), k,
+            [](const std::pair<std::int64_t, double>& a, std::int64_t key)
+            { return a.first < key; });
+        if (it != source_bins.end() && it->first == k)
+        {
+            out[i] = it->second;
+        }
+    }
+    return out;
+}
 
 } // namespace lsdtt

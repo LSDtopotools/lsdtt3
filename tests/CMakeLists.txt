@@ -6771,6 +6771,59 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# 2D significant frequencies with bearings (the legacy _significant_freq.csv)
+# and background_seed reproducibility. Known-answer sinusoids pin the bearing
+# convention, including a non-square grid where dfx != dfy; the seed mode pins
+# bit-identical backgrounds across thread counts; --edges pins the Nyquist-edge
+# pairing; --align pins the bin matching of the radial CSV's beta and R^2
+# columns. --threshold and --align need no FFTW.
+add_executable(lsdtt-test-spectral-significant-2d cpp/test_spectral_significant_2d.cpp)
+target_link_libraries(lsdtt-test-spectral-significant-2d PRIVATE lsdtt3_cpu)
+set(_sss2d_modes "threshold" "align")
+if(LSDTT_HAS_FFTW)
+    list(APPEND _sss2d_modes "bearings" "seed" "edges")
+endif()
+foreach(_sss2d_mode IN LISTS _sss2d_modes)
+    add_test(NAME unit_spectral_analysis_significant_2d_${_sss2d_mode}
+             COMMAND lsdtt-test-spectral-significant-2d --${_sss2d_mode})
+    lsdtt_set_tests_properties(unit_spectral_analysis_significant_2d_${_sss2d_mode}
+        PROPERTIES LABELS "unit;surface_metrics")
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_analysis_significant_2d
+    lsdtt-spectral-analysis
+    spectral_analysis_significant_2d.param.in
+    sig2d_significant_frequencies_2d.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect-file-contains "sig2d_significant_frequencies_2d.csv:bearing_rad,bearing_deg,frequency_cycles_per_m,wavelength_m,normalised_psd"
+    --expect-file-contains "sig2d_significant_frequencies_2d.csv:# normalised_psd_threshold,9.21034"
+    --expect-file-contains "sig2d_significant_frequencies_2d.csv:# background_seed,17"
+    # The fixture DEM has nothing significant at the defaults, so both CSVs
+    # must say so in words rather than leave an empty table.
+    --expect-file-contains "sig2d_significant_frequencies_2d.csv:# n_significant_frequencies,0"
+    --expect-file-contains "sig2d_significant_frequencies_2d.csv:# No significant frequencies were found in this raster"
+    --expect-file-contains "sig2d_significant_frequencies.csv:# n_significant_frequencies,0"
+    --expect-file-contains "sig2d_significant_frequencies.csv:# No significant frequencies were found in this raster"
+)
+lsdtt_set_tests_properties(smoke_spectral_analysis_significant_2d PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
+# The same DEM at confidence 0.5 (threshold 0.69): cells must be written and the
+# no-significant-frequencies line must not appear.
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_analysis_significant_2d_found
+    lsdtt-spectral-analysis
+    spectral_analysis_significant_2d_found.param.in
+    sig2dfound_significant_frequencies_2d.csv
+    --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+    --expect-file-contains "sig2dfound_significant_frequencies_2d.csv:# normalised_psd_threshold,0.693147"
+    --expect-file-not-contains "sig2dfound_significant_frequencies_2d.csv:# n_significant_frequencies,0"
+    --expect-file-not-contains "sig2dfound_significant_frequencies_2d.csv:No significant frequencies"
+)
+lsdtt_set_tests_properties(smoke_spectral_analysis_significant_2d_found PROPERTIES
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 add_lsdtt_cli_smoke_test(
     regression_spectral_analysis_valley_spacing_legacy_alias
     lsdtt-spectral-analysis

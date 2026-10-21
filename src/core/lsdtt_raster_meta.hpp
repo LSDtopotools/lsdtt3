@@ -54,16 +54,28 @@ struct lsdtt_raster_meta
     // Georeferencing
     //
     // Origin is the bottom-left corner of the bottom-left pixel.
-    // Cell size is assumed square (equal x and y resolution).
+    // Cell size is assumed square (equal x and y resolution): the loader
+    // refuses non-square pixels, and all compute code uses cell_size.
+    //
+    // cell_size_y is an OUTPUT-ONLY exception for rasters that are not maps,
+    // such as the 2D spectrum rasters of lsdtt-spectral-analysis, whose axes
+    // are frequencies with different spacings when the padded grid is not
+    // square. 0 (the default) means "same as cell_size". When it is set, the
+    // writers use it as the pixel height; nothing else reads it, and the
+    // loader never sets it.
     // -------------------------------------------------------------------------
 
-    double x_min      = 0.0;   // easting  of left   edge (metres or degrees)
-    double y_min      = 0.0;   // northing of bottom edge (metres or degrees)
-    double cell_size  = 1.0;   // pixel size in projection units
+    double x_min       = 0.0;   // easting  of left   edge (metres or degrees)
+    double y_min       = 0.0;   // northing of bottom edge (metres or degrees)
+    double cell_size   = 1.0;   // pixel size in projection units
+    double cell_size_y = 0.0;   // output-only pixel height; 0 = cell_size
+
+    // Pixel height used when writing: cell_size_y if set, else cell_size.
+    double pixel_height() const { return cell_size_y > 0.0 ? cell_size_y : cell_size; }
 
     // Derived extents - computed from the above, provided for convenience
     double x_max() const { return x_min + n_cols * cell_size; }
-    double y_max() const { return y_min + n_rows * cell_size; }
+    double y_max() const { return y_min + n_rows * pixel_height(); }
 
     // -------------------------------------------------------------------------
     // NoData

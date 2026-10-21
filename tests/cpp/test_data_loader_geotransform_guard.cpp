@@ -23,6 +23,16 @@
 //       so lsdtt-raster-preprocessing can reproject it; the analysis CLIs
 //       refuse geographic rasters themselves.
 //
+// And the one deliberate way OUT: lsdtt_raster_meta::cell_size_y, an
+// output-only pixel height for rasters that are not maps (the 2D spectrum
+// rasters of lsdtt-spectral-analysis, whose frequency axes differ in spacing):
+//
+//   W1  write_full (gtiff) with cell_size_y = 0: gt[5] = -cell_size, as always.
+//   W2  write_full (gtiff) with cell_size 0.25, cell_size_y 0.5: gt[1] = 0.25,
+//       gt[5] = -0.5, top edge y_min + n_rows * 0.5.
+//   W3  the same through the png writer (worldfile / PAM georeferencing).
+//   W4  the loader still refuses that file on reading (not square).
+//
 // Usage: lsdtt-test-data-loader-geotransform-guard <scratch_dir>
 // -----------------------------------------------------------------------------
 
@@ -50,6 +60,26 @@ void check(const std::string& what, bool ok, const std::string& detail = "")
     if (!detail.empty()) std::cout << " -- " << detail;
     std::cout << "\n";
     if (!ok) ++g_failures;
+}
+
+// Writes a 4-row x 6-col raster through lsdtt_data_loader::write_full and
+// returns the geotransform GDAL reads back.
+std::vector<double> write_full_and_read_gt(const std::string& path,
+                                           const lsdtt::lsdtt_raster_meta& meta,
+                                           lsdtt::raster_output_format fmt)
+{
+    std::vector<float> v(static_cast<std::size_t>(meta.n_rows) * meta.n_cols);
+    for (std::size_t i = 0; i < v.size(); ++i) v[i] = static_cast<float>(i);
+    lsdtt::lsdtt_data_loader loader;
+    loader.write_full(v, meta, path, fmt);
+    std::vector<double> gt(6, std::nan(""));
+    GDALDataset* ds = static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_ReadOnly));
+    if (ds)
+    {
+        ds->GetGeoTransform(gt.data());
+        GDALClose(ds);
+    }
+    return gt;
 }
 
 // A 3-row x 5-col float GeoTIFF with the given geotransform and a nodata
@@ -157,6 +187,38 @@ int main(int argc, char* argv[])
         const std::string err = open_error(write_tif(dir, "gt_geographic.tif", gt, 4326), &m);
         check("G8 EPSG:4326 with 1.5\" x 1\" pixels: opens (for reprojection)",
               err.empty(), err);
+    }
+
+    {
+        lsdtt::lsdtt_raster_meta m;
+        m.n_rows = 4;
+        m.n_cols = 6;
+        m.cell_size = 0.25;
+        m.x_min = -1.0;
+        m.y_min = -2.0;
+        m.no_data_value = -9999.0;
+        const auto gt0 = write_full_and_read_gt(dir + "/w_square.tif", m,
+                                                lsdtt::raster_output_format::gtiff);
+        check("W1 cell_size_y unset: square pixels as before",
+              gt0[1] == 0.25 && gt0[5] == -0.25 && gt0[3] == -2.0 + 4 * 0.25,
+              "gt[1] " + std::to_string(gt0[1]) + ", gt[5] " + std::to_string(gt0[5]));
+
+        m.cell_size_y = 0.5;
+        const auto gt1 = write_full_and_read_gt(dir + "/w_rect.tif", m,
+                                                lsdtt::raster_output_format::gtiff);
+        check("W2 gtiff with cell_size_y 0.5: gt[1] 0.25, gt[5] -0.5, top 0",
+              gt1[0] == -1.0 && gt1[1] == 0.25 && gt1[5] == -0.5 && gt1[3] == 0.0,
+              "gt " + std::to_string(gt1[0]) + " " + std::to_string(gt1[1]) + " " +
+                  std::to_string(gt1[3]) + " " + std::to_string(gt1[5]));
+        const auto gt2 = write_full_and_read_gt(dir + "/w_rect.png", m,
+                                                lsdtt::raster_output_format::png);
+        check("W3 png with cell_size_y 0.5: gt[1] 0.25, gt[5] -0.5, top 0",
+              gt2[0] == -1.0 && gt2[1] == 0.25 && gt2[5] == -0.5 && gt2[3] == 0.0,
+              "gt " + std::to_string(gt2[0]) + " " + std::to_string(gt2[1]) + " " +
+                  std::to_string(gt2[3]) + " " + std::to_string(gt2[5]));
+        const std::string err = open_error(dir + "/w_rect.tif");
+        check("W4 the loader still refuses the non-square output on reading",
+              contains(err, "not square"), err);
     }
 
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";

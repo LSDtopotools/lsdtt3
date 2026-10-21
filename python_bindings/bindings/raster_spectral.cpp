@@ -207,7 +207,7 @@ cycles per metre and wavelengths are in metres.
 #endif
     }, "Return whether this build includes FFTW spectral support.");
     m.def("spectral_analysis", &spectral_analysis, nb::arg("raster"),
-        nb::arg("log_bin_width") = 0.05, nb::arg("n_background_iterations") = 20,
+        nb::arg("log_bin_width") = 0.05, nb::arg("n_background_iterations") = 100,
         nb::arg("seed") = -1, nb::arg("window") = "hann",
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
         "Run full FFT-based spectral analysis and return a SpectralResult.");

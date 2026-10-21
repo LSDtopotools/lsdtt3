@@ -1,0 +1,16 @@
+# Smoke test for the 2D significant-frequency output of lsdtt-spectral-analysis
+# (_significant_frequencies_2d.csv, the lsdtt3 equivalent of the legacy
+# _significant_freq.csv with bearings). Checks the header, the default 99.99%
+# threshold, that the seed is recorded, and that both CSVs state in words that
+# nothing is significant (this DEM has no significant cells at the defaults).
+# The bearing convention itself is pinned by
+# lsdtt-test-spectral-significant-2d --bearings.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sig2d
+
+n_threads: 1
+n_background_iterations: 5
+background_seed: 17
+write_2d_spectrum_rasters: false

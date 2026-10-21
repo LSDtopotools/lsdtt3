@@ -46,8 +46,12 @@ CIBW_CONTAINER_ENGINE=podman CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28 \
 On Linux `cibuildwheel` builds inside the manylinux container, and it uses
 Docker unless told otherwise. This project does not use Docker: set
 `CIBW_CONTAINER_ENGINE=podman` (`sudo apt install podman`).
-`tools/make_all_packages.sh --only wheel` does all of this for you, for one
-Python version, from a tag.
+`tools/make_all_packages.sh --only wheel` does all of this for you, from a tag.
+
+If you have Apptainer but no podman (and no sudo to install it), see
+[Building the manylinux wheels with Apptainer](#building-the-manylinux-wheels-with-apptainer).
+`make_all_packages.sh` picks podman first, then Apptainer, then falls back to
+a host wheel; `--wheel-engine podman|apptainer|host` forces one.
 
 `cibuildwheel` will build one wheel per supported Python version, which takes
 a while. To build a single wheel for the interpreter you already have, bypass
@@ -60,6 +64,112 @@ CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON" python -m build --wheel python_bind
 
 That wheel is **not** self-contained — it links whatever GDAL your machine has.
 Fine for a local check, not for distribution.
+
+---
+
+## Building the manylinux wheels with Apptainer
+
+cibuildwheel can only drive Docker or podman. On Linux, though, all it does is
+run three steps inside the manylinux_2_28 image, and that image already holds
+every CPython the wheels target and `auditwheel`. So
+`tools/build_manylinux_wheel_apptainer.sh` runs the same three steps under
+Apptainer:
+
+1. **build**: `pip wheel python_bindings`, with `CMAKE_ARGS` from
+   `[tool.cibuildwheel] environment`;
+2. **repair**: `auditwheel repair`, which vendors GDAL, PROJ, FFTW and netCDF
+   into `lsdtt3.libs/`;
+3. **test**: a clean venv holding only the repaired wheel, then the
+   `[tool.cibuildwheel] test-command` (the three checks in
+   [What is tested before a wheel ships](#what-is-tested-before-a-wheel-ships)).
+
+The Python versions, the system dependencies (`before-all`), the environment
+and the test command are all read from `python_bindings/pyproject.toml`, so
+this route and the cibuildwheel route (CI, or podman) build the same wheels.
+The result is a real manylinux wheel, fit to upload.
+
+The image is defined in `apptainer_def/manylinux_wheel.def`: the
+`quay.io/pypa/manylinux_2_28_x86_64` image with `before-all` already run. The
+script builds it once and reuses it. It is named after a hash of the `.def`
+file and the `before-all` command, so it is rebuilt only when one of those
+changes, not at every release.
+
+The podman route is unchanged: on a machine with podman,
+`make_all_packages.sh` still uses cibuildwheel exactly as before.
+
+### What you need on the server
+
+- **Apptainer 1.1 or newer** (`apptainer --version`). From 1.1 an ordinary
+  user can run `apptainer build --fakeroot`, which is how the image is built.
+  **No sudo is needed.** If your account has `/etc/subuid` and `/etc/subgid`
+  entries Apptainer uses them; if not, it falls back to its unprivileged
+  fakeroot mode, which needs user namespaces enabled on the server and the
+  `fakeroot` program available. `apptainer build --fakeroot` reports which
+  of these is missing.
+- **Network access** to `quay.io` (the base image, first build only), to the
+  package mirrors the image's `dnf` uses (first build only), and to PyPI
+  (`scikit-build-core`, `nanobind` and `pytest`, at every build).
+- **Disk space**: a few GB for the image (default
+  `~/.cache/lsdtt3/manylinux_2_28-lsdtt3-<hash>.sif`, or `--sif <path>` /
+  `$LSDTT_WHEEL_SIF`), the same again transiently in Apptainer's cache
+  (`~/.apptainer/cache`; set `APPTAINER_CACHEDIR` to put it elsewhere, and
+  `apptainer cache clean` once the image exists), and a staged copy of the
+  source tree under `$TMPDIR` during the build.
+- **git**, **bash**, `awk` and `sha256sum`. No Python, pixi or conda
+  environment is needed on the host for this route: everything Python runs
+  inside the image. The one host Python call is `make_all_packages.sh`'s
+  version stamp, which works with any `python3`.
+
+Everything runs as you. The build uses `apptainer exec --cleanenv`, so an
+activated pixi or conda shell's `GDAL_DATA`, `PROJ_LIB` or `PYTHONPATH` cannot
+leak into it.
+
+### The steps
+
+```bash
+git clone <lsdtt3 repo> && cd lsdtt3      # or git fetch --tags in an existing clone
+
+# 1. Check: apptainer found, image path, Python versions.
+tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
+    --wheel-engine apptainer --wheel-python all --check-only
+
+# 2. Build the image once (optional: step 3 does it if it is missing).
+#    Runs the image's %test section afterwards.
+tools/build_manylinux_wheel_apptainer.sh --image-only
+apptainer cache clean                      # reclaim the cache once the .sif exists
+
+# 3. Build, repair and test one wheel per Python version, from the tag.
+tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
+    --wheel-engine apptainer --wheel-python all
+```
+
+The wheels land in `dist/v0.7.0/`, five of them for CPython 3.10 to 3.14,
+each with a `manylinux` platform tag in its name (`auditwheel` picks the
+exact tag). Upload them as
+described in [`publishing_to_pypi.md`](publishing_to_pypi.md).
+
+`--clean --tag` builds exactly what the tag contains, but the wheel script
+and image definition are taken from your checkout, so the route also works
+for tags that predate it. While iterating, `--wheel-python 3.12` builds a
+single wheel, and the script can be run on its own against the working tree:
+
+```bash
+tools/build_manylinux_wheel_apptainer.sh --python 3.12     # wheels in ./wheelhouse
+tools/build_manylinux_wheel_apptainer.sh --help
+```
+
+### If the image build fails
+
+- `apptainer build --fakeroot` refused: your Apptainer is older than 1.1, or
+  the administrator has disabled user namespaces. Ask for Apptainer >= 1.1, or
+  build the `.sif` on another machine and copy it over with `--sif <path>`
+  (the script's error message gives the exact command).
+- `dnf` cannot find `gdal-devel`: the package set is `before-all` in
+  `pyproject.toml`, shared with CI; fix it there and both routes pick it up
+  (the image hash changes, so the next run rebuilds it).
+- A build or test failure after the image exists is a code or packaging
+  failure, the same as it would be in CI: see
+  [When a wheel build fails](#when-a-wheel-build-fails).
 
 ---
 
