@@ -1,0 +1,14 @@
+# Companion to spectral_analysis_significant_2d.param.in. The fixture DEM has no
+# significant cells at the default 99.99% level; at confidence 0.5 (threshold
+# -ln 0.5 = 0.693) it has many, so this run checks that cells are written and
+# that the "No significant frequencies" line is absent when they are.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sig2dfound
+
+n_threads: 1
+n_background_iterations: 5
+background_seed: 17
+write_2d_spectrum_rasters: false
+significant_frequencies_2d_confidence: 0.5

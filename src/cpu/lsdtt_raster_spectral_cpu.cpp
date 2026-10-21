@@ -3610,4 +3610,82 @@ directional_periodicity_result detect_directional_periodicity(
 
 #endif  // LSDTT_HAS_FFTW
 
+// -----------------------------------------------------------------------------
+// spectral_normalised_psd_threshold
+// -----------------------------------------------------------------------------
+double spectral_normalised_psd_threshold(double confidence)
+{
+    if (!std::isfinite(confidence) || confidence <= 0.0 || confidence >= 1.0)
+    {
+        throw std::invalid_argument(
+            "lsdtt::spectral_normalised_psd_threshold: confidence must lie in "
+            "(0, 1), got " + std::to_string(confidence)
+        );
+    }
+    return -std::log1p(-confidence);
+}
+
+// -----------------------------------------------------------------------------
+// find_significant_frequencies_2d
+// -----------------------------------------------------------------------------
+lsdtt_spectral_significant_2d find_significant_frequencies_2d(
+    const lsdtt_spectral_analysis_result& result,
+    double                                normalised_psd_threshold)
+{
+    const int n_rows = result.padded_rows;
+    const int n_cols = result.padded_cols;
+
+    if (n_rows <= 0 || n_cols <= 0 ||
+        result.psd_2d.n_rows() != n_rows || result.psd_2d.n_cols() != n_cols ||
+        result.background_psd_2d.n_rows() != n_rows ||
+        result.background_psd_2d.n_cols() != n_cols)
+    {
+        throw std::invalid_argument(
+            "lsdtt::find_significant_frequencies_2d: the 2D PSD arrays do not "
+            "match the padded dimensions in the result"
+        );
+    }
+
+    // DC sits at (n_rows/2, n_cols/2). A positive column offset is an eastward
+    // frequency; row 0 of the DEM is its northern edge, so a positive row
+    // offset is a SOUTHWARD frequency and the north component is its negative.
+    const int centre_row = n_rows / 2;
+    const int centre_col = n_cols / 2;
+    constexpr double two_pi = 2.0 * 3.14159265358979323846;
+    constexpr double rad_to_deg = 180.0 / 3.14159265358979323846;
+
+    lsdtt_spectral_significant_2d out;
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            if (row == centre_row && col == centre_col)
+                continue;
+
+            const double background = result.background_psd_2d(row, col);
+            if (!std::isfinite(background) || background <= 0.0)
+                continue;
+
+            const double norm = result.psd_2d(row, col) / background;
+            if (!(norm > normalised_psd_threshold))
+                continue;
+
+            const double f_east  = (col - centre_col) * result.dfx;
+            const double f_north = (centre_row - row) * result.dfy;
+            const double f = std::hypot(f_east, f_north);
+
+            double bearing = std::atan2(f_east, f_north);
+            if (bearing < 0.0)
+                bearing += two_pi;
+
+            out.bearing_rad.push_back(bearing);
+            out.bearing_deg.push_back(bearing * rad_to_deg);
+            out.frequency.push_back(f);
+            out.wavelength.push_back(1.0 / f);
+            out.normalised_psd.push_back(norm);
+        }
+    }
+    return out;
+}
+
 } // namespace lsdtt

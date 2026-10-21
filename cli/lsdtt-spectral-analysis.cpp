@@ -26,6 +26,7 @@
 //   lsdtt-spectral-analysis -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -208,8 +209,37 @@ int main(int argc, char* argv[])
         "Write a CSV of frequencies with significant spectral power.",
         "Writes _significant_frequencies.csv. A frequency is significant if "
         "its normalised PSD exceeds the chi-squared 95% CI threshold (2.9955). "
-        "Also includes rollover summary lines.",
+        "Lines starting with # give the rollover summary, the threshold and "
+        "n_significant_frequencies; when that is 0 a line under the column "
+        "header says no significant frequencies were found.",
         "Output toggles", "switch", ""};
+
+    bool_default_map["write_significant_frequencies_2d"] = true;
+    help_map["write_significant_frequencies_2d"] = {"bool","true",
+        "Write a CSV of individual 2D spectrum cells with significant power, with bearings.",
+        "Writes _significant_frequencies_2d.csv with columns bearing_rad, "
+        "bearing_deg, frequency_cycles_per_m, wavelength_m, normalised_psd. "
+        "The bearing is the direction of the wave vector, clockwise from north; "
+        "the crests run perpendicular to it. The spectrum of a real surface is "
+        "point-symmetric, so each significant frequency appears twice, at "
+        "bearings theta and theta + 180. Equivalent to the legacy "
+        "_significant_freq.csv. The threshold is set by "
+        "significant_frequencies_2d_confidence. Lines starting with # record the "
+        "confidence, threshold, seed, iterations and n_significant_frequencies; "
+        "when that is 0 a line under the column header says no significant "
+        "frequencies were found, so an empty table is never mistaken for a "
+        "failed run. Read with pandas.read_csv(path, comment='#').",
+        "Output toggles", "switch", ""};
+
+    float_default_map["significant_frequencies_2d_confidence"] = 0.9999f;
+    help_map["significant_frequencies_2d_confidence"] = {"float","0.9999",
+        "Confidence level for a 2D spectrum cell to be written as significant.",
+        "A cell is significant when its normalised PSD exceeds -ln(1 - confidence), "
+        "the chi-squared (2 DOF) quantile divided by 2 (Perron et al. 2008, eq. 9). "
+        "0.9999 gives 9.2103, as in the legacy LSDTopoTools output; 0.95 gives "
+        "2.9957. Must lie strictly between 0 and 1. The spectrum has thousands of "
+        "cells, so at 0.95 hundreds pass by chance alone.",
+        "Spectral options", "param", ""};
 
     // -------------------------------------------------------------------------
     // Parse
@@ -267,6 +297,27 @@ int main(int argc, char* argv[])
     else if (out_fmt == lsdtt::raster_output_format::same_as_input)
     {
         output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
+    }
+
+    // Validate the 2D confidence level before the (expensive) analysis runs.
+    // The parameter is read as a float, which stores 0.9999 as 0.99989998;
+    // rounding to 7 decimals restores the value the user typed.
+    const double sig2d_confidence = std::round(
+        static_cast<double>(ff["significant_frequencies_2d_confidence"]) * 1.0e7) / 1.0e7;
+    double sig2d_threshold = 0.0;
+    if (bf["write_significant_frequencies_2d"])
+    {
+        try
+        {
+            sig2d_threshold =
+                lsdtt::spectral_normalised_psd_threshold(sig2d_confidence);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\nFATAL: significant_frequencies_2d_confidence: "
+                      << e.what() << "\n";
+            return 1;
+        }
     }
 
     std::cout << "Output format       : " << sf["write_output_format"] << "\n";
@@ -433,11 +484,12 @@ int main(int argc, char* argv[])
     //   - Origin is set so that the DC pixel centre is at (0, 0) in the
     //     output coordinate system (units: cycles/m).
     //   - x increases to the right  (positive = eastward spatial frequency).
-    //   - y increases upward, but because GDAL stores row 0 at the top and
-    //     the fftshifted array has the most negative y-frequency in row 0,
-    //     the y-axis appears inverted relative to northward direction.
-    //     For a real-valued DEM the 2D PSD is point-symmetric so this does
-    //     not affect interpretation.
+    //   - y increases upward (positive = northward spatial frequency). Row 0
+    //     of the fftshift-ed array has the most negative ROW-direction
+    //     frequency; rows run southward, so that is the most NORTHWARD
+    //     frequency, and GDAL draws row 0 at the top. The raster is therefore
+    //     north-up as written, consistent with the bearings in
+    //     _significant_frequencies_2d.csv (checked on real tiles, 2026-10-21).
     //
     // To confirm the origin is correct: the DC pixel should appear at
     // coordinate (0, 0) when opened in a GIS tool.
@@ -574,26 +626,100 @@ int main(int argc, char* argv[])
             ofs << "# rollover_beta," << result.rollover_beta << "\n";
             ofs << "# sub_rollover_beta," << result.sub_rollover_beta << "\n";
 
-            // frequency: cycles/m   wavelength: m
-            ofs << "frequency_cycles_per_m,wavelength_m,normalised_psd\n";
-
             // Chi-squared 95% CI threshold (constant, = 0.5 * 5.991)
             static const double norm_ci95 = 2.9955;
 
-            const std::size_t n = result.binned.frequency.size();
-            for (std::size_t i = 0; i < n; ++i)
+            std::vector<std::size_t> significant;
+            for (std::size_t i = 0; i < result.binned.frequency.size(); ++i)
             {
                 if (result.binned.normalised_psd[i] > norm_ci95)
-                {
-                    ofs << result.binned.frequency[i]      << ","
-                        << result.binned.wavelength[i]     << ","
-                        << result.binned.normalised_psd[i] << "\n";
-                }
+                    significant.push_back(i);
             }
+            ofs << "# normalised_psd_threshold," << norm_ci95 << "\n";
+            ofs << "# n_significant_frequencies," << significant.size() << "\n";
+
+            // frequency: cycles/m   wavelength: m
+            ofs << "frequency_cycles_per_m,wavelength_m,normalised_psd\n";
+            for (const std::size_t i : significant)
+            {
+                ofs << result.binned.frequency[i]      << ","
+                    << result.binned.wavelength[i]     << ","
+                    << result.binned.normalised_psd[i] << "\n";
+            }
+            // Say so explicitly: an empty table otherwise looks like a failed run.
+            if (significant.empty())
+            {
+                ofs << "# No significant frequencies were found in this raster: no bin of "
+                       "the radial spectrum exceeded the normalised PSD threshold of "
+                    << norm_ci95 << " (95% confidence). This is a valid result, not an error.\n";
+            }
+            std::cout << "  " << significant.size()
+                      << " radial bins above normalised PSD " << norm_ci95 << "\n";
         }
         catch (const std::exception& e)
         {
             std::cerr << "Warning: failed to write significant frequencies: "
+                      << e.what() << "\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4 - Significant 2D spectrum cells, with bearings
+    // -------------------------------------------------------------------------
+    if (bf["write_significant_frequencies_2d"])
+    {
+        std::cout << "\n--- Writing significant 2D frequencies ---\n";
+
+        try
+        {
+            const double confidence = sig2d_confidence;
+            const double threshold  = sig2d_threshold;
+            const lsdtt::lsdtt_spectral_significant_2d sig =
+                lsdtt::find_significant_frequencies_2d(result, threshold);
+
+            const std::string o =
+                pp.make_output_path("_significant_frequencies_2d.csv");
+            std::cout << "Writing: " << o << "  (" << sig.frequency.size()
+                      << " cells above normalised PSD " << threshold << ")\n";
+
+            std::ofstream ofs(o);
+            if (!ofs)
+            {
+                throw std::runtime_error("Cannot open file for writing: " + o);
+            }
+
+            ofs << "# confidence," << confidence << "\n";
+            ofs << "# normalised_psd_threshold," << threshold << "\n";
+            ofs << "# background_seed,"
+                << (ifs["background_seed"] >= 0 ? ifs["background_seed"] : 1000)
+                << "\n";
+            ofs << "# n_background_iterations," << ifs["n_background_iterations"] << "\n";
+            ofs << "# n_significant_frequencies," << sig.frequency.size() << "\n";
+
+            // bearing: wave-vector direction clockwise from north
+            // frequency: cycles/m   wavelength: m
+            ofs << "bearing_rad,bearing_deg,frequency_cycles_per_m,wavelength_m,"
+                   "normalised_psd\n";
+            for (std::size_t i = 0; i < sig.frequency.size(); ++i)
+            {
+                ofs << sig.bearing_rad[i]    << ","
+                    << sig.bearing_deg[i]    << ","
+                    << sig.frequency[i]      << ","
+                    << sig.wavelength[i]     << ","
+                    << sig.normalised_psd[i] << "\n";
+            }
+            // Say so explicitly: an empty table otherwise looks like a failed run.
+            if (sig.frequency.empty())
+            {
+                ofs << "# No significant frequencies were found in this raster: no cell of "
+                       "the 2D spectrum exceeded the normalised PSD threshold of "
+                    << threshold << " (confidence " << confidence
+                    << "). This is a valid result, not an error.\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Warning: failed to write significant 2D frequencies: "
                       << e.what() << "\n";
         }
     }

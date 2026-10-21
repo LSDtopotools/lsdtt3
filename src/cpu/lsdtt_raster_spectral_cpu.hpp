@@ -268,6 +268,62 @@ lsdtt_spectral_analysis_result full_spectral_analysis(
     const lsdtt_spectral_analysis_options& opts = {}
 );
 
+// -----------------------------------------------------------------------------
+// spectral_normalised_psd_threshold
+//
+// Normalised-PSD threshold for a single 2D periodogram value at the given
+// confidence level. Each periodogram value of a Gaussian background is
+// distributed as (background / 2) * chi^2 with 2 DOF, whose CDF is
+// 1 - exp(-x/2), so the threshold is -ln(1 - confidence) (Perron et al. 2008,
+// eq. 9). 0.95 -> 2.9957, 0.99 -> 4.6052, 0.9999 -> 9.2103.
+//
+// Throws std::invalid_argument unless 0 < confidence < 1.
+// -----------------------------------------------------------------------------
+double spectral_normalised_psd_threshold(double confidence);
+
+// -----------------------------------------------------------------------------
+// lsdtt_spectral_significant_2d
+//
+// The individual 2D spectrum cells whose normalised PSD exceeds a threshold,
+// in row-major order of the fftshift-ed spectrum.
+//
+//   bearing_rad / bearing_deg - direction of the wave vector, clockwise from
+//                               north, in [0, 2 pi) / [0, 360). The crests of
+//                               the corresponding wave run perpendicular to it.
+//   frequency                 - radial frequency, cycles/m
+//   wavelength                - 1 / frequency, m
+//   normalised_psd            - psd_2d / background_psd_2d, dimensionless
+//
+// The spectrum of a real surface is point-symmetric, so every significant
+// frequency appears twice, at bearings theta and theta + 180 deg. Both are
+// kept, matching the legacy LSDRasterSpectral::print_significant_freq_99p99
+// output. The DC cell (zero frequency) is never included.
+// -----------------------------------------------------------------------------
+struct lsdtt_spectral_significant_2d
+{
+    std::vector<double> bearing_rad;
+    std::vector<double> bearing_deg;
+    std::vector<double> frequency;       // cycles/m
+    std::vector<double> wavelength;      // m
+    std::vector<double> normalised_psd;  // dimensionless
+};
+
+// -----------------------------------------------------------------------------
+// find_significant_frequencies_2d
+//
+// Scans result.psd_2d / result.background_psd_2d for cells whose normalised
+// PSD exceeds normalised_psd_threshold (see spectral_normalised_psd_threshold).
+// Cells with a non-positive or non-finite background are skipped.
+//
+// The bearing uses the physical frequency components (col offset * dfx east,
+// row offset * dfy north), so it is correct for a non-square padded spectrum.
+// The legacy code used index offsets, which agree only when dfx == dfy.
+// -----------------------------------------------------------------------------
+lsdtt_spectral_significant_2d find_significant_frequencies_2d(
+    const lsdtt_spectral_analysis_result& result,
+    double                                normalised_psd_threshold
+);
+
 
 
 // -----------------------------------------------------------------------------

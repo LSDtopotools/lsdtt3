@@ -66,7 +66,8 @@ physical cores on a shared machine.
 | `n_threads` | int | `0` | OpenMP threads; `0` uses all available hardware threads. |
 | `spectral_log_bin_width` | float | `0.05` | Log10 bin width for the radial spectrum. |
 | `n_background_iterations` | int | `20` | Synthetic-background Monte Carlo iterations. |
-| `background_seed` | int | `-1` | Background seed; `-1` selects the reproducible built-in sequence. |
+| `background_seed` | int | `-1` | Background seed; `-1` selects the reproducible built-in sequence (base 1000). For a given seed every output is bit-identical, whatever `n_threads` is. |
+| `significant_frequencies_2d_confidence` | float | `0.9999` | Confidence level for `_significant_frequencies_2d.csv`; the normalised-PSD threshold is `-ln(1 - confidence)` (9.2103 at 0.9999). |
 
 ---
 
@@ -92,6 +93,46 @@ physical cores on a shared machine.
 | `write_2d_spectrum_rasters` | bool | `true` | Write observed and background 2D PSD rasters. Former `write_2d_spectrum` is an unchanged-value alias. |
 | `write_radial_spectrum` | bool | `false` | Write the log-binned radial spectrum CSV. |
 | `write_significant_frequencies` | bool | `true` | Write significant frequencies and rollover summaries. |
+| `write_significant_frequencies_2d` | bool | `true` | Write the individual significant 2D spectrum cells, with bearings. |
+
+### Significant 2D frequencies with bearings
+
+`_significant_frequencies_2d.csv` lists every cell of the 2D spectrum whose
+normalised PSD (observed / background) exceeds `-ln(1 - confidence)`, the
+χ²(2 DOF) quantile divided by 2 (Perron et al. 2008, eq. 9). It replaces the
+legacy LSDTopoTools `_significant_freq.csv`, at the same default 99.99% level.
+
+| Column | Units | Meaning |
+|---|---|---|
+| `bearing_rad`, `bearing_deg` | rad, ° | Direction of the wave vector, clockwise from north, in [0, 2π) / [0, 360). The crests run perpendicular to it. |
+| `frequency_cycles_per_m` | cycles/m | Radial frequency of the cell. |
+| `wavelength_m` | m | 1 / frequency. |
+| `normalised_psd` | - | Observed PSD / background PSD. |
+
+Five `#` comment lines at the top record the confidence, threshold,
+effective background seed, number of background iterations and
+`n_significant_frequencies`. When nothing passes the threshold, a further `#`
+line under the column header says so in words:
+
+```
+# n_significant_frequencies,0
+bearing_rad,bearing_deg,frequency_cycles_per_m,wavelength_m,normalised_psd
+# No significant frequencies were found in this raster: no cell of the 2D spectrum exceeded the normalised PSD threshold of 9.21034 (confidence 0.9999). This is a valid result, not an error.
+```
+
+`_significant_frequencies.csv` does the same, with its threshold (2.9955)
+and `n_significant_frequencies` added to its rollover lines. Read either file
+with `pandas.read_csv(path, comment="#")`.
+
+- The spectrum of a real surface is point-symmetric, so every significant
+  frequency appears twice, at θ and θ + 180°. Use `bearing_deg % 180` for an
+  axial (orientation) analysis, or keep one of each pair.
+- The bearing uses the physical frequency components, so it is correct when
+  the padded grid is not square. The legacy code used index offsets, which
+  agree only for square grids.
+- The 2D spectrum has thousands of cells, so a few pass the threshold by
+  chance alone: about 1 in 10,000 at 0.9999, i.e. roughly one pair per
+  128 × 128 tile.
 
 ---
 
@@ -143,6 +184,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `spectral_log_bin_width` | `float` | `0.05` | `param` | - | Log10 bin width for the radial spectrum. | Controls the width of each frequency bin in log10 space. Smaller values give finer frequency resolution. Default is 0.05. |
 | `n_background_iterations` | `int` | `20` | `param` | - | Number of iterations for synthetic background spectrum estimation. | Each iteration generates a random phase spectrum with the same amplitude envelope. More iterations give a smoother background. Default is 20. |
 | `background_seed` | `int` | `-1` | `param` | - | Base seed for the Monte Carlo background spectrum. | Iteration i uses seed = background_seed + i. Default (-1) uses the built-in sequence (base 1000), which is always reproducible. Set an explicit non-negative integer to pin a specific realisation - record the value alongside results to reproduce them exactly. |
+| `significant_frequencies_2d_confidence` | `float` | `0.9999` | `param` | - | Confidence level for a 2D spectrum cell to be written as significant. | A cell is significant when its normalised PSD exceeds -ln(1 - confidence), the chi-squared (2 DOF) quantile divided by 2 (Perron et al. 2008, eq. 9). 0.9999 gives 9.2103, as in the legacy LSDTopoTools output; 0.95 gives 2.9957. Must lie strictly between 0 and 1. The spectrum has thousands of cells, so at 0.95 hundreds pass by chance alone. |
 
 ### Output toggles
 
@@ -150,7 +192,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_2d_spectrum_rasters` | `bool` | `true` | `switch` | - | Write the 2D observed and background PSD rasters. | Writes _psd_2d.&lt;ext&gt; and _background_psd_2d.&lt;ext&gt; in frequency space; write_output_format selects the extension. |
 | `write_radial_spectrum` | `bool` | `false` | `switch` | - | Write the log-binned radial spectrum as a CSV. | Writes _radial_spectrum.csv with columns: frequency, wavelength, psd, background_psd, normalised_psd, beta_by_bin, r_sq_by_bin. |
-| `write_significant_frequencies` | `bool` | `true` | `switch` | - | Write a CSV of frequencies with significant spectral power. | Writes _significant_frequencies.csv. A frequency is significant if its normalised PSD exceeds the chi-squared 95% CI threshold (2.9955). Also includes rollover summary lines. |
+| `write_significant_frequencies` | `bool` | `true` | `switch` | - | Write a CSV of frequencies with significant spectral power. | Writes _significant_frequencies.csv. A frequency is significant if its normalised PSD exceeds the chi-squared 95% CI threshold (2.9955). Lines starting with # give the rollover summary, the threshold and n_significant_frequencies; when that is 0 a line under the column header says no significant frequencies were found. |
+| `write_significant_frequencies_2d` | `bool` | `true` | `switch` | - | Write a CSV of individual 2D spectrum cells with significant power, with bearings. | Writes _significant_frequencies_2d.csv with columns bearing_rad, bearing_deg, frequency_cycles_per_m, wavelength_m, normalised_psd. The bearing is the direction of the wave vector, clockwise from north; the crests run perpendicular to it. The spectrum of a real surface is point-symmetric, so each significant frequency appears twice, at bearings theta and theta + 180. Equivalent to the legacy _significant_freq.csv. The threshold is set by significant_frequencies_2d_confidence. Lines starting with # record the confidence, threshold, seed, iterations and n_significant_frequencies; when that is 0 a line under the column header says no significant frequencies were found, so an empty table is never mistaken for a failed run. Read with pandas.read_csv(path, comment='#'). |
 
 ### Valley spacing
 
