@@ -171,6 +171,36 @@ struct lsdtt_channel_profile_row
     bool      slope_valid            = false;
 };
 
+// One row per reach in the template CSV. Coordinates are in the raster CRS
+// (typically UTM, metres) for QGIS visualization. manning_n and
+// target_discharge_m3s are left empty for the user to fill in.
+struct lsdtt_reach_template_row
+{
+    int reach_index = 0;
+    double start_distance_m = 0.0;
+    double end_distance_m = 0.0;
+    double start_easting_m = 0.0;
+    double start_northing_m = 0.0;
+    double end_easting_m = 0.0;
+    double end_northing_m = 0.0;
+};
+
+// One row per reference cross-section candidate. Coordinates are in the
+// raster CRS (typically UTM, metres) for QGIS visualization.
+struct lsdtt_reference_xs_candidate
+{
+    int reach_index = 0;
+    double reach_start_distance_m = 0.0;
+    double reach_end_distance_m = 0.0;
+    long long cross_id = -1;
+    double distance_from_source_m = 0.0;
+    double easting_m = 0.0;
+    double northing_m = 0.0;
+    double drainage_area_m2 = 0.0;
+    double slope_m_per_m = 0.0;
+    int slope_valid = 0;
+};
+
 // How many extracted sections the profile lookup can actually serve.
 struct lsdtt_manning_profile_coverage
 {
@@ -331,5 +361,41 @@ std::size_t write_manning_widths_csv(
 void write_channel_profile_csv(
     const std::vector<lsdtt_channel_profile_row>& rows,
     const std::string&                            out_path);
+
+// -----------------------------------------------------------------------------
+// Reach template generation
+//
+// detect_reach_breaks: identifies reach breaks from drainage area jumps,
+// enforces minimum spacing and reach length, and builds reach bounds with
+// coordinates for QGIS visualization.
+//
+// sample_reference_xs: selects N evenly-spaced cross sections per reach as
+// candidates for reference XS (for discharge calculation).
+//
+// write_reaches_template_csv: writes reach bounds with empty n/Q columns.
+//
+// write_reference_xs_candidates_csv: writes candidate XS per reach.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<lsdtt_reach_template_row> detect_reach_breaks(
+    const std::vector<lsdtt_channel_profile_row>& profile,
+    const std::vector<lsdtt_cross_section>&       sections,
+    double relative_jump_threshold,
+    double abs_jump_fraction_of_max,
+    double min_break_spacing_metres,
+    double min_reach_length_metres);
+
+[[nodiscard]] std::vector<lsdtt_reference_xs_candidate> sample_reference_xs(
+    const std::vector<lsdtt_channel_profile_row>&      profile,
+    const std::vector<lsdtt_reach_template_row>&       reaches,
+    const std::vector<lsdtt_cross_section>&            sections,
+    int n_per_reach);
+
+void write_reaches_template_csv(
+    const std::vector<lsdtt_reach_template_row>& reaches,
+    const std::string&                           out_path);
+
+void write_reference_xs_candidates_csv(
+    const std::vector<lsdtt_reference_xs_candidate>& candidates,
+    const std::string&                               out_path);
 
 } // namespace lsdtt

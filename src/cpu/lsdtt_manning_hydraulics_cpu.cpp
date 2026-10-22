@@ -1051,4 +1051,317 @@ void write_channel_profile_csv(
     }
 }
 
+// -----------------------------------------------------------------------------
+// Reach template generation
+// -----------------------------------------------------------------------------
+namespace
+{
+
+// Helper: get coordinates for a cross section by cross_id
+std::pair<double, double> get_cross_section_coordinates(
+    const std::vector<lsdtt::lsdtt_cross_section>& sections,
+    long long cross_id)
+{
+    for (const auto& sec : sections)
+    {
+        if (sec.cross_section_id == cross_id)
+            return {sec.centre_x, sec.centre_y};
+    }
+    return {0.0, 0.0};  // Should not happen if cross_ids match
+}
+
+// Helper: merge close breaks, keeping the one with larger abs_jump
+std::vector<std::size_t> merge_close_breaks(
+    const std::vector<std::size_t>& candidates,
+    const std::vector<double>&      distance,
+    const std::vector<double>&      abs_jump,
+    double min_spacing_metres)
+{
+    if (candidates.empty())
+        return {};
+    
+    std::vector<std::size_t> merged;
+    merged.push_back(candidates[0]);
+    
+    for (std::size_t i = 1; i < candidates.size(); ++i)
+    {
+        const std::size_t curr = candidates[i];
+        const std::size_t last = merged.back();
+        
+        if (distance[curr] - distance[last] < min_spacing_metres)
+        {
+            // Keep the one with larger abs_jump
+            if (abs_jump[curr] > abs_jump[last])
+                merged.back() = curr;
+        }
+        else
+        {
+            merged.push_back(curr);
+        }
+    }
+    return merged;
+}
+
+// Helper: enforce minimum reach length by removing breaks that create
+// reaches shorter than min_reach_length_metres
+std::vector<std::size_t> enforce_min_reach_length(
+    const std::vector<std::size_t>& breaks,
+    const std::vector<double>&      distance,
+    double min_reach_length_metres)
+{
+    if (breaks.size() <= 2)
+        return breaks;  // Source and outlet only, or empty
+    
+    std::vector<std::size_t> filtered;
+    filtered.push_back(breaks[0]);  // Always keep source
+    
+    for (std::size_t i = 1; i < breaks.size() - 1; ++i)
+    {
+        const std::size_t curr = breaks[i];
+        const double reach_len = distance[curr] - distance[filtered.back()];
+        
+        if (reach_len >= min_reach_length_metres)
+            filtered.push_back(curr);
+        // else skip this break (merge with previous reach)
+    }
+    
+    filtered.push_back(breaks.back());  // Always keep outlet
+    return filtered;
+}
+
+} // unnamed namespace
+
+std::vector<lsdtt_reach_template_row> detect_reach_breaks(
+    const std::vector<lsdtt_channel_profile_row>& profile,
+    const std::vector<lsdtt_cross_section>&       sections,
+    double relative_jump_threshold,
+    double abs_jump_fraction_of_max,
+    double min_break_spacing_metres,
+    double min_reach_length_metres)
+{
+    if (profile.empty())
+    {
+        throw std::runtime_error(
+            "detect_reach_breaks: channel profile is empty. "
+            "Check source_points_path and cross-section extraction.");
+    }
+    
+    const std::size_t n = profile.size();
+    
+    // Sort profile by distance (should already be sorted, but ensure it)
+    std::vector<std::size_t> order(n);
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::sort(order.begin(), order.end(),
+        [&](std::size_t a, std::size_t b) {
+            return profile[a].distance_from_source_m < profile[b].distance_from_source_m;
+        });
+    
+    // Extract sorted distance and area arrays
+    std::vector<double> distance(n), area(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        distance[i] = profile[order[i]].distance_from_source_m;
+        area[i] = profile[order[i]].drainage_area_m2;
+    }
+    
+    // Step 1: Compute drainage area jumps
+    std::vector<double> abs_jump(n, 0.0);
+    std::vector<double> rel_jump(n, 0.0);
+    double max_area = 0.0;
+    
+    for (std::size_t i = 1; i < n; ++i)
+    {
+        abs_jump[i] = area[i] - area[i - 1];
+        rel_jump[i] = abs_jump[i] / std::max(area[i - 1], 1.0);
+        max_area = std::max(max_area, area[i]);
+    }
+    
+    const double abs_threshold = abs_jump_fraction_of_max * max_area;
+    
+    // Step 2: Find candidate breaks
+    std::vector<std::size_t> candidates;
+    for (std::size_t i = 1; i < n; ++i)
+    {
+        if (rel_jump[i] > relative_jump_threshold && abs_jump[i] > abs_threshold)
+            candidates.push_back(i);
+    }
+    
+    // Step 3: Merge close breaks
+    std::vector<std::size_t> merged = merge_close_breaks(
+        candidates, distance, abs_jump, min_break_spacing_metres);
+    
+    // Step 4: Add source (0) and outlet (n-1)
+    std::vector<std::size_t> breaks;
+    breaks.push_back(0);
+    breaks.insert(breaks.end(), merged.begin(), merged.end());
+    breaks.push_back(n - 1);
+    
+    // Step 5: Enforce minimum reach length
+    std::vector<std::size_t> final_breaks = enforce_min_reach_length(
+        breaks, distance, min_reach_length_metres);
+    
+    // Step 6: Build reaches with coordinates
+    std::vector<lsdtt_reach_template_row> reaches;
+    for (std::size_t i = 0; i < final_breaks.size() - 1; ++i)
+    {
+        const std::size_t lo_idx = final_breaks[i];
+        const std::size_t hi_idx = final_breaks[i + 1];
+        
+        const long long lo_cross_id = profile[order[lo_idx]].cross_section_id;
+        const long long hi_cross_id = profile[order[hi_idx]].cross_section_id;
+        
+        const auto [lo_easting, lo_northing] = get_cross_section_coordinates(sections, lo_cross_id);
+        const auto [hi_easting, hi_northing] = get_cross_section_coordinates(sections, hi_cross_id);
+        
+        lsdtt_reach_template_row reach;
+        reach.reach_index = static_cast<int>(i);
+        reach.start_distance_m = distance[lo_idx];
+        reach.end_distance_m = distance[hi_idx];
+        reach.start_easting_m = lo_easting;
+        reach.start_northing_m = lo_northing;
+        reach.end_easting_m = hi_easting;
+        reach.end_northing_m = hi_northing;
+        
+        reaches.push_back(reach);
+    }
+    
+    return reaches;
+}
+
+std::vector<lsdtt_reference_xs_candidate> sample_reference_xs(
+    const std::vector<lsdtt_channel_profile_row>&      profile,
+    const std::vector<lsdtt_reach_template_row>&       reaches,
+    const std::vector<lsdtt_cross_section>&            sections,
+    int n_per_reach)
+{
+    std::vector<lsdtt_reference_xs_candidate> candidates;
+    
+    for (const auto& reach : reaches)
+    {
+        // Find all XS in this reach
+        std::vector<const lsdtt_channel_profile_row*> reach_xs;
+        for (const auto& row : profile)
+        {
+            if (row.distance_from_source_m >= reach.start_distance_m &&
+                row.distance_from_source_m < reach.end_distance_m)
+            {
+                reach_xs.push_back(&row);
+            }
+        }
+        
+        if (reach_xs.empty())
+            continue;
+        
+        // Sort by distance
+        std::sort(reach_xs.begin(), reach_xs.end(),
+            [](const lsdtt_channel_profile_row* a, const lsdtt_channel_profile_row* b) {
+                return a->distance_from_source_m < b->distance_from_source_m;
+            });
+        
+        // Sample evenly by position (not distance)
+        const int n_available = static_cast<int>(reach_xs.size());
+        const int n_pick = std::min(n_per_reach, n_available);
+        
+        std::vector<int> pick_positions(n_pick);
+        if (n_pick == 1)
+        {
+            // Single pick: use the middle XS
+            pick_positions[0] = n_available / 2;
+        }
+        else
+        {
+            for (int i = 0; i < n_pick; ++i)
+            {
+                pick_positions[i] = static_cast<int>(
+                    std::round(static_cast<double>(i) * (n_available - 1) / (n_pick - 1)));
+            }
+        }
+        
+        // Deduplicate positions
+        std::sort(pick_positions.begin(), pick_positions.end());
+        pick_positions.erase(
+            std::unique(pick_positions.begin(), pick_positions.end()),
+            pick_positions.end());
+        
+        // Build candidates
+        for (int pos : pick_positions)
+        {
+            const auto* row = reach_xs[static_cast<std::size_t>(pos)];
+            const auto [easting, northing] = get_cross_section_coordinates(sections, row->cross_section_id);
+            
+            lsdtt_reference_xs_candidate cand;
+            cand.reach_index = reach.reach_index;
+            cand.reach_start_distance_m = reach.start_distance_m;
+            cand.reach_end_distance_m = reach.end_distance_m;
+            cand.cross_id = row->cross_section_id;
+            cand.distance_from_source_m = row->distance_from_source_m;
+            cand.easting_m = easting;
+            cand.northing_m = northing;
+            cand.drainage_area_m2 = row->drainage_area_m2;
+            cand.slope_m_per_m = row->slope_m_per_m;
+            cand.slope_valid = row->slope_valid ? 1 : 0;
+            
+            candidates.push_back(cand);
+        }
+    }
+    
+    return candidates;
+}
+
+void write_reaches_template_csv(
+    const std::vector<lsdtt_reach_template_row>& reaches,
+    const std::string&                           out_path)
+{
+    std::ofstream out = open_output_file(
+        out_path, "write_reaches_template_csv: could not open ");
+    
+    out << "reach_index,start_distance_m,end_distance_m,"
+        << "start_easting_m,start_northing_m,end_easting_m,end_northing_m,"
+        << "manning_n,target_discharge_m3s\n";
+    out << std::fixed << std::setprecision(2);
+    
+    for (const auto& r : reaches)
+    {
+        out << r.reach_index << ","
+            << r.start_distance_m << ","
+            << r.end_distance_m << ","
+            << r.start_easting_m << ","
+            << r.start_northing_m << ","
+            << r.end_easting_m << ","
+            << r.end_northing_m << ",,"
+            << "\n";
+    }
+}
+
+void write_reference_xs_candidates_csv(
+    const std::vector<lsdtt_reference_xs_candidate>& candidates,
+    const std::string&                               out_path)
+{
+    std::ofstream out = open_output_file(
+        out_path, "write_reference_xs_candidates_csv: could not open ");
+    
+    out << "reach_index,reach_start_distance_m,reach_end_distance_m,"
+        << "cross_id,distance_from_source_m,easting_m,northing_m,"
+        << "drainage_area_m2,slope_m_per_m,slope_valid\n";
+    out << std::fixed << std::setprecision(2);
+    
+    for (const auto& c : candidates)
+    {
+        // Slope formatted with more precision
+        char slope_buf[32];
+        std::snprintf(slope_buf, sizeof(slope_buf), "%.8g", c.slope_m_per_m);
+        
+        out << c.reach_index << ","
+            << c.reach_start_distance_m << ","
+            << c.reach_end_distance_m << ","
+            << c.cross_id << ","
+            << c.distance_from_source_m << ","
+            << c.easting_m << ","
+            << c.northing_m << ","
+            << c.drainage_area_m2 << ","
+            << slope_buf << ","
+            << c.slope_valid << "\n";
+    }
+}
+
 } // namespace lsdtt

@@ -336,6 +336,50 @@ int main(int argc, char* argv[])
         "<write_fname>_manning_widths.csv.",
         "Manning widths", "switch", "run_manning_widths"};
 
+    // --- Reach template ---
+    bool_default_map["generate_reach_template"] = false;
+    help_map["generate_reach_template"] = {"bool", "false",
+        "Generate reach template with suggested break locations.",
+        "Uses drainage area jumps to detect reach boundaries. Requires "
+        "write_channel_profile_csv=true (computed in same run). Outputs: "
+        "<write_fname>_reaches_template.csv and "
+        "<write_fname>_reference_xs_candidates.csv",
+        "Reach template", "switch", ""};
+
+    float_default_map["reach_template_relative_jump_threshold"] = 0.01f;
+    help_map["reach_template_relative_jump_threshold"] = {"float", "0.01",
+        "Minimum relative drainage area jump (dA/A) to flag a break.",
+        "Must be in range (0, 1). Typical values: 0.01-0.05.",
+        "Reach template", "param", "generate_reach_template"};
+
+    float_default_map["reach_template_abs_jump_fraction_of_max"] = 0.01f;
+    help_map["reach_template_abs_jump_fraction_of_max"] = {"float", "0.01",
+        "Minimum absolute jump as fraction of max drainage area.",
+        "Must be in range (0, 1). Prevents flagging small jumps in "
+        "large basins. Typical values: 0.005-0.02.",
+        "Reach template", "param", "generate_reach_template"};
+
+    float_default_map["reach_template_min_break_spacing_metres"] = 20.0f;
+    help_map["reach_template_min_break_spacing_metres"] = {"float", "20.0",
+        "Minimum distance between break locations (merged if closer).",
+        "Prevents over-segmentation from noise. For gullies: 10-30 m. "
+        "For large rivers: 200-500 m.",
+        "Reach template", "param", "generate_reach_template"};
+
+    float_default_map["reach_template_min_reach_length_metres"] = 30.0f;
+    help_map["reach_template_min_reach_length_metres"] = {"float", "30.0",
+        "Minimum reach length (shorter reaches merged).",
+        "Ensures reaches are geomorphically meaningful. For gullies: "
+        "20-50 m. For large rivers: 300-1000 m.",
+        "Reach template", "param", "generate_reach_template"};
+
+    int_default_map["reach_template_n_reference_xs"] = 10;
+    help_map["reach_template_n_reference_xs"] = {"int", "10",
+        "Number of reference cross-section candidates per reach.",
+        "Evenly spaced by position (not distance) along each reach. "
+        "Use these to pick a reference XS for discharge calculation.",
+        "Reach template", "param", "generate_reach_template"};
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -416,6 +460,51 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (bf["generate_reach_template"])
+    {
+        if (!bf["write_channel_profile_csv"])
+        {
+            std::cerr << "FATAL: generate_reach_template=true requires "
+                      << "write_channel_profile_csv=true (computed in same run). "
+                      << "The reach template uses the channel profile directly.\n";
+            return 1;
+        }
+        
+        if (!(ff["reach_template_relative_jump_threshold"] > 0.0f &&
+              ff["reach_template_relative_jump_threshold"] < 1.0f))
+        {
+            std::cerr << "FATAL: reach_template_relative_jump_threshold must be "
+                      << "in range (0, 1).\n";
+            return 1;
+        }
+        
+        if (!(ff["reach_template_abs_jump_fraction_of_max"] > 0.0f &&
+              ff["reach_template_abs_jump_fraction_of_max"] < 1.0f))
+        {
+            std::cerr << "FATAL: reach_template_abs_jump_fraction_of_max must be "
+                      << "in range (0, 1).\n";
+            return 1;
+        }
+        
+        if (ff["reach_template_min_break_spacing_metres"] <= 0.0f)
+        {
+            std::cerr << "FATAL: reach_template_min_break_spacing_metres must be > 0.\n";
+            return 1;
+        }
+        
+        if (ff["reach_template_min_reach_length_metres"] <= 0.0f)
+        {
+            std::cerr << "FATAL: reach_template_min_reach_length_metres must be > 0.\n";
+            return 1;
+        }
+        
+        if (ifs["reach_template_n_reference_xs"] < 1)
+        {
+            std::cerr << "FATAL: reach_template_n_reference_xs must be >= 1.\n";
+            return 1;
+        }
+    }
+    
     if (bf["run_manning_widths"])
     {
         if (sf["reach_manning_parameters_path"].empty())
@@ -810,6 +899,65 @@ int main(int argc, char* argv[])
         {
             std::cerr << "FATAL: channel profile computation failed: " << e.what() << "\n";
             return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Reach template generation
+    // -------------------------------------------------------------------------
+    if (bf["generate_reach_template"])
+    {
+        std::cout << "\n--- Generating reach template ---\n";
+        std::cout << "Relative jump threshold: " << ff["reach_template_relative_jump_threshold"] << "\n";
+        std::cout << "Absolute jump fraction: " << ff["reach_template_abs_jump_fraction_of_max"] << "\n";
+        
+        std::vector<lsdtt::lsdtt_reach_template_row> reaches;
+        std::vector<lsdtt::lsdtt_reference_xs_candidate> candidates;
+        
+        try
+        {
+            // Detect reach breaks
+            reaches = lsdtt::detect_reach_breaks(
+                profile_rows,
+                sections,
+                ff["reach_template_relative_jump_threshold"],
+                ff["reach_template_abs_jump_fraction_of_max"],
+                ff["reach_template_min_break_spacing_metres"],
+                ff["reach_template_min_reach_length_metres"]);
+            
+            std::cout << "Reach breaks detected: " << reaches.size() - 1 << "\n";
+            std::cout << "Reaches created: " << reaches.size() << "\n";
+            
+            // Sample reference XS candidates
+            candidates = lsdtt::sample_reference_xs(
+                profile_rows,
+                reaches,
+                sections,
+                ifs["reach_template_n_reference_xs"]);
+            
+            std::cout << "Reference XS candidates: " << candidates.size() << "\n";
+            
+            // Write outputs
+            const std::string reaches_path = pp.make_output_path("_reaches_template", ".csv");
+            const std::string candidates_path = pp.make_output_path("_reference_xs_candidates", ".csv");
+            
+            lsdtt::write_reaches_template_csv(reaches, reaches_path);
+            lsdtt::write_reference_xs_candidates_csv(candidates, candidates_path);
+            
+            std::cout << "Wrote: " << reaches_path << " (with easting/northing for QGIS)\n";
+            std::cout << "Wrote: " << candidates_path << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: reach template generation failed: " << e.what() << "\n";
+            return 1;
+        }
+        
+        if (reaches.empty())
+        {
+            std::cerr << "WARNING: No reach breaks detected. All cross sections "
+                      << "assigned to single reach. Consider reducing "
+                      << "reach_template_min_break_spacing_metres.\n";
         }
     }
 
