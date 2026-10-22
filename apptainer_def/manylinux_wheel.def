@@ -45,9 +45,18 @@ with open("/opt/lsdtt3/pyproject.toml", "rb") as f:
     print(tomllib.load(f)["tool"]["cibuildwheel"]["linux"]["before-all"])
 EOF
 )"
-    echo "Running before-all from pyproject.toml:"
+    # Without /etc/subuid entries for the user, the script builds this image
+    # with --ignore-fakeroot-command: %post runs as root in a namespace that
+    # maps only that one uid, so an RPM that sets a file to another owner
+    # would fail. The image's own fakeroot fakes those chowns. It is not
+    # always installable; if not, run without it.
+    command -v fakeroot >/dev/null 2>&1 || dnf install -y fakeroot || true
+    WRAP=""
+    command -v fakeroot >/dev/null 2>&1 && WRAP="fakeroot"
+
+    echo "Running before-all from pyproject.toml${WRAP:+ (under fakeroot)}:"
     echo "    $BEFORE_ALL"
-    bash -c "$BEFORE_ALL"
+    $WRAP bash -c "$BEFORE_ALL"
 
     dnf clean all >/dev/null 2>&1 || yum clean all >/dev/null 2>&1 || true
     rm -rf /var/cache/dnf /var/cache/yum

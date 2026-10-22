@@ -164,6 +164,28 @@ tools/build_manylinux_wheel_apptainer.sh --help
   the administrator has disabled user namespaces. Ask for Apptainer >= 1.1, or
   build the `.sif` on another machine and copy it over with `--sif <path>`
   (the script's error message gives the exact command).
+- `faked: ... GLIBC_2.33 not found` (followed by `fakeroot: error while
+  starting the faked daemon`): your account has no `/etc/subuid` entry, so
+  Apptainer runs `%post` under the host's fakeroot helper. That helper needs a
+  newer glibc than the manylinux_2_28 image has. The script now detects the
+  missing entry and builds with `--ignore-fakeroot-command`, and the `.def`
+  runs `before-all` under the image's own fakeroot. If you still see this
+  error, your copy of the script is older than that fix: pull and rerun.
+- `no space left on device` during `%post`: the build unpacks the image and
+  installs the packages in `APPTAINER_TMPDIR` (default `/tmp`), which needs
+  about 3 GB. The script warns if there is less than 4 GB free. Set
+  `APPTAINER_TMPDIR` and `APPTAINER_CACHEDIR` to directories on local disk.
+  NFS often fails for fakeroot builds.
+- `cpio: chown` or `unpacking of archive failed` from `dnf`: the build ran
+  without `/etc/subuid` entries and the image's own `fakeroot` could not be
+  installed. Ask for subuid/subgid entries, or build the `.sif` on a machine
+  that has them and pass it with `--sif`.
+- Once the image exists, `pip` fails to reach PyPI: the build runs with
+  `--cleanenv`. The script passes the proxy variables, `PIP_INDEX_URL`,
+  `PIP_EXTRA_INDEX_URL`, `PIP_TRUSTED_HOST` and the certificate variables
+  through, so set those in the shell you run it from.
+- `c++: fatal error: Killed signal terminated program cc1plus`: the compiler
+  ran out of memory. Lower `--jobs`.
 - `dnf` cannot find `gdal-devel`: the package set is `before-all` in
   `pyproject.toml`, shared with CI; fix it there and both routes pick it up
   (the image hash changes, so the next run rebuilds it).

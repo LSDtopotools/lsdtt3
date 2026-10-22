@@ -197,10 +197,36 @@ if [[ ! -f "$SIF" ]] || (( REBUILD_IMAGE )); then
     cp "$PYPROJECT" "${STAGE}/pyproject.toml"
     tmp_sif="${SIF}.partial"
     rm -f "$tmp_sif"
-    ( cd "$STAGE" && apptainer build --fakeroot "$tmp_sif" "$DEF_FILE" ) || fail "apptainer build failed.
-  Without sudo this needs Apptainer >= 1.1 (unprivileged --fakeroot). If it
-  still fails, ask an administrator for /etc/subuid and /etc/subgid entries,
-  or build the image on another machine with:
+    build_flags=(--fakeroot)
+    # Without /etc/subuid entries Apptainer falls back to a root-mapped
+    # namespace and runs %post under the host's fakeroot helper. That helper
+    # is built against the host glibc, which is newer than the image's (2.28),
+    # so it fails to start ("GLIBC_2.33 not found"). Skip it; the .def then
+    # runs before-all under the image's own fakeroot instead.
+    # Apptainer needs entries in BOTH files to avoid the fallback.
+    # (Entries served by LDAP rather than these files would make this flag
+    # unnecessary, but it is harmless then: no fakeroot command is injected
+    # when the full mapping is available.)
+    user_re="^($(id -un)|$(id -u)):"
+    if ! grep -qE "$user_re" /etc/subuid 2>/dev/null || ! grep -qE "$user_re" /etc/subgid 2>/dev/null; then
+        build_flags+=(--ignore-fakeroot-command)
+        info "not in /etc/subuid and /etc/subgid: building with --ignore-fakeroot-command"
+    fi
+    # The build unpacks the image and installs the -devel packages in
+    # APPTAINER_TMPDIR (default /tmp): about 3 GB. A small /tmp fails part
+    # way through with "no space left on device", so warn up front.
+    build_tmp="${APPTAINER_TMPDIR:-/tmp}"
+    free_kb="$(df -Pk "$build_tmp" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [[ -n "$free_kb" ]] && (( free_kb < 4 * 1024 * 1024 )); then
+        warn "only $((free_kb / 1024)) MB free in ${build_tmp}; the image build needs about 3 GB there."
+        warn "set APPTAINER_TMPDIR to a local directory with more space (not NFS) and rerun."
+    fi
+    ( cd "$STAGE" && apptainer build "${build_flags[@]}" "$tmp_sif" "$DEF_FILE" ) || fail "apptainer build failed.
+  Without sudo this needs Apptainer >= 1.1 (unprivileged --fakeroot).
+  'no space left on device': set APPTAINER_TMPDIR (and APPTAINER_CACHEDIR)
+  to a local directory with a few GB free. NFS often fails for fakeroot
+  builds, so prefer local disk. If it still fails, ask an administrator for
+  /etc/subuid and /etc/subgid entries, or build the image on another machine with:
       cd <dir holding a copy of python_bindings/pyproject.toml>
       apptainer build --fakeroot manylinux_wheel.sif ${DEF_FILE}
   and pass it here with --sif <path>."
@@ -267,14 +293,29 @@ cp "$wheel" /wheelhouse/
 echo "-- done: $(basename "$wheel")"
 INNER_EOF
 
+# --cleanenv drops the caller's whole environment, including any proxy and
+# pip index settings that pip needs to reach PyPI (build backend, pytest).
+# Pass those few through explicitly.
+pass_env=()
+for v in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY \
+         PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_TRUSTED_HOST PIP_CERT \
+         SSL_CERT_FILE REQUESTS_CA_BUNDLE; do
+    [[ -n "${!v:-}" ]] && pass_env+=(--env "${v}=${!v}")
+done
+
 BUILT=()
 for tag in "${TAGS[@]}"; do
     step "Wheel for ${tag}"
     t0=$SECONDS
     # --cleanenv: nothing from the caller's environment (a pixi or conda
     # shell's GDAL_DATA, PROJ_LIB, PYTHONPATH ...) leaks into the build.
+    # PYTHONNOUSERSITE: the host home directory is mounted, so without it the
+    # image's Pythons would import packages from ~/.local/lib/python3.X (an
+    # old pip, say) that were installed on the host.
     apptainer exec --cleanenv \
         --env "CMAKE_BUILD_PARALLEL_LEVEL=${JOBS}" \
+        --env "PYTHONNOUSERSITE=1" \
+        ${pass_env[@]+"${pass_env[@]}"} \
         --bind "${SOURCE}:/project" \
         --bind "${OUT_DIR}:/wheelhouse" \
         "$SIF" bash -c "$INNER" inner "$tag" "$RUN_TESTS" \

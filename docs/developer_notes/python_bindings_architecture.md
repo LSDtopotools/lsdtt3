@@ -203,6 +203,22 @@ are not.
 6. Update runtime docs, facade, API pages, examples, LLM cards, and tests.
 7. Regenerate/check all contracts and include a release note.
 
+**Never edit `public_api.json` by hand.** Each overload records its defaults
+twice: in the `doc` string, which nanobind writes and which shows the values,
+and in the `signatures[].defaults` list, where the `definition` line has
+placeholders (`\0`, `\1`, ...) instead of values. If you change only one,
+`test_public_api_manifest` fails in the release build. This happened in v0.7.1:
+the `n_background_iterations` default for `spectral_analysis` went from 20 to
+100, the hand edit changed the docstring but not the `defaults` list, and the
+`release.yml` bindings smoke check failed on the tagged commit. Changing a
+default in `bindings/*.cpp` always changes the manifest. Rebuild the extension
+(see "Building the extension for development"), then run
+`generate_public_api_manifest.py --update` followed by `--check`, and review
+the `git diff` on `public_api.json` before committing. If you cannot rebuild,
+search the file for every occurrence of the old value in that entry, but
+treat the change as unverified until `--check` passes against a built
+extension.
+
 Functions and native constructors use different compatibility seams. Python
 wrappers can normalize kwargs before forwarding to an unwrapped native
 function. Native classes require nanobind constructor overloads/placement
