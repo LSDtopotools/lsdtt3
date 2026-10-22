@@ -93,7 +93,7 @@ The image is defined in `apptainer_def/manylinux_wheel.def`: the
 script builds it once and reuses it. It is named after a hash of the `.def`
 file, the `before-all` command and the script that command runs, so it is
 rebuilt only when one of those changes, not at every release. The first build
-takes 20 to 30 minutes, because `before-all` compiles PROJ, GDAL, GEOS and curl
+takes 10 to 20 minutes, because `before-all` compiles PROJ, GDAL, GEOS, SQLite and curl
 (see [The Linux wheel's GDAL and PROJ](#the-linux-wheels-gdal-and-proj)).
 
 The podman route is unchanged: on a machine with podman,
@@ -109,8 +109,8 @@ The podman route is unchanged: on a machine with podman,
   `fakeroot` program available. `apptainer build --fakeroot` reports which
   of these is missing.
 - **Network access** to `quay.io` (the base image, first build only), to the
-  package mirrors the image's `dnf` uses and to `curl.se`, `download.osgeo.org`
-  and `github.com` for the PROJ, GDAL, GEOS and curl sources (first build
+  package mirrors the image's `dnf` uses and to `www.sqlite.org`, `curl.se`, `download.osgeo.org`
+  and `github.com` for the PROJ, GDAL, GEOS, SQLite and curl sources (first build
   only), and to PyPI
   (`scikit-build-core`, `nanobind` and `pytest`, at every build).
 - **Disk space**: a few GB for the image (default
@@ -231,24 +231,36 @@ which is how current pyproj and GDAL describe WGS 84 and most CRSs based on
 it. With those versions, reprojection fails with `DatumEnsemble can only be
 exported to WKT2:2019`. So `build_manylinux_native_deps.sh` compiles the
 following from pinned, checksummed source tarballs, using the image's own
-compiler:
+compiler (gcc-toolset):
 
 - PROJ 9.5.1
 - GDAL 3.10.3
-- GEOS 3.13.1
+- GEOS 3.13.1. GDAL needs 3.8 or newer.
+- SQLite 3.47.2. GDAL needs 3.31 or newer, and AlmaLinux 8 has 3.26.
 - curl 8.11.1. GDAL needs curl 7.68 or newer for `/vsicurl`, and AlmaLinux 8
   has 7.61.
 
 Using the image's compiler keeps the result manylinux-compliant. Libraries
 from conda-forge are not, because they need a newer libstdc++.
 
-GDAL is built with only the dependencies the script names, and with a reduced
-driver set: GTiff/COG, MEM, VRT, PNG, JPEG, ENVI/EHdr, AAIGrid and HFA for
-rasters, and Shapefile, GeoJSON, GPKG, FlatGeobuf, MVT, CSV and KML for
-vectors. The script fails if any of those is missing. If lsdtt3 starts reading
-or writing another format, add its driver there.
+GDAL is built with `GDAL_USE_EXTERNAL_LIBS=OFF`, so it uses only the
+libraries the script names (those above, zlib, and glibc's iconv) plus GDAL's
+own internal copies of libtiff, libgeotiff, libpng, libjpeg, json-c and a few
+others. Every GDAL driver that needs nothing more is built. Drivers that need
+another library are not, for example netCDF, HDF5, JPEG 2000, WebP and Parquet.
+At the end, the script checks that the formats lsdtt3 reads and writes are
+present: GTiff/COG, MEM, VRT, PNG, JPEG, ENVI/EHdr, AAIGrid and HFA for
+rasters, and Shapefile, GeoJSON, GPKG, FlatGeobuf, MVT and CSV for vectors.
+It fails if any of them is missing. If lsdtt3 starts depending on another
+format, add it to that check.
 
-This adds 20 to 30 minutes to every run of the CI Linux leg, and to the first
+The script also has a local-test mode. Run it as an ordinary user with
+`LSDTT_NATIVE_DEPS_PREFIX` set to a writable directory. It then skips `dnf`
+and `ldconfig` and runs the downloads, the builds and the closing checks on
+the host. That is a quick way to check a version bump before rebuilding the
+image.
+
+This adds 10 to 20 minutes to every run of the CI Linux leg, and to the first
 Apptainer image build. The Apptainer image is then reused. The macOS and
 Windows legs are unchanged.
 

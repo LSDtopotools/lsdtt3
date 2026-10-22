@@ -19,8 +19,8 @@ From: quay.io/pypa/manylinux_2_28_x86_64
 # [tool.cibuildwheel.linux] before-all command from that pyproject.toml, the
 # same command cibuildwheel runs in CI and under podman, so the routes cannot
 # drift apart. That command runs build_manylinux_native_deps.sh, which builds
-# PROJ, GDAL, GEOS and curl from source; the first image build therefore takes
-# 20-30 minutes. The script names the image after a hash of this file, that
+# PROJ, GDAL, GEOS, SQLite and curl from source; the first image build therefore takes
+# 10-20 minutes. The script names the image after a hash of this file, that
 # command and the deps script, so changing any of them produces a new image.
 #
 # The base image carries every CPython the wheels target (/opt/python/cp3XX-*)

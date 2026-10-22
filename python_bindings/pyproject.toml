@@ -71,7 +71,7 @@ environment = { CMAKE_ARGS = "-DLSDTT_PYTHON_RELEASE_WHEEL=ON" }
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]
-# PROJ, GDAL, GEOS and curl are built from source: EPEL 8's GDAL 3.0 / PROJ 6.3
+# PROJ, GDAL, GEOS, SQLite and curl are built from source: EPEL 8's GDAL 3.0 / PROJ 6.3
 # cannot handle datum-ensemble CRSs. See the script's header.
 before-all = "bash {project}/python_bindings/tools/build_manylinux_native_deps.sh"
 
