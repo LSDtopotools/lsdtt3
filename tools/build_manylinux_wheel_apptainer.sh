@@ -312,7 +312,10 @@ for tag in "${TAGS[@]}"; do
     # PYTHONNOUSERSITE: the host home directory is mounted, so without it the
     # image's Pythons would import packages from ~/.local/lib/python3.X (an
     # old pip, say) that were installed on the host.
-    apptainer exec --cleanenv \
+    # --pwd: the inner script uses only absolute paths. Without this Apptainer
+    # tries to start in the caller's directory, which is not mounted in the
+    # image when it is outside $HOME's mount (a harmless chdir warning).
+    apptainer exec --cleanenv --pwd /project \
         --env "CMAKE_BUILD_PARALLEL_LEVEL=${JOBS}" \
         --env "PYTHONNOUSERSITE=1" \
         ${pass_env[@]+"${pass_env[@]}"} \

@@ -14,6 +14,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cpl_error.h>
 #include <cpl_vsi.h>
 #include <gdal_utils.h>
 #include <gdal_priv.h>
@@ -106,12 +107,16 @@ Raster gdal_warp(const Raster& raster, const std::vector<std::string>& arguments
     GDALWarpAppOptions* options = GDALWarpAppOptionsNew(argv.data(), nullptr);
     int usage_error = FALSE;
     GDALDatasetH source_handle = source;
+    CPLErrorReset();
     GDALDatasetH destination = GDALWarp(destination_path.c_str(), nullptr, 1, &source_handle, options, &usage_error);
     GDALWarpAppOptionsFree(options);
     if (!destination || usage_error) {
+        // Carry GDAL's own reason (often a PROJ error such as a missing or
+        // mismatched proj.db) into the exception, not just "failed".
+        const std::string reason = CPLGetLastErrorMsg();
         GDALClose(source);
         VSIUnlink(destination_path.c_str());
-        throw std::runtime_error("GDAL raster warp failed");
+        throw std::runtime_error("GDAL raster warp failed" + (reason.empty() ? std::string() : ": " + reason));
     }
     try {
         Raster output = raster_from_gdal_dataset(static_cast<GDALDataset*>(destination));
