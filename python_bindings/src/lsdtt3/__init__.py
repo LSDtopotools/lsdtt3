@@ -14,6 +14,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+from ._authors import authors_for as _authors_for
 from ._llm import helper_for_llm as _render_llm_api
 from ._compat import MISSING as _MISSING, resolve_deprecated_keyword as _resolve_deprecated_keyword
 
@@ -34,8 +35,6 @@ def _configure_bundled_geospatial_data() -> None:
     B. Gailleton
     """
     package_dir = Path(__file__).resolve().parent
-    gdal_data = package_dir / "share" / "gdal"
-    proj_data = package_dir / "share" / "proj"
 
     # The authoritative mechanism. lsdtt::gdal_init() probes <root>/share/proj
     # and <root>/share/gdal and pins what it finds, in preference to the
@@ -47,25 +46,21 @@ def _configure_bundled_geospatial_data() -> None:
     # This must happen before anything touches GDAL, which is why it is here and
     # not somewhere more convenient. Importing _core does not itself initialise
     # GDAL; the first call that needs it does.
+    #
+    # GDAL_DATA, PROJ_DATA and PROJ_LIB are deliberately NOT set. lsdtt3 does
+    # not need them (the pinning above uses OSRSetPROJSearchPaths and
+    # CPLSetConfigOption inside this process), and the variables are read by
+    # every OTHER geospatial library in the process: a conda pyproj or GMT,
+    # which has no data directory of its own, would then open this wheel's
+    # proj.db, which may be older than its PROJ accepts, and fail.
     try:
         from . import _core
 
         _core.set_bundled_data_root(str(package_dir))
     except Exception:
-        # A source tree or a partially built package: fall through to the
-        # environment variables below, which is the pre-existing behaviour.
+        # A source tree or a partially built package: lsdtt3 then uses the
+        # interpreter-relative probe or the environment, as before.
         pass
-
-    # Belt and braces, and still useful for any OTHER library in this process
-    # (rasterio, pyproj) that reads these variables. setdefault, so a user who
-    # has deliberately set them keeps their choice for those libraries; lsdtt3
-    # itself is already pinned above regardless.
-    if gdal_data.is_dir():
-        os.environ.setdefault("GDAL_DATA", str(gdal_data))
-    if proj_data.is_dir():
-        os.environ.setdefault("PROJ_DATA", str(proj_data))
-        # Older GDAL/PROJ combinations use the legacy spelling.
-        os.environ.setdefault("PROJ_LIB", str(proj_data))
 
     # The Linux wheel bundles a libcurl built on AlmaLinux, which looks for CA
     # certificates only where AlmaLinux keeps them. On Debian/Ubuntu (Colab
@@ -584,9 +579,24 @@ def _notes_block(doc):
     inspect.getdoc() cannot clean. Normalise it, then indent it like the
     template, so every Python version produces the same text.
     """
-    return textwrap.indent(inspect.cleandoc(doc), "    ").lstrip()
+    return textwrap.indent(_without_authors(inspect.cleandoc(doc)), "    ").lstrip()
 
-def _numpy_style_docstring(function):
+
+def _without_authors(doc):
+    """Drop a trailing ``Authors`` section from a binding's own docstring.
+
+    The generated envelope carries the authors (see :mod:`lsdtt3._authors`),
+    so a binding docstring that ends with its own ``Authors`` section would
+    otherwise list them twice, and could disagree with the envelope.
+    """
+    return re.sub(r"\n*Authors\n-{3,}\n(?:[^\n]+(?:\n|$))+\s*$", "", doc).rstrip()
+
+
+def _authors_block(name):
+    """The author lines for export ``name``, indented for the docstring template."""
+    return "\n    ".join(_authors_for(name))
+
+def _numpy_style_docstring(function, name=None):
     """Give an exported binding a consistent public Python docstring.
 
     The low-level nanobind signature remains available through
@@ -598,6 +608,9 @@ def _numpy_style_docstring(function):
     ----------
     function : callable
         Low-level function exported by :mod:`lsdtt3._core`.
+    name : str, optional
+        Public name, used to look up its authors. Defaults to
+        ``function.__name__``.
 
     Returns
     -------
@@ -637,7 +650,7 @@ def _numpy_style_docstring(function):
 
     Authors
     -------
-    B. Gailleton
+    {_authors_block(name or function.__name__)}
     """
     return documented
 
@@ -676,13 +689,16 @@ def _with_deprecated_keywords(function, *pairs, is_method=False):
     return compatible
 
 
-def _numpy_style_class_docstring(cls):
+def _numpy_style_class_docstring(cls, name=None):
     """Give an exported native-backed class a consistent public docstring.
 
     Parameters
     ----------
     cls : type
         Native-backed class exported by :mod:`lsdtt3._core`.
+    name : str, optional
+        Public name, used to look up its authors. Defaults to
+        ``cls.__name__``.
 
     Returns
     -------
@@ -719,7 +735,7 @@ def _numpy_style_class_docstring(cls):
 
     Authors
     -------
-    B. Gailleton
+    {_authors_block(name or cls.__name__)}
     """
     return cls
 
@@ -809,9 +825,9 @@ run_landslide_series = _with_deprecated_keywords(
 for _public_name in __all__:
     _public_value = globals()[_public_name]
     if isinstance(_public_value, type):
-        globals()[_public_name] = _numpy_style_class_docstring(_public_value)
+        globals()[_public_name] = _numpy_style_class_docstring(_public_value, _public_name)
     elif callable(_public_value):
-        globals()[_public_name] = _numpy_style_docstring(_public_value)
+        globals()[_public_name] = _numpy_style_docstring(_public_value, _public_name)
 
 del _canonical_name, _crn_depth_method, _flow_threshold_method, _graphflood_name
 del _legacy_name, _public_name, _public_value

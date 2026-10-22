@@ -120,10 +120,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `profiles`
@@ -468,10 +464,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `lines`
@@ -503,10 +495,6 @@ See the generated binding signature for available properties and methods.
 Notes
 -----
 Repaired water-line output and diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -608,10 +596,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def burn_streams(dem: lsdtt3.Raster, lines: object, n_threads: int = 0) -> lsdtt3.StreamBurnResult
 ```
@@ -655,6 +639,7 @@ Route centrelines through a supplied valley mask from ordered channel paths.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `fallback_valley_hand_metres` -> `valley_mask`; earliest removal: following minor.
@@ -870,10 +855,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def repair_water_lines(water_lines: object, roads: object, snap_tolerance_metres: float = 0.5, max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, road_intersection_tolerance_metres: float = 1.0, require_mutual_best: bool = True) -> lsdtt3.WaterLineRepairResult
 ```
@@ -949,10 +930,6 @@ Returns
 -------
 WaterCentrelineResult
     Connected linework and count diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------

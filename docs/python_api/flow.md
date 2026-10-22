@@ -1267,6 +1267,7 @@ Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def divide(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster
@@ -1335,6 +1336,7 @@ curvature, candidate channel mask, skeleton, and QQ table.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `surface_fitting_radius_m` -> `surface_fitting_radius_metres`; earliest removal: following minor.

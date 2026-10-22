@@ -94,6 +94,7 @@ are effective rates in g/cm²/yr.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `removal_m` -> `removal_metres`; earliest removal: following minor.
@@ -718,10 +719,7 @@ The calculation is O(number of valid pixels × history rows).
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `sampling_depth_m` -> `sampling_depth_metres`; earliest removal: following minor.

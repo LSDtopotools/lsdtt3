@@ -47,10 +47,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
 ```
@@ -87,10 +83,6 @@ Returns
 -------
 str
     Machine-oriented API context with exact public identifiers.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -138,10 +130,6 @@ Returns
 geopandas.GeoDataFrame
     Copy of ``lines`` with length, sample-count, and descriptive-statistic
     columns. Samples outside the grid or on nodata are ignored.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------

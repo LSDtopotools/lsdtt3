@@ -162,6 +162,7 @@ The layer must contain polygons or exactly two points. Use the result's
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def bounds_from_vector(path: str, layer: str = '') -> lsdtt3.VectorBounds
@@ -247,6 +248,7 @@ Raster
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `size_px` -> `size_pixels`; earliest removal: following minor.
@@ -313,6 +315,7 @@ OutletFetchResult
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def fetch_dem_for_outlets(outlets: object, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, initial_radius_km: float = 100.0, auto_split_disconnected_basins: bool = True, split_cluster_gap_km: float = 25.0, max_final_dem_area_km2: float = 2500.0, split_overlap_km: float = 2.0, max_basins_per_dem: int = 0, cache_dir: str = '', resampling: str = 'cubic', nodata_value: float = -9999.0, snapping_method: str = 'downstream', contributing_pixels_threshold: int = 1000, edge_buffer_pixels: int = 3, nodata_buffer_pixels: int = 1, tight_bbox_buffer_pixels: int = 3, verify_expand_factor: float = 1.25, verify_max_iters: int = 3, tight_bbox_refetch: bool = True, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, mask_outside_basins: bool = False) -> lsdtt3.OutletFetchResult
@@ -344,6 +347,7 @@ As proj_data_description(), for GDAL's own data directory.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -376,6 +380,7 @@ GDAL release name of the library actually loaded, e.g. "3.8.4".
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -447,6 +452,7 @@ failing.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -482,6 +488,7 @@ against -- that distinction is the whole point.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python

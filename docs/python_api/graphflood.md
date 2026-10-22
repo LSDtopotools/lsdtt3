@@ -48,10 +48,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 (result: Any, prepass: Any, active_mask: numpy.ndarray, active_fraction: float, expansion_results: tuple[typing.Any, ...], source_discharge: float, outlet_qin: float, relative_mass_error: float) -> None
 ```
@@ -101,10 +97,6 @@ level_results : tuple
     Backend result at each requested factor.
 factors : tuple of int
     Coarsening factors in execution order.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -509,6 +501,7 @@ are an N by 3 array of ``(row, col, discharge_m3_s)``.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -567,10 +560,7 @@ GraphFloodInducedResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -627,10 +617,7 @@ GraphFloodMultigridResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -670,6 +657,7 @@ direct raster MFD routing and validates a cached topology before reuse.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -714,6 +702,7 @@ evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.

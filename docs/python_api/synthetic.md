@@ -139,6 +139,7 @@ Optimise a synthetic D8 optimal channel network and derive its chi steady-state 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `relief_m` -> `relief_metres`; earliest removal: following minor.
@@ -190,10 +191,6 @@ Returns
 -------
 Raster
     Newly allocated synthetic raster.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------

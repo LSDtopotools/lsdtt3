@@ -241,7 +241,8 @@ if [[ ! -f "$SIF" ]] || (( REBUILD_IMAGE )); then
 fi
 
 if (( IMAGE_ONLY )); then
-    apptainer test "$SIF" || fail "the image's %test section failed"
+    # From /, which always exists in the image (avoids the chdir warning).
+    ( cd / && apptainer test "$SIF" ) || fail "the image's %test section failed"
     ok "image ready: ${SIF}"
     exit 0
 fi

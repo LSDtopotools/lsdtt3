@@ -12,14 +12,45 @@ flow = lsdtt3.FlowInfo(dem)
 network = flow.channel_network(flow.channel_scope(threshold_contributing_pixels=500))
 
 chi = network.chi(m_over_n=0.45)
-fit = chi.fit(dem, critical_divergence_metres=0.1)
+fit = chi.fit(dem, critical_divergence_metres=10.0)
 
-nodes = fit.nodes       # GeoDataFrame / table of fitted channel nodes
-segments = fit.segments # one row per fitted chi segment, including ksn
+nodes = fit.nodes        # pandas DataFrame: one row per channel node
+segments = fit.segments  # pandas DataFrame: one row per fitted segment, with ksn
+summary = fit.summary    # pandas DataFrame: one row per basin
 ```
 
-Use the segment table for mapped `k_sn`; join or assign its values to the node
-table for point-based plotting. See the repository example
+Without `outlets`, chi is computed upstream of every outlet of the network.
+To analyse chosen basins, pass their outlet pixels as an N by 2 array of
+`(row, col)`: `network.chi(outlets=outlet_pixels, m_over_n=0.45)`. The same
+array gives the basins themselves with `flow.basins(outlet_pixels)` (see
+[Flow, channels, and basins](flow_networks.md)).
+
+`critical_divergence_metres` is how far, in metres of elevation, the data may
+move from a straight line in chi-elevation space before a segment is split.
+The default is 5 m; 10 m suits 30 m DEMs. Much smaller values (the 0.1 m in
+the lidar example below) split the profile into many short segments.
+
+The tables are plain pandas DataFrames without geometry. `nodes` has the
+node's flat pixel index (`flat`; row = `flat // n_cols`, col =
+`flat % n_cols`), `chi`, `observed_elevation`, `fitted_elevation` and
+`branch_id`; `segments` has `downstream_chi`, `upstream_chi` and `ksn` for
+each segment. Use the segment table for mapped `ksn`; join or assign its values
+to the node table for point-based plotting. See the repository example
 `python_bindings/examples/chi_ksn.py` for a map plus chi-elevation panel.
+
+The basin column is `basin_id` and the steepness column `ksn`.
+`lsdviztools3`'s chi plots expect the command-line programs' names,
+`basin_index` and `k_sn`, so rename them first:
+
+```python
+from lsdviztools3.io.chi import assign_node_ksn
+from lsdviztools3.charts import plot_chi_stacked
+
+chi_nodes = assign_node_ksn(
+    fit.nodes.rename(columns={"basin_id": "basin_index"}),
+    fit.segments.rename(columns={"basin_id": "basin_index", "ksn": "k_sn"}),
+)
+fig, ax = plot_chi_stacked(chi_nodes)
+```
 
 See [Chi and ksn API](../python_api/chi.md).

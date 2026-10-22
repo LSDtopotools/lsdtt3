@@ -28,10 +28,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `completed`
@@ -88,10 +84,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `converged`
@@ -131,10 +123,6 @@ See the generated binding signature for available properties and methods.
 Notes
 -----
 Implicit hillslope-transport result and adaptive-solver diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -198,10 +186,7 @@ workspaces between calls to ``step`` or ``run``.
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `incision_threshold_area` -> `incision_threshold_specific_area`; earliest removal: following minor.
@@ -452,10 +437,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `delta_max_elevation`
@@ -553,10 +534,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def hillslope_steady_state(dem: lsdtt3.Raster, channels: lsdtt3.Raster, model: str = 'roering', diffusivity: float = 0.0010000000474974513, uplift_rate: float = 9.999999747378752e-05, critical_slope: float = 0.800000011920929, nonlinear: bool = False, boundary_conditions: str = 'oooo', tolerance: float = 9.999999747378752e-05, max_iterations: int = 10000, sor_omega: float = 0.0, n_threads: int = 0) -> lsdtt3.HillslopeSteadyStateResult
 ```
@@ -605,10 +582,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def hillslope_transport_adi(dem: lsdtt3.Raster, diffusivity: float, duration_years: float, boundary_conditions: str = 'oooo') -> lsdtt3.Raster
 ```
@@ -650,10 +623,6 @@ Returns
 -------
 HillslopeCellularResult
     Updated elevation and conservative transfer diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -715,10 +684,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def hillslope_transport_explicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, diffusivity: float, duration_years: float, nonlinear: bool = False, critical_slope: float = 0.800000011920929, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.Raster
 ```
@@ -764,10 +729,6 @@ Returns
 -------
 HillslopeTransportResult
     New elevation surface and adaptive/Picard diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------

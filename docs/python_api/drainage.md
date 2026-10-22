@@ -26,10 +26,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `flow_direction`
@@ -132,10 +128,6 @@ Closed-depression candidates and, optionally, their GIS-ready footprints.
 
 Candidates are point GeoDataFrames with hierarchy, depth, area, and storage
 metadata. Footprints are polygons keyed by ``sink_id``.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -331,10 +323,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def depression_hierarchy(dem: lsdtt3.Raster, boundary_conditions: str = 'oooo', ocean_from_boundary: bool = True, nodata_is_ocean: bool = False, ocean_level: object | None = None) -> lsdtt3.DepressionHierarchyResult
 ```
@@ -428,10 +416,7 @@ modelling selected depressions as drainage exits.
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `min_area_metres2` -> `min_area_m2`; earliest removal: following minor.

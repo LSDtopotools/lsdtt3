@@ -764,6 +764,7 @@ Absolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM o
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -955,6 +956,7 @@ fill_min_slope : float, default=0.0001
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
@@ -1211,6 +1213,7 @@ smooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -1253,6 +1256,7 @@ DataFrame with one row per iteration).
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -1584,6 +1588,7 @@ Detect and label flat surfaces from texture and local relief.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `relief_window_pixels` -> `relief_window_side_pixels`; earliest removal: following minor.
@@ -1619,6 +1624,7 @@ Run a multiscale Frangi ridge or valley filter.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def frangi_filter(raster: lsdtt3.Raster, sigma_min_metres: float = 1.0, sigma_max_metres: float = 5.0, n_scales: int = 4, beta: float = 0.5, c: float = 1.0, target: str = 'ridges', n_threads: int = 0) -> lsdtt3.FrangiResult
@@ -1846,6 +1852,7 @@ Return the non-negative elevation removed by least-cost breaching (parameters as
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def least_cost_carve_depth(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
@@ -2325,6 +2332,7 @@ n_iterations.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -2730,7 +2738,7 @@ def slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
 
 ## `spectral_analysis`
 
-spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
+spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 100, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
 
 Parameters
 ----------
@@ -2746,16 +2754,17 @@ object
 
 Notes
 -----
-spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
+spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 100, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
 
 Run full FFT-based spectral analysis and return a SpectralResult.
 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 20, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
+def spectral_analysis(raster: lsdtt3.Raster, log_bin_width: float = 0.05, n_background_iterations: int = 100, seed: int = -1, window: str = 'hann', clip_to_valid_rectangle: bool = False, n_threads: int = 0) -> lsdtt3.SpectralResult
 ```
 
 ---
@@ -2820,6 +2829,7 @@ distribution is what k_quantile is a quantile of.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -3113,6 +3123,7 @@ vertical unit from the data provider's metadata.
 
 Authors
 -------
+S. M. Mudd
 B. Gailleton
 
 ```python
@@ -3146,6 +3157,7 @@ Attenuate high-frequency white noise with an adaptive Wiener filter.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `signal_wavelength_long_m` -> `signal_wavelength_long_metres`; earliest removal: following minor.

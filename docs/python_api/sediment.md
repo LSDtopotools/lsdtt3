@@ -26,10 +26,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `achieved_volume_m3`
@@ -89,10 +85,6 @@ Outputs from a stochastic sequence of landslide events.
 The elevation raster accumulates every excavation. ``failure_time`` and
 ``excavation_depth`` describe the most recent scar at each pixel, which is the
 state required by the cosmogenic response functions.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -550,10 +542,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ### Members
 
 #### `active_layer_d50`
@@ -664,10 +652,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.ChannelNetwork, dem: lsdtt3.Raster, split_method: str = 'longest_channel', snout_smoothing_fraction: float = 0.10000000149011612, detrend_smoothing_pixels: int = 5) -> object
 ```
@@ -763,6 +747,7 @@ Build flow-direction and terrain diagnostics for road/channel discrimination.
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
@@ -890,10 +875,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def landslide_crn_concentration(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, nuclide: str = 'Be10', muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> lsdtt3.Raster
 ```
@@ -938,10 +919,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: lsdtt3.Raster, background_erosion_rate_g_cm2_yr: float = 0.001, production_scaling: float = 1.0, total_shielding: float = 1.0, muon_scheme: str = 'BraucherBorchers', report_time_yr: float = 0.0) -> dict
 ```
@@ -977,6 +954,7 @@ an edge pixel. This established Python keyword is independent of the CLI's
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
 def mountain_front_outlets(mountain_mask: lsdtt3.Raster, contributing_pixels: lsdtt3.Raster, min_contributing_pixels: int) -> lsdtt3.Raster
@@ -1046,10 +1024,7 @@ SedimentRoutingResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `active_layer_depth_m` -> `active_layer_depth_metres`; earliest removal: following minor.
@@ -1120,10 +1095,7 @@ LandslideSeriesResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `budget_tol` -> `event_budget_relative_tolerance`; earliest removal: following minor.
@@ -1205,10 +1177,6 @@ Returns
 -------
 LandslideResult
     Excavated surface, failure-time/depth rasters, and budget diagnostics.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
