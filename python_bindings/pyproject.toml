@@ -71,7 +71,9 @@ environment = { CMAKE_ARGS = "-DLSDTT_PYTHON_RELEASE_WHEEL=ON" }
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]
-before-all = "dnf install -y cmake gcc-c++ pkgconf-pkg-config gdal-devel fftw-devel netcdf-devel eigen3-devel libgomp || yum install -y cmake gcc-c++ pkgconfig gdal-devel fftw-devel netcdf-devel eigen3-devel libgomp"
+# PROJ, GDAL, GEOS and curl are built from source: EPEL 8's GDAL 3.0 / PROJ 6.3
+# cannot handle datum-ensemble CRSs. See the script's header.
+before-all = "bash {project}/python_bindings/tools/build_manylinux_native_deps.sh"
 
 [tool.cibuildwheel.macos]
 before-all = "brew install gdal fftw netcdf eigen libomp"

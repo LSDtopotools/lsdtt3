@@ -147,8 +147,9 @@ tools/make_all_packages.sh --clean --tag v0.7.0 --only wheel \
     --wheel-engine apptainer --wheel-python all
 ```
 
-The Apptainer route builds its image once (a few GB under `~/.cache/lsdtt3`
-plus Apptainer's cache) and reuses it. See
+The Apptainer route builds its image once and then reuses it. The image takes
+a few GB under `~/.cache/lsdtt3`, plus Apptainer's cache. The first build takes
+20 to 30 minutes, because it compiles PROJ, GDAL, GEOS and curl. See
 `docs/developer_notes/building_python_wheels.md` for the server steps.
 
 ### The wheel builds in a pixi environment

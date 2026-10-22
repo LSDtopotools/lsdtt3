@@ -91,8 +91,10 @@ The result is a real manylinux wheel, fit to upload.
 The image is defined in `apptainer_def/manylinux_wheel.def`: the
 `quay.io/pypa/manylinux_2_28_x86_64` image with `before-all` already run. The
 script builds it once and reuses it. It is named after a hash of the `.def`
-file and the `before-all` command, so it is rebuilt only when one of those
-changes, not at every release.
+file, the `before-all` command and the script that command runs, so it is
+rebuilt only when one of those changes, not at every release. The first build
+takes 20 to 30 minutes, because `before-all` compiles PROJ, GDAL, GEOS and curl
+(see [The Linux wheel's GDAL and PROJ](#the-linux-wheels-gdal-and-proj)).
 
 The podman route is unchanged: on a machine with podman,
 `make_all_packages.sh` still uses cibuildwheel exactly as before.
@@ -107,7 +109,9 @@ The podman route is unchanged: on a machine with podman,
   `fakeroot` program available. `apptainer build --fakeroot` reports which
   of these is missing.
 - **Network access** to `quay.io` (the base image, first build only), to the
-  package mirrors the image's `dnf` uses (first build only), and to PyPI
+  package mirrors the image's `dnf` uses and to `curl.se`, `download.osgeo.org`
+  and `github.com` for the PROJ, GDAL, GEOS and curl sources (first build
+  only), and to PyPI
   (`scikit-build-core`, `nanobind` and `pytest`, at every build).
 - **Disk space**: a few GB for the image (default
   `~/.cache/lsdtt3/manylinux_2_28-lsdtt3-<hash>.sif`, or `--sif <path>` /
@@ -186,9 +190,10 @@ tools/build_manylinux_wheel_apptainer.sh --help
   through, so set those in the shell you run it from.
 - `c++: fatal error: Killed signal terminated program cc1plus`: the compiler
   ran out of memory. Lower `--jobs`.
-- `dnf` cannot find `gdal-devel`: the package set is `before-all` in
-  `pyproject.toml`, shared with CI; fix it there and both routes pick it up
-  (the image hash changes, so the next run rebuilds it).
+- A failure in `build_manylinux_native_deps.sh` (a download, a checksum, a
+  compile, or its closing driver check): that script is `before-all`, shared
+  with CI. Fix it there and every route picks it up. The image hash changes,
+  so the next run rebuilds the image.
 - A build or test failure after the image exists is a code or packaging
   failure, the same as it would be in CI: see
   [When a wheel build fails](#when-a-wheel-build-fails).
@@ -213,9 +218,45 @@ either the Linux leg alone or all four (the workflow's `platforms` input; see
 | macOS Intel | `macos-15-intel` | `x86_64` | `MACOSX_DEPLOYMENT_TARGET=15.0` |
 | Windows x86_64 | `windows-2025` | `AMD64` | vcpkg toolchain; **OpenMP off** |
 
-System dependencies come from `before-all`: `dnf`/`yum` inside the manylinux
-image, Homebrew on macOS, and vcpkg on Windows (with the installed tree cached
-between runs).
+System dependencies come from `before-all`: inside the manylinux image,
+`python_bindings/tools/build_manylinux_native_deps.sh`; Homebrew on macOS; and
+vcpkg on Windows (with the installed tree cached between runs).
+
+### The Linux wheel's GDAL and PROJ
+
+The Linux wheel bundles whatever GDAL and PROJ the manylinux image has. In
+AlmaLinux 8 (the base of manylinux_2_28), EPEL 8 has only GDAL 3.0.4 and
+PROJ 6.3. PROJ before 7.2 cannot convert a CRS that uses a datum ensemble,
+which is how current pyproj and GDAL describe WGS 84 and most CRSs based on
+it. With those versions, reprojection fails with `DatumEnsemble can only be
+exported to WKT2:2019`. So `build_manylinux_native_deps.sh` compiles the
+following from pinned, checksummed source tarballs, using the image's own
+compiler:
+
+- PROJ 9.5.1
+- GDAL 3.10.3
+- GEOS 3.13.1
+- curl 8.11.1. GDAL needs curl 7.68 or newer for `/vsicurl`, and AlmaLinux 8
+  has 7.61.
+
+Using the image's compiler keeps the result manylinux-compliant. Libraries
+from conda-forge are not, because they need a newer libstdc++.
+
+GDAL is built with only the dependencies the script names, and with a reduced
+driver set: GTiff/COG, MEM, VRT, PNG, JPEG, ENVI/EHdr, AAIGrid and HFA for
+rasters, and Shapefile, GeoJSON, GPKG, FlatGeobuf, MVT, CSV and KML for
+vectors. The script fails if any of those is missing. If lsdtt3 starts reading
+or writing another format, add its driver there.
+
+This adds 20 to 30 minutes to every run of the CI Linux leg, and to the first
+Apptainer image build. The Apptainer image is then reused. The macOS and
+Windows legs are unchanged.
+
+The bundled curl only knows AlmaLinux's CA-certificate path. On Debian,
+Ubuntu (including Colab) and other distributions, `lsdtt3/__init__` sets
+`CURL_CA_BUNDLE` to the system certificate bundle at import, unless
+`CURL_CA_BUNDLE` or `SSL_CERT_FILE` is already set. Without that, every
+`https://` read through `/vsicurl` would fail certificate verification.
 
 !!! warning "Windows wheels are single-threaded"
 

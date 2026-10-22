@@ -117,6 +117,7 @@ done
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SOURCE="$(cd "$SOURCE" 2>/dev/null && pwd)" || fail "--source directory does not exist"
 PYPROJECT="${SOURCE}/python_bindings/pyproject.toml"
+DEPS_SCRIPT="${SOURCE}/python_bindings/tools/build_manylinux_native_deps.sh"
 OUT_DIR="${OUT_DIR:-${SOURCE}/wheelhouse}"
 
 # ----------------------------------------------------------------------------
@@ -125,6 +126,7 @@ OUT_DIR="${OUT_DIR:-${SOURCE}/wheelhouse}"
 command -v apptainer >/dev/null 2>&1 || fail "apptainer is not installed (or not on PATH)"
 [[ -f "$DEF_FILE" ]]  || fail "image definition not found: ${DEF_FILE}"
 [[ -f "$PYPROJECT" ]] || fail "no python_bindings/pyproject.toml under ${SOURCE}"
+[[ -f "$DEPS_SCRIPT" ]] || fail "no python_bindings/tools/build_manylinux_native_deps.sh under ${SOURCE}"
 
 # toml_value <section> <key>: the raw right-hand side of a one-line key in a
 # pyproject section. Only used for the image hash and the version list, so
@@ -142,7 +144,7 @@ BEFORE_ALL="$(toml_value tool.cibuildwheel.linux before-all)"
 BUILD_SELECTORS="$(toml_value tool.cibuildwheel build | tr -d '"')"
 [[ -n "$BUILD_SELECTORS" ]] || fail "no build list in [tool.cibuildwheel] of ${PYPROJECT}"
 
-IMAGE_HASH="$( { cat "$DEF_FILE"; printf '%s\n' "$BEFORE_ALL"; } | sha256sum | cut -c1-12 )"
+IMAGE_HASH="$( { cat "$DEF_FILE"; printf '%s\n' "$BEFORE_ALL"; cat "$DEPS_SCRIPT"; } | sha256sum | cut -c1-12 )"
 if [[ -z "$SIF" ]]; then
     SIF="${XDG_CACHE_HOME:-${HOME}/.cache}/lsdtt3/manylinux_2_28-lsdtt3-${IMAGE_HASH}.sif"
 fi
@@ -192,9 +194,10 @@ if [[ ! -f "$SIF" ]] || (( REBUILD_IMAGE )); then
     mkdir -p "$(dirname "$SIF")"
     STAGE="$(mktemp -d "${TMPDIR:-/tmp}/lsdtt3-wheel-image-XXXXXX")"
     trap 'rm -rf "$STAGE"' EXIT
-    # %files in the .def copies pyproject.toml relative to the current
-    # directory, so build from a directory holding just that file.
+    # %files in the .def copies these relative to the current directory, so
+    # build from a directory holding just them.
     cp "$PYPROJECT" "${STAGE}/pyproject.toml"
+    cp "$DEPS_SCRIPT" "${STAGE}/build_manylinux_native_deps.sh"
     tmp_sif="${SIF}.partial"
     rm -f "$tmp_sif"
     build_flags=(--fakeroot)
@@ -227,7 +230,8 @@ if [[ ! -f "$SIF" ]] || (( REBUILD_IMAGE )); then
   to a local directory with a few GB free. NFS often fails for fakeroot
   builds, so prefer local disk. If it still fails, ask an administrator for
   /etc/subuid and /etc/subgid entries, or build the image on another machine with:
-      cd <dir holding a copy of python_bindings/pyproject.toml>
+      cd <dir holding copies of python_bindings/pyproject.toml and
+          python_bindings/tools/build_manylinux_native_deps.sh>
       apptainer build --fakeroot manylinux_wheel.sif ${DEF_FILE}
   and pass it here with --sif <path>."
     mv "$tmp_sif" "$SIF"

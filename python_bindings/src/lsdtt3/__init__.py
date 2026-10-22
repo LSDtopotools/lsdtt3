@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, distribution
 import inspect
 import os
 import re
+import sys
 import textwrap
 from pathlib import Path
 
@@ -65,6 +66,27 @@ def _configure_bundled_geospatial_data() -> None:
         os.environ.setdefault("PROJ_DATA", str(proj_data))
         # Older GDAL/PROJ combinations use the legacy spelling.
         os.environ.setdefault("PROJ_LIB", str(proj_data))
+
+    # The Linux wheel bundles a libcurl built on AlmaLinux, which looks for CA
+    # certificates only where AlmaLinux keeps them. On Debian/Ubuntu (Colab
+    # included) and other distributions that path does not exist, and every
+    # https:// read through /vsicurl fails certificate verification. GDAL reads
+    # CURL_CA_BUNDLE, so point it at whichever system bundle exists. setdefault
+    # and the SSL_CERT_FILE check leave a deliberate choice alone.
+    if (
+        sys.platform.startswith("linux")
+        and "CURL_CA_BUNDLE" not in os.environ
+        and "SSL_CERT_FILE" not in os.environ
+    ):
+        for bundle in (
+            "/etc/ssl/certs/ca-certificates.crt",  # Debian, Ubuntu, Arch, Alpine
+            "/etc/pki/tls/certs/ca-bundle.crt",  # RHEL, Fedora, Rocky, Alma
+            "/etc/ssl/ca-bundle.pem",  # openSUSE
+            "/etc/ssl/cert.pem",
+        ):
+            if os.path.isfile(bundle):
+                os.environ["CURL_CA_BUNDLE"] = bundle
+                break
 
 
 _configure_bundled_geospatial_data()

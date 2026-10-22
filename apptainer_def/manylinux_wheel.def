@@ -10,14 +10,18 @@ From: quay.io/pypa/manylinux_2_28_x86_64
 #
 # Do not build this by hand: tools/build_manylinux_wheel_apptainer.sh builds it
 # (once, then reuses it) and runs the wheel build inside it. The script runs
-# `apptainer build` from a staging directory that holds a copy of
-# python_bindings/pyproject.toml, which is what the %files line below copies.
+# `apptainer build` from a staging directory that holds copies of
+# python_bindings/pyproject.toml and
+# python_bindings/tools/build_manylinux_native_deps.sh, which is what the
+# %files lines below copy.
 #
 # The dependency list is NOT repeated here. %post runs the
 # [tool.cibuildwheel.linux] before-all command from that pyproject.toml, the
-# same command cibuildwheel runs in CI and under podman, so the two routes
-# cannot drift apart. The script names the image after a hash of this file and
-# of that command, so changing either produces a new image.
+# same command cibuildwheel runs in CI and under podman, so the routes cannot
+# drift apart. That command runs build_manylinux_native_deps.sh, which builds
+# PROJ, GDAL, GEOS and curl from source; the first image build therefore takes
+# 20-30 minutes. The script names the image after a hash of this file, that
+# command and the deps script, so changing any of them produces a new image.
 #
 # The base image carries every CPython the wheels target (/opt/python/cp3XX-*)
 # and auditwheel.
@@ -28,6 +32,7 @@ From: quay.io/pypa/manylinux_2_28_x86_64
 
 %files
     pyproject.toml /opt/lsdtt3/pyproject.toml
+    build_manylinux_native_deps.sh /opt/lsdtt3/python_bindings/tools/build_manylinux_native_deps.sh
 
 %post
     set -eu
@@ -54,6 +59,10 @@ EOF
     WRAP=""
     command -v fakeroot >/dev/null 2>&1 && WRAP="fakeroot"
 
+    # cibuildwheel replaces {project} with the project root; here the files
+    # the command needs are under /opt/lsdtt3.
+    BEFORE_ALL="$(printf '%s' "$BEFORE_ALL" | sed 's#{project}#/opt/lsdtt3#g')"
+
     echo "Running before-all from pyproject.toml${WRAP:+ (under fakeroot)}:"
     echo "    $BEFORE_ALL"
     $WRAP bash -c "$BEFORE_ALL"
@@ -69,6 +78,7 @@ EOF
 
 %test
     gdal-config --version
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion proj
     cmake --version | head -1
     pkg-config --modversion fftw3
     pkg-config --modversion netcdf
