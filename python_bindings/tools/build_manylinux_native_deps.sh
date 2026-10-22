@@ -74,6 +74,16 @@ fetch() {
     echo "${sha}  ${file}" | sha256sum -c -
 }
 
+# Download everything first. Once the curl built below is registered with
+# ldconfig, the image's own /usr/bin/curl (7.61) loads it and fails ("unknown
+# option": it asks for features this build leaves out). Nothing after that step
+# may use the system curl, or dnf, which also uses libcurl.
+say "Downloading sources"
+fetch "https://curl.se/download/curl-${CURL_VERSION}.tar.xz" "$CURL_SHA256"
+fetch "https://download.osgeo.org/geos/geos-${GEOS_VERSION}.tar.bz2" "$GEOS_SHA256"
+fetch "https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz" "$PROJ_SHA256"
+fetch "https://github.com/OSGeo/gdal/releases/download/v${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" "$GDAL_SHA256"
+
 # The libraries all go in $PREFIX/lib (not lib64) so one ldconfig entry covers
 # them, and so CMake finds them before any older system copy.
 CMAKE_COMMON=(
@@ -95,7 +105,6 @@ say "curl ${CURL_VERSION}"
 # versioned symbols (CURL_OPENSSL_4). One libcurl.so.4 ends up in the wheel, so
 # it has to satisfy both. CA certificates: built-in paths are AlmaLinux's; on
 # other distributions lsdtt3/__init__ points CURL_CA_BUNDLE at the system bundle.
-fetch "https://curl.se/download/curl-${CURL_VERSION}.tar.xz" "$CURL_SHA256"
 tar xJf "curl-${CURL_VERSION}.tar.xz"
 (
     cd "curl-${CURL_VERSION}"
@@ -110,7 +119,6 @@ tar xJf "curl-${CURL_VERSION}.tar.xz"
 register_libs
 
 say "GEOS ${GEOS_VERSION}"
-fetch "https://download.osgeo.org/geos/geos-${GEOS_VERSION}.tar.bz2" "$GEOS_SHA256"
 tar xjf "geos-${GEOS_VERSION}.tar.bz2"
 cmake -S "geos-${GEOS_VERSION}" -B build-geos "${CMAKE_COMMON[@]}" \
     -DBUILD_DOCUMENTATION=OFF -DBUILD_GEOSOP=OFF
@@ -120,7 +128,6 @@ register_libs
 
 say "PROJ ${PROJ_VERSION}"
 # No network access (ENABLE_CURL=OFF): the wheel does not download grids.
-fetch "https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz" "$PROJ_SHA256"
 tar xzf "proj-${PROJ_VERSION}.tar.gz"
 cmake -S "proj-${PROJ_VERSION}" -B build-proj "${CMAKE_COMMON[@]}" \
     -DENABLE_CURL=OFF -DENABLE_TIFF=ON -DBUILD_APPS=OFF
@@ -132,7 +139,6 @@ say "GDAL ${GDAL_VERSION}"
 # GDAL_USE_EXTERNAL_LIBS=OFF: only the dependencies named here are used, so a
 # library that happens to be in the image cannot creep into the wheel. The
 # optional drivers are off and the ones lsdtt3 uses are switched back on.
-fetch "https://github.com/OSGeo/gdal/releases/download/v${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz" "$GDAL_SHA256"
 tar xzf "gdal-${GDAL_VERSION}.tar.gz"
 cmake -S "gdal-${GDAL_VERSION}" -B build-gdal "${CMAKE_COMMON[@]}" \
     -DBUILD_APPS=ON \
