@@ -39,6 +39,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_hydraulic_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -520,7 +521,8 @@ int main(int argc, char* argv[])
         state_raster.get_meta().cell_size != routed_dem.get_meta().cell_size ||
         state_raster.get_meta().x_min != routed_dem.get_meta().x_min ||
         state_raster.get_meta().y_min != routed_dem.get_meta().y_min ||
-        state_raster.get_meta().crs_wkt != routed_dem.get_meta().crs_wkt)
+        !lsdtt::crs_equal_semantically(state_raster.get_meta().crs_wkt,
+                                       routed_dem.get_meta().crs_wkt))
     {
         std::cerr << "FATAL: hydraulic_node_state_fname must use the DEM grid.\n";
         return 1;
@@ -603,7 +605,8 @@ int main(int argc, char* argv[])
             field.get_meta().cell_size != routed_dem.get_meta().cell_size ||
             field.get_meta().x_min != routed_dem.get_meta().x_min ||
             field.get_meta().y_min != routed_dem.get_meta().y_min ||
-            field.get_meta().crs_wkt != routed_dem.get_meta().crs_wkt)
+            !lsdtt::crs_equal_semantically(field.get_meta().crs_wkt,
+                                           routed_dem.get_meta().crs_wkt))
             throw std::invalid_argument(std::string(label) + " raster must use the DEM grid");
         std::vector<double> out(field.get_data().begin(), field.get_data().end());
         return out;

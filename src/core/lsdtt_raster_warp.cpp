@@ -493,7 +493,7 @@ bool crs_equal_semantically(
     const std::string& a_wkt,
     const std::string& b_wkt)
 {
-    if (a_wkt.empty() && b_wkt.empty())
+    if (a_wkt == b_wkt)
     {
         return true;
     }

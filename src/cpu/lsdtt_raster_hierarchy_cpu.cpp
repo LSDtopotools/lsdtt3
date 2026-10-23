@@ -9,6 +9,8 @@
 
 #include "lsdtt_raster_hierarchy_cpu.hpp"
 
+#include "../core/lsdtt_raster_warp.hpp"
+
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -196,7 +198,8 @@ void lsdtt_raster_hierarchy_cpu::set_active(const lsdtt_raster_cpu& raster)
     const auto& actual = raster.get_meta();
     if (actual.n_rows != expected.n_rows || actual.n_cols != expected.n_cols ||
         actual.x_min != expected.x_min || actual.y_min != expected.y_min ||
-        actual.cell_size != expected.cell_size || actual.crs_wkt != expected.crs_wkt)
+        actual.cell_size != expected.cell_size ||
+        !crs_equal_semantically(actual.crs_wkt, expected.crs_wkt))
         throw std::invalid_argument("replacement raster does not match active hierarchy geometry");
     levels_[active_level_] = raster;
 }

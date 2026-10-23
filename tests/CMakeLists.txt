@@ -4840,6 +4840,24 @@ add_test(NAME unit_raster_resampling
          COMMAND lsdtt-test-raster-resampling)
 lsdtt_set_tests_properties(unit_raster_resampling PROPERTIES LABELS "unit;raster")
 
+# Oblique analysis frames: geometry, axis convention, datum, line and polygon
+# builders, checked against an independent Vincenty geodesic.
+add_executable(lsdtt-test-oblique-frame cpp/test_oblique_frame.cpp)
+target_link_libraries(lsdtt-test-oblique-frame PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame
+         COMMAND lsdtt-test-oblique-frame)
+lsdtt_set_tests_properties(unit_oblique_frame PROPERTIES LABELS "unit;raster")
+
+# CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
+# mask in one oblique Mercator frame must be accepted together.
+add_executable(lsdtt-test-crs-semantic-matching cpp/test_crs_semantic_matching.cpp)
+target_link_libraries(lsdtt-test-crs-semantic-matching PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_crs_semantic_matching
+         COMMAND lsdtt-test-crs-semantic-matching)
+lsdtt_set_tests_properties(unit_crs_semantic_matching PROPERTIES LABELS "unit;raster")
+
 add_executable(lsdtt-test-raster-hierarchy cpp/test_raster_hierarchy.cpp)
 target_link_libraries(lsdtt-test-raster-hierarchy PRIVATE lsdtt3_cpu)
 
@@ -9154,7 +9172,7 @@ set(LSDTT_DOMAIN_RULES
     "junction_graph"         "network"
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
-    "connected_components|grid_geodesic" "raster"
+    "connected_components|grid_geodesic|oblique_frame" "raster"
     "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"

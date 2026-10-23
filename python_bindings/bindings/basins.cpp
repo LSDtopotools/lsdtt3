@@ -22,6 +22,8 @@
 #include <utils/lsdtt_statistics.hpp>
 #include <utils/lsdtt_polygon_geometry.hpp>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -278,7 +280,8 @@ nb::object basin_outline_ridgelines(const BasinCollection& collection, const Ras
     const auto& meta = dem.native().get_meta();
     if (meta.n_rows != flow.n_rows() || meta.n_cols != flow.n_cols() ||
         meta.x_min != flow.meta().x_min || meta.y_min != flow.meta().y_min ||
-        meta.cell_size != flow.meta().cell_size || meta.crs_wkt != flow.meta().crs_wkt)
+        meta.cell_size != flow.meta().cell_size ||
+        !lsdtt::crs_equal_semantically(meta.crs_wkt, flow.meta().crs_wkt))
         throw std::invalid_argument("dem must share the BasinCollection flow grid");
     if (split_method != "longest_channel" && split_method != "maximum_elevation" &&
         split_method != "equal_length")
@@ -350,7 +353,8 @@ nb::object basin_ridgeline_extrema(const BasinCollection& collection,
     const auto& meta = dem.native().get_meta();
     if (meta.n_rows != flow.n_rows() || meta.n_cols != flow.n_cols() ||
         meta.x_min != flow.meta().x_min || meta.y_min != flow.meta().y_min ||
-        meta.cell_size != flow.meta().cell_size || meta.crs_wkt != flow.meta().crs_wkt)
+        meta.cell_size != flow.meta().cell_size ||
+        !lsdtt::crs_equal_semantically(meta.crs_wkt, flow.meta().crs_wkt))
         throw std::invalid_argument("dem must share the BasinCollection flow grid");
     if (split_method != "longest_channel" && split_method != "maximum_elevation" &&
         split_method != "equal_length")

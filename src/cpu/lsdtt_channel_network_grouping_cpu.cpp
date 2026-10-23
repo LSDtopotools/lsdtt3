@@ -127,7 +127,8 @@ channel_network_zone_labels make_zone_labels_from_code_raster(
                          std::abs(sm.cell_size - gm.cell_size) < tol &&
                          std::abs(sm.x_min - gm.x_min) < tol &&
                          std::abs(sm.y_min - gm.y_min) < tol &&
-                         (sm.crs_wkt.empty() || gm.crs_wkt.empty() || sm.crs_wkt == gm.crs_wkt);
+                         (sm.crs_wkt.empty() || gm.crs_wkt.empty() ||
+                          crs_equal_semantically(sm.crs_wkt, gm.crs_wkt));
 
     channel_network_zone_labels out;
     out.key_name = key_name;

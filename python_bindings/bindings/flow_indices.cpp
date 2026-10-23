@@ -11,6 +11,8 @@
 #include <cpu/lsdtt_connectivity_cpu.hpp>
 #include <cpu/lsdtt_sti_cpu.hpp>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -26,7 +28,7 @@ bool grids_match(const lsdtt::lsdtt_raster_meta& a, const lsdtt::lsdtt_raster_me
 {
     return a.n_rows == b.n_rows && a.n_cols == b.n_cols &&
         a.x_min == b.x_min && a.y_min == b.y_min &&
-        a.cell_size == b.cell_size && a.crs_wkt == b.crs_wkt;
+        a.cell_size == b.cell_size && lsdtt::crs_equal_semantically(a.crs_wkt, b.crs_wkt);
 }
 
 void require_same_grid(const Raster& a, const Raster& b, const char* name)

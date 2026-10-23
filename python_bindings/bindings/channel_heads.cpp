@@ -10,6 +10,8 @@
 
 #include <cpu/lsdtt_channel_sources_wiener_cpu.hpp>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -20,7 +22,7 @@ void require_flow_grid(const Raster& dem, const FlowInfo& flow)
     const auto& a = dem.native().get_meta();
     const auto& b = flow.native().meta();
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
-        a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt ||
+        a.y_min != b.y_min || a.cell_size != b.cell_size || !lsdtt::crs_equal_semantically(a.crs_wkt, b.crs_wkt) ||
         dem.native().get_mask().size() != flow.native().full_grid_size())
         throw std::invalid_argument("dem must share the FlowInfo grid");
 

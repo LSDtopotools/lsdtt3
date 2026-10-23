@@ -44,6 +44,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -145,7 +146,7 @@ static void require_same_grid(
         !nearly_equal(reference.x_min, candidate.x_min) ||
         !nearly_equal(reference.y_min, candidate.y_min) ||
         !nearly_equal(reference.cell_size, candidate.cell_size) ||
-        reference.crs_wkt != candidate.crs_wkt)
+        !lsdtt::crs_equal_semantically(reference.crs_wkt, candidate.crs_wkt))
     {
         throw std::runtime_error(
             name + " does not have exactly the same grid settings as the DEM");

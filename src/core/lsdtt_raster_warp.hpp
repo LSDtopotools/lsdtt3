@@ -64,8 +64,9 @@ namespace lsdtt {
 //
 // True if two WKT strings describe the same CRS (OGR IsSame, traditional GIS
 // axis order), so that e.g. an EPSG-tagged WKT and an equivalent untagged one
-// compare equal. Two empty strings are equal; one empty string is not equal to
-// a non-empty one; a WKT that does not parse is not equal to anything.
+// compare equal. Identical strings (including two empty strings) are equal
+// without parsing; one empty string is not equal to a non-empty one; otherwise
+// a WKT that does not parse is not equal to anything.
 // -----------------------------------------------------------------------------
 bool crs_equal_semantically(const std::string& a_wkt, const std::string& b_wkt);
 
