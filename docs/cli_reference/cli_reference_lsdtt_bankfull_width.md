@@ -33,14 +33,21 @@ key: value
 | 4 | Build the channel network from the source points |
 | 5 | Extract cross sections using a bearing window |
 | 6 | Channel profile per cross section: distance from source, drainage area, thalweg elevation, along-channel slope |
-| 7 | Sampled elevation profile per cross section |
-| 8 | Manning width / depth solve per cross section, using the reach that contains it |
+| 7 | **Optional:** Reach template generation (drainage area jumps) |
+| 8 | Sampled elevation profile per cross section |
+| 9 | Manning width / depth solve per cross section, using the reach that contains it |
 
 Every output comes from the same cross-section extraction, so `cross_id` / `cross_section_id` numbering matches across all files from one run.
 
 ---
 
 ## Inputs
+
+**Reach template generation** (optional). Set `generate_reach_template: true` to automatically detect reach breaks from drainage area jumps. This outputs:
+- `<write_fname>_reaches_template.csv` — suggested reach bounds with empty `manning_n` and `target_discharge_m3s` columns
+- `<write_fname>_reference_xs_candidates.csv` — reference cross-section candidates per reach (for discharge calculation)
+
+**The suggested reach breaks are a starting point only.** Edit the template CSV to add, remove, or adjust reach boundaries based on geomorphic knowledge, field observations, or gauging station locations. Then fill in `manning_n` and `target_discharge_m3s` before running the Manning solve. See the **Reach template** section below for parameters.
 
 **Reach table** (`reach_manning_parameters_path`, CSV). One row per reach:
 
@@ -52,6 +59,13 @@ start_distance_m,end_distance_m,manning_n,target_discharge_m3s
 
 A cross section belongs to a reach by its distance from the source, half-open: `start <= d < end`. `cross_section_id` is assigned by a row-major raster scan and has nothing to do with position along the channel, so it is not used for matching. A malformed row is reported with its line number.
 
+**Target discharge sources:** The `target_discharge_m3s` column can be populated from:
+- **Gauging stations**: measured discharge (preferred where available)
+- **Cross-section geometry**: back-calculated from channel form using Manning's equation
+- **Hydrologic models**: simulated discharge from rainfall-runoff models
+
+The reach template workflow (above) helps you identify reach breaks and select reference cross sections for either approach.
+
 **Channel profile** (`channel_profile_csv_path`, CSV). Read only when the profile is not computed in the same run (that is, when `write_channel_profile_csv` is false). It must come from the same DEM and cross-section geometry parameters.
 
 ---
@@ -62,6 +76,8 @@ A cross section belongs to a reach by its distance from the source, half-open: `
 |---|---|---|
 | `<write_fname>_channel_profile.csv` | `write_channel_profile_csv` | `cross_id`, `distance_from_source_m`, `drainage_area_m2`, `thalweg_elevation_m`, `slope_m_per_m`, `slope_valid` |
 | `<write_fname>_cross_section_sample_points.<ext>` | `write_cross_section_sample_points` | Sampled elevation profile per section: `cross_section_id`, `offset_metres`, `x`, `y`, `elevation`, `valid` |
+| `<write_fname>_reaches_template.csv` | `generate_reach_template` | Reach bounds with coordinates (`start_easting_m`, `start_northing_m`, etc.) and empty `manning_n`/`target_discharge_m3s` columns |
+| `<write_fname>_reference_xs_candidates.csv` | `generate_reach_template` | Reference cross-section candidates per reach: `cross_id`, `distance_from_source_m`, `easting_m`, `northing_m`, `drainage_area_m2`, `slope_m_per_m` |
 | `<write_fname>_manning_bank_points.<ext>` | `write_manning_bank_points` | One point per bank per valid section |
 | `<write_fname>_manning_widths.csv` | `write_manning_widths_csv` | Per section: solved depth, water-surface elevation, bank positions, width, flow area, wetted perimeter, hydraulic radius, discharge at the solution, `valid`, `quality_flag` |
 
@@ -76,6 +92,54 @@ These older names are still read and print a deprecation warning:
 | `cross_section_sample_points_output_format` | `write_vector_format` (an old value is still applied to that layer for the run) |
 | `manning_bank_points_output_format` | `write_vector_format` (an old value is still applied to that layer for the run) |
 | `minimum_bearing_window_pixels` | `min_bearing_window_pixels` |
+
+---
+
+## Reach template workflow
+
+When `generate_reach_template: true`, the tool analyses drainage area jumps along the channel to suggest reach boundaries. This is useful for identifying where to place reach breaks before calculating target discharge.
+
+**Note:** The detected reach breaks are **suggestions only**. You should review and edit the reach boundaries as needed based on:
+- Geomorphic knowledge of the channel (knickpoints, lithologic contacts, valley transitions)
+- Tributary confluences not captured by drainage area jumps
+- Field observations or local expertise
+- Gauging station locations
+
+Edit `dem_reaches_template.csv` to add, remove, or adjust reach breaks before calculating discharge.
+
+**Workflow:**
+
+1. **Generate reach template:**
+   ```
+   lsdtt-bankfull-width dem.param
+   ```
+   Outputs: `dem_reaches_template.csv` and `dem_reference_xs_candidates.csv`
+
+2. **Review in QGIS:**
+   - Load `dem_reaches_template.csv` as a delimited text layer
+   - Use `start_easting_m` and `start_northing_m` as X/Y coordinates
+   - Visualize reach boundaries on your DEM
+
+3. **Pick reference cross sections:**
+   - Open `dem_reference_xs_candidates.csv`
+   - Select one `cross_id` per `reach_index` (typically from the middle of each reach)
+
+4. **Determine target discharge for each reach:**
+
+   Fill in `manning_n` and `target_discharge_m3s` in `dem_reaches_template.csv` with your chosen values.
+
+5. **Run Manning widths:**
+   - Set `run_manning_widths: true`
+   - Set `reach_manning_parameters_path: dem_reaches_template.csv`
+   - Run `lsdtt-bankfull-width dem.param`
+
+**Reach break detection algorithm:**
+
+The tool flags a reach break where:
+- Relative jump: `dA / A_previous > reach_template_relative_jump_threshold` (default: 0.01 = 1%)
+- Absolute jump: `dA > reach_template_abs_jump_fraction_of_max × max(A)` (default: 1% of max drainage area)
+
+Close breaks (< `reach_template_min_break_spacing_metres`) are merged, keeping the larger jump. Reaches shorter than `reach_template_min_reach_length_metres` are merged with neighbours.
 
 ---
 
@@ -190,5 +254,16 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `manning_max_discharge_relative_error` | `float` | `0.05` | `param` | `run_manning_widths` | Maximum \|Q_solved - Q_target\| / Q_target before a section is flagged. | Above this the section gets quality_flag spill_discontinuity: the water surface overtopped a bank crest into lower ground and no depth reproduces the target discharge. Must be &gt; 0. |
 | `write_manning_bank_points` | `bool` | `true` | `switch` | `run_manning_widths` | Write Manning bank points as georeferenced points. | One point per bank per valid section. Output: &lt;write_fname&gt;_manning_bank_points.fgb (or .gpkg). |
 | `write_manning_widths_csv` | `bool` | `true` | `switch` | `run_manning_widths` | Write per-section Manning results to CSV. | One row per section, valid or not, with quality_flag. Output: &lt;write_fname&gt;_manning_widths.csv. |
+
+### Reach template
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `generate_reach_template` | `bool` | `false` | `switch` | - | Generate reach template with suggested break locations. | Uses drainage area jumps to detect reach boundaries. Requires write_channel_profile_csv=true (computed in same run). Outputs: &lt;write_fname&gt;_reaches_template.csv and &lt;write_fname&gt;_reference_xs_candidates.csv |
+| `reach_template_relative_jump_threshold` | `float` | `0.01` | `param` | `generate_reach_template` | Minimum relative drainage area jump (dA/A) to flag a break. | Must be in range (0, 1). Typical values: 0.01-0.05. |
+| `reach_template_abs_jump_fraction_of_max` | `float` | `0.01` | `param` | `generate_reach_template` | Minimum absolute jump as fraction of max drainage area. | Must be in range (0, 1). Prevents flagging small jumps in large basins. Typical values: 0.005-0.02. |
+| `reach_template_min_break_spacing_metres` | `float` | `20.0` | `param` | `generate_reach_template` | Minimum distance between break locations (merged if closer). | Prevents over-segmentation from noise. For gullies: 10-30 m. For large rivers: 200-500 m. |
+| `reach_template_min_reach_length_metres` | `float` | `30.0` | `param` | `generate_reach_template` | Minimum reach length (shorter reaches merged). | Ensures reaches are geomorphically meaningful. For gullies: 20-50 m. For large rivers: 300-1000 m. |
+| `reach_template_n_reference_xs` | `int` | `10` | `param` | `generate_reach_template` | Number of reference cross-section candidates per reach. | Evenly spaced by position (not distance) along each reach. Use these to pick a reference XS for discharge calculation. |
 
 <!-- END GENERATED CLI PARAMETERS -->
