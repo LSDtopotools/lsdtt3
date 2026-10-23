@@ -1,6 +1,6 @@
 # Raster Data
 
-Rasters are the main data model in lsdtt3. A raster combines a regular grid of
+Rasters are the main data model in `lsdtt3`. A raster combines a regular grid of
 values with its dimensions, cell size, origin, coordinate reference system
 (CRS), data type, and nodata value. I'm not sure why we are telling you this because it is very difficult to imagine you looking for this software if you don't know what a raster is. But better safe than sorry, we guess. 
 
@@ -12,8 +12,9 @@ with the parameters `read_path` and `read_fname`; individual tools document any 
 raster inputs they require.
 
 In practice "supported by GDAL" is a big claim, so these are the raster formats
-we actually test that lsdtt3 can open. The test is
-`unit_gdal_format_support`, and it writes a small raster in each format and
+we actually test that `lsdtt3` can open. If you have a raster format that is different from the ones below, 
+you have found your way onto some weird corner of the ancient internet. Anyway, to test formast, use
+`unit_gdal_format_support`: it writes a small raster in each format and
 checks that lsdtt3 reads the geometry, the CRS and the pixel values back:
 
 | Format | Extension | Notes |
@@ -33,8 +34,8 @@ checks that lsdtt3 reads the geometry, the CRS and the pixel values back:
 | ISIS3 | `.cub` | planetary: USGS ISIS cubes |
 | PNG | `.png` | readable, but see the output section — it is not for analysis |
 
-Yes, planetary formats. If you want to do geomorphology on Mars, the reading
-side will not stop you.
+Yes, planetary formats. If you want to do geomorphology on Mars, the file reading
+side will not stop you. I have bad news, you probably can't get a Nature paper by saying there was water on Mars anymore, that golden age (the Nature paper one, not the age of Martian water) only lasted 10 years. 
 
 Some things we deliberately do **not** read: JPEG 2000 (that way lies
 multispectral analysis, which is not what this software is for), KML (convert it
