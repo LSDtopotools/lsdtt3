@@ -42,7 +42,7 @@ list, and the same content is on this site under
 | `lsdtt-slope-area` | Slope–area statistics for one or more polynomial-fit smoothing lengths, binned by logarithmic drainage area. |
 | `lsdtt-swath-profile` | Swath profile along an ordered polyline baseline. |
 | `lsdtt-cross-sections` | Channel network from supplied source points, with extracted cross sections. |
-| `lsdtt-bankfull-width` | Bankfull channel width and depth per cross section from Manning's equation, on a high-resolution DEM. Needs source points and a reach table of Manning's n and target discharge. |
+| `lsdtt-bankfull-width` | Bankfull channel width and depth per cross section from Manning's equation, on a high-resolution DEM. Needs source points and a reach table of Manning's *n* and target discharge. |
 
 ## Flow routing and drainage
 
@@ -91,7 +91,7 @@ list, and the same content is on this site under
 
 | Tool | What it does |
 |---|---|
-| `lsdtt-distributed-hydrology` | A raster TOPMODEL: time-evolving, rainfall-driven runoff simulation with distributed stores. |
+| `lsdtt-distributed-hydrology` | Two hydrologic models, one driven by TOPMODEL equations and the other driven by S-HYPE: time-evolving, rainfall-driven runoff simulation with distributed stores. |
 | `lsdtt-graphflood` | Stationary graph-based hydraulic routing. Solves for steady-state flow depths given a rainfall-rate field. |
 
 See [Hydrological modelling](../design_and_algorithms/hydrological_modelling.md)

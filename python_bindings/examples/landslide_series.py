@@ -5,7 +5,14 @@ import numpy as np
 
 import lsdtt3
 
-dem = lsdtt3.fill_pits(lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif"))
+# Fetch a small 30 m Copernicus DEM of the Green River canyon beside
+# Canyonlands National Park, Utah (projected to UTM zone 12N). The tile is
+# cached in dem_cache/ so later runs do not download it again.
+dem = lsdtt3.fetch_dem(
+    west=-110.10, south=38.36, east=-109.96, north=38.47,
+    grid_spacing=30.0, cache_dir="dem_cache",
+)
+dem = lsdtt3.fill_pits(dem)
 flow = lsdtt3.FlowInfo(dem)
 series = lsdtt3.run_landslide_series(
     dem, flow,

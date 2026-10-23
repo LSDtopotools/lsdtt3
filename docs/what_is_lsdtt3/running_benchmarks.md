@@ -2,9 +2,9 @@
 
 lsdtt3 includes a benchmark suite that measures how it compares against three
 other topographic analysis implementations — **RichDEM**, **TopoToolbox** and
-**Whitebox Workflows** on *your* hardware, on real terrain.
+**Whitebox Workflows** on *your* hardware, on real terrain. Note that these benchmarks are against the publicly available python version: we do not test against the Matlab version of **TopoToolbox** or the Rust version of **Whitebox Next Gen**. 
 
-It is deliberately not part of the test suite: the test suite makes sure the CLIs and routines do not break with updates and are implemented correctly. This is a different exercise. `ctest` never runs it and it cannot fail a build. Its only product is a
+Benchmarking is deliberately not part of the test suite: the test suite makes sure the CLIs and routines do not break with updates and are implemented correctly. This is a different exercise. `ctest` never runs it and it cannot fail a build. Its only product is a
 self-contained directory of measurements you can use to see how fast and how memory-hungry the different implementations are.
 
 If you want the reasoning behind the design — why particular comparisons are
@@ -102,7 +102,7 @@ everything is cached and the suite runs offline.
 
 ## The two profiles
 
-Only run the `server` version if you have powerful compute available.
+Only run the `server` version if you have powerful compute available (i.e., not a university-issued laptop, which will end up smoking after a `server` run).
 Note that if you are running on a personal computer (e.g., your laptop), the compute will become thermally limited (this is when your fan starts going crazy). In that event, your computer will throttle the CPU speed and the speed reporting will not be reliable. 
 
 | | `laptop` | `server` |
@@ -113,21 +113,10 @@ Note that if you are running on a personal computer (e.g., your laptop), the com
 | Download (first run) | ~4 MB per region | ~64 MB per region |
 | Runtime | minutes | ~1.5-2 hours (estimated, see below) |
 
-The `server` ladder stopped at 8000² on 2026-09-13. On the first full server
-campaign that rung took 4.2 h of 5.5 h, and for the surface metrics, D8 and
-D-infinity every engine's throughput at 8000² was within 0.95–1.04× of its
-4000² figure. Add it back with `--ladder 1000,2000,4000,8000` if you want a
-size study. If the 8000 px source is already in your fixture cache it is reused
-rather than downloading a new one, and existing crops keep their hashes.
+We used to do an 8000x8000 raster but that took a very long time and we didn't learn anything that we didn't already know from the 4kx4k run. 
+If you are keen you can add it back with `--ladder 1000,2000,4000,8000`.
 
-Whitebox is swept over the same thread counts as lsdtt3. From 2026-09-13 to
-2026-10-10 it was measured at 1 and 2 threads only, because an earlier campaign
-showed it flat (0.96–1.04×) at every thread count. That evidence is no longer
-trusted: on 2026-10-11 Whitebox used 1.3–1.65 CPUs at `max_procs=1` on a
-machine that allowed the process only 2, so a flat curve there showed the
-mask, not Whitebox.
-
-The server runtime is an estimate: that same campaign spent 80 minutes on the
+The server runtime is an estimate: one of our campaigns spent 80 minutes on the
 1000-4000² rungs, and cases have since been added, removed and re-paired
 (see [Reading the results](#2-only-compare-like-with-like)); the plan is now
 390 measurements. The
