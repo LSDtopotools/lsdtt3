@@ -820,6 +820,12 @@ int main(int argc, char* argv[])
         "Overrules the default linear fit and the optional polynomial fit. Only applicable if ridgeline_analysis_mode is range_defined_ridgelines.",
         "Ridgeline Algorithms", "switch", ""};
 
+    string_default_map["ridgeline_detrend_moving_average_window_pixels"] = "";
+    help_map["ridgeline_detrend_moving_average_window_pixels"] = {"string", "",
+        "Optional comma-separated odd pixel-window sizes for additional moving-average detrending outputs.",
+        "For each configured size X, writes moving_window_fitted_elevation_Xpx and moving_window_detrended_elevation_Xpx columns. These outputs are additional to, and do not replace, the linear/polynomial/constant fitted_elevation and detrended_elevation selected by the fit options.",
+        "Ridgeline Algorithms", "param", ""};
+
     float_default_map["m_over_n"] = 0.5f;
     help_map["m_over_n"] = {"float", "0.5", 
         "The concavity index for calculating ridgeline steepness. Usually denoted as the Greek symbol theta.", 
@@ -1109,6 +1115,34 @@ int main(int argc, char* argv[])
     auto ff  = pp.get_float_parameters();
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
+
+    std::vector<int> ridgeline_detrend_windows;
+    try
+    {
+        std::stringstream values(sf["ridgeline_detrend_moving_average_window_pixels"]);
+        std::string token;
+        while (std::getline(values, token, ','))
+        {
+            const auto first = token.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos)
+                throw std::invalid_argument("empty window size");
+            const auto last = token.find_last_not_of(" \t\r\n");
+            const int window = std::stoi(token.substr(first, last - first + 1));
+            if (window <= 0 || window % 2 == 0)
+                throw std::invalid_argument("window sizes must be positive odd numbers");
+            if (std::find(ridgeline_detrend_windows.begin(),
+                          ridgeline_detrend_windows.end(), window) !=
+                ridgeline_detrend_windows.end())
+                throw std::invalid_argument("window sizes must be unique");
+            ridgeline_detrend_windows.push_back(window);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: invalid ridgeline_detrend_moving_average_window_pixels: "
+                  << e.what() << ". Supply comma-separated positive odd pixel sizes.\n";
+        return 1;
+    }
 
     std::vector<float> topological_distance_thresholds;
     try
@@ -2836,8 +2870,10 @@ int main(int argc, char* argv[])
             bool is_mdd = (record.feature_type == "main_drainage_divide");
             bool use_const = is_mdd && bf["use_constant_fit_for_mdd_ridgeline"];
             bool use_poly  = bf["use_polynomial_fit_for_ridgeline"];
-            
             record.ridgeline.fit_ridgeline_profile(use_poly, use_const);
+            for (const int window : ridgeline_detrend_windows)
+                record.ridgeline.fit_ridgeline_profile(
+                    use_poly, use_const, window, true);
             
             record.ridgeline.smoothen_and_derive_detrended_ridgeline(
                 ifs["ridgeline_pixels_smoothing_window"]
@@ -2870,6 +2906,20 @@ int main(int argc, char* argv[])
         points_headers_single.push_back("elevation_nearest_channel_right");
         points_headers_dual.push_back("elevation_nearest_channel_left");
         points_headers_dual.push_back("elevation_nearest_channel_right");
+    }
+    for (const int window : ridgeline_detrend_windows)
+    {
+        const std::string suffix = std::to_string(window) + "px";
+        const auto insert_moving_headers = [&suffix](std::vector<std::string>& headers) {
+            const auto insert_at = headers.size() -
+                ((headers.size() >= 2 && headers[headers.size() - 2] == "elevation_nearest_channel_left") ? 2 : 0);
+            headers.insert(
+                headers.begin() + static_cast<std::ptrdiff_t>(insert_at),
+                {"moving_window_fitted_elevation_" + suffix,
+                 "moving_window_detrended_elevation_" + suffix});
+        };
+        insert_moving_headers(points_headers_single);
+        insert_moving_headers(points_headers_dual);
     }
 
     // =========================================================================

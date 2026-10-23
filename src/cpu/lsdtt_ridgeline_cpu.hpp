@@ -142,9 +142,12 @@ public:
     // Segment the ridge snout off by max curvature following Robinson et al. (2025).
     void segment_ridgeline_snout_by_curvature(float smoothing_window_fraction);
 
-    // Fit the ridgeline elevation profile with a linear and optionally polynomial trend.
-    // Skips points in the segmented snout (if identified).
-    void fit_ridgeline_profile(bool use_polynomial, bool use_constant);
+    // Fit the profile and create detrended elevations. Slope/statistics always
+    // use the linear fit. Optional moving-average results are stored separately
+    // when additional_output is true.
+    void fit_ridgeline_profile(bool use_polynomial, bool use_constant,
+                               int moving_average_window_pixels = 1,
+                               bool additional_output = false);
 
     // Compute the detrended elevation profile and smooth it.
     void smoothen_and_derive_detrended_ridgeline(int smoothing_window_pixels);
@@ -249,6 +252,9 @@ private:
     std::vector<float> elevations_;
     std::vector<float> fitted_elevations_;
     std::vector<float> detrended_elevations_;
+    std::vector<std::vector<float>> moving_window_fitted_elevations_;
+    std::vector<std::vector<float>> moving_window_detrended_elevations_;
+    std::vector<int> moving_window_sizes_pixels_;
     std::vector<float> smoothed_detrended_elevations_;
     std::vector<float> smoothed_detrended_slopes_;
     std::vector<float> nearest_channel_elevations_left_;
