@@ -124,5 +124,9 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_dhw_raster` | `bool` | `false` | `switch` | - | Write final timestep water-depth increment raster. | Output suffix: _dhw.tif |
 | `write_bed_raster` | `bool` | `false` | `switch` | - | Write bed elevation raster used by the hydraulic solver. | Output suffix: _bed.tif |
 | `write_output_format` | `string` | `cog` | `io` | - | Output format for raster outputs. | Allowed values: cog, gtiff, same_as_input. |
+| `write_hydraulic_slope_raster` | `bool` | `false` | `switch` | - | Write final hydraulic (water-surface) slope raster, as a gradient (m/m). | Output suffix: _hydraulic_slope.tif |
+| `write_specific_discharge_raster` | `bool` | `false` | `switch` | - | Write final specific discharge raster: discharge per unit width (m^2/s). | Output suffix: _specific_discharge.tif |
+| `write_total_discharge_raster` | `bool` | `false` | `switch` | - | Write final total discharge raster (m^3/s). | Output suffix: _total_discharge.tif |
+| `write_effective_width_raster` | `bool` | `false` | `switch` | - | Write effective flow width raster: total / specific discharge (m). | Output suffix: _effective_width.tif. 0 where the specific discharge is effectively zero. |
 
 <!-- END GENERATED CLI PARAMETERS -->

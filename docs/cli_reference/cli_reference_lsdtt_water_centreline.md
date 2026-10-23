@@ -1,6 +1,11 @@
 # CLI reference: lsdtt-water-centreline
 
-Water/floodplain centreline extraction and tracing. Combines multiple methods to identify river centrelines and floodplain axes. Outputs centreline polylines and optional diagnostic rasters.
+Turns mapped water bodies into a single connected line network. For each
+water-**area** polygon (a wide river reach or a loch) it extracts a
+centreline, then connects the surrounding water-**line** tributaries to it.
+This is a pure vector tool: **no DEM is read.** It was written for Ordnance
+Survey VectorMap Local, which supplies both layers in one GeoPackage, and it
+reads that product's `Fid` and `FeatCode` attributes when they are present.
 
 ## Usage
 
@@ -19,120 +24,63 @@ lsdtt-water-centreline  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
-!!! note "Multipart lines"
-    `input_vector_fname` accepts multipart geometry (`MultiLineString` and friends). Each feature is split into its parts on read, with the attributes copied onto each, and the split is reported in the log.
+## Pipeline
 
-    Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
+1. Read the polygon layer (`water_area_layer`) and the line layer
+   (`water_line_layer`) from `input_vector_fname`.
+2. With `clip_lines_to_areas: true` (default), drop the parts of the water
+   lines that are the outlines of water areas (VectorMap Local draws banks in
+   the line layer). What is left outside the areas are the tributaries.
+3. Rasterise each polygon on its own grid of `cell_size_metres` (default 1 m),
+   fill its holes (`fill_holes`), and skeletonise it. The centreline is the
+   skeleton's longest path, smoothed (`centreline_smooth_iterations`) and
+   simplified (`dp_tolerance_metres`). With `detect_channel_spurs: true`,
+   narrow channel arms (half-width below `channel_max_half_width_metres`) are
+   followed as well.
+4. A polygon whose Feret aspect ratio is below
+   `max_centreline_aspect_for_loch` is a loch. It still gets its long-axis
+   line, unless `skip_loch_centreline: true`, in which case its tributaries are
+   joined to its centroid instead.
+5. Join each tributary mouth (an endpoint within
+   `tributary_snap_tolerance_metres` of a polygon boundary) to the nearest
+   centreline with a connector, up to `centreline_snap_max_distance_metres`
+   long.
 
-## Pipeline overview
+## Example
 
-Steps run in this order:
+```
+read_path: /home/alice/os_vml/
+input_vector_fname: vml-nr73sw.gpkg
+water_area_layer: vml-nr73sw_Water_Area
+water_line_layer: vml-nr73sw_Water_Line
+epsg: 27700
+```
 
-| Step | Description |
+`epsg` (default 27700, British National Grid) must match the CRS of the input
+layers, which must be projected with metre units. The layers are not
+reprojected.
+
+## Output
+
+`<write_fname>_water_centreline.fgb` (or `.gpkg` with
+`write_vector_format: gpkg`): one line layer holding the whole network, with
+attributes
+
+| Field | Meaning |
 |---|---|
-| 1. DEM preparation | Load DEM, verify projection, optionally fill pits |
-| 2. Water mask detection | Identify water-related low-relief areas |
-| 3. Skeletonisation | Extract 1-pixel centreline(s) |
-| 4. Vectorisation | Convert centreline raster to polyline(s) |
-| 5. Smoothing *(optional)* | Apply Douglas-Peucker or Visvalingam-Whyatt simplification |
-| 6. Output | Write centreline polylines and diagnostics |
+| `role` | `centreline`, `connector` (tributary mouth to centreline) or `tributary` |
+| `source_fid` | `Fid` of the source water-area polygon; empty for tributaries |
+| `feat_code` | `FeatCode` of the source feature |
+| `length_m` | Line length (m) |
+| `segment_id` | Running id of the line |
 
----
-
-## Input / output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-
----
-
-## Threading
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` = all available hardware threads. |
-
----
-
-## DEM preparation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
-
----
-
-## Water mask detection
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `detection_method` | string | `relief` | Method to identify water areas: `relief` (local relief), `slope` (slope-based), `curvature` (curvature-based). |
-| `relief_threshold_metres` | float | `5.0` | Relief threshold (metres) for water mask. Pixels with relief < threshold are water. |
-| `slope_threshold_degrees` | float | `3.0` | Slope threshold (degrees). Pixels below this are potential water. |
-| `smoothing_scale_metres` | float | `100.0` | Smoothing scale (metres) for relief/curvature computation. |
-
----
-
-## Skeleton extraction
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `skeleton_method` | string | `zhang_suen` | Skeletonisation algorithm: `zhang_suen`, `thinning`. |
-| `prune_skeleton_length_pixels` | int | `5` | Remove skeleton spurs shorter than this (pixels). |
-| `bridge_small_gaps_pixels` | int | `3` | Bridge isolated skeleton segments separated by gaps < this (pixels). |
-
----
-
-## Centreline smoothing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `apply_smoothing` | bool | `false` | Simplify centreline using Douglas-Peucker or similar. |
-| `smoothing_tolerance_metres` | float | `10.0` | Tolerance (metres) for centreline simplification. Larger = simpler line. |
-| `smoothing_algorithm` | string | `douglas_peucker` | Simplification algorithm: `douglas_peucker`, `visvalingam_whyatt`. |
-
----
-
-## Output: Centreline vector
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_centreline_vector` | bool | `true` | Write centreline(s) as polyline vector layer. |
-| `centreline_vector_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb` (preferred), `gpkg`. |
-
-Output file: `<write_fname>_water_centreline.<ext>`
-
----
-
-## Output: Diagnostic rasters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_water_mask` | bool | `false` | Write binary water mask raster. |
-| `write_skeleton_raster` | bool | `false` | Write skeleton/centreline as raster. |
-| `write_relief_raster` | bool | `false` | Write relief raster used for detection. |
-
-Output files:
-- `<write_fname>_water_mask.tif`
-- `<write_fname>_skeleton.tif`
-- `<write_fname>_relief.tif`
-
----
-
-## Output vector format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_vector_format` | string | `flatgeobuf` | Output **vector** format for the centreline layer: `flatgeobuf`/`fgb`, `gpkg`. This is the vector key, not the raster key `write_output_format` used by the raster tools. |
+Tributaries are copied into the output only with
+`emit_unchanged_tributaries: true` (default).
 
 `write_vector_format` was called `write_output_format` in earlier releases. The
 old name still works as a deprecated alias: the value is carried across and a

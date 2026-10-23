@@ -1,6 +1,6 @@
 # CLI reference: lsdtt-ridgeline-analysis
 
-Analyses drainage divides and their elevation profiles (ridgelines). The tool builds D8 flow routing and a junction/channel network, selects basins, extracts ridgelines from the basin topology, then processes each ridgeline (elevation, detrending, snout segmentation) and writes point, statistics, and extrema CSVs. It can also fit a polynomial surface and sample its metrics along each ridgeline, including 1‑D power spectra and characteristic spacing.
+Analyses drainage divides and their elevation profiles (ridgelines). The tool builds D8 flow routing and a junction/channel network, selects basins, extracts ridgelines from the basin topology, then processes each ridgeline (elevation, detrending, snout segmentation) and writes point, statistics, and extrema CSVs. It can also fit a polynomial surface and sample its metrics along each ridgeline.
 
 ## Usage
 
@@ -47,7 +47,7 @@ To analyse **all ridges in a DEM**, use the default mode with `select_all_basins
 | 5b | Optional paired flow path statistics (lengthwise asymmetry) |
 | 6 | Fill elevations, fit/detrend each profile, segment snouts, smooth |
 | 7 | Write ridgeline point / stats / extrema CSVs |
-| 9 | Optional polynomial surface fit, sample metrics along ridgelines, optional power spectra and characteristic spacing |
+| 9 | Optional polynomial surface fit, and sampling of its metrics along the ridgelines |
 
 Nothing is written unless the relevant `print_*` / `write_*` switch is set.
 
@@ -268,12 +268,10 @@ Runs when `write_polyfit_rasters` is true **or** `polyfit_metrics` is non‑empt
 |---|---|---|---|
 | `polyfit_metrics` | string | _(empty)_ | Comma‑separated polyfit metrics to compute and sample (or `all`). E.g. `slope,tangential_curvature,plan_curvature`. |
 | `polyfit_lambda_metres` | float | `70.0` | Characteristic lengthscale (m) for the quadratic fit window. Reduce for lidar (e.g. 10–30 m). |
-| `polyfit_method` | string | `direct` | `direct` (rolling‑moment, no FFTW), `wavelet` (FFT, requires FFTW), or `both`. Outputs are prefixed `_direct_*` / `_wavelet_*`. |
+| `polyfit_method` | string | `wavelet` | `direct` (rolling‑moment, no FFTW), `wavelet` (FFT, requires FFTW), or `both`. Outputs are prefixed `_direct_*` / `_wavelet_*`. |
 | `polyfit_z_factor` | float | `1.0` | Vertical scaling applied before interpreting derivatives. |
 | `polyfit_flat_slope_tolerance` | float | `1e-12` | Slope tolerance below which direction‑dependent metrics are nodata. |
 | `write_polyfit_rasters` | bool | `false` | Write the six coefficient rasters and each requested metric raster (`_<method>_polyfit_*.tif`). |
-| `write_ridgeline_power_spectra_csv` | bool | `false` | Write the 1‑D power spectrum of each sampled metric along each ridgeline (`_<method><mode_prefix>_power_spectra.csv`). Requires FFTW. |
-| `write_ridgeline_autocorrelation_csv` | bool | `false` | Write the characteristic spacing (dominant wavelength) of each sampled metric per ridgeline (`_<method><mode_prefix>_characteristic_spacing.csv`). |
 
 ---
 

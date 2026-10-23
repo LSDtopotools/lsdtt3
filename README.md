@@ -14,7 +14,7 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 
 ## Overview
 
-lsdtt3 is a C++ library and set of command-line tools for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support, and easier incremental development.
+lsdtt3 is a C++ library, a set of command-line tools and a Python package for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support, and easier incremental development.
 
 If you use this software for research, please also cite the original LSDTopoTools2:
 
@@ -38,6 +38,7 @@ Key improvements over LSDTopoTools2:
 - CPU and GPU backends behind a shared abstract interface (GPU functionality is significantly reduced compared to CPU, however).
 - Analysis routines as stateless free functions as opposed to objects. The reason this was done was to reduce the amount of spaghetti code in the package, and in addition reduce the chances of needing a full rebuild any time a small modification is made, problems both present in LSDTopoTools2. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want (although a side effect of this is that there are many more command line interfaces than previously). In other words, we have not thrown the kitchen sink at something called lsdtt-basic-metrics this time (it no longer exists). The names of the CLI tools should give users a reasonable idea of what they are meant to do. 
 - OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code. We have a testing and benchmarking document that has some concrete numbers attached to this statement, see it in the `/docs` directory. 
+- A Python package (`import lsdtt3`) that wraps the same C++ routines and keeps rasters and results in memory, so a script or notebook can chain analyses without parameter files. Where a Python function and a CLI share an option, they call the same C++ code and give the same result.
 - Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
 - Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
 
@@ -68,9 +69,9 @@ Packages are on the [Releases page](../../releases/latest) and at
 ### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
-source lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh
 lsdtt-channel-extraction --help
 ```
 
@@ -91,9 +92,28 @@ On **Google Colab**, `!source setenv.sh` does not work — set the environment
 from Python instead. The install guide has the cell to paste.
 
 The **QGIS plugin** (a zip installed with *Install from ZIP*, plus a backend
-package) and the **Python package** (wheels, for releases that support the
-Python API) are covered in the install guide too. All of them share one
-version number: files from the same release go together.
+package) is covered in the install guide too. The backend packages, the QGIS
+plugin and the Python package share one version number: files from the same
+release go together.
+
+### Python package
+
+`lsdtt3` is not on PyPI. For releases that support the Python API, wheels are
+attached to the GitHub release; each one is for one Python version (`cp312` is
+Python 3.12, `cp313` is Python 3.13). Keep the wheel's original file name and
+install it into a virtual, conda or pixi environment:
+
+```bash
+python -m pip install lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
+```
+
+Google Colab runs Python 3.13, so it needs the `cp313` wheel. The wheel bundles
+GDAL and PROJ. Every function is documented in the package (`help(lsdtt3.FlowInfo)`),
+and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for you
+or an AI assistant such as Gemini in Colab. Worked examples are in the
+[Python guide](docs/python/index.md) and the
+[API reference](docs/python_api/index.md); building the wheels yourself is in
+[`docs/developer_notes/building_python_wheels.md`](docs/developer_notes/building_python_wheels.md).
 
 ### Want the latest code rather than a release?
 
@@ -371,10 +391,10 @@ lsdtt-drainage-analysis     my_params.driver
 | Program | Description | Reference |
 |---|---|---|
 | `lsdtt-surface-metrics` | Hillshade, local relief, polynomial surface fit (direct and wavelet), curvature metrics, MADk2 roughness, Frangi filter, Otsu segmentation, Hough line extraction, curvature skeletons, cloth-drape upper envelope and incision depth. | `docs/cli_reference/cli_reference_lsdtt_surface_metrics.md` |
-| `lsdtt-flat-surface-finder` | Identifies low-texture surfaces (alluvial fans, terraces, piedmonts) using MADk2, residual IQR, and normal-vector dispersion (NVD). | — |
+| `lsdtt-flat-surface-finder` | Identifies low-texture surfaces (alluvial fans, terraces, piedmonts) using MADk2, residual IQR, and normal-vector dispersion (NVD). | [reference](docs/cli_reference/cli_reference_lsdtt_flat_surface_finder.md) |
 | `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | `docs/cli_reference/cli_reference_lsdtt_mountain_front.md` |
-| `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | — |
-| `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | — |
+| `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | [reference](docs/cli_reference/cli_reference_lsdtt_feature_finder.md) |
+| `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](docs/cli_reference/cli_reference_lsdtt_spectral_analysis.md) |
 | `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](docs/cli_reference/cli_reference_lsdtt_basin_surface_metrics.md) |
 | `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](docs/cli_reference/cli_reference_lsdtt_slope_area.md) |
 | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](docs/cli_reference/cli_reference_lsdtt_swath_profile.md) |
@@ -390,8 +410,8 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/cli_reference/cli_reference_lsdtt_basin_extraction.md` |
 | `lsdtt-outlet-matching` | Matches outlet coordinates from a reference DEM to a target/resampled DEM using spatial overlap of complete D8 upstream masks; independent of channelisation thresholds. | `docs/cli_reference/cli_reference_lsdtt_outlet_matching.md` |
 | `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
-| `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | — |
-| `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | — |
+| `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | [reference](docs/cli_reference/cli_reference_lsdtt_graphflood.md) |
+| `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | [reference](docs/cli_reference/cli_reference_lsdtt_stream_burning.md) |
 | `lsdtt-internal-drainage` | Detects and routes closed (internally drained) basins. | [reference](docs/cli_reference/cli_reference_lsdtt_internal_drainage.md) |
 | `lsdtt-distributed-hydrology` | A raster TOPMODEL: rainfall and PET drive stores on every pixel, and runoff is routed down the flow network. | [reference](docs/cli_reference/cli_reference_lsdtt_distributed_hydrology.md) |
 | `lsdtt-water-centreline` | Centrelines for water-area polygons and their tributaries. | [reference](docs/cli_reference/cli_reference_lsdtt_water_centreline.md) |
@@ -426,18 +446,18 @@ lsdtt-drainage-analysis     my_params.driver
 
 ### Landscape evolution
 
-| Program | Description |
-|---|---|
-| `lsdtt-lem` | Landscape evolution model: D-infinity flow routing, implicit stream-power fluvial incision (Anand et al. 2020 / Braun & Willett 2013), Cidre linear/nonlinear hillslope transport (Carretier et al. 2016), uniform uplift. Runs from a synthetic flat or noise surface, or an input DEM. |
-| `lsdtt-advection-diffusion` | A minimal transient landscape-evolution model. |
-| `lsdtt-sediment-routing` | 1-D reach-scale bedload sediment routing, built from a port of d-CASCADE (Battista et al. 2022). |
+| Program | Description | Reference |
+|---|---|---|
+| `lsdtt-lem` | Landscape evolution model: D-infinity flow routing, implicit stream-power fluvial incision (Anand et al. 2020 / Braun & Willett 2013), Cidre linear/nonlinear hillslope transport (Carretier et al. 2016), uniform uplift. Runs from a synthetic flat or noise surface, or an input DEM. | [reference](docs/cli_reference/cli_reference_lsdtt_lem.md) |
+| `lsdtt-advection-diffusion` | A minimal transient landscape-evolution model. | [reference](docs/cli_reference/cli_reference_lsdtt_advection_diffusion.md) |
+| `lsdtt-sediment-routing` | 1-D reach-scale bedload sediment routing, built from a port of d-CASCADE (Battista et al. 2022). | [reference](docs/cli_reference/cli_reference_lsdtt_sediment_routing.md) |
 
 ### Utilities
 
-| Program | Description |
-|---|---|
-| `lsdtt-linear-stats` | Statistical summaries for linear (directional/bearing) data. |
-| `lsdtt-raster-calculator` | Two-raster algebra and overlap masking, for example DEMs of difference. |
+| Program | Description | Reference |
+|---|---|---|
+| `lsdtt-linear-stats` | Statistical summaries for linear (directional/bearing) data. | [reference](docs/cli_reference/cli_reference_lsdtt_linear_stats.md) |
+| `lsdtt-raster-calculator` | Two-raster algebra and overlap masking, for example DEMs of difference. | [reference](docs/cli_reference/cli_reference_lsdtt_raster_calculator.md) |
 
 ---
 
@@ -450,6 +470,7 @@ The `docs/` tree is organised by audience:
 | `docs/what_is_lsdtt3/` | **Users** — overview, installation, data, flow routing, benchmarks, and workflows. |
 | `docs/design_and_algorithms/` | **Users and developers** — scientific design, algorithms, and numerical choices. |
 | `docs/cli_reference/` | **Users** — one parameter reference per command-line tool. |
+| `docs/python/`, `docs/python_api/` | **Users** — the Python package: worked guides, and the reference for every function. |
 | `docs/developer_notes/` | **Developers** — architecture, building, packaging. |
 | `docs/plan_docs/` | Working design documents. Not published, not committed. |
 | `docs/tex_technical/` | LaTeX sources for method write-ups with full equations. |
@@ -460,6 +481,12 @@ The `docs/` tree is organised by audience:
 |---|---|
 | `docs/what_is_lsdtt3/install_lsdtt3.md` | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
 | `docs/what_is_lsdtt3/overview.md` | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
+| `docs/what_is_lsdtt3/first_analysis.md` | From a DEM on disk to a hillshade and a channel network. |
+| `docs/what_is_lsdtt3/lsdtt3_clis.md` | All the command-line tools, grouped by what they are for, and how their parameter files work. |
+| `docs/what_is_lsdtt3/workflows.md` | Multi-stage, reproducible analysis chains run with Snakemake (`workflows/`). |
+| `docs/what_is_lsdtt3/raster_data.md`, `vector_data.md` | Input and output data formats. |
+| `docs/what_is_lsdtt3/running_benchmarks.md` | Timing lsdtt3 against other tools on your own machine. |
+| `docs/python/index.md` | The Python package: getting started and worked guides. |
 | `docs/design_and_algorithms/` | Scientific design and algorithm documentation. |
 | `docs/cli_reference/` | Parameter reference for every tool — see the table above for which file. |
 
@@ -476,6 +503,11 @@ The `docs/` tree is organised by audience:
 | `docs/developer_notes/qgis_plugin_development.md` | The QGIS plugin and its backend bundle: version checks and the development loop. |
 | `docs/developer_notes/making_release_packages.md` | How the release packages are built and published. |
 | `docs/developer_notes/building_the_docs.md` | Building the documentation site with MkDocs, and publishing it. |
+| `docs/developer_notes/cli_parameter_conventions.md` | Naming rules for CLI parameters. |
+| `docs/developer_notes/basin_object_architecture.md` | Design boundaries of the basin object hierarchy. |
+| `docs/developer_notes/python_bindings_architecture.md` | The Python bindings: architecture and the public-API contracts (manifest, generated reference). |
+| `docs/developer_notes/building_python_wheels.md` | Building the manylinux and other Python wheels. |
+| `docs/developer_notes/publishing_to_pypi.md` | Publishing the wheels to PyPI, by hand or from GitHub Actions (not yet done). |
 | `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
 | `docs/developer_notes/using_lsdtt_flowinfo.md` | How to use the D8 flow routing object in analysis code. |
 | `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
@@ -488,13 +520,13 @@ The `docs/` tree is organised by audience:
 
 ---
 
-## Python helpers
+## Python helper scripts
 
-We also provide various python helpers (in `python_helpers/`) for simple visualisation and downloading of DEMs. Maintaining python environments is very time consuming and annoying, which is why the core tools are written in c++. We provide helper functions for users familiar with maintaining a geospatial python environment, but if you don't know how to do this just use a GIS and the internet to get and look at `lsdtt3` data inputs and outputs.  
+Separate from the `lsdtt3` Python package, we also provide various python helper scripts (in `python_helpers/`) for simple visualisation and downloading of DEMs. Maintaining python environments is very time consuming and annoying, which is why the core tools are written in c++. We provide helper functions for users familiar with maintaining a geospatial python environment, but if you don't know how to do this just use a GIS and the internet to get and look at `lsdtt3` data inputs and outputs.  
 
 | Script | Purpose |
 |---|---|
-| `download_dem_tiles.py` | Download DEMs from Planetary Computer (keyless), OpenTopography, a WCS endpoint, or Copernicus Data Space. Note that we also have a command line interface, `lsdtt-fetch-rasters` that also does this. |
+| `download_dem_tiles.py` | Download DEMs from Planetary Computer (keyless), OpenTopography, a WCS endpoint, or Copernicus Data Space. Note that we also have a command line interface, `lsdtt-fetch-raster`, that also does this. |
 | `tif_to_png.py` | Convert a GeoTIFF to a PNG for quick inspection |
 | `osm_download_features.py`, `osm_water_download.py` | Download OpenStreetMap features / water layers |
 | `download_gem_faults.py` | Download the GEM active-fault database |

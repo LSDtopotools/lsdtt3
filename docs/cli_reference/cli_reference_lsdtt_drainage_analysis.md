@@ -167,9 +167,9 @@ These outputs match the default STI paths and layer names in this CLI.
 | `sti_p95_jenks_n_classes` | int | `5` | Requested number of Jenks classes for P95 categorisation. |
 | `sti_p95_jenks_max_histogram_bins` | int | `2048` | Maximum histogram bins used by Jenks fitting (histogram-weighted implementation). |
 | `write_sti_lookup_csv` | bool | `false` | Write `<write_fname>_sti_lookup.csv` with join/debug diagnostics. |
-| `sti_soil_vector_path` | string | `data/scotland_soils/hutton_series_code_min.fgb` | Soil polygon vector path. |
+| `sti_soil_fname` | string | `data/scotland_soils/hutton_series_code_min.fgb` | Soil polygon vector path. |
 | `sti_soil_layer_name` | string | `hutton_series_code_min` | Soil layer name. |
-| `sti_landuse_vector_path` | string | `data/scotland_soils/sg_land_use_min.fgb` | Land-use polygon vector path. |
+| `sti_landuse_fname` | string | `data/scotland_soils/sg_land_use_min.fgb` | Land-use polygon vector path. |
 | `sti_landuse_layer_name` | string | `sg_land_use_min` | Land-use layer name. |
 | `sti_drainage_area_method` | string | `Dinf` | Drainage area method used by STI TWI stage. Options: `Dinf`, `MFD`. |
 | `sti_window_radius_metres` | float | `100.0` | Polyfit window radius (m) for STI slope computation. |
@@ -179,18 +179,18 @@ These outputs match the default STI paths and layer names in this CLI.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_sti_raster` | bool | `false` | Write `<write_fname>_sti.tif` using `ln(Ks*D)` term from horizon integration. |
-| `sti_ksat_csv_path` | string | `data/scotland_soils/SSKIB_C_MED_KSAT.csv` | Horizon/profile table used for `ln(Ks*D)` term. |
-| `sti_xlsx_path` | string | `data/scotland_soils/SSKIB_OCT18_V1.2.xlsx` | Optional consistency source (first pass checks file presence). |
-| `sti_depth_cap_cm` | float | `100.0` | Depth cap used when integrating horizons for `Ks*D`. |
-| `sti_min_valid_depth_cm` | float | `30.0` | Minimum integrated depth required to keep a profile. |
-| `sti_ks_unit_scale_to_m_per_day` | float | `1.0` | Explicit scale factor applied to `COND_0_HYPRES` before horizon integration. |
+| `sti_ksat_fname` | string | `data/scotland_soils/SSKIB_C_MED_KSAT.csv` | Horizon/profile table used for `ln(Ks*D)` term. |
+| `sti_sskib_fname` | string | `data/scotland_soils/SSKIB_OCT18_V1.2.xlsx` | Optional consistency source (first pass checks file presence). |
+| `sti_depth_cap_centimetres` | float | `100.0` | Depth cap used when integrating horizons for `Ks*D`. |
+| `sti_min_valid_depth_centimetres` | float | `30.0` | Minimum integrated depth required to keep a profile. |
+| `sti_ks_unit_scale_to_metres_per_day` | float | `1.0` | Explicit scale factor applied to `COND_0_HYPRES` before horizon integration. |
 
 ### Parameters for `spr` mode (`sti_term_mode: spr`)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `write_sti_proxy_raster` | bool | `false` | Write `<write_fname>_sti_proxy.tif` using SPR-based denominator term. |
-| `sti_spr_csv_path` | string | `data/scotland_soils/SERIES_SPR.csv` | SPR lookup table by soil series code. |
+| `sti_spr_fname` | string | `data/scotland_soils/SERIES_SPR.csv` | SPR lookup table by soil series code. |
 | `sti_spr_transform` | string | `ln_1_minus_spr` | SPR transform. Options: `ln_1_minus_spr`, `ln_spr`. |
 
 ---
@@ -283,18 +283,18 @@ sti_term_mode: ksd
 sti_drainage_area_method: Dinf
 sti_window_radius_metres: 100.0
 
-sti_soil_vector_path: /mnt/c/LSDTopoTools/data/scotland_soils/hutton_series_code_min.fgb
+sti_soil_fname: /mnt/c/LSDTopoTools/data/scotland_soils/hutton_series_code_min.fgb
 sti_soil_layer_name: hutton_series_code_min
-sti_landuse_vector_path: /mnt/c/LSDTopoTools/data/scotland_soils/sg_land_use_min.fgb
+sti_landuse_fname: /mnt/c/LSDTopoTools/data/scotland_soils/sg_land_use_min.fgb
 sti_landuse_layer_name: sg_land_use_min
 
-sti_ksat_csv_path: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_C_MED_KSAT.csv
-sti_spr_csv_path: /mnt/c/LSDTopoTools/data/scotland_soils/SERIES_SPR.csv
-sti_xlsx_path: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_OCT18_V1.2.xlsx
+sti_ksat_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_C_MED_KSAT.csv
+sti_spr_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SERIES_SPR.csv
+sti_sskib_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_OCT18_V1.2.xlsx
 
-sti_depth_cap_cm: 100.0
-sti_min_valid_depth_cm: 30.0
-sti_ks_unit_scale_to_m_per_day: 1.0
+sti_depth_cap_centimetres: 100.0
+sti_min_valid_depth_centimetres: 30.0
+sti_ks_unit_scale_to_metres_per_day: 1.0
 sti_spr_transform: ln_1_minus_spr
 ```
 

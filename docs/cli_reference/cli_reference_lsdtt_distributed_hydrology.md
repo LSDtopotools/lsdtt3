@@ -73,7 +73,7 @@ The model combines **store-based hydrology** (deficits, depths) with **topograph
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `flow_method` | string | `dinf` | Flow routing method used for drainage area and all graph sweeps. **Allowed values: `dinf` (Tarboton 1997) or `mfd` (Quinn et al. 1991).** D8 is **not** available here: it sends all of a cell's area to one neighbour, which creates artificial stripes in the wetness index and all deficits derived from it. |
-| `mfd_exponent` | string | `1.0` | Slope-weighting exponent for MFD flow partitioning. Quinn et al. (1991) use 1.0; Freeman (1991) suggest 1.1. Used only when `flow_method: mfd`. |
+| `mfd_exponent` | float | `1.0` | Slope-weighting exponent for MFD flow partitioning. Quinn et al. (1991) use 1.0; Freeman (1991) suggest 1.1. Used only when `flow_method: mfd`. |
 | `twi_window_radius_metres` | float | `100.0` | Polyfit window radius (metres) for the slope used in the Topographic Wetness Index and velocity calculations. Must be large enough to capture local slopes but small enough to capture hillslope-scale variation. |
 
 ---

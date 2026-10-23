@@ -1,6 +1,11 @@
 # CLI reference: lsdtt-sediment-routing
 
-Routes sediment through a landscape using flow routing and sediment transport laws. Computes sediment flux, deposition, and erosion/incision across the DEM using either detachment-limited or transport-limited formulations.
+One-dimensional, reach-scale bedload routing with several grain-size classes
+on a D8 channel network, built from a port of d-CASCADE (Battista et al.
+2022). Reach length, slope and drainage area come from the DEM. Channel width
+and the grain-size distribution are set in the parameter file. Discharge comes
+from a drainage-area power law, or from a geomorphic instantaneous unit
+hydrograph (GIUH) with `use_giuh_discharge: true`.
 
 ## Usage
 
@@ -19,119 +24,39 @@ lsdtt-sediment-routing  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
-## Pipeline overview
+## Pipeline
 
-Steps run in this order:
+1. Load the DEM and fill pits (skipped with `raster_is_filled: true`).
+2. Route flow with D8 and extract the channel network
+   (`threshold_contributing_pixels`, default 1000). Each network link is a
+   reach.
+3. Give each reach a width, `width_coefficient × A^width_exponent` (A in m²),
+   and a discharge, either `discharge_coefficient × A^discharge_exponent` or,
+   with `use_giuh_discharge: true`, a synthetic rainfall pulse convolved with
+   the network's width-function GIUH (Rodríguez-Iturbe and Valdés 1979).
+4. March through the network from upstream to downstream `n_timesteps` times,
+   each step `timestep_s` seconds long (defaults: 365 daily steps). Transport
+   capacity per grain-size class comes from `transport_formula_choice`:
+   `wilcock_crowe` (default; Wilcock and Crowe 2003), `wong_parker` (Wong and
+   Parker 2006, with the Parker 1982 hiding function) or `engelund_hansen`
+   (Engelund and Hansen 1967, D50 only). The active layer is
+   `active_layer_depth_metres` thick, or 2 × D90 per reach when that is ≤ 0
+   (default).
 
-| Step | Description |
-|---|---|
-| 1. DEM preparation | Load DEM, verify projection, fill pits |
-| 2. Flow routing | Build D8 or D-inf flow network |
-| 3. Accumulation | Compute drainage area and flow length |
-| 4. Transport law | Solve transport equation (detachment or transport-limited) |
-| 5. Output | Write sediment flux, deposition, and topographic change |
+The grain-size classes are `psi_mm` (class sizes in mm) with the fractions in
+`gsd_fractions`; both are comma-separated lists of the same length.
 
----
+## Outputs
 
-## Input / output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-
----
-
-## Threading
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` = all available hardware threads. |
-| `boundary_conditions` | string | `oooo` | Four-character boundary condition string (N, E, S, W). |
-
----
-
-## DEM preparation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
-
----
-
-## Flow routing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `threshold_contributing_pixels` | int | `1000` | Minimum D8 contributing-pixel count used to extract the channel network routed by the model. |
-
----
-
-## Sediment transport law
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `sediment_transport_model` | string | `stream_power` | Transport law: `stream_power` (U = K·A^m·S^n), `detachment_limited`, `transport_limited`. |
-| `stream_power_K` | float | `1e-5` | Stream power erodibility coefficient (m/a). |
-| `stream_power_m` | float | `0.5` | Area exponent. |
-| `stream_power_n` | float | `1.0` | Slope exponent. |
-| `slope_clamp_factor` | float | `0.0` | Maximum slope permissible (multiples of `dx`). `0` = no clamping. |
-
----
-
-## Threshold area
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `threshold_area_m2` | float | `1000000.0` | Minimum drainage area (m²) for fluvial transport. Hillslope above this threshold. |
-| `divide_area_by_dx` | bool | `true` | Divide area by pixel size (`cell_size`) in transport law (common in some formulations). |
-
----
-
-## Sediment flux computation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `compute_sediment_flux` | bool | `true` | Compute and write sediment flux raster. |
-| `compute_deposition_raster` | bool | `false` | Compute deposition locations. |
-
----
-
-## Output: Sediment flux
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_sediment_flux_raster` | bool | `true` | Write sediment flux magnitude raster. |
-
-Output file: `<write_fname>_sediment_flux.tif`
-
----
-
-## Output: Erosion and deposition
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_erosion_rate_raster` | bool | `false` | Write erosion rate raster (m/a). |
-| `write_deposition_rate_raster` | bool | `false` | Write deposition rate raster (m/a). |
-
-Output files:
-- `<write_fname>_erosion_rate.tif`
-- `<write_fname>_deposition_rate.tif`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog`, `gtiff`, `same_as_input`. |
+| File | Written when | Contents |
+|---|---|---|
+| `<write_fname>_cumulative_deposition.tif` | `write_deposition_raster: true` (default) | Cumulative deposited volume over the run (m³). Every pixel of a reach carries that reach's total, so do not sum pixels. |
+| `<write_fname>_d50_al.tif` | `write_d50_raster: true` (default) | Median grain size of the active layer at the end of the run (m) |
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters

@@ -29,11 +29,11 @@
 //
 //   3. Pixels are assigned to along-axis bins of width `bin_width_metres`.
 //      Within each bin the values of a user-supplied raster are collected and
-//      summarised as a 20-point CDF at fixed percentile levels:
-//        5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75,
+//      summarised as a 21-point CDF at fixed percentile levels:
+//        0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75,
 //        80, 85, 90, 95, 100
 //      Levels 25 (p25), 50 (median) and 75 (p75) are included, making IQR
-//      directly readable as quantiles[4] and quantiles[14].
+//      directly readable as quantiles[5] and quantiles[15].
 //
 // Output rasters
 // --------------

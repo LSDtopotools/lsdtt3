@@ -41,7 +41,6 @@ key: value
 | `read_fname` | string | — | Input DEM filename. |
 | `write_path` | string | `read_path` | Output directory. |
 | `write_fname` | string | DEM stem | Output filename prefix. |
-| `write_output_format` | string | `cog` | Raster output format where applicable. |
 | `write_flowinfo_rasters` | bool | `true` | Write the drainage-area (and, for d8, flow-direction) rasters. |
 | `write_slope_rasters` | bool | `true` | Write one slope raster per lambda. |
 | `summary_csv_fname` | string | automatic | Summary CSV filename. |
@@ -115,7 +114,6 @@ read_path: /data/Moreno
 read_fname: Moreno.tif
 write_path: /results/Moreno/slope_area
 write_fname: Moreno_slope_area
-write_output_format: cog
 n_threads: 4
 boundary_conditions: opop
 fill_before_routing: true

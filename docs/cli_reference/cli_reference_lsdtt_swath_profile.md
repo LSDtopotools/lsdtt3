@@ -1,6 +1,11 @@
 # CLI reference: lsdtt-swath-profile
 
-Extracts swath profile statistics perpendicular to a baseline polyline. Computes min/max/mean elevation and other metrics within a corridor along the polyline, outputting profiles as CSV and optional rasters.
+A swath profile along an ordered baseline polyline. Every valid pixel within
+`half_width_metres` of the baseline is projected onto it and binned by
+distance along the baseline. Each bin reports the pixel count, the mean and a
+21-level percentile distribution (p0, p5, …, p100) of a value raster, which
+is the DEM's own elevation unless you give `value_raster_fname`. The tool also
+writes rasters of the along-axis and perpendicular distance of every pixel.
 
 ## Usage
 
@@ -19,7 +24,8 @@ lsdtt-swath-profile  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
@@ -28,96 +34,27 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 
     Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
-## Pipeline overview
+## Example
 
-Steps run in this order:
+```
+read_fname: my_dem.tif
+baseline_vector_fname: valley_axis.fgb
+half_width_metres: 2000
+bin_width_metres: 250
+```
 
-| Step | Description |
-|---|---|
-| 1. DEM preparation | Load DEM, verify projection |
-| 2. Baseline input | Read polyline from vector file or compute from points |
-| 3. Corridor creation | Create swath perpendicular to baseline |
-| 4. Sampling | Extract elevation and metrics within swath |
-| 5. Statistics | Compute min, max, mean, percentiles, count |
-| 6. Output | Write swath CSV and optional raster |
+The first LineString feature in `baseline_vector_fname` is the baseline, in
+the order its vertices are stored. `half_width_metres: 0` (the default)
+includes every valid pixel in the raster.
 
----
+## Outputs
 
-## Input / output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-
----
-
-## Baseline specification
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `baseline_type` | string | `vector` | Source of baseline: `vector` (polyline file), `points` (endpoints, auto-connect). |
-| `baseline_vector_fname` | string | _(empty)_ | Polyline vector file (GeoPackage, FlatGeobuf, Shapefile). Required if `baseline_type: vector`. |
-| `baseline_vector_format` | string | `gpkg` | Vector format: `gpkg`, `flatgeobuf`, `shapefile`. |
-| `baseline_start_latitude` | float | _(empty)_ | Latitude of baseline start point. Used if `baseline_type: points`. |
-| `baseline_start_longitude` | float | _(empty)_ | Longitude of baseline start point. |
-| `baseline_end_latitude` | float | _(empty)_ | Latitude of baseline end point. |
-| `baseline_end_longitude` | float | _(empty)_ | Longitude of baseline end point. |
-
----
-
-## Swath parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `swath_width_metres` | float | `1000.0` | Total swath width (metres). Half extends on each side of baseline. |
-| `swath_spacing_metres` | float | `100.0` | Spacing (metres) between sample points along baseline. |
-
----
-
-## Statistics
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `compute_min` | bool | `true` | Compute minimum elevation in swath at each position. |
-| `compute_max` | bool | `true` | Compute maximum elevation. |
-| `compute_mean` | bool | `true` | Compute mean elevation. |
-| `compute_median` | bool | `false` | Compute median elevation. |
-| `compute_std_deviation` | bool | `false` | Compute standard deviation. |
-| `compute_percentiles` | bool | `false` | Compute percentile values (25th, 75th). |
-| `compute_sample_count` | bool | `true` | Count valid pixels in swath. |
-
----
-
-## Output: Swath CSV
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_swath_csv` | bool | `true` | Write swath profile CSV. |
-
-Output file: `<write_fname>_swath.csv`
-
-Columns: `distance_m`, `elevation_m`, `min_elevation_m`, `max_elevation_m`, `mean_elevation_m`, `std_dev_m`, `sample_count`, `latitude`, `longitude`
-
----
-
-## Output: Swath raster
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_swath_raster` | bool | `false` | Write swath corridor as binary raster mask. |
-
-Output file: `<write_fname>_swath_mask.tif`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format (for swath mask): `cog`, `gtiff`, `same_as_input`. |
+| File | Written when | Contents |
+|---|---|---|
+| `<write_fname>_swath_profile.csv` | always | One row per bin: `along_axis_centre` (m along the baseline), `n_pixels`, `mean`, then `p0`, `p5`, …, `p100`. |
+| `<write_fname>_swath_along_axis.tif` | `write_distance_rasters: true` (default) | Distance along the baseline of each pixel's projection (m). |
+| `<write_fname>_swath_perp_distance.tif` | as above | Perpendicular distance from the baseline (m). |
+| `<write_fname>_swath_signed_perp.tif` | as above | Perpendicular distance, signed by which side of the baseline the pixel is on (m). |
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters

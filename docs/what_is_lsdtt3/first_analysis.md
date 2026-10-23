@@ -120,8 +120,10 @@ something is wrong with the data before any analysis starts.
 ## Worked example 2: a channel network
 
 Channel extraction needs a DEM without pits, so the pipeline is: fill the
-pits, then extract. `lsdtt-channel-extraction` does the flow routing itself —
-you just point it at the DEM.
+pits, then extract. `lsdtt-channel-extraction` does both itself: it fills the
+pits and routes the flow, so you just point it at the DEM. If your DEM is
+already filled (for example by `lsdtt-raster-preprocessing`), set
+`raster_is_filled: true` to skip the fill.
 
 ```
 # channels.param
