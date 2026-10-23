@@ -576,69 +576,335 @@ nb::dict basin_surface_metrics(const BasinCollection& collection, const Raster& 
 void bind_basins(nb::module_& module, nb::class_<FlowInfo>& flow)
 {
     nb::class_<BasinCollection>(module, "BasinCollection", R"doc(
-Selected nested D8 drainage basins retaining their parent ``FlowInfo`` topology.
+Selected D8 drainage basins (possibly nested) on a ``FlowInfo`` topology.
 
-Each basin is defined by an outlet pixel and stores an efficient native
-upslope slice; no raster-sized copy is retained per basin.
+Made by ``FlowInfo.basins(outlets)``. Basin ``basin_id`` (0-based) is the
+whole upslope area of its outlet pixel; basins may nest (a basin whose
+outlet lies inside another basin). Each basin is stored as a view of the
+flow topology, so collections are cheap. ``table`` describes each basin,
+``polygons`` gives outlines, ``labels`` and ``mask()`` give rasters, and
+``statistics(dem)`` summarises elevation, slope and shape.
 )doc")
-        .def_prop_ro("size", &BasinCollection::size)
-        .def_prop_ro("labels", &basin_labels, "Basin IDs (one-based); nested basins overwrite parents.")
-        .def_prop_ro("table", &basin_table)
-        .def_prop_ro("polygons", &basin_polygons, "Basin outline polygons as a GeoDataFrame.")
+        .def_prop_ro("size", &BasinCollection::size, "Number of basins.")
+        .def_prop_ro("labels", &basin_labels, R"doc(
+Raster of basin membership: ``basin_id + 1``, 0 outside all basins.
+
+Basins are painted in ``basin_id`` order, so a pixel inside several nested
+basins carries the largest ``basin_id + 1`` among them. Nodata where the DEM
+is nodata.
+)doc")
+        .def_prop_ro("table", &basin_table, nb::sig("def table(self) -> pandas.DataFrame"), R"doc(
+One row per basin (pandas.DataFrame).
+
+Columns: ``basin_id`` (0-based), ``outlet_flat``, ``outlet_row``,
+``outlet_col``, ``n_pixels``, ``area_metres2`` (m^2), ``complete`` (False if
+any basin pixel, including the outlet, is next to a nodata pixel or to an
+open or base-level DEM edge, so the basin may be cut off), ``outlet_on_dem_edge``,
+``parent_id`` (the smallest other selected basin containing this outlet,
+-1 if none), ``nesting_depth`` (0 for a basin with no parent).
+)doc")
+        .def_prop_ro("polygons", &basin_polygons, nb::sig("def polygons(self) -> geopandas.GeoDataFrame"), R"doc(
+Basin outline polygons as a GeoDataFrame.
+
+Columns ``basin_id``, ``outlet_flat``, ``geometry`` (polygon traced along
+pixel edges), in the DEM CRS.
+)doc")
         .def("outline_ridgelines", &basin_outline_ridgelines, nb::arg("dem"),
              nb::arg("split_method") = "longest_channel", R"doc(
 Split every selected basin outline into two ridgelines.
 
-Returns a GeoDataFrame of left/right ridge lines. ``split_method`` is
-``"longest_channel"``, ``"maximum_elevation"``, or ``"equal_length"``.
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid.
+split_method : {"longest_channel", "maximum_elevation", "equal_length"}, default="longest_channel"
+    How the outline is split in two: at the
+    head of the longest flow path, at the highest outline point, or halfway
+    round the perimeter.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Left/right ridge lines with columns ``basin_id``, ``ridgeline_id``,
+    ``outlet_flat``, ``n_nodes``, ``length_metres``, ``elevation_min``,
+    ``elevation_max`` (m), ``geometry``.
 )doc")
-        .def("mask", &basin_mask, nb::arg("basin_id"))
-        .def("pixels", &basin_pixels, nb::arg("basin_id"))
-        .def("membership", &basin_membership, nb::arg("row"), nb::arg("col"), "Return all selected basin IDs containing this pixel.")
+        .def("mask", &basin_mask, nb::arg("basin_id"), R"doc(
+Return a 0/1 Raster of one basin.
+
+Parameters
+----------
+basin_id : int
+    Zero-based basin index (a ``table.basin_id`` value).
+
+Returns
+-------
+Raster
+    1 inside the basin, 0 on other valid pixels.
+)doc")
+        .def("pixels", &basin_pixels, nb::arg("basin_id"), R"doc(
+Return the pixels of one basin.
+
+Parameters
+----------
+basin_id : int
+    Zero-based basin index.
+
+Returns
+-------
+numpy.ndarray
+    N x 2 int64 array of ``(row, col)``; the first row is the outlet.
+)doc")
+        .def("membership", &basin_membership, nb::arg("row"), nb::arg("col"), R"doc(
+Return all selected basin IDs containing this pixel.
+
+Parameters
+----------
+row, col : int
+    Zero-based pixel position of a valid pixel.
+
+Returns
+-------
+numpy.ndarray
+    Int32 array of zero-based basin IDs (empty if the pixel is in none).
+)doc")
         .def("statistics", &basin_statistics, nb::arg("dem"), nb::arg("include_slope") = true,
              nb::arg("include_flow_distance") = true,
              nb::arg("include_shape_metrics") = false, nb::arg("perimeter_simplify_cells") = 1.0,
-             "Return per-basin elevation, slope, flow-distance, and optional shape statistics.");
+             R"doc(
+Return per-basin elevation, slope, flow-distance, and optional shape statistics.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid.
+include_slope : bool, default=True
+    Add ``slope_25th``, ``slope_50th``, ``slope_75th``: percentiles of the
+    3 x 3 gradient (m/m, as ``slope()``).
+include_flow_distance : bool, default=True
+    Add ``flow_distance_25th/50th/75th``: percentiles of D8 flow distance
+    to the outlet (m).
+include_shape_metrics : bool, default=False
+    Add planform shape metrics: ``centroid_x``, ``centroid_y``,
+    ``basin_length_metres``, ``elongation_ratio``, ``form_factor``,
+    ``circularity_ratio``, ``gravelius_compactness``, ``solidity``,
+    ``eccentricity``, ``orientation_degrees`` (compass, 0-180),
+    ``hypsometric_integral``.
+perimeter_simplify_cells : float, default=1.0
+    Simplification tolerance of the outline, in cells, used for the
+    perimeter in the shape metrics.
+
+Returns
+-------
+pandas.DataFrame
+    One row per basin: ``basin_id``, ``n_pixels``, ``area_metres2``,
+    ``elevation_min``, ``elevation_max``, ``elevation_mean``,
+    ``elevation_median``, ``elevation_stddev`` (m), plus the optional
+    columns above.
+)doc");
     nb::class_<JunctionBasinCollection>(module, "JunctionBasinCollection", R"doc(
 Junction-aware D8 basins selected from a ``ChannelNetwork``.
 
-The collection retains the channel-network stream order and supports in-place
-selection filters. It is created with :func:`junction_basins`.
+Each basin drains to one channel junction and carries that junction's
+Strahler stream order. The ``filter_*`` methods remove basins in place and
+return the collection, so they can be chained:
+``junction_basins(N).filter_incomplete().filter_stream_order(2, 2)``.
+Created with :func:`junction_basins`.
 )doc")
-        .def_prop_ro("size", &JunctionBasinCollection::size)
-        .def_prop_ro("table", &junction_basin_table)
-        .def_prop_ro("labels", &junction_basin_labels)
-        .def("mask", &junction_basin_mask, nb::arg("basin_id"))
-        .def("filter_incomplete", &JunctionBasinCollection::filter_incomplete, nb::rv_policy::reference_internal)
-        .def("filter_area", &JunctionBasinCollection::filter_area, nb::arg("min_pixels") = -1, nb::arg("max_pixels") = -1, nb::rv_policy::reference_internal)
-        .def("filter_stream_order", &JunctionBasinCollection::filter_stream_order, nb::arg("min_order") = -1, nb::arg("max_order") = -1, nb::rv_policy::reference_internal)
-        .def("filter_nested", &JunctionBasinCollection::filter_nested, nb::rv_policy::reference_internal)
-        .def("filter_nested_by_stream_order", &JunctionBasinCollection::filter_nested_by_stream_order, nb::rv_policy::reference_internal)
-        .def("filter_largest", &JunctionBasinCollection::filter_largest, nb::rv_policy::reference_internal);
+        .def_prop_ro("size", &JunctionBasinCollection::size, "Number of selected basins.")
+        .def_prop_ro("table", &junction_basin_table, nb::sig("def table(self) -> pandas.DataFrame"), R"doc(
+One row per basin (pandas.DataFrame).
+
+Columns ``basin_id`` (0-based), ``junction_id``, ``stream_order``,
+``outlet_flat``, ``outlet_row``, ``outlet_col``, ``n_pixels``,
+``area_metres2`` (m^2), ``complete`` (False if the basin touches nodata or
+an open edge).
+)doc")
+        .def_prop_ro("labels", &junction_basin_labels,
+            "Raster of each basin's junction ID; nested basins overwrite their parents; nodata outside all basins.")
+        .def("mask", &junction_basin_mask, nb::arg("basin_id"), R"doc(
+Return a 0/1 Raster of one basin.
+
+Parameters
+----------
+basin_id : int
+    Zero-based basin index (a ``table.basin_id`` value).
+
+Returns
+-------
+Raster
+)doc")
+        .def("filter_incomplete", &JunctionBasinCollection::filter_incomplete, nb::rv_policy::reference_internal,
+            "Remove basins that touch nodata or an open DEM edge; returns this collection.")
+        .def("filter_area", &JunctionBasinCollection::filter_area, nb::arg("min_pixels") = -1, nb::arg("max_pixels") = -1, nb::rv_policy::reference_internal, R"doc(
+Keep basins whose pixel count is within [min_pixels, max_pixels].
+
+Parameters
+----------
+min_pixels, max_pixels : int, default=-1
+    Bounds in pixels (multiply by ``metadata.pixel_area`` for m^2); -1
+    leaves that end open.
+
+Returns
+-------
+JunctionBasinCollection
+    This collection, filtered in place.
+)doc")
+        .def("filter_stream_order", &JunctionBasinCollection::filter_stream_order, nb::arg("min_order") = -1, nb::arg("max_order") = -1, nb::rv_policy::reference_internal, R"doc(
+Keep basins whose Strahler order is within [min_order, max_order].
+
+Parameters
+----------
+min_order, max_order : int, default=-1
+    Bounds on stream order; -1 leaves that end open.
+
+Returns
+-------
+JunctionBasinCollection
+    This collection, filtered in place.
+)doc")
+        .def("filter_nested", &JunctionBasinCollection::filter_nested, nb::rv_policy::reference_internal,
+            "Remove basins whose outlet lies upslope of another selected basin's outlet; returns this collection.")
+        .def("filter_nested_by_stream_order", &JunctionBasinCollection::filter_nested_by_stream_order, nb::rv_policy::reference_internal,
+            "Remove nested basins only where they share the enclosing basin's stream order; returns this collection.")
+        .def("filter_largest", &JunctionBasinCollection::filter_largest, nb::rv_policy::reference_internal,
+            "Keep only the basin with the most pixels; returns this collection.");
     module.def("junction_basins", &make_junction_basins, nb::arg("network"), nb::arg("selection") = "all", nb::arg("outlets") = nb::none(), nb::keep_alive<0, 1>(), R"doc(
 Select junction-aware basins from a channel network.
 
-``selection`` is ``"all"``, ``"outlets"``, or ``"nested"``. The latter two
-require outlet pixels as an N-by-2 ``(row, col)`` array.
+Parameters
+----------
+network : ChannelNetwork
+    Channel network whose junctions define the basins.
+selection : {"all", "outlets", "nested"}, default="all"
+    ``"all"``: one basin per junction, draining to the pixel just upstream
+    of the next junction downstream. ``"outlets"``: one basin per supplied
+    outlet. ``"nested"``: each supplied outlet's basin plus every junction
+    basin nested inside it.
+outlets : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` outlet pixels (valid pixels); required
+    for ``"outlets"`` and ``"nested"``, ignored for ``"all"``.
+
+Returns
+-------
+JunctionBasinCollection
+    Basins that can be filtered by area, stream order and nesting.
 )doc");
-    nb::class_<SideTributaryBasins>(module, "SideTributaryBasins", "Side basins draining into a traced D8 channel.")
-        .def_prop_ro("table", &side_tributary_table)
-        .def_prop_ro("channel_mask", &side_channel_mask)
-        .def_prop_ro("basins", &SideTributaryBasins::basins, nb::rv_policy::reference_internal);
+    nb::class_<SideTributaryBasins>(module, "SideTributaryBasins", R"doc(
+Side basins draining into a traced D8 channel.
+
+Made by :func:`side_tributary_basins`.
+)doc")
+        .def_prop_ro("table", &side_tributary_table, nb::sig("def table(self) -> pandas.DataFrame"),
+            "One row per accepted side basin: outlet_flat, receiver_channel_flat, outlet_row, outlet_col, receiver_channel_row, receiver_channel_col, n_pixels, drainage_area_metres2, complete.")
+        .def_prop_ro("channel_mask", &side_channel_mask, "0/1 Raster of the traced trunk channel.")
+        .def_prop_ro("basins", &SideTributaryBasins::basins, nb::rv_policy::reference_internal,
+            "The accepted side basins as a BasinCollection.");
     module.def("side_tributary_basins", &side_tributary_basins, nb::arg("flow"), nb::arg("points_path"),
         nb::arg("minimum_contributing_pixels") = 1000, nb::arg("reject_incomplete") = true,
         nb::arg("single_channel") = false, nb::arg("include_stopping_point") = false,
-        nb::arg("stopping_point_window_pixels") = 5);
+        nb::arg("stopping_point_window_pixels") = 5, R"doc(
+Extract the side basins that drain into channels traced from input points.
+
+Parameters
+----------
+flow : FlowInfo
+    Flow topology.
+points_path : str
+    Vector file of the points from which trunk channels are traced D8
+    downstream.
+minimum_contributing_pixels : int, default=1000
+    Smallest side basin kept, in contributing pixels (positive).
+reject_incomplete : bool, default=True
+    Drop side basins that touch nodata or an open DEM edge.
+single_channel : bool, default=False
+    Trace a single main channel: the file holds one point (traced to the
+    DEM edge) or two points (traced from the upstream one to where the
+    other's flow path joins it). If False every point is a source.
+include_stopping_point : bool, default=False
+    Treat the last point in the file as a stopping point: each trace ends
+    when it first enters a square window around it.
+stopping_point_window_pixels : int, default=5
+    Half-width (pixels) of the stopping-point window.
+
+Returns
+-------
+SideTributaryBasins
+)doc");
     module.def("line_crossing_basins", &line_crossing_basins, nb::arg("network"), nb::arg("line"),
-        nb::arg("minimum_contributing_pixels") = 500);
+        nb::arg("minimum_contributing_pixels") = 500, R"doc(
+Create basins whose outlets are channel pixels crossed by a line.
+
+Every network channel pixel within 0.71 cell sizes of the line, with at least
+``minimum_contributing_pixels`` contributing pixels, becomes an outlet.
+
+Parameters
+----------
+network : ChannelNetwork
+    Channel network on the line's grid.
+line : shapely geometry or geopandas.GeoDataFrame
+    Line (for example a mountain front or a road) in the DEM CRS; a
+    GeoDataFrame is merged into one geometry.
+minimum_contributing_pixels : int, default=500
+    Smallest channel crossing kept, in contributing pixels (positive).
+
+Returns
+-------
+BasinCollection
+)doc");
     module.def("basin_channel_lengths", &basin_channel_lengths, nb::arg("basins"), nb::arg("network"),
         nb::arg("max_stream_order") = 6, R"doc(
 Return total in-basin D8 channel length by Strahler stream order.
 
 ``basins`` and ``network`` must have been created from the same ``FlowInfo``.
+
+Parameters
+----------
+basins : BasinCollection
+    Basins to measure.
+network : ChannelNetwork
+    Channel network from the same ``FlowInfo``.
+max_stream_order : int, default=6
+    Highest Strahler order reported (positive).
+
+Returns
+-------
+pandas.DataFrame
+    One row per basin: ``basin_id`` and ``channel_length_order_<k>_metres``
+    for k = 1 .. ``max_stream_order`` (D8 channel length in m).
 )doc");
     module.def("basin_surface_metrics", &basin_surface_metrics, nb::arg("basins"), nb::arg("dem"),
-        nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0);
+        nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0, R"doc(
+Summarise polyfit surface metrics inside each basin at several fitting scales.
+
+Parameters
+----------
+basins : BasinCollection
+    Basins to summarise.
+dem : Raster
+    Elevation (m) on the basins' flow grid.
+scales : list of float
+    Polyfit length scales ``lambda_metres`` (m, positive), as in
+    ``polyfit_metrics``.
+metrics : list of str
+    Any of ``"slope"`` (m/m), ``"slope_degrees"``, ``"aspect_degrees"``,
+    ``"maximum_curvature"``, ``"minimum_curvature"``, ``"mean_curvature"``,
+    ``"gaussian_curvature"``, ``"profile_curvature"``, ``"plan_curvature"``,
+    ``"tangential_curvature"``.
+include_outline : bool, default=True
+    Also sample each metric along the basin outline.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+dict of str to pandas.DataFrame
+    ``"interior"`` (basin_id, scale_metres, metric, n_values, min, mean,
+    median, max), ``"outline"`` (basin_id, scale_metres, metric,
+    distance_metres, value), ``"curvature_flips"`` (sign changes of
+    maximum_curvature along the outline), ``"slope_area"`` (median slope in
+    0.1 log10 drainage-area bins) and ``"slope_area_summary"``.
+)doc");
     module.def("basin_ridgeline_extrema", &basin_ridgeline_extrema,
         nb::arg("basins"), nb::arg("network"), nb::arg("dem"),
         nb::arg("split_method") = "longest_channel",
@@ -656,6 +922,11 @@ dem : Raster
     Elevation raster on the shared flow grid.
 split_method : {"longest_channel", "maximum_elevation", "equal_length"}, optional
     Rule used to divide each basin outline into ridgelines.
+snout_smoothing_fraction : float, optional
+    Smoothing window, as a fraction of ridge length, used to find the ridge
+    snout from its curvature.
+detrend_smoothing_pixels : int, optional
+    Smoothing window (pixels) used to detrend each ridge profile.
 
 Returns
 -------
@@ -670,7 +941,25 @@ B. Gailleton
         R"doc(
 Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.
 
-Explicit outlets may be internal channel pixels, which creates nested basins.
+Explicit outlets may be any valid pixels, including channel pixels inside
+another basin, which creates nested basins.
+
+Parameters
+----------
+outlets : array-like of int or None, default=None
+    N x 2 integer array of ``(row, col)`` outlet pixels; basin ``i`` is the
+    upslope area of the ``i``-th distinct outlet. Duplicate outlets are
+    silently dropped (so IDs follow first appearance). Out-of-grid or
+    nodata pixels raise ``ValueError``. None selects every D8 outlet of the
+    flow topology (pixels that drain off the grid or into nodata).
+min_upslope_pixels : int, default=0
+    With ``outlets=None``, keep only outlets with at least this many
+    contributing pixels (including the outlet). Ignored when ``outlets`` is
+    given. Non-negative.
+
+Returns
+-------
+BasinCollection
 )doc");
 }
 } // namespace lsdtt3_python

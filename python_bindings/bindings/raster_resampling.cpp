@@ -89,21 +89,65 @@ Resample an in-memory raster onto an explicit target grid without GDAL.
 The source and target CRS must match. Sampling methods are ``nearest``,
 ``linear`` and ``cubic``. Aggregation methods are ``mean``, ``sum``, ``min``,
 ``max``, ``mode`` and the overlap-area-weighted ``conservative_mean``.
+
+Parameters
+----------
+source : Raster
+    Raster to resample.
+target_metadata : RasterMeta
+    Target grid in the same CRS.
+method : str, default="linear"
+    One of the methods above.
+
+Returns
+-------
+Raster
 )doc");
 
     m.def("double_raster", &double_resolution, nb::arg("source"),
         nb::arg("method") = "linear", R"doc(
 Double both raster dimensions over the same extent using the optimized path.
+
+Parameters
+----------
+source : Raster
+    Raster to refine; the cell size is halved.
+method : str, default="linear"
+    Sampling method (``"nearest"``, ``"linear"``, ``"cubic"``).
+
+Returns
+-------
+Raster
 )doc");
 
     m.def("halve_raster", &halve_resolution, nb::arg("source"),
         nb::arg("method") = "conservative_mean", R"doc(
 Halve both even raster dimensions over the same extent using the optimized path.
+
+Parameters
+----------
+source : Raster
+    Raster with even dimensions; the cell size is doubled.
+method : str, default="conservative_mean"
+    Resampling method, as in ``resample_raster``.
+
+Returns
+-------
+Raster
 )doc");
 
     m.def("pad_to_nearest_power_of_two", &pad_power_of_two,
         nb::arg("source"), R"doc(
 Pad the north and east sides with nodata to the next power-of-two dimensions.
+
+Parameters
+----------
+source : Raster
+    Raster to pad.
+
+Returns
+-------
+Raster
 )doc");
 
     m.def("interpolate_to_nearest_power_of_two", &interpolate_power_of_two,
@@ -113,6 +157,19 @@ Resize to lower, higher, or nearest power-of-two dimensions.
 
 The full extent is preserved. Rasters whose two dimension scale factors differ
 cannot be represented with square cells and are rejected.
+
+Parameters
+----------
+source : Raster
+    Raster to resize.
+direction : {"lower", "higher", "nearest"}, default="nearest"
+    Which power of two to resize each dimension to.
+method : str, default="linear"
+    Sampling or aggregation method, as in ``resample_raster``.
+
+Returns
+-------
+Raster
 )doc");
 }
 

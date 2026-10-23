@@ -140,7 +140,7 @@ enum class basin_stats_outcome
 // -----------------------------------------------------------------------------
 struct basin_stats_options
 {
-    // "none", "expanding_square" or "downstream".
+    // "none", "expanding_square", "downstream" or "largest_area".
     std::string snapping_method = "none";
     lsdtt_square_snap_options     square_snap;
     lsdtt_downstream_snap_options downstream_snap;

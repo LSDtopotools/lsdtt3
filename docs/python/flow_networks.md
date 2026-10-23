@@ -38,12 +38,22 @@ Check the `complete` column: a basin cut by the edge of the DEM or by nodata
 would be wrong.
 
 An outlet is used exactly where it is given. A point taken from a map is
-rarely on the D8 channel pixel, so move it downstream onto the channel first:
-follow `flow.receiver_of(row, col)` until `flow.contributing_pixels()` at the
-pixel reaches the channel threshold. That is what the command-line
-programs' `basin_outlet_snapping_method: downstream` does. The
-`python_binding_examples` notebook in lsdtt3_notebooks has a complete version,
-including the conversion from latitude and longitude to a pixel.
+rarely on the D8 channel pixel, so snap it onto the channel first with
+`flow.snap_points`, which also converts latitude and longitude (or x and y)
+to pixels:
+
+```python
+outlet_pixels = flow.snap_points(latitude=[37.94234], longitude=[15.79008],
+                                 method="downstream",
+                                 threshold_contributing_pixels=500)
+```
+
+`method="downstream"` follows the D8 receivers until the contributing-pixel
+count reaches the threshold. The methods (`downstream`, `expanding_square`,
+`largest_area`) and their rules are those of the command-line programs'
+`basin_outlet_snapping_method`, and the same C++ routines do the work. The
+`python_binding_examples` notebook in lsdtt3_notebooks has a complete
+example.
 
 Use `extract_channel_heads` when a simple accumulation threshold is not the
 right source-detection method. The resulting heads can be passed to

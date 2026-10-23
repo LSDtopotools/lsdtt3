@@ -232,6 +232,13 @@ inline constexpr const char* inherit_write_output_format =
     const std::string& canonical_value);
 
 // -----------------------------------------------------------------------------
+// Default of basin_outlet_contributing_pixels_threshold. Every CLI that takes
+// the key, and FlowInfo.snap_points in the Python bindings, use this one value
+// so the same (absent) parameter snaps to the same pixel everywhere.
+// -----------------------------------------------------------------------------
+inline constexpr int default_basin_outlet_contributing_pixels_threshold = 1000;
+
+// -----------------------------------------------------------------------------
 // Basin outlet input and outlet snapping.
 //
 //   basin_outlet_fname                          string  "NULL"

@@ -203,8 +203,10 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("candidates", [](const InternalDrainageResult& self) { return self.candidates; })
-        .def_prop_ro("polygons", [](const InternalDrainageResult& self) { return self.polygons; })
+        .def_prop_ro("candidates", [](const InternalDrainageResult& self) { return self.candidates; },
+            nb::sig("def candidates(self) -> geopandas.GeoDataFrame"), "Depression candidates as points with depth, area and storage attributes.")
+        .def_prop_ro("polygons", [](const InternalDrainageResult& self) { return self.polygons; },
+            nb::sig("def polygons(self) -> geopandas.GeoDataFrame | None"), "Depression footprints keyed by sink_id, or None if not requested.")
         .def_prop_ro("n_candidates", [](const InternalDrainageResult& self) { return self.n_candidates; });
 
     nb::class_<DepressionHierarchyResult>(module, "DepressionHierarchyResult", R"doc(
@@ -263,7 +265,7 @@ boundary_conditions : str, optional
     Four-character north/east/south/west boundary condition string.
 min_pixels : int, optional
     Minimum depression footprint size in raster cells.
- min_depth_metres, min_area_m2, min_volume_m3 : float, optional
+min_depth_metres, min_area_m2, min_volume_m3 : float, optional
     Post-detection filters on depression properties.
 leaves_only : bool, optional
     For ``method="hierarchy"``, return only innermost depressions.

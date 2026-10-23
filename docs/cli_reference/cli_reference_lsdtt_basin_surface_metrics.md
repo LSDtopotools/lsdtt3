@@ -177,10 +177,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Method to snap CSV points to the routing object. | none: uses mapped pixel. downstream: follows flow path. expanding_square: searches outward until channel hit. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Method to snap CSV points to the routing object. | none: uses mapped pixel. downstream: follows flow path. expanding_square: searches outward until channel hit. largest_area: the pixel with the most contributing pixels within basin_outlet_snap_max_search_radius_pixels. |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Pixel threshold for confirming an outlet snap. | Defines the required D8 accumulation to arrest snapping. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | `basin_outlet_snapping_method` | Minimum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square or largest_area (the half-width of the square searched). |
 
 ### Smoothing Scales &amp; Polyfit
 

@@ -69,7 +69,8 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             lsdtt_xy     xy{outlet.x, outlet.y};
 
             if (options.snapping_method == "expanding_square" ||
-                options.snapping_method == "downstream")
+                options.snapping_method == "downstream" ||
+                options.snapping_method == "largest_area")
             {
                 const lsdtt_snap_result snapped = snap_pixel_by_method(
                     flow, row, col, options.snapping_method,

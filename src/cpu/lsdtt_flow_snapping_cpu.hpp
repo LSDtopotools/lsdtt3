@@ -19,7 +19,7 @@
 //
 // This is an upslope contributing-pixel count, not a direct-donor count.
 //
-// Two snapping behaviours are currently supported:
+// Four snapping behaviours are currently supported:
 //
 //   1. expanding_square
 //      Search outward ring-by-ring in pixel space. At the first radius that
@@ -32,7 +32,14 @@
 //      Follow the D8 receiver chain until the first cell is reached whose
 //      contributing-pixel count meets or exceeds the threshold.
 //
-//   3. reported_area (snap_pixel_to_reported_drainage_area_expanding_square)
+//   3. largest_area (snap_pixel_to_contributing_pixels_threshold_largest_area)
+//      Take the valid cell with the most contributing pixels in the square of
+//      half-width R around the input pixel (ties: smaller pixel distance, then
+//      smaller flat index), provided its count meets or exceeds the threshold.
+//      This is the GIS "snap pour point" rule: a point slightly off a river is
+//      moved onto it, but a large R can jump onto a bigger neighbouring river.
+//
+//   4. reported_area (snap_pixel_to_reported_drainage_area_expanding_square)
 //      For a point that comes with a reported drainage area (e.g. a sampled
 //      basin). Among every channel cell (contributing pixels >= threshold) in
 //      the square of radius R, take the NEAREST whose area is within a ratio
@@ -86,7 +93,8 @@ namespace lsdtt
 //
 // threshold_not_found_in_search_window
 //   Expanding-square search completed through the requested maximum search
-//   radius without finding any qualifying pixel.
+//   radius without finding any qualifying pixel, or no cell in the
+//   largest-area or reported-area search square met the threshold.
 //
 // outlet_reached_before_threshold
 //   Downstream tracing reached an outlet before finding a cell that met the
@@ -163,6 +171,25 @@ struct lsdtt_square_snap_options
 struct lsdtt_downstream_snap_options
 {
     std::uint64_t contributing_pixels_threshold = 1000;
+};
+
+// -----------------------------------------------------------------------------
+// lsdtt_largest_area_snap_options
+//
+// Options for largest-area snapping.
+//
+// contributing_pixels_threshold
+//   Minimum upslope contributing-pixel count the chosen cell must have. Every
+//   valid cell has at least 1 (itself), so 1 means "no minimum".
+//
+// max_search_radius_pixels
+//   Inclusive half-width R of the search square; 0 searches only the input
+//   pixel.
+// -----------------------------------------------------------------------------
+struct lsdtt_largest_area_snap_options
+{
+    std::uint64_t contributing_pixels_threshold = 1;
+    int           max_search_radius_pixels      = 25;
 };
 
 // -----------------------------------------------------------------------------
@@ -260,9 +287,33 @@ snap_pixel_to_contributing_pixels_threshold_downstream(
 );
 
 // -----------------------------------------------------------------------------
+// snap_pixel_to_contributing_pixels_threshold_largest_area
+//
+// Largest-area snapping (method 3 above). Over the valid cells of the square
+// of half-width max_search_radius_pixels around (row, col), take the cell with
+// the largest contributing-pixel count; ties go to the smaller squared pixel
+// distance from (row, col), then the smaller flat index. The input pixel need
+// not be a valid flow cell. Status success when that cell's count is >=
+// contributing_pixels_threshold (the same comparison as the other methods),
+// threshold_not_found_in_search_window when it is below the threshold or the
+// square holds no valid cell, input_out_of_bounds for a point off the grid.
+// search_radius_pixels is the ring (Chebyshev distance) of the chosen cell;
+// downstream_steps is -1. Throws std::invalid_argument for a zero threshold
+// or a negative radius.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_snap_result
+snap_pixel_to_contributing_pixels_threshold_largest_area(
+    const lsdtt_flow_base&                 flow,
+    int                                    row,
+    int                                    col,
+    const lsdtt_largest_area_snap_options& options =
+        lsdtt_largest_area_snap_options{}
+);
+
+// -----------------------------------------------------------------------------
 // snap_pixel_to_reported_drainage_area_expanding_square
 //
-// Area-matched snapping (method 3 above). reported_area_m2 is in the squared
+// Area-matched snapping (method 4 above). reported_area_m2 is in the squared
 // map units of the grid (m^2 for a projected DEM); a cell's area is
 // contributing pixels * cell_size^2. Rule, over the valid cells of the square
 // of radius max_search_radius_pixels around (row, col) whose contributing
@@ -353,10 +404,14 @@ snap_flats_to_contributing_pixels_threshold_downstream(
 // the method as a string parameter does not have to spell the if/else out.
 //
 //   "none"              no snapping; the input pixel is returned with
-//                       status success, so a caller can treat all three
+//                       status success, so a caller can treat all the
 //                       methods uniformly
 //   "expanding_square"  snap_pixel_to_contributing_pixels_threshold_expanding_square
 //   "downstream"        snap_pixel_to_contributing_pixels_threshold_downstream
+//   "largest_area"      snap_pixel_to_contributing_pixels_threshold_largest_area,
+//                       taking contributing_pixels_threshold and
+//                       max_search_radius_pixels from square_options
+//                       (min_search_radius_pixels is not used)
 //
 // Throws std::invalid_argument on an unrecognised method, rather than silently
 // falling through to no snapping: a typo in a parameter file would otherwise

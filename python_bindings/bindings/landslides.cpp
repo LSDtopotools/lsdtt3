@@ -127,12 +127,28 @@ poisson_timing : bool
     Draw exponential waiting times when True; otherwise use fixed recurrence.
 target_volume_per_event_m3, long_term_erosion_rate_mm_kyr : float
     Provide exactly one event-budget mode.
-channel_threshold_pixels, size_model, area_volume_preset :
-    Native scar-placement and size-distribution controls.
-min_pixels, max_area_m2, anneal_time_yr :
-    Scar bounds and time before failed ground becomes eligible again.
- event_budget_relative_tolerance, budget_max_iter, seed, active_mask :
-    Event-budget solver controls, reproducibility, and optional host mask.
+channel_threshold_pixels : int
+    Channel threshold (contributing pixels) used by scar placement.
+size_model : {"inverse_gamma", "truncated_pareto"}
+    Landslide area distribution.
+area_volume_preset : str
+    Area-volume scaling preset: ``"larsen_global"``, ``"larsen_soil_scar"``,
+    ``"larsen_bedrock_scar"``, ``"larsen_soil_all"``,
+    ``"larsen_bedrock_all"``, ``"hovius_slab"`` or ``"hovius_parabolic"``.
+min_pixels : int
+    Smallest scar (pixels).
+max_area_m2 : float
+    Largest scar area (m^2); 0 means no cap.
+anneal_time_yr : float
+    Years before failed ground can fail again.
+event_budget_relative_tolerance : float
+    Relative tolerance of each event's volume against its budget.
+budget_max_iter : int
+    Largest number of budget-solver iterations per event.
+seed : int
+    Random seed.
+active_mask : Raster, optional
+    0/1 raster of pixels allowed to fail; None allows every pixel.
 
 Returns
 -------

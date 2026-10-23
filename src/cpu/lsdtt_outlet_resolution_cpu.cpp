@@ -134,7 +134,8 @@ std::vector<std::int64_t> resolve_outlet_flats_from_file(
         std::int64_t flat = pt.flat;
 
         if (options.snapping_method == "expanding_square" ||
-            options.snapping_method == "downstream")
+            options.snapping_method == "downstream" ||
+            options.snapping_method == "largest_area")
         {
             const lsdtt_snap_result snapped = snap_pixel_by_method(
                 flow, pt.row, pt.col, options.snapping_method,

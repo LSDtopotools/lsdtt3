@@ -226,11 +226,16 @@ int main(int argc, char* argv[])
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Optional snapping of supplied outlet points to qualifying channel pixels.",
-        "Allowed values: none, expanding_square, downstream.",
+        "Allowed values: none, expanding_square, downstream, largest_area. "
+        "largest_area takes the pixel with the most contributing pixels in the "
+        "square of half-width basin_outlet_snap_max_search_radius_pixels, if it "
+        "reaches basin_outlet_contributing_pixels_threshold.",
         "Basin outlet input", "param", ""};
 
-    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
-    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+    int_default_map["basin_outlet_contributing_pixels_threshold"] =
+        lsdtt::default_basin_outlet_contributing_pixels_threshold;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int",
+        std::to_string(lsdtt::default_basin_outlet_contributing_pixels_threshold),
         "Contributing-pixel threshold used for optional outlet snapping.",
         "Total upslope contributing pixels required at the snapped cell.",
         "Basin outlet input", "param", ""};
@@ -244,7 +249,8 @@ int main(int argc, char* argv[])
     int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Used only when basin_outlet_snapping_method is expanding_square or "
+        "largest_area (the half-width of the square searched).",
         "Basin outlet input", "param", ""};
 
     // --- Diagnostic data maps ---
@@ -791,10 +797,11 @@ int main(int argc, char* argv[])
 
     if (snapping_method != "none" &&
         snapping_method != "expanding_square" &&
-        snapping_method != "downstream")
+        snapping_method != "downstream" &&
+        snapping_method != "largest_area")
     {
         std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
-                     "none, expanding_square, downstream.\n";
+                     "none, expanding_square, downstream, largest_area.\n";
         return 1;
     }
 
@@ -837,9 +844,11 @@ int main(int argc, char* argv[])
             er_basin.area_mismatch_excludes = action == "exclude";
             er_basin.nested_policy = lsdtt::to_lower_ascii(sf["erosion_rate_nested_basins"]);
             const std::string& sm = er_basin.snapping_method;
-            if (sm != "reported_area" && sm != "expanding_square" && sm != "downstream" && sm != "none")
+            if (sm != "reported_area" && sm != "expanding_square" && sm != "downstream" &&
+                sm != "largest_area" && sm != "none")
                 throw std::invalid_argument("erosion_rate_snapping_method must be one of reported_area, "
-                                            "expanding_square, downstream, none (got '" + sm + "')");
+                                            "expanding_square, downstream, largest_area, none (got '" +
+                                            sm + "')");
             const std::string& np = er_basin.nested_policy;
             if (np != "keep" && np != "outermost" && np != "innermost")
                 throw std::invalid_argument("erosion_rate_nested_basins must be one of keep, outermost, "
@@ -1302,8 +1311,8 @@ int main(int argc, char* argv[])
             for (const std::int32_t pid : orep.unsnappable_point_ids)
             {
                 std::cerr << "Warning: outlet point " << pid;
-                if (snapping_method == "expanding_square")
-                    std::cerr << " could not be snapped with expanding_square";
+                if (snapping_method == "expanding_square" || snapping_method == "largest_area")
+                    std::cerr << " could not be snapped with " << snapping_method;
                 else if (snapping_method == "downstream")
                     std::cerr << " could not be snapped downstream";
                 else

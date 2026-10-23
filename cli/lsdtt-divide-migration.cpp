@@ -193,11 +193,15 @@ int main(int argc, char* argv[])
     string_default_map["basin_outlet_snapping_method"] = "downstream";
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Outlet snapping method.",
-        "Options: none, downstream, expanding_square.",
+        "Options: none, downstream, expanding_square, largest_area. "
+        "largest_area takes the pixel with the most contributing pixels within "
+        "basin_outlet_snap_max_search_radius_pixels.",
         "Outlets / clusters", "param", ""};
 
-    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
-    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+    int_default_map["basin_outlet_contributing_pixels_threshold"] =
+        lsdtt::default_basin_outlet_contributing_pixels_threshold;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int",
+        std::to_string(lsdtt::default_basin_outlet_contributing_pixels_threshold),
         "Contributing-pixel threshold used in outlet snapping.",
         "Higher values snap outlets onto larger channels.",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
@@ -211,7 +215,8 @@ int main(int argc, char* argv[])
     int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snap radius (pixels).",
-        "Used only for basin_outlet_snapping_method=expanding_square.",
+        "Used only for basin_outlet_snapping_method=expanding_square or "
+        "largest_area (the half-width of the square searched).",
         "Outlets / clusters", "param", "basin_outlet_snapping_method"};
 
     // --- Chi and outlet/base-level controls ---
@@ -369,9 +374,10 @@ int main(int argc, char* argv[])
     }
 
     if (!valid_choice(sf.at("basin_outlet_snapping_method"),
-                      {"none", "downstream", "expanding_square"}))
+                      {"none", "downstream", "expanding_square", "largest_area"}))
     {
-        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: none, downstream, expanding_square.\n";
+        std::cerr << "FATAL: basin_outlet_snapping_method must be one of: none, downstream, "
+                     "expanding_square, largest_area.\n";
         return 1;
     }
 

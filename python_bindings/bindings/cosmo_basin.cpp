@@ -208,7 +208,53 @@ void bind_cosmo_basin(nb::module_& module)
 Points are projected to the flow-grid CRS, snapped to the nearest D8 channel
 meeting ``channel_threshold_pixels``, then inverted with the native CAIRN
 solver over each snapped outlet's exact upslope pixel set. Failed rows remain
-in the returned GeoDataFrame and are identified by ``crn_status``.)doc");
+in the returned GeoDataFrame and are identified by ``crn_status``.
+
+Parameters
+----------
+flow : FlowInfo
+    Flow topology of the (conditioned) DEM.
+samples : geopandas.GeoDataFrame
+    Point geometries of the river samples (any declared CRS; reprojected to
+    the flow grid's CRS) with a concentration column.
+production_scaling : Raster
+    Production-scaling factor on the flow grid (``crn_production_scaling``).
+concentration_column : str, default="concentration"
+    Column of measured concentrations in atoms/g (positive).
+nuclide : {"Be10", "Al26", "C14"}, default="Be10"
+    Cosmogenic nuclide.
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation: ``"Braucher"``,
+    ``"BraucherBorchers"``, ``"Granger"``, ``"Schaller"`` or
+    ``"newCRONUS"``.
+channel_threshold_pixels : int, default=1000
+    Samples snap to the nearest pixel with at least this many contributing
+    pixels (positive).
+snap_radius_pixels : int, default=25
+    Largest snapping search radius (pixels, non-negative).
+topographic_shielding : Raster or None, default=None
+    Topographic shielding factor (dimensionless, 0-1; 1 = unshielded) on the
+    same grid; None means 1 everywhere.
+snow_shielding : Raster or None, default=None
+    Snow shielding as an effective depth (g/cm^2); None means 0 (no snow).
+self_shielding : Raster or None, default=None
+    Self (sample-thickness) shielding as an effective depth (g/cm^2); None
+    means 0 (surface sample).
+rock_density_kg_m3 : float, default=2650.0
+    Rock density (kg/m^3) used to convert to mm/kyr.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Copy of ``samples`` with columns ``crn_status`` (``"ok"``,
+    ``"invalid_geometry"``, ``"invalid_concentration"``,
+    ``"outside_flow_grid"`` or ``"channel_not_found"``), ``input_x``,
+    ``input_y``, ``input_row``, ``input_col``, ``snapped_row``,
+    ``snapped_col``, ``snapped_x``, ``snapped_y``, ``outlet_flat``,
+    ``channel_contributing_pixels``, ``snap_radius_pixels``,
+    ``basin_pixels``, ``basin_area_m2``, ``erosion_rate_g_cm2_yr``,
+    ``erosion_rate_mm_kyr``, ``predicted_concentration_atoms_g``.
+)doc");
     module.def("crn_pair_diagnostics", &crn_pair_diagnostics,
         nb::arg("samples"), nb::arg("mode") = "burial", nb::arg("nuclide_fast") = "Al26",
         nb::arg("nuclide_slow") = "Be10", nb::arg("concentration_fast_column") = "Al26_CONC",
@@ -219,7 +265,40 @@ in the returned GeoDataFrame and are identified by ``crn_status``.)doc");
 ``mode='burial'`` reports pre-burial erosion, burial age and ratio diagnostics.
 ``mode='step_change'`` reports the new erosion rate, time since change, and
 forward-predicted pair concentrations. Invalid rows remain in place and carry
-``crn_pair_status='invalid_concentration'``.)doc");
+``crn_pair_status='invalid_concentration'``.
+
+Parameters
+----------
+samples : geopandas.GeoDataFrame
+    Rows with two concentration columns (atoms/g).
+mode : {"burial", "step_change"}, default="burial"
+    Diagnostic to compute.
+nuclide_fast, nuclide_slow : str, default="Al26", "Be10"
+    Shorter- and longer-lived nuclides of the pair.
+concentration_fast_column, concentration_slow_column : str
+    Columns holding the two concentrations (atoms/g).
+total_scaling : float, default=1.0
+    Combined production scaling x shielding factor (dimensionless,
+    positive).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation: ``"Braucher"``,
+    ``"BraucherBorchers"``, ``"Granger"``, ``"Schaller"`` or
+    ``"newCRONUS"``.
+effective_erosion_rate_old_g_cm2_yr : float, default=0.01
+    ``"step_change"`` only: erosion rate before the change (g/cm^2/yr).
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Copy of ``samples`` with ``crn_pair_status``,
+    ``crn_fast_concentration_atoms_g``, ``crn_slow_concentration_atoms_g``,
+    ``crn_pair_erosion_rate_g_cm2_yr`` (pre-burial or new rate) and
+    ``crn_pair_time_yr`` (burial age or time since change), plus
+    ``crn_pair_measured_ratio``, ``crn_pair_steady_state_ratio``,
+    ``crn_pair_burial_required`` (burial) or
+    ``crn_pair_fast_predicted_atoms_g``, ``crn_pair_slow_predicted_atoms_g``,
+    ``crn_pair_n_brackets`` (step change).
+)doc");
 }
 
 } // namespace lsdtt3_python

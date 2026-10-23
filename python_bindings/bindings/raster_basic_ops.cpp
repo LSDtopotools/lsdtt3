@@ -208,38 +208,264 @@ Raster normalize_unit_interval(const Raster& raster)
 
 void bind_raster_basic_ops(nb::module_& m)
 {
-    m.def("add_uniform_noise", &add_uniform_noise, nb::arg("raster"), nb::arg("seed"), nb::arg("magnitude"),
-        "Add reproducible uniform noise to valid pixels.");
+    m.def("add_uniform_noise", &add_uniform_noise, nb::arg("raster"), nb::arg("seed"), nb::arg("magnitude"), R"doc(
+Add reproducible uniform noise to valid pixels.
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+seed : int
+    Random seed; the same seed gives the same noise.
+magnitude : float
+    Noise is drawn uniformly from ``[-magnitude, magnitude]``, in the units
+    of the raster (m for a DEM); non-negative.
+
+Returns
+-------
+Raster
+    New in-memory raster; nodata pixels are unchanged.
+)doc");
     m.def("fill_interior_nodata", &fill_interior_nodata, nb::arg("raster"),
         nb::arg("method") = "laplacian", nb::arg("max_iter") = 10000,
-        nb::arg("tolerance") = 1e-6f, nb::arg("n_threads") = 0,
-        "Fill nodata regions that are not connected to the raster edge.");
-    m.def("clip_to_maximum_rectangle", &clip_to_maximum_rectangle, nb::arg("raster"),
-        "Crop to the largest all-valid axis-aligned rectangle.");
+        nb::arg("tolerance") = 1e-6f, nb::arg("n_threads") = 0, R"doc(
+Fill nodata regions that are not connected to the raster edge.
+
+Holes enclosed by valid pixels are filled by interpolation; nodata regions
+that touch the raster edge are left as nodata.
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+method : {"laplacian", "iterative"}, default="laplacian"
+    ``"laplacian"`` solves Laplace's equation across each hole (smooth
+    surface through its rim); ``"iterative"`` repeatedly averages valid
+    neighbours.
+max_iter : int, default=10000
+    Maximum number of iterations (positive).
+tolerance : float, default=1e-6
+    Convergence tolerance on the change per iteration, in raster units
+    (positive).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    New in-memory raster.
+)doc");
+    m.def("clip_to_maximum_rectangle", &clip_to_maximum_rectangle, nb::arg("raster"), R"doc(
+Crop to the largest all-valid axis-aligned rectangle.
+
+Parameters
+----------
+raster : Raster
+    Input raster, for example a reprojected DEM with nodata corners.
+
+Returns
+-------
+Raster
+    New, smaller raster with no nodata pixels and updated georeferencing.
+)doc");
     m.def("set_nodata_rectangle", &set_nodata_rectangle, nb::arg("raster"),
-        nb::arg("row_start"), nb::arg("row_stop"), nb::arg("col_start"), nb::arg("col_stop"),
-        "Set a half-open row/column rectangle to nodata.");
+        nb::arg("row_start"), nb::arg("row_stop"), nb::arg("col_start"), nb::arg("col_stop"), R"doc(
+Set a half-open row/column rectangle to nodata.
+
+Pixels with ``row_start <= row < row_stop`` and ``col_start <= col <
+col_stop`` (as in NumPy slicing; row 0 is the northern edge) become nodata.
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+row_start, row_stop : int
+    Row range; non-empty and within the raster.
+col_start, col_stop : int
+    Column range; non-empty and within the raster.
+
+Returns
+-------
+Raster
+    New in-memory raster.
+)doc");
     m.def("mask_to_nodata", &mask_to_nodata, nb::arg("raster"),
-        nb::arg("threshold"), nb::arg("below") = true,
-        "Set valid pixels below (or above) a threshold to nodata.");
-    m.def("threshold_above", &threshold_above, nb::arg("raster"), nb::arg("threshold"),
-        "Return a binary mask that is True where valid values exceed threshold.");
-    m.def("threshold_below", &threshold_below, nb::arg("raster"), nb::arg("threshold"),
-        "Return a binary mask that is True where valid values are below threshold.");
-    m.def("invert_binary_mask", &invert_binary_mask, nb::arg("raster"),
-        "Invert a binary raster mask while preserving nodata.");
-    m.def("mask_by_binary", &mask_by_binary, nb::arg("values"), nb::arg("keep_mask"),
-        "Set values to nodata where keep_mask is false or nodata.");
-    m.def("add", &add, nb::arg("a"), nb::arg("b"), "Add two grid-compatible rasters.");
-    m.def("subtract", &subtract, nb::arg("a"), nb::arg("b"), "Subtract two grid-compatible rasters.");
-    m.def("multiply", &multiply, nb::arg("a"), nb::arg("b"), "Multiply two grid-compatible rasters.");
-    m.def("absolute", &absolute, nb::arg("raster"),
-        "Absolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM of absolute difference).");
-    m.def("divide", &divide, nb::arg("a"), nb::arg("b"),
-        "Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.");
-    m.def("scale", &scale, nb::arg("raster"), nb::arg("factor"),
-        "Multiply valid raster values by a scalar factor.");
-    m.def("normalize_unit_interval", &normalize_unit_interval, nb::arg("raster"),
-        "Linearly rescale valid values to the closed interval [0, 1].");
+        nb::arg("threshold"), nb::arg("below") = true, R"doc(
+Set valid pixels below (or above) a threshold to nodata.
+
+With ``below=True`` pixels with value ``<= threshold`` become nodata; with
+``below=False`` pixels with value ``> threshold`` become nodata. A common
+use is masking the sea in a Copernicus DEM, which stores sea as exactly
+0 m: ``mask_to_nodata(dem, 0.0)``.
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+threshold : float
+    Threshold in the units of the raster (m for a DEM).
+below : bool, default=True
+    True masks values ``<= threshold``; False masks values ``> threshold``.
+
+Returns
+-------
+Raster
+    New in-memory raster with the selected pixels set to nodata.
+)doc");
+    m.def("threshold_above", &threshold_above, nb::arg("raster"), nb::arg("threshold"), R"doc(
+Return a binary mask that is True where valid values exceed threshold.
+
+Pixels with value ``>= threshold`` are 1 and others 0 (the threshold
+itself counts as above).
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+threshold : float
+    Threshold in the units of the raster.
+
+Returns
+-------
+Raster
+    0/1 raster; nodata where the input is nodata or not finite.
+)doc");
+    m.def("threshold_below", &threshold_below, nb::arg("raster"), nb::arg("threshold"), R"doc(
+Return a binary mask that is True where valid values are below threshold.
+
+Pixels with value ``<= threshold`` are 1 and others 0 (the threshold
+itself counts as below).
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+threshold : float
+    Threshold in the units of the raster.
+
+Returns
+-------
+Raster
+    0/1 raster; nodata where the input is nodata or not finite.
+)doc");
+    m.def("invert_binary_mask", &invert_binary_mask, nb::arg("raster"), R"doc(
+Invert a binary raster mask while preserving nodata.
+
+Parameters
+----------
+raster : Raster
+    0/1 raster; values > 0.5 count as 1.
+
+Returns
+-------
+Raster
+    0 where the input is > 0.5, 1 elsewhere; nodata stays nodata.
+)doc");
+    m.def("mask_by_binary", &mask_by_binary, nb::arg("values"), nb::arg("keep_mask"), R"doc(
+Set values to nodata where keep_mask is false or nodata.
+
+Parameters
+----------
+values : Raster
+    Raster whose values are kept.
+keep_mask : Raster
+    0/1 raster on the same grid; values are kept where it is > 0.5, for
+    example ``BasinCollection.mask(0)`` or ``threshold_above(...)``.
+
+Returns
+-------
+Raster
+    ``values`` where ``keep_mask`` > 0.5, nodata elsewhere.
+)doc");
+    m.def("add", &add, nb::arg("a"), nb::arg("b"), R"doc(
+Add two grid-compatible rasters.
+
+Parameters
+----------
+a, b : Raster
+    Rasters on the same grid (shape, cell size and georeferencing).
+
+Returns
+-------
+Raster
+    ``a + b``; nodata where either input is nodata.
+)doc");
+    m.def("subtract", &subtract, nb::arg("a"), nb::arg("b"), R"doc(
+Subtract two grid-compatible rasters.
+
+Parameters
+----------
+a, b : Raster
+    Rasters on the same grid.
+
+Returns
+-------
+Raster
+    ``a - b`` (for example a DEM of difference); nodata where either input
+    is nodata.
+)doc");
+    m.def("multiply", &multiply, nb::arg("a"), nb::arg("b"), R"doc(
+Multiply two grid-compatible rasters.
+
+Parameters
+----------
+a, b : Raster
+    Rasters on the same grid.
+
+Returns
+-------
+Raster
+    ``a * b``; nodata where either input is nodata.
+)doc");
+    m.def("absolute", &absolute, nb::arg("raster"), R"doc(
+Absolute value of every valid pixel (for example abs(subtract(a, b)) for a DEM of absolute difference).
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+
+Returns
+-------
+Raster
+)doc");
+    m.def("divide", &divide, nb::arg("a"), nb::arg("b"), R"doc(
+Divide two grid-compatible rasters (a / b); nodata where b is 0 or either input is nodata.
+
+Parameters
+----------
+a, b : Raster
+    Numerator and denominator rasters on the same grid.
+
+Returns
+-------
+Raster
+)doc");
+    m.def("scale", &scale, nb::arg("raster"), nb::arg("factor"), R"doc(
+Multiply valid raster values by a scalar factor.
+
+Parameters
+----------
+raster : Raster
+    Input raster.
+factor : float
+    Multiplier, for example 0.3048 to convert feet to metres.
+
+Returns
+-------
+Raster
+)doc");
+    m.def("normalize_unit_interval", &normalize_unit_interval, nb::arg("raster"), R"doc(
+Linearly rescale valid values to the closed interval [0, 1].
+
+Parameters
+----------
+raster : Raster
+    Input raster; its minimum maps to 0 and maximum to 1.
+
+Returns
+-------
+Raster
+)doc");
 }
 } // namespace lsdtt3_python

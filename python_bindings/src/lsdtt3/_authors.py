@@ -38,7 +38,9 @@ WRITTEN_BY_MUDD = (
 # Bindings by B. Gailleton that S. M. Mudd changed: he is second author.
 CHANGED_BY_MUDD = (
     "CRNColumn",
+    "FlowInfo",
     "LandscapeModel",
+    "RasterMeta",
     "bounds_from_vector",
     "breach_least_cost",
     "crn_transient_history",
@@ -51,6 +53,7 @@ CHANGED_BY_MUDD = (
     "find_internal_drainage",
     "find_road_flow_discrimination",
     "frangi_filter",
+    "helper_for_llm",
     "least_cost_carve_depth",
     "mountain_front_outlets",
     "route_sediment",

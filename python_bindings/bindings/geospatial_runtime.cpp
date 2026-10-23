@@ -72,12 +72,21 @@ One of ``"bundled: <dir>"`` (lsdtt3 pinned it), ``"PROJ_DATA=<dir>"``,
 Put this in any bug report about projections or coordinates that look subtly
 wrong -- a mismatched proj.db usually returns plausible values rather than
 failing.
+
+Returns
+-------
+str
 )doc");
 
     module.def(
         "gdal_data_description",
         []() { return lsdtt::gdal_data_description(); },
-        "As proj_data_description(), for GDAL's own data directory.");
+        R"doc(As proj_data_description(), for GDAL's own data directory.
+
+Returns
+-------
+str
+)doc");
 
     module.def(
         "lsdtt3_version",
@@ -92,7 +101,12 @@ project(lsdtt3 VERSION ...) number from the root CMakeLists.txt.
     module.def(
         "gdal_version",
         []() { return lsdtt::gdal_version(); },
-        "GDAL release name of the library actually loaded, e.g. \"3.8.4\".");
+        R"doc(GDAL release name of the library actually loaded, e.g. "3.8.4".
+
+Returns
+-------
+str
+)doc");
 
     module.def(
         "proj_version",
@@ -101,6 +115,10 @@ project(lsdtt3 VERSION ...) number from the root CMakeLists.txt.
 
 Reported by the loaded library rather than by the headers this was compiled
 against -- that distinction is the whole point.
+
+Returns
+-------
+str
 )doc");
 }
 

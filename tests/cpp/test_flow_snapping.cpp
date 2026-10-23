@@ -1,6 +1,7 @@
-// Direct tests for the string snapping dispatcher, and for area-matched
-// snapping (snap_pixel_to_reported_drainage_area_expanding_square) on a
-// synthetic tributary junction.
+// Direct tests for the string snapping dispatcher, for area-matched snapping
+// (snap_pixel_to_reported_drainage_area_expanding_square) on a synthetic
+// tributary junction, and for largest-area snapping
+// (snap_pixel_to_contributing_pixels_threshold_largest_area).
 
 #include <algorithm>
 #include <cmath>
@@ -223,6 +224,115 @@ void check_reported_area_snapping()
     check("T-SN4: reported_area without an area throws", needs_area);
 }
 
+// T-LA: largest-area snapping on the junction fixture and on the south-tilted
+// plane of make_flow, where every pixel drains due south so a pixel in row r
+// has r + 1 contributing pixels.
+void check_largest_area_snapping()
+{
+    const lsdtt::lsdtt_flowinfo flow = make_junction_flow();
+    auto count_of = [&](int r, int c) { return flow.s_vector_size(flow.flat_index(r, c)); };
+
+    // Brute-force maximum over the window, for comparison.
+    std::uint64_t window_max = 0;
+    for (int r = 10; r <= 16; ++r)
+        for (int c = 6; c <= 12; ++c) window_max = std::max(window_max, count_of(r, c));
+
+    lsdtt::lsdtt_largest_area_snap_options lo;
+    lo.contributing_pixels_threshold = 20;
+    lo.max_search_radius_pixels = 3;
+    const auto largest =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, 13, 9, lo);
+    check("T-LA1: from (13,9) with R=3 the trunk at the window's bottom row (16,10) is taken",
+          largest.status == lsdtt::lsdtt_snap_status::success && largest.snapped_row == 16 &&
+          largest.snapped_col == 10 && largest.snapped_flat == flow.flat_index(16, 10) &&
+          largest.snapped_contributing_pixels == window_max &&
+          largest.search_radius_pixels == 3 && largest.downstream_steps == -1);
+
+    // The threshold only accepts or rejects the largest cell.
+    lsdtt::lsdtt_largest_area_snap_options high = lo;
+    high.contributing_pixels_threshold = window_max;
+    const auto at_threshold =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, 13, 9, high);
+    high.contributing_pixels_threshold = window_max + 1;
+    const auto above_threshold =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, 13, 9, high);
+    check("T-LA2: a threshold equal to the largest count succeeds (>=), one above fails",
+          at_threshold.status == lsdtt::lsdtt_snap_status::success &&
+          at_threshold.snapped_flat == largest.snapped_flat &&
+          above_threshold.status ==
+              lsdtt::lsdtt_snap_status::threshold_not_found_in_search_window &&
+          above_threshold.snapped_flat == -1);
+
+    lsdtt::lsdtt_largest_area_snap_options own = lo;
+    own.max_search_radius_pixels = 0;
+    own.contributing_pixels_threshold = 1;
+    const auto own_pixel =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, 13, 9, own);
+    check("T-LA3: R=0 with threshold 1 keeps the input pixel",
+          own_pixel.status == lsdtt::lsdtt_snap_status::success && own_pixel.snapped_row == 13 &&
+          own_pixel.snapped_col == 9 && own_pixel.search_radius_pixels == 0);
+
+    const auto off_grid =
+        lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, -5, 2, lo);
+    check("T-LA4: a point off the grid -> input_out_of_bounds",
+          off_grid.status == lsdtt::lsdtt_snap_status::input_out_of_bounds);
+
+    auto throws = [&](std::uint64_t thr, int radius) {
+        lsdtt::lsdtt_largest_area_snap_options o;
+        o.contributing_pixels_threshold = thr;
+        o.max_search_radius_pixels = radius;
+        try
+        {
+            (void)lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(flow, 13, 9, o);
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+        return false;
+    };
+    check("T-LA5: a zero threshold and a negative radius throw", throws(0, 3) && throws(20, -1));
+
+    // Ties on count go to the nearer pixel: on the plane every bottom-row
+    // pixel has 7 contributing pixels, and (6,3) is the nearest to (4,3).
+    const lsdtt::lsdtt_flowinfo plane = make_flow();
+    lsdtt::lsdtt_largest_area_snap_options po;
+    po.contributing_pixels_threshold = 1;
+    po.max_search_radius_pixels = 3;
+    const auto tie = lsdtt::snap_pixel_to_contributing_pixels_threshold_largest_area(plane, 4, 3, po);
+    check("T-LA6: equal counts go to the nearer pixel ((6,3) from (4,3))",
+          plane.s_vector_size(plane.flat_index(6, 1)) == 7 &&
+          plane.s_vector_size(plane.flat_index(6, 3)) == 7 &&
+          tie.status == lsdtt::lsdtt_snap_status::success && tie.snapped_row == 6 &&
+          tie.snapped_col == 3 && tie.search_radius_pixels == 2);
+
+    // Dispatch: largest_area takes the threshold and max radius from the
+    // square options and ignores min_search_radius_pixels.
+    lsdtt::lsdtt_square_snap_options sq;
+    sq.contributing_pixels_threshold = lo.contributing_pixels_threshold;
+    sq.min_search_radius_pixels = 2;
+    sq.max_search_radius_pixels = lo.max_search_radius_pixels;
+    lsdtt::lsdtt_downstream_snap_options ds;
+    ds.contributing_pixels_threshold = 20;
+    const auto dispatched = lsdtt::snap_pixel_by_method(flow, 13, 9, "largest_area", sq, ds);
+    check("T-LA7: largest_area dispatch matches the direct call",
+          dispatched.status == largest.status && dispatched.snapped_flat == largest.snapped_flat &&
+          dispatched.search_radius_pixels == largest.search_radius_pixels);
+    lsdtt::lsdtt_reported_area_snap_options ao;
+    const auto area_overload =
+        lsdtt::snap_pixel_by_method(flow, 13, 9, "largest_area", sq, ds, 1.0, ao);
+    check("T-LA7: the area overload passes largest_area through unchanged",
+          area_overload.status == largest.status &&
+          area_overload.snapped_flat == largest.snapped_flat);
+    bool listed = false;
+    try { (void)lsdtt::snap_pixel_by_method(flow, 13, 9, "sideways", sq, ds); }
+    catch (const std::invalid_argument& e)
+    {
+        listed = std::string(e.what()).find("largest_area") != std::string::npos;
+    }
+    check("T-LA7: the unknown-method message lists largest_area", listed);
+}
+
 } // namespace
 
 int main()
@@ -281,6 +391,7 @@ int main()
     check("unknown method throws invalid_argument naming the method", unknown_threw);
 
     check_reported_area_snapping();
+    check_largest_area_snapping();
 
     std::cout << "RESULT: " << (failures == 0 ? "PASS" : "FAIL") << '\n';
     return failures == 0 ? 0 : 1;

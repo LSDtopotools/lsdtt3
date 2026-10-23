@@ -57,10 +57,19 @@ void bind_raster_ridgeline(nb::module_& m)
 {
     nb::class_<Ridgeline>(m, "Ridgeline", R"doc(
 An ordered, four-connected raster ridgeline with profile-analysis methods.
+
+Parameters
+----------
+grid : Raster
+    Raster whose grid the pixels refer to.
+pixels : array-like of int
+    N x 2 ``(row, col)`` pixels along the ridge, in order (at least two).
 )doc")
         .def(nb::init<const Raster&, nb::object>(), nb::arg("grid"), nb::arg("pixels"))
-        .def_prop_ro("pixels", [](const Ridgeline& r) { return nodes_array(r.native().nodes()); })
-        .def_prop_ro("positions", [](const Ridgeline& r) { return positions_array(r.native().positions()); })
+        .def_prop_ro("pixels", [](const Ridgeline& r) { return nodes_array(r.native().nodes()); },
+            nb::sig("def pixels(self) -> numpy.ndarray"), "N x 2 int64 array of (row, col).")
+        .def_prop_ro("positions", [](const Ridgeline& r) { return positions_array(r.native().positions()); },
+            nb::sig("def positions(self) -> numpy.ndarray"), "N x 2 float64 array of (x, y) map coordinates.")
         .def_prop_ro("distance_metres", [](const Ridgeline& r) { return r.native().distances(); })
         .def_prop_ro("elevation", [](const Ridgeline& r) { return r.native().elevations(); })
         .def_prop_ro("length_metres", [](const Ridgeline& r) { return r.native().total_length(); })

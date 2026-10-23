@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <string>
 #include <vector>
 #include <utility>
@@ -36,6 +37,27 @@ inline lsdtt::raster_resampling_method raster_resampling_method(
     throw std::invalid_argument(
         "method must be nearest, linear, mean, sum, min, max, cubic, mode, or conservative_mean");
 }
+// Pixel containing map point (x, y) in the grid's own CRS, using the
+// RasterMeta convention: row 0 is the north edge, a pixel holds
+// [x_min + col*cs, x_min + (col+1)*cs) x (y_max - (row+1)*cs, y_max - row*cs].
+// Returns false (row = col = -1) for a point off the grid or a non-finite one.
+inline bool pixel_of_xy(const lsdtt::lsdtt_raster_meta& meta, double x, double y, int& row, int& col)
+{
+    row = col = -1;
+    if (!std::isfinite(x) || !std::isfinite(y)) return false;
+    const double fcol = std::floor((x - meta.x_min) / meta.cell_size);
+    const double frow = std::floor((meta.y_max() - y) / meta.cell_size);
+    if (fcol < 0.0 || frow < 0.0 || fcol >= meta.n_cols || frow >= meta.n_rows) return false;
+    row = static_cast<int>(frow); col = static_cast<int>(fcol);
+    return true;
+}
+// Transform points in place from source_crs (any GDAL user CRS string, such
+// as "EPSG:4326" or WKT; lon/lat axis order for geographic CRSs) into the
+// CRS of meta. Throws std::invalid_argument when meta carries no CRS or
+// source_crs is not understood (raster_types.cpp).
+void transform_points_to_raster_crs(std::vector<double>& x, std::vector<double>& y,
+                                    const std::string& source_crs,
+                                    const lsdtt::lsdtt_raster_meta& meta);
 class Raster { public: explicit Raster(lsdtt::lsdtt_raster_cpu raster): raster_(std::move(raster)) {} static Raster read(const std::string& path) { lsdtt::lsdtt_data_loader loader; loader.open_raster(path); return Raster(lsdtt::lsdtt_raster_cpu(loader)); } void write(const std::string& path, const std::string& format) const { lsdtt::lsdtt_data_loader loader; loader.write_full(raster_.get_data(), raster_.get_meta(), path, lsdtt::resolve_raster_output_format(format)); } const lsdtt::lsdtt_raster_cpu& native() const noexcept { return raster_; } private: lsdtt::lsdtt_raster_cpu raster_; };
 class FlowInfo { public: explicit FlowInfo(lsdtt::lsdtt_flowinfo flow): flow_(std::make_shared<lsdtt::lsdtt_flowinfo>(std::move(flow))) {} FlowInfo(const Raster& dem, const std::string& boundary_conditions, bool interior_nodata_is_outlet, nb::object forced_outlets, bool allow_pits_as_outlets, int n_threads); const lsdtt::lsdtt_flowinfo& native() const noexcept { return *flow_; } std::shared_ptr<lsdtt::lsdtt_flowinfo> shared_native() const noexcept { return flow_; } private: std::shared_ptr<lsdtt::lsdtt_flowinfo> flow_; };
 class ChannelHeads { public: ChannelHeads(std::vector<std::int64_t> flats, std::string method, std::shared_ptr<lsdtt::lsdtt_flowinfo> flow, std::optional<lsdtt::lsdtt_raster_cpu> filtered_dem = std::nullopt, std::optional<lsdtt::lsdtt_raster_cpu> tangential_curvature = std::nullopt, std::optional<lsdtt::lsdtt_raster_cpu> channel_mask = std::nullopt, std::optional<lsdtt::lsdtt_raster_cpu> skeleton = std::nullopt, lsdtt::lsdtt_qq_data qq_data = {}): flats_(std::move(flats)), method_(std::move(method)), flow_(std::move(flow)), filtered_dem_(std::move(filtered_dem)), tangential_curvature_(std::move(tangential_curvature)), channel_mask_(std::move(channel_mask)), skeleton_(std::move(skeleton)), qq_data_(std::move(qq_data)) {} const std::vector<std::int64_t>& flats() const noexcept { return flats_; } const std::string& method() const noexcept { return method_; } const lsdtt::lsdtt_flowinfo& flow() const noexcept { return *flow_; } std::shared_ptr<lsdtt::lsdtt_flowinfo> shared_flow() const noexcept { return flow_; } const std::optional<lsdtt::lsdtt_raster_cpu>& filtered_dem() const noexcept { return filtered_dem_; } const std::optional<lsdtt::lsdtt_raster_cpu>& tangential_curvature() const noexcept { return tangential_curvature_; } const std::optional<lsdtt::lsdtt_raster_cpu>& channel_mask() const noexcept { return channel_mask_; } const std::optional<lsdtt::lsdtt_raster_cpu>& skeleton() const noexcept { return skeleton_; } const lsdtt::lsdtt_qq_data& qq_data() const noexcept { return qq_data_; } private: std::vector<std::int64_t> flats_; std::string method_; std::shared_ptr<lsdtt::lsdtt_flowinfo> flow_; std::optional<lsdtt::lsdtt_raster_cpu> filtered_dem_, tangential_curvature_, channel_mask_, skeleton_; lsdtt::lsdtt_qq_data qq_data_; };

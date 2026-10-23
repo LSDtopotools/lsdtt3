@@ -308,20 +308,26 @@ void declare_basin_outlet_parameters(
     string_default_map[k_basin_outlet_snapping_method] = "downstream";
     help_map[k_basin_outlet_snapping_method] = {"string", "downstream",
         "How outlet points are snapped onto the channel network.",
-        "Allowed values: none, expanding_square, downstream. "
+        "Allowed values: none, expanding_square, downstream, largest_area. "
         "none: use the mapped raster pixel directly. "
-        "expanding_square: search outward ring-by-ring until a pixel exceeding "
+        "expanding_square: search outward ring-by-ring until a pixel reaching "
         "basin_outlet_contributing_pixels_threshold is found. "
         "downstream: follow the D8 receiver chain until a qualifying pixel is "
-        "found.",
+        "found. "
+        "largest_area: take the pixel with the most contributing pixels in the "
+        "square of half-width basin_outlet_snap_max_search_radius_pixels, if it "
+        "reaches basin_outlet_contributing_pixels_threshold (a large radius can "
+        "jump onto a bigger neighbouring river).",
         group, "param", ""};
 
     const std::string k_basin_outlet_contributing_pixels_threshold =
         prefixed_parameter_key(prefix,
                                "basin_outlet_contributing_pixels_threshold");
-    int_default_map[k_basin_outlet_contributing_pixels_threshold] = 1000;
-    help_map[k_basin_outlet_contributing_pixels_threshold] = {"int", "1000",
-        "Contributing-pixel threshold a pixel must exceed to accept an outlet.",
+    int_default_map[k_basin_outlet_contributing_pixels_threshold] =
+        default_basin_outlet_contributing_pixels_threshold;
+    help_map[k_basin_outlet_contributing_pixels_threshold] = {"int",
+        std::to_string(default_basin_outlet_contributing_pixels_threshold),
+        "Contributing-pixel threshold a pixel must reach (>=) to accept an outlet.",
         "This is the total number of upslope contributing pixels from the "
         "flow-routing object, not the number of direct donors to a pixel. Used "
         "only when basin_outlet_snapping_method is not none. It is a separate "
@@ -343,9 +349,10 @@ void declare_basin_outlet_parameters(
     int_default_map[k_basin_outlet_snap_max_search_radius_pixels] = 25;
     help_map[k_basin_outlet_snap_max_search_radius_pixels] = {"int", "25",
         "Maximum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square. "
-        "The search stops at the first radius containing one or more "
-        "qualifying pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square or "
+        "largest_area. For expanding_square the search stops at the first "
+        "radius containing one or more qualifying pixels; for largest_area it "
+        "is the half-width of the square searched.",
         group, "param", ""};
 }
 
@@ -935,11 +942,12 @@ void declare_erosion_rate_input_parameters(std::map<std::string, float>&       f
         "not in the file, skips both.", dep.c_str());
     str("erosion_rate_snapping_method", "reported_area",
         "How a sample is snapped to the channel network: reported_area, expanding_square, "
-        "downstream or none.",
+        "downstream, largest_area or none.",
         "reported_area takes the nearest channel cell whose drainage area is within "
         "erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in "
         "area. Without a reported area it falls back to expanding_square (nearest channel "
-        "cell).", dep.c_str());
+        "cell). largest_area takes the cell with the most contributing pixels within "
+        "erosion_rate_snap_max_distance_metres.", dep.c_str());
     flt("erosion_rate_snap_max_distance_metres", 300.0f, "300",
         "Search radius for snapping a sample, in metres.",
         "Converted to pixels with the cell size and rounded up, so a parameter file stays valid "

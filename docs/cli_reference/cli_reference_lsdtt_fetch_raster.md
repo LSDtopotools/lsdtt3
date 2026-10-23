@@ -181,10 +181,10 @@ Silently preferring one would leave you unsure which area you actually got.
 | `prefetch_expand_factor` | float | `1.8` | Expansion factor when retrying bounds. Must be >1. |
 | `prefetch_max_iters` | int | `6` | Max first-guess expansion iterations. |
 | `prefetch_edge_buffer_pixels` | int | `3` | Coarse-stage edge buffer target. |
-| `basin_outlet_snapping_method` | string | `downstream` | Outlet snapping for basin delineation: `none`, `expanding_square`, or `downstream`. |
+| `basin_outlet_snapping_method` | string | `downstream` | Outlet snapping for basin delineation: `none`, `expanding_square`, `downstream`, or `largest_area`. `largest_area` takes the pixel with the most contributing pixels in the square of half-width `basin_outlet_snap_max_search_radius_pixels`, if it reaches the threshold (a wide square can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Minimum contributing-pixel threshold used during outlet snapping. |
 | `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` snapping. |
-| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` snapping. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` snapping, and the square's half-width for `largest_area`. |
 | `tight_basin_bbox_refetch` | bool | `true` | After basin delineation, refetch final group DEMs using tight basin bounds. |
 | `tight_basin_bbox_buffer_pixels` | int | `3` | Pixel buffer around basin envelope when forming tight refetch bounds. |
 | `basin_nested_enable` | bool | `true` | Enable staged outlet-mode nested fetching pipeline. |
@@ -823,10 +823,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `prefetch_expand_factor` | `float` | `1.8` | `param` | - | Expansion multiplier for iterative coarse prefetch. | Must be &gt; 1.0. |
 | `prefetch_max_iters` | `int` | `6` | `param` | - | Maximum prefetch expansion iterations per outlet/group. | Must be &gt;= 1. |
 | `prefetch_edge_buffer_pixels` | `int` | `3` | `param` | - | Minimum coarse-stage basin margin from raster edge (pixels). | Must be &gt;= 0. |
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Snapping method for outlet-mode basin delineation. | One of: none, expanding_square, downstream. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Snapping method for outlet-mode basin delineation. | One of: none, expanding_square, downstream, largest_area. largest_area takes the pixel with the most contributing pixels within basin_outlet_snap_max_search_radius_pixels. |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for outlet snapping. | Higher values snap outlets onto better-defined channels. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping radius in pixels. | Used when basin_outlet_snapping_method=expanding_square. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping radius in pixels. | Used when basin_outlet_snapping_method=expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping radius in pixels. | Used when basin_outlet_snapping_method=expanding_square or largest_area (the half-width of the square searched). |
 | `tight_basin_bbox_buffer_pixels` | `int` | `3` | `param` | - | Pixel buffer around delineated basin for tight refetch bounds. | A value of 3 gives a 7x7 fetch for a 1-pixel basin. |
 | `tight_basin_bbox_refetch` | `bool` | `true` | `param` | - | Refetch group DEMs using tight basin bounds after delineation. | Applied in bounds_mode=outlets. |
 | `auto_split_disconnected_basins` | `bool` | `true` | `param` | - | Auto-split distant/disconnected basins into multiple final DEMs. | Used in bounds_mode: outlets. |
