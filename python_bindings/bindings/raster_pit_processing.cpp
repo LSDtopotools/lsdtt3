@@ -292,11 +292,66 @@ Raster fill_pits_boundary_aware(
             priority_flood_backend(backend)));
     }
 
-    Raster outlets = make_outlet_mask(
-        raster, boundary[0] != 'n', boundary[1] != 'n',
-        boundary[2] != 'n', boundary[3] != 'n'
-    );
-    return fill_pits_with_outlets(raster, outlets, min_slope, n_threads, backend);
+    // Without a closed edge this is the fill the CLIs run: the raster border
+    // and every valid cell touching nodata are spill points.
+    if (boundary.find('n') == std::string::npos)
+    {
+        return Raster(lsdtt::fill_pits(
+            raster.native(), min_slope, boundary, n_threads,
+            priority_flood_backend(backend)));
+    }
+
+    // Closed edges: seed the valid pixels of the other edges, plus every valid
+    // cell touching nodata (a closed edge included), because nodata in a
+    // downloaded DEM marks where the data ends, not a wall.
+    const auto& metadata = raster.native().get_meta();
+    const auto& mask = raster.native().get_mask();
+    const int n_rows = metadata.n_rows;
+    const int n_cols = metadata.n_cols;
+    const auto valid = [&](int row, int col) {
+        return mask[static_cast<std::size_t>(row) * n_cols + col] != 0;
+    };
+    std::vector<int> rows;
+    std::vector<int> cols;
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            if (!valid(row, col)) continue;
+            bool seed = (row == 0 && boundary[0] != 'n') ||
+                        (col == n_cols - 1 && boundary[1] != 'n') ||
+                        (row == n_rows - 1 && boundary[2] != 'n') ||
+                        (col == 0 && boundary[3] != 'n');
+            for (int dr = -1; dr <= 1 && !seed; ++dr)
+            {
+                for (int dc = -1; dc <= 1 && !seed; ++dc)
+                {
+                    const int r = row + dr;
+                    const int c = col + dc;
+                    if (r >= 0 && r < n_rows && c >= 0 && c < n_cols && !valid(r, c))
+                    {
+                        seed = true;
+                    }
+                }
+            }
+            if (seed)
+            {
+                rows.push_back(row);
+                cols.push_back(col);
+            }
+        }
+    }
+    if (rows.empty())
+    {
+        throw std::invalid_argument(
+            "boundary_conditions leave no outlet: every edge is closed and no "
+            "valid pixel touches nodata"
+        );
+    }
+    return Raster(lsdtt::fill_pits_with_boundary(
+        raster.native(), min_slope, {rows}, {cols}, {"outlet"}, "outlet", n_threads,
+        priority_flood_backend(backend)
+    ));
 }
 
 lsdtt::breach_least_cost_options least_cost_options(
@@ -661,6 +716,11 @@ Fill pits with NESW open, closed, periodic, or base-level boundaries.
 Closed (``n``) edges are not outlets; periodic (``p``) edges wrap, so
 depressions spilling across the seam are filled to their true spill level.
 Fill with the same ``boundary_conditions`` you will give ``FlowInfo``.
+
+Every valid pixel touching nodata is also an outlet, including one on a
+closed edge, so DEMs with a nodata frame or voids (such as those from
+``fetch_dem``) drain out where the data ends. Nodata pixels on an open edge
+are skipped. Without a closed edge this is the same fill as ``fill_pits``.
 
 Parameters
 ----------

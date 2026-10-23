@@ -1,12 +1,18 @@
 # Installing lsdtt3
 
-Every route on this page installs a **pre-built release package**. You do not
+The main option for installation of `lsdtt3` is the **pre-built release package** which 
+installs a series of command line interface programs: you run these in a Linux terminal (or a terminal on your operating system).
+This method is the way the developers primarily use this software, and is built for automated, repeatable analysis of large topographic datasets. 
+
+However, you can also use `lsdtt3` in [Google Colab](#google-colab), in our [QGIS plugin](#qgis-plugin), and using our [Python package](#python-package)
+
+For the **pre-built release package** you do not
 need a compiler, you do not need to install GDAL or any other library, and on
 Linux you do not need `sudo` — the package carries the command-line tools and
 every library they depend on.
 
 > **Want the very latest code instead of a release?**
-> Then you need to compile it yourself. If you are not a developer do not do this. That activity is
+> Then you need to compile it yourself. If you are not a developer you really do not want to do this. That activity is
 > documented separately in
 > [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
 
@@ -19,13 +25,13 @@ Both of these hold the same files. Use whichever you can reach.
 | Source | Notes |
 |---|---|
 | [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. While the repository is in private beta you need to be a collaborator to see it. |
-| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they go out of date.  |
+| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they are more likeley to be out of date.  |
 
 File names look like this:
 
 ```
 lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native)
+lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native, but limited to QGIS packages)
 lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 

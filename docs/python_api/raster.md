@@ -1676,6 +1676,11 @@ Closed (``n``) edges are not outlets; periodic (``p``) edges wrap, so
 depressions spilling across the seam are filled to their true spill level.
 Fill with the same ``boundary_conditions`` you will give ``FlowInfo``.
 
+Every valid pixel touching nodata is also an outlet, including one on a
+closed edge, so DEMs with a nodata frame or voids (such as those from
+``fetch_dem``) drain out where the data ends. Nodata pixels on an open edge
+are skipped. Without a closed edge this is the same fill as ``fill_pits``.
+
 Parameters
 ----------
 raster : Raster
