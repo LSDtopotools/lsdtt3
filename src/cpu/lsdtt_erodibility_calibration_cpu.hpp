@@ -210,7 +210,7 @@ struct lsdtt_erosion_rate_read_result
 // ---------------------------------------------------------------------------
 struct lsdtt_erosion_rate_basin_options
 {
-    std::string snapping_method = "reported_area";   // reported_area | expanding_square | downstream | none
+    std::string snapping_method = "reported_area";   // reported_area | expanding_square | downstream | largest_area | none
     double snap_max_distance_m = 300.0;               // converted to pixels, rounded up
     std::uint64_t channel_threshold_pixels = 1000;    // snapping candidates
     double area_ratio_tolerance = 1.25;               // > 1

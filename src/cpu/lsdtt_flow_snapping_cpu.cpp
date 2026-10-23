@@ -17,7 +17,7 @@
 //
 //   contributing_pixels = flow.s_vector_size(flat)
 //
-// Two snapping behaviours are implemented:
+// Snapping behaviours implemented (the header has the full rules):
 //
 //   1. expanding_square
 //      Search outwards ring-by-ring in raster pixel space. At the first radius
@@ -29,6 +29,13 @@
 //   2. downstream_d8
 //      Follow the D8 receiver chain until the first cell is reached whose
 //      contributing-pixel count meets or exceeds the threshold.
+//
+//   3. largest_area
+//      The cell with the most contributing pixels in a square window, if it
+//      meets or exceeds the threshold.
+//
+//   4. reported_area
+//      The nearest channel cell whose area matches a reported area.
 //
 // Notes
 // -----
@@ -822,10 +829,21 @@ lsdtt_snap_result snap_pixel_by_method(
             flow, row, col, downstream_options);
     }
 
+    if (method == "largest_area")
+    {
+        lsdtt_largest_area_snap_options largest_options;
+        largest_options.contributing_pixels_threshold =
+            square_options.contributing_pixels_threshold;
+        largest_options.max_search_radius_pixels =
+            square_options.max_search_radius_pixels;
+        return snap_pixel_to_contributing_pixels_threshold_largest_area(
+            flow, row, col, largest_options);
+    }
+
     if (method == "none")
     {
         // Report the input pixel as the answer, so a caller can handle all
-        // three methods through one code path. The pixel is still validated:
+        // the methods through one code path. The pixel is still validated:
         // "no snapping" should not mean "no checking".
         lsdtt_snap_result out;
         out.input_row  = row;
@@ -856,7 +874,7 @@ lsdtt_snap_result snap_pixel_by_method(
 
     throw std::invalid_argument(
         "snap_pixel_by_method: unknown snapping method '" + method +
-        "'. Expected one of: none, expanding_square, downstream.");
+        "'. Expected one of: none, expanding_square, downstream, largest_area.");
 }
 
 lsdtt_snap_result snap_pixel_by_method(
@@ -875,14 +893,87 @@ lsdtt_snap_result snap_pixel_by_method(
         return snap_pixel_to_reported_drainage_area_expanding_square(
             flow, row, col, reported_area_m2, area_options);
     }
-    if (method == "expanding_square" || method == "downstream" || method == "none")
+    if (method == "expanding_square" || method == "downstream" ||
+        method == "largest_area" || method == "none")
     {
         return snap_pixel_by_method(
             flow, row, col, method, square_options, downstream_options);
     }
     throw std::invalid_argument(
         "snap_pixel_by_method: unknown snapping method '" + method +
-        "'. Expected one of: none, expanding_square, downstream, reported_area.");
+        "'. Expected one of: none, expanding_square, downstream, largest_area, "
+        "reported_area.");
+}
+
+lsdtt_snap_result snap_pixel_to_contributing_pixels_threshold_largest_area(
+    const lsdtt_flow_base&                 flow,
+    const int                              row,
+    const int                              col,
+    const lsdtt_largest_area_snap_options& options)
+{
+    const std::string fn = "snap_pixel_to_contributing_pixels_threshold_largest_area";
+    validate_common_preconditions(flow, fn);
+    if (options.contributing_pixels_threshold == 0)
+    {
+        throw std::invalid_argument(fn + ": contributing_pixels_threshold must be > 0");
+    }
+    if (options.max_search_radius_pixels < 0)
+    {
+        throw std::invalid_argument(fn + ": max_search_radius_pixels must be >= 0");
+    }
+
+    lsdtt_snap_result result = initialise_snap_result_from_row_col(flow, row, col);
+    if (result.status == lsdtt_snap_status::input_out_of_bounds)
+    {
+        return result;
+    }
+
+    bool          found = false;
+    std::int64_t  best_flat = -1;
+    std::uint64_t best_count = 0;
+    std::int64_t  best_distance_squared = 0;
+    int           best_ring = -1;
+
+    const int r_max = options.max_search_radius_pixels;
+    for (int r = row - r_max; r <= row + r_max; ++r)
+    {
+        for (int c = col - r_max; c <= col + r_max; ++c)
+        {
+            if (!flow.in_bounds(r, c)) continue;
+            const std::int64_t flat = flow.flat_index_unchecked(r, c);
+            if (!flow.is_valid_cell(flat)) continue;
+            const std::uint64_t n_pix = flow.s_vector_size_unchecked(flat);
+            const std::int64_t dr = static_cast<std::int64_t>(r) - row;
+            const std::int64_t dc = static_cast<std::int64_t>(c) - col;
+            const std::int64_t distance_squared = dr * dr + dc * dc;
+
+            const bool better =
+                !found || n_pix > best_count ||
+                (n_pix == best_count &&
+                 (distance_squared < best_distance_squared ||
+                  (distance_squared == best_distance_squared && flat < best_flat)));
+            if (better)
+            {
+                found = true;
+                best_flat = flat;
+                best_count = n_pix;
+                best_distance_squared = distance_squared;
+                best_ring = static_cast<int>(std::max(std::llabs(dr), std::llabs(dc)));
+            }
+        }
+    }
+
+    // The largest cell is the answer whatever the threshold; the threshold
+    // only decides whether that answer is accepted.
+    if (!found || best_count < options.contributing_pixels_threshold)
+    {
+        result.status = lsdtt_snap_status::threshold_not_found_in_search_window;
+        return result;
+    }
+    write_successful_snap_to_result(flow, best_flat, best_count, result);
+    result.search_radius_pixels = best_ring;
+    result.downstream_steps     = -1;
+    return result;
 }
 
 lsdtt_snap_result snap_pixel_to_reported_drainage_area_expanding_square(

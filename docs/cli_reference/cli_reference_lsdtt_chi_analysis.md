@@ -77,10 +77,10 @@ If `basin_outlet_fname` is `NULL` the largest basin in the DEM is used automatic
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `basin_outlet_fname` | string | `NULL` | CSV, FlatGeobuf, or GeoPackage of outlet points. CSV must have `latitude` and `longitude` columns (EPSG:4326). |
-| `basin_outlet_snapping_method` | string | `downstream` | `none`, `expanding_square`, or `downstream`. |
+| `basin_outlet_snapping_method` | string | `downstream` | `none`, `expanding_square`, `downstream`, or `largest_area`. `largest_area` takes the pixel with the most contributing pixels in the square of half-width `basin_outlet_snap_max_search_radius_pixels`, if it reaches the threshold (a wide square can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing-pixel count required at the snapped outlet. |
 | `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). |
-| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square`, and the square's half-width for `largest_area` (pixels). |
 
 ---
 
@@ -580,7 +580,7 @@ reported area, `reported_area` snapping takes the nearest channel cell whose dra
 area is within `erosion_rate_area_mismatch_tolerance` of it (a ratio, default 1.25),
 otherwise the cell closest in area. Without one it falls back to the nearest channel
 cell, and the run says that mis-snapping onto a neighbouring channel cannot then be
-detected. `expanding_square`, `downstream` and `none` are also accepted.
+detected. `expanding_square`, `downstream`, `largest_area` and `none` are also accepted.
 
 The basin of each snapped outlet must be complete (it may not reach the DEM edge or
 nodata). The DEM area is compared with the reported area; a ratio outside 1/tol..tol
@@ -826,10 +826,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `basin_outlet_fname` | `string` | `NULL` | `param` | - | File of basin outlet points (CSV, FlatGeobuf, or GeoPackage). | If NULL (default), the largest basin outlet in the DEM is used. CSV files must have 'latitude' and 'longitude' columns (EPSG:4326). |
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of supplied outlet points to qualifying channel pixels. | Allowed values: none, expanding_square, downstream. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of supplied outlet points to qualifying channel pixels. | Allowed values: none, expanding_square, downstream, largest_area. largest_area takes the pixel with the most contributing pixels in the square of half-width basin_outlet_snap_max_search_radius_pixels, if it reaches basin_outlet_contributing_pixels_threshold. |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional outlet snapping. | Total upslope contributing pixels required at the snapped cell. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square or largest_area (the half-width of the square searched). |
 
 ### Diagnostic data maps
 
@@ -964,7 +964,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `erosion_rate_uncertainty_column` | `string` | `erosion_rate_uncertainty` | `param` | `erosion_rate_fname` | Column holding the 1-sigma uncertainty of the erosion rate. | Same units as the rate. A missing column is an error; a blank or non-positive value marks that sample missing_uncertainty. |
 | `erosion_rate_units` | `string` | - | `param` | `erosion_rate_fname` | Units of the erosion rate and its uncertainty (required, no default): mm_per_kyr, m_per_myr, cm_per_kyr, mm_per_yr or m_per_yr. | mm_per_kyr equals m_per_myr (1e-6 m/yr). Mass fluxes (g cm^-2 yr^-1) are refused: divide by the rock density first. When the file has an erosion_rate_units column every row must agree with this parameter. |
 | `erosion_rate_reported_area_column` | `string` | `reported_area_km2` | `param` | `erosion_rate_fname` | Column holding each sample's reported drainage area in km^2. | Used for area-matched snapping and the DEM-vs-reported area check. Empty, or a column not in the file, skips both. |
-| `erosion_rate_snapping_method` | `string` | `reported_area` | `param` | `erosion_rate_fname` | How a sample is snapped to the channel network: reported_area, expanding_square, downstream or none. | reported_area takes the nearest channel cell whose drainage area is within erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in area. Without a reported area it falls back to expanding_square (nearest channel cell). |
+| `erosion_rate_snapping_method` | `string` | `reported_area` | `param` | `erosion_rate_fname` | How a sample is snapped to the channel network: reported_area, expanding_square, downstream, largest_area or none. | reported_area takes the nearest channel cell whose drainage area is within erosion_rate_area_mismatch_tolerance of the reported area, else the cell closest in area. Without a reported area it falls back to expanding_square (nearest channel cell). largest_area takes the cell with the most contributing pixels within erosion_rate_snap_max_distance_metres. |
 | `erosion_rate_snap_max_distance_metres` | `float` | `300` | `param` | `erosion_rate_fname` | Search radius for snapping a sample, in metres. | Converted to pixels with the cell size and rounded up, so a parameter file stays valid across resolutions. |
 | `erosion_rate_area_mismatch_tolerance` | `float` | `1.25` | `param` | `erosion_rate_fname` | Ratio tolerance (&gt; 1) between the DEM drainage area and the reported area. | A basin with A_dem / A_reported outside [1/tol, tol] is area_mismatch. Also the matching tolerance of reported_area snapping. |
 | `erosion_rate_area_mismatch_action` | `string` | `exclude` | `param` | `erosion_rate_fname` | What an area_mismatch basin does: exclude (written, kept out of every fit) or flag (kept in the fits and flagged). | - |

@@ -413,22 +413,108 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("elevation", &LandscapeStepResult::elevation)
-        .def_prop_ro("iteration", &LandscapeStepResult::iteration)
-        .def_prop_ro("time_years", &LandscapeStepResult::time_years)
-        .def_prop_ro("delta_max_elevation", &LandscapeStepResult::delta_max_elevation)
-        .def_prop_ro("delta_mean_elevation", &LandscapeStepResult::delta_mean_elevation)
-        .def_prop_ro("max_local_elevation_change", &LandscapeStepResult::max_local_elevation_change)
-        .def_prop_ro("p999_local_elevation_change", &LandscapeStepResult::p999_local_elevation_change)
-        .def_prop_ro("mean_erosion_rate", &LandscapeStepResult::mean_erosion_rate)
-        .def_prop_ro("max_erosion_rate", &LandscapeStepResult::max_erosion_rate)
-        .def_prop_ro("erosion_rate", &LandscapeStepResult::erosion_rate);
+        .def_prop_ro("elevation", &LandscapeStepResult::elevation, "Elevation (m) after the step(s).")
+        .def_prop_ro("iteration", &LandscapeStepResult::iteration, "Total number of steps the model has taken.")
+        .def_prop_ro("time_years", &LandscapeStepResult::time_years, "Model time (years).")
+        .def_prop_ro("delta_max_elevation", &LandscapeStepResult::delta_max_elevation, "Absolute change of the maximum elevation over the last step (m).")
+        .def_prop_ro("delta_mean_elevation", &LandscapeStepResult::delta_mean_elevation, "Absolute change of the mean elevation over the last step (m).")
+        .def_prop_ro("max_local_elevation_change", &LandscapeStepResult::max_local_elevation_change, "Largest absolute per-pixel elevation change over the last step (m).")
+        .def_prop_ro("p999_local_elevation_change", &LandscapeStepResult::p999_local_elevation_change, "99.9th percentile of the absolute per-pixel elevation change (m); a robust steady-state measure.")
+        .def_prop_ro("mean_erosion_rate", &LandscapeStepResult::mean_erosion_rate, "Mean erosion rate over the last step (m/yr, before uplift).")
+        .def_prop_ro("max_erosion_rate", &LandscapeStepResult::max_erosion_rate, "Largest erosion rate over the last step (m/yr, before uplift).")
+        .def_prop_ro("erosion_rate", &LandscapeStepResult::erosion_rate, nb::sig("def erosion_rate(self) -> Raster | None"), "Per-pixel erosion rate Raster (m/yr, positive = erosion, uplift removed) if requested, else None.");
 
     nb::class_<LandscapeModel>(module, "LandscapeModel", R"doc(
 Stateful coupled fluvial-incision and hillslope-transport landscape model.
 
 The model owns its evolving elevation raster and reuses native hillslope solver
-workspaces between calls to ``step`` or ``run``.
+workspaces between calls to ``step`` or ``run``. Each step applies uplift,
+stream-power fluvial incision ``E = K a**m S**n`` (``a = A / dx`` the
+specific catchment area in m, ``S`` the gradient in m/m, ``E`` in m/yr) and
+hillslope transport. Typical use::
+
+    model = lsdtt3.LandscapeModel(dem, timestep_years=100, uplift_rate=1e-4)
+    result = model.run(1000)          # 1000 steps of 100 years
+    result.elevation.write("evolved.tif")
+
+Parameters
+----------
+dem : Raster
+    Initial, depression-conditioned elevation surface (m) in a projected
+    metre CRS.
+timestep_years : float, default=100.0
+    Duration (years) of each call to ``step``.
+erodibility : float, default=0.001
+    Stream-power erodibility K (> 0), in the specific-area convention above;
+    also the reference K for ``erodibility_field``.
+m_exponent, n_exponent : float, default=0.45, 1.0
+    Stream-power exponents on specific area and slope.
+uplift_rate : float, default=0.0001
+    Uniform rock uplift rate in m/yr.
+hillslope_diffusivity : float, default=0.001
+    Hillslope diffusivity D in m^2/yr.
+hillslope_model : {"none", "linear", "roering", "roering_implicit", "cidre", "adi", "cellular"}, default="cidre"
+    Hillslope process model: ``linear`` explicit diffusion, ``roering``
+    explicit nonlinear flux (Roering et al. 1999), ``roering_implicit``
+    backward-Euler nonlinear solver, ``cidre`` Carretier et al. (2016),
+    ``adi`` implicit linear diffusion, ``cellular`` cellular transport;
+    ``none`` disables hillslope transport.
+nonlinear_hillslopes : bool, default=False
+    Use the Roering nonlinear flux law where the model supports it.
+critical_hillslope_slope : float, default=0.8
+    Critical gradient S_c (m/m) of the nonlinear flux law.
+incision_threshold_specific_area : float, default=0.0
+    Channel threshold in specific catchment area A/dx (metres); zero supports fully coupled runs.
+incision_threshold_area : float, default=0.0
+    Deprecated alias of ``incision_threshold_specific_area`` (emits a
+    ``DeprecationWarning``).
+coupling_regime : {"automatic", "coupled", "channels_as_boundaries"}, default="automatic"
+    ``coupled``: hillslope and fluvial processes act everywhere, so valleys
+    and drainage density emerge; ``channels_as_boundaries``: channel pixels
+    (above the threshold or in ``channel_mask``) are fixed boundaries of the
+    hillslope solve; ``automatic`` chooses ``channels_as_boundaries`` when a
+    positive threshold or a channel mask is given, else ``coupled``.
+boundary_conditions : str, default='oooo'
+    Four NESW codes: ``o`` open, ``n`` no-flux, ``p`` periodic, ``b`` base
+    level.
+fluvial_method : {"d8", "dinf", "none"}, default="d8"
+    Fluvial incision routing method, or ``none`` for hillslope-only evolution.
+channel_mask : Raster or None, default=None
+    Same-grid 0/1 imposed channel raster.
+hold_channel_mask_fixed : bool, default=False
+    Add imposed channel pixels to the fixed-elevation set.
+fixed_pixels : array-like of int or None, default=None
+    Explicit N x 2 ``(row, col)`` fixed-elevation cells. None uses the open
+    and base-level edges.
+n_threads : int, default=0
+    OpenMP thread count; zero uses the runtime default.
+baselevel_fall_rate : float, default=0.0
+    Downward motion of fixed base-level cells in m/yr.
+cellular_r_match : float, default=0.85
+    ``cellular`` only: slope ratio r = S / S_c (0 < r < 1) above which the
+    nonlinear mobility ``1 / (1 - r**2)`` is continued linearly, avoiding
+    the singularity at S_c.
+cellular_cfl_safety : float, default=0.8
+    ``cellular`` only: stability safety factor on the substep (0 < f <= 1).
+cellular_nonlocal_fraction : float, default=0.0
+    ``cellular`` only: fraction of near-critical excess flux moved
+    non-locally (0 keeps the local solver exactly).
+cellular_nonlocal_activation_ratio : float, default=0.8
+    ``cellular`` only: slope / S_c ratio (0-1) above which non-local
+    transfer starts.
+cellular_nonlocal_deposition_probability : float, default=0.5
+    ``cellular`` only: probability (0-1] that non-local material deposits at
+    each hop.
+cellular_nonlocal_max_hops : int, default=4
+    ``cellular`` only: largest number of cells non-local material travels.
+erodibility_field : Raster or numpy.ndarray or None, default=None
+    Per-pixel absolute erodibility K replacing ``erodibility`` in the fluvial
+    step: a Raster strictly on the DEM grid or a ``(n_rows, n_cols)`` array
+    (NaN only on DEM nodata). Every valid pixel needs a finite K > 0.
+erodibility_m_exponent : float or None, default=None
+    The m the field was calibrated for; a different m raises ``ValueError``.
+erodibility_area_convention : {"map_area", "specific_area"} or None, default=None
+    Area convention of the field; ``map_area`` K is converted by dx**m.
 
 Authors
 -------
@@ -561,7 +647,7 @@ B. Gailleton
            nb::arg("erodibility_field") = nb::none(),
            nb::arg("erodibility_m_exponent") = nb::none(),
            nb::arg("erodibility_area_convention") = nb::none())
-        .def_prop_ro("elevation", &LandscapeModel::elevation)
+        .def_prop_ro("elevation", &LandscapeModel::elevation, "Current elevation Raster (m).")
         .def_prop_ro("erodibility_field", &LandscapeModel::erodibility_field,
                      "The per-pixel erodibility in use (run convention), or None.")
         .def("set_erodibility_field", &LandscapeModel::set_erodibility_field,
@@ -583,11 +669,11 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("iteration", &LandscapeModel::iteration)
-        .def_prop_ro("time_years", &LandscapeModel::time_years)
+        .def_prop_ro("iteration", &LandscapeModel::iteration, "Number of steps taken so far.")
+        .def_prop_ro("time_years", &LandscapeModel::time_years, "Model time (years).")
         .def_prop_ro("coupling_regime", &LandscapeModel::coupling_regime,
                      "Resolved coupling experiment: coupled or channels_as_boundaries.")
-        .def_prop_ro("hillslope_model", &LandscapeModel::hillslope_model)
+        .def_prop_ro("hillslope_model", &LandscapeModel::hillslope_model, "Name of the hillslope model in use.")
         .def("set_forcing", &LandscapeModel::set_forcing,
              nb::arg("uplift_rate"), nb::arg("baselevel_fall_rate") = 0.0f, R"doc(
 Change the uniform tectonic/base-level forcing used by subsequent steps.

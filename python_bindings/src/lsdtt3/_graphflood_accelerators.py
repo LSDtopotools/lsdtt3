@@ -248,6 +248,14 @@ def run_graphflood_multigrid(
         Rows of ``(row, col, discharge_m3_s)``.
     initial_water_depth : Raster, optional
         Full-resolution initial depth.
+    median_dhw_convergence_tolerance_metres : float or None, default=None
+        Stop a solve when the median absolute water-depth change per step
+        (m) is at most this value (and the relative test below also holds).
+        None uses the backend's own default.
+    median_dhw_relative_convergence_tolerance : float or None, default=None
+        Relative counterpart: the median depth change divided by the depth
+        must also be at most this value (dimensionless). None uses the
+        backend's own default.
     **backend_options
         Options forwarded to every backend call.
 
@@ -534,6 +542,14 @@ def run_graphflood_induced(
         Maximum number of domain expansions after the first solve.
     point_inflows : array-like, optional
         Rows of ``(row, col, discharge_m3_s)``.
+    median_dhw_convergence_tolerance_metres : float or None, default=None
+        Stop a solve when the median absolute water-depth change per step
+        (m) is at most this value (and the relative test below also holds).
+        None uses the backend's own default.
+    median_dhw_relative_convergence_tolerance : float or None, default=None
+        Relative counterpart: the median depth change divided by the depth
+        must also be at most this value (dimensionless). None uses the
+        backend's own default.
     **backend_options
         Options forwarded to the backend.
 

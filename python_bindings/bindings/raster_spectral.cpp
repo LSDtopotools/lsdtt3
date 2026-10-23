@@ -164,21 +164,21 @@ cycles per metre and wavelengths are in metres.
         })
         .def_prop_ro("frequency_x", [](const SpectralResult& result) {
             return numpy_vector(frequency_axis(result.native().padded_cols, result.native().dfx));
-        })
+        }, nb::sig("def frequency_x(self) -> numpy.ndarray"))
         .def_prop_ro("frequency_y", [](const SpectralResult& result) {
             return numpy_vector(frequency_axis(result.native().padded_rows, result.native().dfy));
-        })
+        }, nb::sig("def frequency_y(self) -> numpy.ndarray"))
         .def_prop_ro("psd_2d", [](const SpectralResult& result) {
             return numpy_array2d(result.native().psd_2d);
-        })
+        }, nb::sig("def psd_2d(self) -> numpy.ndarray"))
         .def_prop_ro("background_psd_2d", [](const SpectralResult& result) {
             return numpy_array2d(result.native().background_psd_2d);
-        })
-        .def_prop_ro("frequency", [](const SpectralResult& result) { return numpy_vector(result.native().radial_frequency); })
-        .def_prop_ro("wavelength", [](const SpectralResult& result) { return numpy_vector(result.native().radial_wavelength); })
-        .def_prop_ro("psd", [](const SpectralResult& result) { return numpy_vector(result.native().radial_psd); })
-        .def_prop_ro("background_psd", [](const SpectralResult& result) { return numpy_vector(result.native().background_psd); })
-        .def_prop_ro("normalised_psd", [](const SpectralResult& result) { return numpy_vector(result.native().normalised_psd); })
+        }, nb::sig("def background_psd_2d(self) -> numpy.ndarray"))
+        .def_prop_ro("frequency", [](const SpectralResult& result) { return numpy_vector(result.native().radial_frequency); }, nb::sig("def frequency(self) -> numpy.ndarray"))
+        .def_prop_ro("wavelength", [](const SpectralResult& result) { return numpy_vector(result.native().radial_wavelength); }, nb::sig("def wavelength(self) -> numpy.ndarray"))
+        .def_prop_ro("psd", [](const SpectralResult& result) { return numpy_vector(result.native().radial_psd); }, nb::sig("def psd(self) -> numpy.ndarray"))
+        .def_prop_ro("background_psd", [](const SpectralResult& result) { return numpy_vector(result.native().background_psd); }, nb::sig("def background_psd(self) -> numpy.ndarray"))
+        .def_prop_ro("normalised_psd", [](const SpectralResult& result) { return numpy_vector(result.native().normalised_psd); }, nb::sig("def normalised_psd(self) -> numpy.ndarray"))
         .def_prop_ro("rollover_frequency", [](const SpectralResult& result) { return result.native().rollover_frequency; })
         .def_prop_ro("rollover_wavelength", [](const SpectralResult& result) {
             const double frequency = result.native().rollover_frequency;
@@ -205,35 +205,205 @@ cycles per metre and wavelengths are in metres.
 #else
         return false;
 #endif
-    }, "Return whether this build includes FFTW spectral support.");
+    }, R"doc(Return whether this build includes FFTW spectral support.
+
+Returns
+-------
+bool
+    True if the FFT-based functions (spectral analysis, filters, Wiener
+    channel heads) are available.
+)doc");
     m.def("spectral_analysis", &spectral_analysis, nb::arg("raster"),
         nb::arg("log_bin_width") = 0.05, nb::arg("n_background_iterations") = 100,
         nb::arg("seed") = -1, nb::arg("window") = "hann",
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
-        "Run full FFT-based spectral analysis and return a SpectralResult.");
+        R"doc(Run full FFT-based spectral analysis and return a SpectralResult.
+
+The detrended, tapered DEM is Fourier transformed and its power spectral
+density is compared with a Monte Carlo background of red-noise surfaces
+(Perron et al. 2008). Needs FFTW (``spectral_available()``).
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m) in a projected metre CRS.
+log_bin_width : float, default=0.05
+    Width of the log10-frequency bins of the binned spectrum.
+n_background_iterations : int, default=100
+    Number of background noise surfaces averaged.
+seed : int, default=-1
+    Base random seed of the background; negative uses a fixed built-in
+    sequence (still reproducible).
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+clip_to_valid_rectangle : bool, default=False
+    First crop to the largest all-valid rectangle (the result is then
+    smaller than the input).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+SpectralResult
+)doc");
     m.def("lowpass_filter", &lowpass_filter, nb::arg("raster"), nb::arg("cutoff_metres"),
         nb::arg("window") = "hann", nb::arg("clip_to_valid_rectangle") = false,
-        nb::arg("n_threads") = 0, "Return the long-wavelength DEM component.");
+        nb::arg("n_threads") = 0, R"doc(Return the long-wavelength DEM component.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m) in a projected metre CRS.
+cutoff_metres : float
+    Wavelengths (m) longer than this are kept.
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+clip_to_valid_rectangle : bool, default=False
+    First crop to the largest all-valid rectangle (the result is then
+    smaller than the input).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+)doc");
     m.def("highpass_filter", &highpass_filter, nb::arg("raster"), nb::arg("cutoff_metres"),
         nb::arg("window") = "hann", nb::arg("clip_to_valid_rectangle") = false,
-        nb::arg("n_threads") = 0, "Return the short-wavelength DEM component.");
+        nb::arg("n_threads") = 0, R"doc(Return the short-wavelength DEM component.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m) in a projected metre CRS.
+cutoff_metres : float
+    Wavelengths (m) shorter than this are kept.
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+clip_to_valid_rectangle : bool, default=False
+    First crop to the largest all-valid rectangle (the result is then
+    smaller than the input).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+)doc");
     m.def("bandpass_filter", &bandpass_filter, nb::arg("raster"), nb::arg("short_metres"),
         nb::arg("long_metres"), nb::arg("window") = "hann",
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
-        "Return the DEM component between two wavelengths.");
+        R"doc(Return the DEM component between two wavelengths.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m) in a projected metre CRS.
+short_metres, long_metres : float
+    Shortest and longest wavelength (m) kept; ``short_metres`` must be less
+    than ``long_metres``.
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+clip_to_valid_rectangle : bool, default=False
+    First crop to the largest all-valid rectangle (the result is then
+    smaller than the input).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+)doc");
     m.def("wiener_filter", &wiener_filter, nb::arg("raster"),
         nb::arg("signal_wavelength_long_metres") = 1000.0,
         nb::arg("signal_wavelength_short_metres") = 100.0, nb::arg("window") = "hann",
         nb::arg("clip_to_valid_rectangle") = false, nb::arg("n_threads") = 0,
-        "Attenuate high-frequency white noise with an adaptive Wiener filter.");
+        R"doc(Attenuate high-frequency white noise with an adaptive Wiener filter.
+
+A power law fitted to the spectrum between the two signal wavelengths gives
+the signal; the noise level comes from the near-Nyquist spectrum; each
+frequency is weighted by signal / (signal + noise).
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m) in a projected metre CRS.
+signal_wavelength_long_metres : float, default=1000.0
+    Longest wavelength (m) of the band used to fit the signal.
+signal_wavelength_short_metres : float, default=100.0
+    Shortest wavelength (m) of that band.
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+clip_to_valid_rectangle : bool, default=False
+    First crop to the largest all-valid rectangle (the result is then
+    smaller than the input).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    Filtered DEM (m).
+)doc");
     m.def("masked_surface_recovery", &masked_surface_recovery, nb::arg("raster"),
         nb::arg("mask"), nb::arg("cutoff_metres"), nb::arg("window") = "hann",
-        nb::arg("n_threads") = 0, "Recover a smooth surface from selected pixels.");
+        nb::arg("n_threads") = 0, R"doc(Recover a smooth surface from selected pixels.
+
+The DEM is detrended, zeroed outside ``mask`` and low-pass filtered, so a
+smooth long-wavelength surface is interpolated under the masked-out area
+(for example the piedmont surface beneath a mountain range).
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+mask : Raster
+    0/1 raster; pixels > 0.5 are used.
+cutoff_metres : float
+    Low-pass cut-off wavelength (m).
+window : {"hann", "hamming", "none"}, default="hann"
+    Taper applied before the FFT.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    Smooth surface (m), valid wherever the DEM is valid.
+)doc");
     m.def("detect_directional_periodicity", &detect_directional_periodicity,
         nb::arg("raster"), nb::arg("window_size_pixels"), nb::arg("step_pixels"),
         nb::arg("min_spacing_metres"), nb::arg("max_spacing_metres"),
         nb::arg("min_valid_fraction") = 0.6, nb::arg("n_threads") = 0,
-        "Detect local regularly spaced parallel features with sliding-window FFTs.");
+        R"doc(Detect local regularly spaced parallel features with sliding-window FFTs.
+
+Families of evenly spaced parallel lines (ditches, tracks, cultivation
+ridges) give a sharp peak in the 2D power spectrum at 1 / spacing. A
+window slides over the raster and the strongest peak in the spacing band
+is recorded; each pixel keeps its best window.
+
+Parameters
+----------
+raster : Raster
+    Input raster, for example a DEM or a curvature response.
+window_size_pixels : int
+    Window side (pixels, >= 8); should span several of the largest spacings.
+step_pixels : int
+    Window stride (pixels, >= 1), typically half the window.
+min_spacing_metres, max_spacing_metres : float
+    Range of spacings (m) searched; the minimum must exceed 2 cell sizes and
+    the maximum be below the window extent.
+min_valid_fraction : float, default=0.6
+    Windows with a smaller fraction of valid pixels are skipped.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+dict
+    ``"strength"`` (peak prominence), ``"spacing_metres"`` and
+    ``"orientation_degrees"`` (line orientation) Rasters.
+)doc");
 }
 
 } // namespace lsdtt3_python

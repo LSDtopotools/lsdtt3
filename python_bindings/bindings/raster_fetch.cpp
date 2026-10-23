@@ -426,9 +426,12 @@ verified selected watersheds and their snapped channel locations.
             for (const Raster& raster : result.basin_labels()) labels.append(raster);
             return labels;
         })
-        .def_prop_ro("outlets", &outlet_table)
-        .def_prop_ro("snapped_outlets", &snapped_outlet_table)
-        .def_prop_ro("groups", &group_table);
+        .def_prop_ro("outlets", &outlet_table, nb::sig("def outlets(self) -> pandas.DataFrame"),
+            "Initial outlet envelopes: outlet_id, longitude, latitude, status, iterations, west, south, east, north, message.")
+        .def_prop_ro("snapped_outlets", &snapped_outlet_table, nb::sig("def snapped_outlets(self) -> pandas.DataFrame"),
+            "Snapped outlets: group_id, outlet_id, row, col, x, y (pixel centre in the group raster's CRS).")
+        .def_prop_ro("groups", &group_table, nb::sig("def groups(self) -> pandas.DataFrame"),
+            "One row per DEM: group_id, west, south, east, north (WGS84), area_km2, outlet_ids, basins_verified, verification_message.");
 
     nb::class_<lsdtt::lsdtt_bounds_from_vector_result>(module, "VectorBounds", R"doc(
 WGS84 bounds derived from a vector layer.
@@ -463,28 +466,57 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
         R"doc(
 Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.
 
+The source tiles are downloaded, mosaicked and warped to a projected grid
+(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)
+stores the sea as exactly 0 m, not as nodata, so mask it before flow
+routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
+footprint are nodata.
+
 Parameters
 ----------
 west, south, east, north : float
-    WGS84 bounds in decimal degrees. Antimeridian-crossing requests are not
-    supported: ``west`` must be less than ``east``.
+    WGS84 bounds in decimal degrees (longitude west/east, latitude
+    south/north). Antimeridian-crossing requests are not supported:
+    ``west`` must be less than ``east``. ``VectorBounds.bbox`` from
+    ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.
 source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
-    ``cop30_aws`` is a keyless global 30 m default. OpenTopography reads its
-    key only from ``OT_API_KEY`` or ``OT_API_KEY_FILE``.
+    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.
+    OpenTopography reads its key only from the ``OT_API_KEY`` or
+    ``OT_API_KEY_FILE`` environment variables (never pass a key as an
+    argument). ``planetary_computer`` is keyless.
 target_epsg : int, optional
-    Output EPSG code. Zero selects UTM from the bounding-box centre.
+    Output EPSG code. Zero selects the UTM zone of the bounding-box centre.
 grid_spacing : float, optional
-    Output grid spacing in projected units.
-
+    Output cell size in target CRS units (m for UTM); default 30.
+resampling : str, optional
+    GDAL warp resampling method (``"cubic"`` default, ``"bilinear"``,
+    ``"near"``, ...).
+nodata_value : float, optional
+    Nodata value of the output (default -9999).
+size_pixels : int, optional
+    If > 0, crop an exact ``size_pixels`` x ``size_pixels`` square from the
+    centre of the warped grid; 0 keeps the full extent.
 cache_dir : str, optional
     Persistent cache directory. This is the only optional disk output; the
-    returned raster itself is kept in memory.
+    returned raster itself is kept in memory. Empty means no caching.
+ot_dem_type : str, optional
+    OpenTopography dataset, for example ``"COP30"``, ``"SRTMGL1"``,
+    ``"NASADEM"`` (see ``opentopography_datasets()``); other sources ignore it.
+pc_collection, pc_asset : str, optional
+    Planetary Computer STAC collection and asset key (defaults
+    ``"cop-dem-glo-30"`` and ``"data"``); other sources ignore them.
+http_timeout_seconds : int, optional
+    Total time limit per HTTP request in seconds.
+http_connect_timeout_seconds : int, optional
+    Connection time limit per HTTP request in seconds.
+http_max_retry : int, optional
+    Number of retries of a failed HTTP request.
 
 Returns
 -------
 Raster
-    A projected raster. Network, GDAL, and invalid-request failures raise
-    ``RuntimeError``.
+    A projected raster of elevation (m). Network, GDAL, and invalid-request
+    failures raise ``RuntimeError``.
 )doc");
 
     module.def("fetch_dem_for_outlets", &fetch_dem_for_outlets,
@@ -521,19 +553,51 @@ Parameters
 ----------
 outlets : geopandas.GeoDataFrame
     Point geometries defining outlet locations, in any declared CRS.
+source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
+    DEM source, as in ``fetch_dem``.
+target_epsg : int, optional
+    Output EPSG code; 0 selects UTM from each group's centre.
+grid_spacing : float, optional
+    Output cell size in target CRS units (m for UTM).
 initial_radius_km : float, optional
-    Initial half-width around each outlet before grouping.
+    Initial half-width (km) of the box around each outlet before grouping.
+auto_split_disconnected_basins : bool, optional
+    Split groups whose outlets form separate clusters.
+split_cluster_gap_km : float, optional
+    Gap (km) between outlet clusters above which a group is split.
 max_final_dem_area_km2 : float, optional
-    Largest allowed grouped initial extent before splitting it.
-snapping_method : {"none", "expanding_square", "downstream"}, optional
-    Outlet snapping used before each basin delineation.
-max_search_radius_pixels : int, optional
-    Largest expanding-square snap radius when ``snapping_method`` is
-    ``"expanding_square"``.
+    Largest allowed grouped initial extent (km^2) before splitting it.
+split_overlap_km : float, optional
+    Overlap (km) between split extents.
+max_basins_per_dem : int, optional
+    Largest number of outlets per DEM; 0 means no limit.
+cache_dir : str, optional
+    Persistent download cache directory; empty means none.
+resampling : str, optional
+    GDAL warp resampling method.
+nodata_value : float, optional
+    Nodata value of the output DEMs.
+snapping_method : {"none", "expanding_square", "downstream", "largest_area"}, optional
+    Outlet snapping used before each basin delineation; the same rules as
+    ``FlowInfo.snap_points`` and the CLI ``basin_outlet_snapping_method``.
+contributing_pixels_threshold : int, optional
+    Channel threshold (contributing pixels) that outlets are snapped to.
 edge_buffer_pixels, nodata_buffer_pixels : int, optional
-    Required basin clearance from the DEM edge and invalid cells.
+    Required basin clearance (pixels) from the DEM edge and invalid cells.
+tight_bbox_buffer_pixels : int, optional
+    Margin (pixels) added around the verified basins for the tight refetch.
+verify_expand_factor : float, optional
+    Factor (> 1) by which an extent grows when a basin reaches its edge.
+verify_max_iters : int, optional
+    Largest number of fetch-and-verify attempts per group.
 tight_bbox_refetch : bool, optional
     Refetch a smaller final DEM around the verified basin footprint.
+min_search_radius_pixels : int, optional
+    Smallest expanding-square snap radius (pixels).
+max_search_radius_pixels : int, optional
+    Largest expanding-square snap radius when ``snapping_method`` is
+    ``"expanding_square"``, and the half-width of the square searched for
+    ``"largest_area"``.
 mask_outside_basins : bool, optional
     Set cells outside the selected basin union to nodata in returned DEMs.
 
@@ -549,19 +613,70 @@ OutletFetchResult
     }, nb::arg("path"), nb::arg("layer") = "", R"doc(
 Derive WGS84 ``(west, south, east, north)`` bounds from a vector file.
 
-The layer must contain polygons or exactly two points. Use the result's
-``bbox`` directly as keyword arguments to :func:`fetch_dem`.
+The layer must contain polygons or exactly two points (opposite corners of
+a box). Geometry is transformed to WGS84 first. ``bbox`` is a tuple
+``(west, south, east, north)``, so ``fetch_dem(*b.bbox)`` fetches the area.
+
+Parameters
+----------
+path : str
+    Vector file readable by GDAL/OGR (GeoPackage, shapefile, GeoJSON, ...).
+layer : str, default=""
+    Layer name; empty uses the first layer.
+
+Returns
+-------
+VectorBounds
+    Bounds in decimal degrees plus diagnostics (``ok``, ``message``).
 )doc");
 
     module.def("http_available", &lsdtt::http_available,
-        "Return whether the bundled GDAL has HTTP support.");
+        R"doc(Return whether the bundled GDAL has HTTP support.
+
+Returns
+-------
+bool
+    True if remote downloads (``fetch_dem``) can work.
+)doc");
     module.def("utm_epsg_for_point", &lsdtt::utm_epsg_for_point,
-        nb::arg("longitude"), nb::arg("latitude"),
-        "Return the UTM EPSG code containing a WGS84 point.");
+        nb::arg("longitude"), nb::arg("latitude"), R"doc(
+Return the UTM EPSG code containing a WGS84 point.
+
+Parameters
+----------
+longitude, latitude : float
+    WGS84 position in decimal degrees (longitude first).
+
+Returns
+-------
+int
+    EPSG code of the WGS84 UTM zone: 326zz in the northern hemisphere,
+    327zz in the southern (for example 32633 for UTM 33N).
+)doc");
     module.def("cop30_tiles_for_bbox", &lsdtt::cop30_tiles_for_bbox,
-        nb::arg("west"), nb::arg("south"), nb::arg("east"), nb::arg("north"));
+        nb::arg("west"), nb::arg("south"), nb::arg("east"), nb::arg("north"), R"doc(
+Return the Copernicus 30 m DEM tile names covering a WGS84 box.
+
+Parameters
+----------
+west, south, east, north : float
+    WGS84 bounds in decimal degrees.
+
+Returns
+-------
+list of str
+    Tile identifiers of the 1 x 1 degree tiles intersecting the box.
+)doc");
     module.def("opentopography_datasets", &opentopography_datasets,
-        "Return OpenTopography DEM catalogue records as dictionaries.");
+        R"doc(Return OpenTopography DEM catalogue records as dictionaries.
+
+Returns
+-------
+list of dict
+    One dict per dataset with keys ``demtype`` (the ``ot_dem_type`` value
+    for ``fetch_dem``), ``name``, ``resolution``, ``coverage``,
+    ``description``, ``citation`` and ``max_area_km2``.
+)doc");
 }
 
 } // namespace lsdtt3_python

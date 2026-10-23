@@ -445,10 +445,10 @@ static int run_hype_model(
             return 1;
         }
         if (snapping_method != "none" && snapping_method != "expanding_square" &&
-            snapping_method != "downstream")
+            snapping_method != "downstream" && snapping_method != "largest_area")
         {
             std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
-                         "none, expanding_square, downstream. Got: "
+                         "none, expanding_square, downstream, largest_area. Got: "
                       << sf["basin_outlet_snapping_method"] << "\n";
             return 1;
         }
@@ -705,7 +705,7 @@ static int run_hype_model(
                     " is not on the channel network (threshold_contributing_pixels " +
                     std::to_string(ifs["threshold_contributing_pixels"]) +
                     "). basin_outlet_snapping_method '" + snapping_method +
-                    "' left it there; use expanding_square or downstream to move "
+                    "' left it there; use expanding_square, downstream or largest_area to move "
                     "outlets onto the channel, or lower threshold_contributing_pixels");
             }
             outlet_flats = lsdtt::subbasin_outlets_from_user_flats(*flow, *network,

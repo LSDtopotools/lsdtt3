@@ -82,10 +82,10 @@ The outlet CSV **must** contain columns named `latitude` and `longitude` (decima
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `basin_outlet_snapping_method` | string | `none` | Snap outlets to pixels exceeding a contributing-pixel threshold. Unlike extraction workflows, basin statistics defaults to `none` so an authoritative gauge/outlet pixel is not moved implicitly. `expanding_square` searches ring-by-ring; `downstream` follows the D8 receiver chain. |
+| `basin_outlet_snapping_method` | string | `none` | Snap outlets to pixels exceeding a contributing-pixel threshold. Unlike extraction workflows, basin statistics defaults to `none` so an authoritative gauge/outlet pixel is not moved implicitly. `expanding_square` searches ring-by-ring; `downstream` follows the D8 receiver chain; `largest_area` takes the pixel with the most contributing pixels in the square of half-width `basin_outlet_snap_max_search_radius_pixels`, if it reaches the threshold (a wide square can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Minimum contributing-pixel count for snapping. |
 | `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius for `expanding_square` (pixels). `0` tests the input pixel first. |
-| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square` (pixels). |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius for `expanding_square`, and the square's half-width for `largest_area` (pixels). |
 
 ---
 
@@ -292,10 +292,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `basin_outlet_snapping_method` | `string` | `none` | `param` | - | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Unlike extraction workflows, basin statistics defaults to none so an authoritative gauge/outlet pixel is not moved implicitly. Allowed values: none, expanding_square, downstream. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_snapping_method` | `string` | `none` | `param` | - | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Unlike extraction workflows, basin statistics defaults to none so an authoritative gauge/outlet pixel is not moved implicitly. Allowed values: none, expanding_square, downstream, largest_area. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. largest_area: take the pixel with the most contributing pixels in the square of half-width basin_outlet_snap_max_search_radius_pixels, if it is a qualifying pixel (a large radius can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional basin outlet snapping. | This is the total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. 0 means the mapped input pixel is tested first. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. The search stops at the first radius containing one or more qualifying pixels. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square or largest_area. For expanding_square the search stops at the first radius containing one or more qualifying pixels; for largest_area it is the half-width of the square searched. |
 
 ### Sea removal
 

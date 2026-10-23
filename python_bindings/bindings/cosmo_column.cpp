@@ -143,36 +143,144 @@ Set an erosion history, ordered from present backwards in time, then use
 ``transient`` to model depth profiles. Point steady-state and step-change
 calculations require no history. Erosion rates for these point calculations
 are effective rates in g/cm²/yr.
+
+The history (``set_erosion_history`` or ``read_erosion_history``) has rows
+``time`` (years before present at which the rate changes, increasing),
+``rate`` (erosion rate in m/yr; 0 means an instantaneous removal event) and
+``removal`` (metres removed, used only when rate is 0); the last row must be
+``time = -9999`` with the positive long-term background rate.
+
+Parameters
+----------
+rock_density_kg_m3 : float, default=2650.0
+    Rock density (kg/m^3, positive) converting depths in m to effective
+    depths in g/cm^2 (``depth_m * density * 0.1``).
 )doc")
         .def(nb::init<double>(), nb::arg("rock_density_kg_m3") = 2650.0)
         .def("set_erosion_history", &CRNColumn::set_erosion_history,
               nb::arg("time_yr_bp"), nb::arg("erosion_rate_m_yr"), nb::arg("removal_metres"),
-             R"doc(Set the history. Last row must be ``time=-9999`` with a positive background rate.)doc")
-        .def("read_erosion_history", &CRNColumn::read_erosion_history, nb::arg("path"))
-        .def_prop_ro("depth_change_m", &CRNColumn::depth_change_m)
-        .def_prop_ro("rock_density_kg_m3", &CRNColumn::rock_density_kg_m3)
-        .def_prop_ro("time_yr_bp", &CRNColumn::time_yr_bp)
-        .def_prop_ro("erosion_rate_m_yr", &CRNColumn::erosion_rate_m_yr)
-        .def_prop_ro("removal_m", &CRNColumn::removal_m)
+             R"doc(Set the history. Last row must be ``time=-9999`` with a positive background rate.
+
+Parameters
+----------
+time_yr_bp : list of float
+    Times (years before present) of each rate change, increasing; the last
+    is -9999.
+erosion_rate_m_yr : list of float
+    Erosion rate (m/yr) from each time; 0 marks an instantaneous removal.
+removal_metres : list of float
+    Depth removed (m) at rows with rate 0, else 0.
+
+Returns
+-------
+None
+)doc")
+        .def("read_erosion_history", &CRNColumn::read_erosion_history, nb::arg("path"), R"doc(
+Read the erosion history from a CSV file with header ``time,rate,removal``.
+
+Parameters
+----------
+path : str
+    CSV file; columns as in ``set_erosion_history`` (years BP, m/yr, m).
+
+Returns
+-------
+None
+)doc")
+        .def_prop_ro("depth_change_m", &CRNColumn::depth_change_m,
+            "Total depth (m) removed over the history: added to sampling depths to get their starting depths.")
+        .def_prop_ro("rock_density_kg_m3", &CRNColumn::rock_density_kg_m3, "Rock density (kg/m^3).")
+        .def_prop_ro("time_yr_bp", &CRNColumn::time_yr_bp, "History times (years before present).")
+        .def_prop_ro("erosion_rate_m_yr", &CRNColumn::erosion_rate_m_yr, "History erosion rates (m/yr).")
+        .def_prop_ro("removal_m", &CRNColumn::removal_m, "History removal depths (m).")
         .def("steady_state", &CRNColumn::steady_state,
              nb::arg("effective_depth_g_cm2") = 0.0,
              nb::arg("effective_erosion_rate_g_cm2_yr") = 0.01,
              nb::arg("production_scaling") = 1.0, nb::arg("total_shielding") = 1.0,
-             nb::arg("muon_scheme") = "BraucherBorchers")
+             nb::arg("muon_scheme") = "BraucherBorchers", R"doc(
+Return steady-state concentrations at one effective depth.
+
+Parameters
+----------
+effective_depth_g_cm2 : float, default=0.0
+    Sample depth as effective depth (g/cm^2); 0 is the surface.
+effective_erosion_rate_g_cm2_yr : float, default=0.01
+    Steady erosion rate (g/cm^2/yr).
+production_scaling : float, default=1.0
+    Production-scaling factor (1 at sea level, high latitude).
+total_shielding : float, default=1.0
+    Combined shielding factor (0-1; 1 = unshielded).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+
+Returns
+-------
+CRNColumnSample
+    Be-10, Al-26 and C-14 concentrations (atoms/g).
+)doc")
         .def("step_change", &CRNColumn::step_change,
              nb::arg("effective_depth_g_cm2") = 0.0,
              nb::arg("effective_erosion_rate_old_g_cm2_yr") = 0.01,
              nb::arg("effective_erosion_rate_new_g_cm2_yr") = 0.01,
              nb::arg("time_since_step_yr") = 0.0,
              nb::arg("production_scaling") = 1.0, nb::arg("total_shielding") = 1.0,
-             nb::arg("muon_scheme") = "BraucherBorchers")
+             nb::arg("muon_scheme") = "BraucherBorchers", R"doc(
+Return concentrations after a step change in erosion rate.
+
+Parameters
+----------
+effective_depth_g_cm2 : float, default=0.0
+    Sample depth as effective depth (g/cm^2).
+effective_erosion_rate_old_g_cm2_yr, effective_erosion_rate_new_g_cm2_yr : float, default=0.01
+    Erosion rate before and after the change (g/cm^2/yr).
+time_since_step_yr : float, default=0.0
+    Years since the change.
+production_scaling : float, default=1.0
+    Production-scaling factor (1 at sea level, high latitude).
+total_shielding : float, default=1.0
+    Combined shielding factor (0-1; 1 = unshielded).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+
+Returns
+-------
+CRNColumnSample
+)doc")
         .def("transient", &CRNColumn::transient,
               nb::arg("sampling_depths_metres"), nb::arg("production_scaling") = 1.0,
              nb::arg("total_shielding") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
              nb::arg("initial_10be") = -1.0, nb::arg("initial_26al") = -1.0,
-             nb::arg("initial_14c") = -1.0);
+             nb::arg("initial_14c") = -1.0, R"doc(
+Run the erosion history and return concentrations at the given depths.
 
-    nb::class_<lsdtt::CrnBurialResult>(m, "CRNBurialResult")
+Parameters
+----------
+sampling_depths_metres : list of float
+    Depths (m) below the present surface.
+production_scaling : float, default=1.0
+    Production-scaling factor (1 at sea level, high latitude).
+total_shielding : float, default=1.0
+    Combined shielding factor (0-1; 1 = unshielded).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+initial_10be, initial_26al, initial_14c : float, default=-1.0
+    Uniform initial concentrations (atoms/g); negative starts at steady
+    state with the background erosion rate.
+
+Returns
+-------
+list of CRNColumnSample
+    One sample per depth.
+)doc");
+
+    nb::class_<lsdtt::CrnBurialResult>(m, "CRNBurialResult", R"doc(
+Result of :func:`crn_burial_pair`: pre-burial erosion rate (g/cm^2/yr),
+burial age (years) and ratio diagnostics; ``status`` is ``"Converged"``,
+``"NoSolution"``, ``"NotUnique"`` or ``"NotConverged"``.
+)doc")
         .def_prop_ro("status", [](const lsdtt::CrnBurialResult& r) { return status_token(r.status); })
         .def_ro("nuclide_fast", &lsdtt::CrnBurialResult::nuclide_fast)
         .def_ro("nuclide_slow", &lsdtt::CrnBurialResult::nuclide_slow)
@@ -183,7 +291,12 @@ are effective rates in g/cm²/yr.
         .def_ro("burial_required", &lsdtt::CrnBurialResult::burial_required)
         .def_ro("apparent_erosion_rate_g_cm2_yr", &lsdtt::CrnBurialResult::apparent_erate_no_burial);
 
-    nb::class_<lsdtt::CrnStepPairResult>(m, "CRNStepPairResult")
+    nb::class_<lsdtt::CrnStepPairResult>(m, "CRNStepPairResult", R"doc(
+Result of :func:`crn_step_change_pair`: new erosion rate (g/cm^2/yr), time
+since the change (years) and the predicted concentrations (atoms/g);
+``status`` is ``"Converged"``, ``"NoSolution"``, ``"NotUnique"`` or
+``"NotConverged"``.
+)doc")
         .def_prop_ro("status", [](const lsdtt::CrnStepPairResult& r) { return status_token(r.status); })
         .def_ro("erosion_rate_g_cm2_yr", &lsdtt::CrnStepPairResult::erate_new_g_cm2_yr)
         .def_ro("time_since_change_yr", &lsdtt::CrnStepPairResult::time_since_change_yr)
@@ -204,20 +317,77 @@ are effective rates in g/cm²/yr.
         return result;
     }, nb::arg("nuclide"), nb::arg("concentration_atoms_g"),
        nb::arg("total_scaling") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
-       R"doc(Invert a surface concentration for its apparent steady-state erosion rate.)doc");
+       R"doc(Invert a surface concentration for its apparent steady-state erosion rate.
+
+Parameters
+----------
+nuclide : {"Be10", "Al26", "C14"}
+    Measured nuclide.
+concentration_atoms_g : float
+    Measured concentration (atoms/g).
+total_scaling : float, default=1.0
+    Production scaling x shielding factor (dimensionless).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+
+Returns
+-------
+dict
+    ``"erosion_rate_g_cm2_yr"`` (float) and ``"status"`` (``"Converged"``,
+    ``"NoSolution"``, ``"NotUnique"`` or ``"NotConverged"``).
+)doc");
 
     m.def("crn_burial_pair", &lsdtt::crn_burial_diagnostics_pair,
           nb::arg("nuclide_fast"), nb::arg("nuclide_slow"),
           nb::arg("concentration_fast_atoms_g"), nb::arg("concentration_slow_atoms_g"),
           nb::arg("total_scaling") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
-          R"doc(Invert a two-nuclide burial pair. ``nuclide_fast`` must decay faster.)doc");
+          R"doc(Invert a two-nuclide burial pair. ``nuclide_fast`` must decay faster.
+
+Parameters
+----------
+nuclide_fast, nuclide_slow : str
+    Shorter- and longer-lived nuclides, for example ``"Al26"`` and ``"Be10"``.
+concentration_fast_atoms_g, concentration_slow_atoms_g : float
+    Measured concentrations (atoms/g).
+total_scaling : float, default=1.0
+    Production scaling x shielding factor (dimensionless).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+
+Returns
+-------
+CRNBurialResult
+    Pre-burial erosion rate, burial age and ratio diagnostics.
+)doc");
 
     m.def("crn_step_change_pair", &lsdtt::crn_invert_step_change_pair,
           nb::arg("nuclide_fast"), nb::arg("nuclide_slow"),
           nb::arg("concentration_fast_atoms_g"), nb::arg("concentration_slow_atoms_g"),
           nb::arg("effective_erosion_rate_old_g_cm2_yr"),
           nb::arg("total_scaling") = 1.0, nb::arg("muon_scheme") = "BraucherBorchers",
-          R"doc(Invert a two-nuclide step-change pair for new erosion rate and timing.)doc");
+          R"doc(Invert a two-nuclide step-change pair for new erosion rate and timing.
+
+Parameters
+----------
+nuclide_fast, nuclide_slow : str
+    Shorter- and longer-lived nuclides.
+concentration_fast_atoms_g, concentration_slow_atoms_g : float
+    Measured concentrations (atoms/g).
+effective_erosion_rate_old_g_cm2_yr : float
+    Erosion rate before the change (g/cm^2/yr).
+total_scaling : float, default=1.0
+    Production scaling x shielding factor (dimensionless).
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
+
+Returns
+-------
+CRNStepPairResult
+    New erosion rate, time since the change and predicted concentrations.
+)doc");
 
     m.def("crn_transient_history", &crn_transient_history,
           nb::arg("column"), nb::arg("production_scaling"),
@@ -233,8 +403,11 @@ production_scaling : Raster
     Per-pixel production-scaling factor.
 topographic_shielding : Raster, optional
     Same-grid shielding factor. Unity is used when omitted.
- sampling_depth_metres : float, optional
-    Depth below the present surface at which to predict concentration.
+sampling_depth_metres : float, optional
+    Depth (m) below the present surface at which to predict concentration.
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation (``"Braucher"``, ``"BraucherBorchers"``,
+    ``"Granger"``, ``"Schaller"`` or ``"newCRONUS"``).
 
 Returns
 -------

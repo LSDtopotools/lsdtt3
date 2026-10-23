@@ -167,15 +167,18 @@ DataFrame with one row per along-axis bin.
 )doc")
         .def_prop_ro("along_axis", [](const SwathProfile& profile) {
             return Raster(profile.native().along_axis);
-        })
+        }, "Distance (m) of each pixel along the baseline.")
         .def_prop_ro("perpendicular_distance", [](const SwathProfile& profile) {
             return Raster(profile.native().perp_distance);
-        })
+        }, "Unsigned distance (m) of each pixel from the baseline.")
         .def_prop_ro("signed_perpendicular_distance", [](const SwathProfile& profile) {
             return Raster(profile.native().signed_perp);
-        })
-        .def_prop_ro("quantile_levels", [](const SwathProfile&) { return quantile_levels(); })
-        .def_prop_ro("table", &profile_table);
+        }, "Signed distance (m) from the baseline (sign gives the side).")
+        .def_prop_ro("quantile_levels", [](const SwathProfile&) { return quantile_levels(); },
+            nb::sig("def quantile_levels(self) -> numpy.ndarray"),
+            "Percentile levels of the table's p<k> columns (float64 array).")
+        .def_prop_ro("table", &profile_table, nb::sig("def table(self) -> pandas.DataFrame"),
+            "One row per along-axis bin: along_axis_centre (m), n_pixels, mean, and percentile columns p0, p5, ..., p100 (5% steps).");
 
     m.def("swath_distances", &swath_distances, nb::arg("raster"),
         nb::arg("baseline"), nb::arg("n_threads") = 0, R"doc(

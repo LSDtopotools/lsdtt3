@@ -86,10 +86,10 @@ Exactly one selection method must be enabled for `basin_outline_ridgelines` and 
 | `select_basins_from_outlets` | bool | `false` | Select basins from the outlet points in `basin_outlet_fname`. |
 | `select_basins_from_outlets_nested` | bool | `false` | As above, plus all nested upstream basins. |
 | `basin_outlet_fname` | string | `NULL` | Outlet points (CSV with `latitude`/`longitude` in EPSG:4326, or `.fgb`/`.gpkg` point layer). Required when selecting from outlets. |
-| `basin_outlet_snapping_method` | string | `downstream` | Snap outlet points to a qualifying channel pixel: `none`, `expanding_square`, or `downstream`. |
+| `basin_outlet_snapping_method` | string | `downstream` | Snap outlet points to a qualifying channel pixel: `none`, `expanding_square`, `downstream`, or `largest_area`. `largest_area` takes the pixel with the most contributing pixels in the square of half-width `basin_outlet_snap_max_search_radius_pixels`, if it reaches the threshold (a wide square can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing‑pixel threshold used for outlet snapping. |
 | `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum search radius (pixels) for `expanding_square` snapping. |
-| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius (pixels) for `expanding_square` snapping. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum search radius (pixels) for `expanding_square` snapping, and the square's half-width for `largest_area`. |
 
 ### Basin filtering
 
@@ -405,10 +405,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Allowed values: none, expanding_square, downstream. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Optional snapping of basin outlet CSV points to pixels that exceed a contributing-pixel threshold. | Allowed values: none, expanding_square, downstream, largest_area. none: use the mapped raster pixel directly. expanding_square: search outward ring-by-ring until a qualifying pixel is found. downstream: follow the D8 receiver chain until a qualifying pixel is found. largest_area: take the pixel with the most contributing pixels in the square of half-width basin_outlet_snap_max_search_radius_pixels, if it is a qualifying pixel (a large radius can jump onto a bigger neighbouring river). |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Contributing-pixel threshold used for optional basin outlet snapping. | This is the total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | - | Minimum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. 0 means the mapped input pixel is tested first. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. The search stops at the first radius containing one or more qualifying pixels. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square snapping search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square or largest_area. For expanding_square the search stops at the first radius containing one or more qualifying pixels; for largest_area it is the half-width of the square searched. |
 | `basins_min_stream_order` | `int` | `-1` | `param` | - | Minimum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore minimum. |
 | `basins_max_stream_order` | `int` | `-1` | `param` | - | Maximum stream order to keep when filtering basins. | Inclusive. Defaults to -1, which means ignore maximum. |
 | `basins_min_area_pixels` | `int` | `-1` | `param` | - | Minimum basin area in pixels to keep when filtering basins by area. | Inclusive. Defaults to -1, which means ignore minimum. |

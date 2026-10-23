@@ -366,24 +366,65 @@ void bind_valley_helpers(nb::module_& m)
 Interpolate a non-increasing valley baseline through finite elevation pins.
 
 Use ``numpy.nan`` for unpinned centreline nodes.
+
+Parameters
+----------
+along_distance : array-like of float
+    Distance (m) of each centreline node along the centreline.
+pin_elevation : array-like of float
+    Elevation (m) pinned at each node, NaN where unpinned.
+
+Returns
+-------
+numpy.ndarray
+    Baseline elevation (m) at every node, never increasing downstream.
 )doc");
     nb::class_<ValleyCentrelineResult>(m, "ValleyCentrelineResult", R"doc(
 Valley masks and centreline diagnostics for supplied channel paths.
+
+Made by :func:`extract_valley_centrelines`; pass it to
+:func:`extract_valley_cross_sections`.
 )doc")
-        .def_prop_ro("valley_mask", [](const ValleyCentrelineResult& r) { return Raster(r.native().valley_mask); })
-        .def_prop_ro("table", &centreline_table)
-        .def("centreline_pixels", &centreline_pixels, nb::arg("source_id"));
-    nb::class_<ValleyCrossSections>(m, "ValleyCrossSections")
-        .def_prop_ro("n_sections", [](const ValleyCrossSections& s) { return s.native().sections.size(); })
-        .def_prop_ro("stations", &cross_section_stations)
-        .def_prop_ro("samples", &cross_section_samples)
+        .def_prop_ro("valley_mask", [](const ValleyCentrelineResult& r) { return Raster(r.native().valley_mask); },
+            "0/1 valley-floor Raster used for routing.")
+        .def_prop_ro("table", &centreline_table, nb::sig("def table(self) -> pandas.DataFrame"),
+            "One row per channel: source_id, valley_hand_break_metres, n_valley_pixels, routing_succeeded, trough_retries, n_centreline_nodes.")
+        .def("centreline_pixels", &centreline_pixels, nb::arg("source_id"), R"doc(
+Return the valley centreline of one channel, upstream to downstream.
+
+Parameters
+----------
+source_id : int
+    Zero-based channel index (``table.source_id``).
+
+Returns
+-------
+numpy.ndarray
+    N x 2 int64 array of ``(row, col)``.
+)doc");
+    nb::class_<ValleyCrossSections>(m, "ValleyCrossSections", R"doc(
+Valley cross sections made by :func:`extract_valley_cross_sections`.
+
+All tables are pandas DataFrames keyed by ``source_id`` (channel) and
+``station_id`` (section); distances are metres.
+)doc")
+        .def_prop_ro("n_sections", [](const ValleyCrossSections& s) { return s.native().sections.size(); },
+            "Number of cross sections.")
+        .def_prop_ro("stations", &cross_section_stations, nb::sig("def stations(self) -> pandas.DataFrame"),
+            "One row per section: source_id, station_id, along_distance_metres, valley_width_metres, centre_x, centre_y, left_offset_metres, right_offset_metres, left_found, right_found.")
+        .def_prop_ro("samples", &cross_section_samples, nb::sig("def samples(self) -> pandas.DataFrame"),
+            "One row per transect sample: source_id, station_id, offset_metres, x, y, elevation, elevation_valid, in_valley, curvature, curvature_valid, hillshade, hillshade_valid, is_channel.")
         .def_prop_ro("features", &cross_section_features,
+nb::sig("def features(self) -> pandas.DataFrame"),
             "Return detected channel crossings, curvature peaks, and hillshade peaks.")
         .def_prop_ro("hydraulic_edges", &cross_section_hydraulic_edges,
+nb::sig("def hydraulic_edges(self) -> pandas.DataFrame"),
             "Return hydraulic step-boundary picks for every cross section.")
         .def_prop_ro("hydraulic_breaks", &cross_section_hydraulic_breaks,
+nb::sig("def hydraulic_breaks(self) -> pandas.DataFrame"),
             "Return hydraulic break stages and local heights above the thalweg.")
         .def_prop_ro("hydraulic_curve", &cross_section_hydraulic_curve,
+nb::sig("def hydraulic_curve(self) -> pandas.DataFrame"),
             "Return optional BankfullMapper-style hydraulic geometry curves.");
 #ifdef LSDTT_PYTHON_COMPATIBILITY_PROBE
     m.def("_extract_valley_centrelines_with_mask_probe",
@@ -424,6 +465,44 @@ Route centrelines through a supplied valley mask using a resolved ``ChannelScope
 Route centrelines through a supplied valley mask from ordered channel paths.
 
 ``channels`` is a sequence of upstream-to-downstream ``(row, col)`` arrays.
+A synthetic trough is carved into the valley floor, deepest along the
+valley axis, and flow is routed down it, so the centreline follows the
+middle of the valley rather than the channel. This function has two call
+forms: pass a ``ChannelScope`` as ``scope`` (its traced channels are used) or
+the ordered channel paths as ``channels``.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m).
+scope : ChannelScope
+    First call form: channels resolved by ``FlowInfo.channel_scope``.
+channels : sequence of numpy.ndarray
+    Second call form: N x 2 ``(row, col)`` arrays, upstream to downstream.
+corridor_width_metres : float, default=5000.0
+    Half-width (m) of the corridor around each channel searched for valley
+    pixels.
+fallback_valley_hand_metres : float or None, default=None
+    Deprecated and ignored when ``valley_mask`` is supplied (a
+    ``DeprecationWarning`` is emitted if set).
+valley_dilation_pixels : int, default=4
+    Pixels by which valley patches are dilated (towards the channel only) to
+    fill holes.
+trough_scaling_factor : float, default=0.1
+    Gradient (m/m) of the synthetic trough carved towards the valley axis:
+    the trough is lowered by this times the distance to the valley wall
+    (Clubb et al. 2022 method); doubled on retries.
+centreline_loops : int, default=5
+    Number of trough-carving and routing iterations.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+valley_mask : Raster, keyword-only
+    0/1 valley-floor raster on the DEM grid, for example from
+    ``find_valleys`` or ``valley_mask_from_cross_sections``.
+
+Returns
+-------
+ValleyCentrelineResult
 )doc");
     m.def("extract_valley_cross_sections", &extract_cross_sections,
         nb::arg("dem"), nb::arg("centrelines"), nb::arg("spacing_metres") = 500.0,
@@ -450,12 +529,96 @@ Extract straight or boundary-fitted valley cross sections.
 Optional curvature, hillshade, and channel-mask rasters enable feature picks.
 Hydraulic break picks are always available; set ``compute_hydraulic_depth`` to
 retain the full per-stage hydraulic-geometry curve.
+
+Stations are placed along each centreline and a transect is cast across the
+valley at each; all transects of a channel have the same length (a multiple
+of its widest valley width).
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m).
+centrelines : ValleyCentrelineResult
+    From :func:`extract_valley_centrelines`.
+spacing_metres : float, default=500.0
+    Spacing (m) of stations along the centreline (positive).
+half_length_multiplier : float, default=1.5
+    Transect total length as a multiple of the channel's widest bounded
+    valley width (positive).
+min_half_length_metres : float, default=0.0
+    Floor (m) on the transect half-length; 0 means none.
+max_half_length_metres : float, default=5000.0
+    Cap (m) on the outward search for a valley side and on the half-length.
+tangent_window_nodes : int, default=8
+    Centreline nodes on each side used to smooth the local direction.
+sample_step_metres : float, default=0.0
+    Sample spacing (m) along a transect; 0 uses the cell size.
+curved_sections : bool, default=False
+    Trace boundary-fitted sections that curve through bends instead of
+    straight transects.
+curvature, hillshade : Raster or None, default=None
+    Optional rasters sampled along transects for feature picks.
+channel_mask : Raster or None, default=None
+    Optional 0/1 channel raster for channel-crossing picks.
+side_gap_tolerance_steps : int, default=1
+    Out-of-valley steps tolerated before a valley side is declared.
+feature_peak_min_prominence_fraction : float, default=0.15
+    Minimum peak prominence, as a fraction of the profile range.
+feature_peak_edge_margin_samples : int, default=2
+    Ignore peaks this close (samples) to the transect ends.
+clip_overlapping_sections : bool, default=True
+    Clip transects where they would cross neighbouring sections.
+neighbour_clip_window : int, default=2
+    Number of neighbouring stations on each side considered for clipping.
+min_section_reach_fraction : float, default=0.35
+    Drop a station whose clipped length is below this fraction of the full
+    transect length.
+curved_wall_clearance_fraction : float, default=0.10
+    Curved sections only: a clipped side still extends at least this
+    fraction beyond the valley wall.
+curved_streamwise_smoothing_passes : int, default=40
+    Curved sections only: smoothing passes of the along-valley coordinate.
+curved_coarse_spacing_metres : float, default=700.0
+    Curved sections only: spacing (m) of the first, coarse set of stations
+    before midpoints are added.
+hydraulic_stage_step_metres : float, default=0.1
+    Flood-stage increment (m) used to build width against stage.
+hydraulic_min_step_height_metres : float, default=2.0
+    Minimum height (m) between accepted hydraulic step boundaries.
+hydraulic_min_step_width_pixels : int, default=3
+    Minimum width change (pixels) between accepted step boundaries.
+hydraulic_midpoint_search_samples : int, default=81
+    Search resolution for placing each step midpoint.
+hydraulic_min_crossings_preferred : int, default=2
+    Preferred number of profile crossings at a step midpoint (2 = one bank
+    pair).
+compute_hydraulic_depth : bool, default=False
+    Store the full stage / width / area / hydraulic-depth curve of each
+    section (``hydraulic_curve``; Delchiaro et al. 2025 BankfullMapper).
+
+Returns
+-------
+ValleyCrossSections
 )doc");
     m.def("valley_mask_from_cross_sections", &cross_section_valley_mask,
         nb::arg("dem"), nb::arg("centrelines"), nb::arg("sections"), R"doc(
 Build a valley-floor mask from the median lowest hydraulic break per channel.
 
 This complements the corridor/HAND mask returned by ``extract_valley_centrelines``.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m).
+centrelines : ValleyCentrelineResult
+    Centrelines the sections were cut from.
+sections : ValleyCrossSections
+    From :func:`extract_valley_cross_sections`.
+
+Returns
+-------
+Raster
+    0/1 valley-floor mask.
 )doc");
 }
 

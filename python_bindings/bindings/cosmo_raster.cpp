@@ -147,29 +147,199 @@ void bind_cosmo_raster(nb::module_& m)
     m.def("crn_production_scaling", &crn_production_scaling,
           nb::arg("dem"), nb::arg("crn_parameters_path") = "", nb::arg("sample_age_yr") = 0.0,
           nb::arg("atmosphere") = "auto", nb::arg("scaling") = "stone", nb::arg("nuclide") = "Be10",
-          "Return a per-pixel CRN production-scaling raster. DEM coordinates and elevations must be metres.");
+          R"doc(Return a per-pixel CRN production-scaling raster. DEM coordinates and elevations must be metres.
+
+The factor multiplies sea-level, high-latitude production; it depends on each
+pixel's elevation and latitude (from the DEM's projected CRS).
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) in a projected metre CRS.
+crn_parameters_path : str, default=""
+    Path to the lsdtt3 CRN parameter NetCDF file (atmosphere reanalysis,
+    geomagnetic and LSDn grids). Empty uses the built-in standard
+    atmosphere and modern field only.
+sample_age_yr : float, default=0.0
+    Exposure age (years) for the time-integrated palaeomagnetic correction
+    (needs the parameter file); 0 uses the modern field.
+atmosphere : {"auto", "standard", "era40", "ncep"}, default="auto"
+    Atmospheric pressure model: ``"auto"`` uses ERA40 when the parameter file
+    is loaded, else the standard atmosphere.
+scaling : {"stone", "lsdn"}, default="stone"
+    Stone (2000) scaling, or Lifton, Sato and Dunai (2014) LSDn scaling
+    (needs the LSDn grids in the parameter file; Be10, Al26, C14 only).
+nuclide : {"Be10", "Al26", "C14"}, default="Be10"
+    Nuclide (affects LSDn scaling only).
+
+Returns
+-------
+Raster
+    Dimensionless production-scaling factor per pixel.
+)doc");
     m.def("crn_pressure", &crn_pressure, nb::arg("dem"), nb::arg("crn_parameters_path") = "",
-          nb::arg("atmosphere") = "auto", "Return atmospheric pressure (hPa) for a DEM.");
+          nb::arg("atmosphere") = "auto", R"doc(Return atmospheric pressure (hPa) for a DEM.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) in a projected metre CRS.
+crn_parameters_path : str, default=""
+    CRN parameter NetCDF file, as in ``crn_production_scaling``.
+atmosphere : {"auto", "standard", "era40", "ncep"}, default="auto"
+    Atmospheric model, as in ``crn_production_scaling``.
+
+Returns
+-------
+Raster
+    Pressure in hPa (mbar).
+)doc");
     m.def("crn_uniform_raster", &crn_uniform_raster, nb::arg("reference"), nb::arg("value"),
-          "Create a masked constant raster for CRN erosion or shielding inputs.");
+          R"doc(Create a masked constant raster for CRN erosion or shielding inputs.
+
+Parameters
+----------
+reference : Raster
+    Raster whose grid and nodata mask are copied.
+value : float
+    Constant value, for example an erosion rate in g/cm^2/yr.
+
+Returns
+-------
+Raster
+    ``value`` on every valid pixel of ``reference``.
+)doc");
     m.def("crn_steady_state", &crn_steady_state, nb::arg("erosion_rate"), nb::arg("production_scaling"),
           nb::arg("nuclide") = "Be10", nb::arg("muon_scheme") = "BraucherBorchers",
           nb::arg("topographic_shielding") = nullptr, nb::arg("snow_shielding") = nullptr,
           nb::arg("self_shielding") = nullptr,
-          "Return whole-raster steady-state CRN concentration (atoms/g).");
+          R"doc(Return whole-raster steady-state CRN concentration (atoms/g).
+
+The surface concentration each pixel would have after eroding at a constant
+rate for long enough to reach steady state.
+
+Parameters
+----------
+erosion_rate : Raster
+    Effective erosion rate in g/cm^2/yr (mass flux; divide by rock density
+    in g/cm^3 for cm/yr, e.g. 0.01 g/cm^2/yr at 2.65 g/cm^3 is 37.7 mm/kyr).
+production_scaling : Raster
+    Production-scaling factor on the same grid (``crn_production_scaling``).
+nuclide : {"Be10", "Al26", "C14"}, default="Be10"
+    Cosmogenic nuclide.
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation: ``"Braucher"``,
+    ``"BraucherBorchers"``, ``"Granger"``, ``"Schaller"`` or
+    ``"newCRONUS"``.
+topographic_shielding : Raster or None, default=None
+    Topographic shielding factor (dimensionless, 0-1; 1 = unshielded) on the
+    same grid; None means 1 everywhere.
+snow_shielding : Raster or None, default=None
+    Snow shielding as an effective depth (g/cm^2); None means 0 (no snow).
+self_shielding : Raster or None, default=None
+    Self (sample-thickness) shielding as an effective depth (g/cm^2); None
+    means 0 (surface sample).
+
+Returns
+-------
+Raster
+    Concentration in atoms/g.
+)doc");
     m.def("crn_step_change", &crn_step_change, nb::arg("time_since_change"), nb::arg("production_scaling"),
           nb::arg("nuclide") = "Be10", nb::arg("muon_scheme") = "BraucherBorchers",
           nb::arg("topographic_shielding") = nullptr, nb::arg("erosion_rate_old_g_cm2_yr") = 0.01,
           nb::arg("erosion_rate_new_g_cm2_yr") = 0.01, nb::arg("pre_change_erosion_rate") = nullptr,
-          "Return a whole-raster surface concentration after a step change in erosion.");
+          R"doc(Return a whole-raster surface concentration after a step change in erosion.
+
+Each pixel was at steady state with ``erosion_rate_old_g_cm2_yr`` and has
+eroded at ``erosion_rate_new_g_cm2_yr`` for ``time_since_change`` years.
+
+Parameters
+----------
+time_since_change : Raster
+    Years since the change reached each pixel; <= 0 where it has not
+    arrived.
+production_scaling : Raster
+    Production-scaling factor on the same grid.
+nuclide : {"Be10", "Al26", "C14"}, default="Be10"
+    Cosmogenic nuclide.
+muon_scheme : str, default="BraucherBorchers"
+    Muon production parameterisation: ``"Braucher"``,
+    ``"BraucherBorchers"``, ``"Granger"``, ``"Schaller"`` or
+    ``"newCRONUS"``.
+topographic_shielding : Raster or None, default=None
+    Topographic shielding factor (0-1); None means 1.
+erosion_rate_old_g_cm2_yr : float, default=0.01
+    Erosion rate before the change (g/cm^2/yr).
+erosion_rate_new_g_cm2_yr : float, default=0.01
+    Erosion rate after the change (g/cm^2/yr).
+pre_change_erosion_rate : Raster or None, default=None
+    Optional per-pixel pre-change rate (g/cm^2/yr) used where
+    ``time_since_change <= 0``; None uses ``erosion_rate_old_g_cm2_yr``.
+
+Returns
+-------
+Raster
+    Surface concentration in atoms/g.
+)doc");
     m.def("crn_accumulated_concentration", &crn_accumulated_concentration,
           nb::arg("concentration"), nb::arg("weight"), nb::arg("flow"),
-          "Route an upstream weight-averaged CRN concentration to every D8 pixel.");
+          R"doc(Route an upstream weight-averaged CRN concentration to every D8 pixel.
+
+Each pixel gets the mean concentration of its upslope area weighted by
+``weight`` (normally the erosion rate, so the result is the
+sediment-flux-weighted concentration a river sample would carry).
+
+Parameters
+----------
+concentration : Raster
+    Concentration (atoms/g) on the flow grid.
+weight : Raster
+    Weights on the same grid, for example erosion rate (g/cm^2/yr).
+flow : FlowInfo
+    Flow topology on the same grid.
+
+Returns
+-------
+Raster
+    Weighted upslope-mean concentration (atoms/g).
+)doc");
     m.def("crn_outlet_concentration", &crn_outlet_concentration,
           nb::arg("concentration"), nb::arg("erosion_rate"), nb::arg("flow"), nb::arg("row"), nb::arg("col"),
-          "Return erosion-weighted upstream CRN concentration at one outlet pixel.");
+          R"doc(Return erosion-weighted upstream CRN concentration at one outlet pixel.
+
+Parameters
+----------
+concentration : Raster
+    Concentration (atoms/g) on the flow grid.
+erosion_rate : Raster
+    Erosion rate (g/cm^2/yr) used as the weight.
+flow : FlowInfo
+    Flow topology on the same grid.
+row, col : int
+    Outlet pixel.
+
+Returns
+-------
+float
+    Basin-averaged concentration (atoms/g).
+)doc");
     m.def("crn_isotope_ratio", &crn_isotope_ratio, nb::arg("numerator"), nb::arg("denominator"),
-          "Return an isotope-ratio raster with nodata-accounting counts.");
+          R"doc(Return an isotope-ratio raster with nodata-accounting counts.
+
+Parameters
+----------
+numerator, denominator : Raster
+    Concentrations (atoms/g) on the same grid, for example Al26 and Be10.
+
+Returns
+-------
+dict
+    ``"raster"``: ratio Raster (nodata where either input is nodata, the
+    denominator is 0, or the result is not finite); ``"n_valid"``,
+    ``"n_zero_denominator"``, ``"n_one_input_masked"``, ``"n_non_finite"``:
+    pixel counts.
+)doc");
 }
 
 } // namespace lsdtt3_python

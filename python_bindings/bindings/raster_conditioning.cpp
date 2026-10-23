@@ -165,8 +165,31 @@ conductance is "exponential" or "quadratic". Nodata cells are untouched and
 never diffused into. The same smoothing as smooth_algorithm_choice:
 perona_malik in lsdtt-raster-preprocessing.
 
-Returns a dict: raster (the smoothed DEM), k_metres_per_cell (the K used),
-n_iterations.)doc");
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+n_iterations : int, default=10
+    Number of diffusion iterations.
+time_step : float, default=0.2
+    Explicit time step, in (0, 0.25].
+conductance : {"exponential", "quadratic"}, default="exponential"
+    Perona-Malik conductance function.
+k_quantile : float, default=0.9
+    Quantile (0-1) of the neighbour-difference distribution used as K; 0
+    uses ``k_metres_per_cell``.
+k_metres_per_cell : float, default=0.0
+    Edge threshold K (m of elevation difference per cell) when
+    ``k_quantile`` is 0.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+dict
+    ``"raster"`` (smoothed DEM), ``"k_metres_per_cell"`` (the K used) and
+    ``"n_iterations"``.
+)doc");
     m.def("coherence_diffusion", &coherence_diffusion, nb::arg("raster"),
         nb::arg("n_iterations") = 10, nb::arg("time_step") = 0.15,
         nb::arg("derivative_radius_metres") = 0.0,
@@ -180,20 +203,70 @@ time_step must be in (0, 0.25]. A radius of 0 means one cell
 (derivative_radius_metres) or three cells (integration_radius_metres).
 contrast sets how selective the along-feature smoothing is; min_diffusivity
 is the across-feature floor, in (0, 1). The same smoothing as
-smooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.)doc");
+smooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+n_iterations : int, default=10
+    Number of diffusion iterations.
+time_step : float, default=0.15
+    Explicit time step, in (0, 0.25].
+derivative_radius_metres : float, default=0.0
+    Smoothing radius (m) of the gradients; 0 means one cell.
+integration_radius_metres : float, default=0.0
+    Radius (m) over which the structure tensor is averaged; 0 means three
+    cells.
+contrast : float, default=0.2
+    How selective the along-feature smoothing is.
+min_diffusivity : float, default=0.001
+    Across-feature diffusivity floor, in (0, 1).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    Smoothed DEM (m).
+)doc");
     m.def("stencil_difference_magnitude", &stencil_difference_magnitude, nb::arg("raster"),
         R"doc(Largest absolute elevation difference from each cell to a 4-neighbour.
 
 In metres; nodata where the cell is nodata or has no valid neighbour. This is
 the quantity Perona-Malik smoothing evaluates its conductance on, so its
-distribution is what k_quantile is a quantile of.)doc");
+distribution is what k_quantile is a quantile of.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+
+Returns
+-------
+Raster
+    Largest neighbour difference (m).
+)doc");
     m.def("vertical_units_to_metres", &vertical_units_to_metres, nb::arg("dem"),
         nb::arg("vertical_units"),
         R"doc(Convert DEM elevations to metres.
 
 vertical_units is "metres" (no change), "feet" (international foot, 0.3048 m)
 or "us_survey_feet" (1200/3937 m). Never applied automatically: establish the
-vertical unit from the data provider's metadata.)doc");
+vertical unit from the data provider's metadata.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster.
+vertical_units : {"metres", "feet", "us_survey_feet"}
+    Unit the elevations are stored in.
+
+Returns
+-------
+Raster
+    Elevations in metres.
+)doc");
     m.def("coregister_dem", &coregister_dem, nb::arg("reference"), nb::arg("moving"),
         nb::arg("max_iterations") = 8, nb::arg("offset_threshold_pixels") = 0.001,
         nb::arg("aspect_bin_count") = 72, nb::arg("min_samples") = 500,
@@ -209,9 +282,36 @@ Both rasters must be on the same grid (use reproject_to_grid first). The same
 coregistration as run_dem_coregistration in lsdtt-raster-calculator, with
 its defaults.
 
-Returns a dict: raster (moving, shifted), dx_metres, dy_metres, dz_metres
-(the total shift), iterations, converged, and diagnostics (a pandas
-DataFrame with one row per iteration).)doc");
+Parameters
+----------
+reference : Raster
+    Reference DEM (m).
+moving : Raster
+    DEM (m) to shift, on the same grid as ``reference``.
+max_iterations : int, default=8
+    Largest number of Nuth-Kaab iterations.
+offset_threshold_pixels : float, default=0.001
+    Stop when an iteration's horizontal step is below this (pixels).
+aspect_bin_count : int, default=72
+    Number of aspect bins in the fit.
+min_samples : int, default=500
+    Smallest number of valid samples required.
+subsample_count : int, default=500000
+    Largest number of pixels sampled per iteration.
+apply_vertical_shift : bool, default=True
+    Also remove the vertical offset dz.
+max_horizontal_step_metres : float, default=0.0
+    Cap (m) on each iteration's horizontal step; 0 means none.
+initial_dx_metres, initial_dy_metres, initial_dz_metres : float, default=0.0
+    Starting shift (m) in x, y and z.
+
+Returns
+-------
+dict
+    ``"raster"`` (moving, shifted), ``"dx_metres"``, ``"dy_metres"``,
+    ``"dz_metres"`` (the total shift, m), ``"iterations"``, ``"converged"``
+    and ``"diagnostics"`` (a pandas DataFrame with one row per iteration).
+)doc");
 }
 
 } // namespace lsdtt3_python

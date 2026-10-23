@@ -276,19 +276,73 @@ DivideMigrationResult divide_migration(const FlowInfo& flow_owner, const Raster&
 
 void bind_divide_migration(nb::module_& module)
 {
-    nb::class_<DivideMigrationResult>(module, "DivideMigrationResult")
+    nb::class_<DivideMigrationResult>(module, "DivideMigrationResult", R"doc(
+Across-divide comparison made by :func:`divide_migration`.
+
+``network`` (ChannelNetwork), ``chi`` (ChiCollection) and ``basin_labels``
+(Raster) are the intermediate products; ``outlets``, ``units`` and
+``pair_summary`` are pandas DataFrames and ``divides`` and
+``channel_heads`` are GeoDataFrames.
+)doc")
         .def_prop_ro("network", &DivideMigrationResult::network, nb::rv_policy::reference_internal)
         .def_prop_ro("chi", &DivideMigrationResult::chi, nb::rv_policy::reference_internal)
         .def_prop_ro("basin_labels", &DivideMigrationResult::basin_labels, nb::rv_policy::reference_internal)
-        .def_prop_ro("outlets", &outlet_table).def_prop_ro("units", &unit_table)
-        .def_prop_ro("divides", &divide_gdf).def_prop_ro("channel_heads", &head_gdf)
-        .def_prop_ro("pair_summary", &summary_table);
+        .def_prop_ro("outlets", &outlet_table, nb::sig("def outlets(self) -> pandas.DataFrame"), "One row per input outlet with its snapped position.")
+        .def_prop_ro("units", &unit_table, nb::sig("def units(self) -> pandas.DataFrame"), "One row per unit (group of outlets).")
+        .def_prop_ro("divides", &divide_gdf, nb::sig("def divides(self) -> geopandas.GeoDataFrame"), "Divide segments between adjacent units, as lines.")
+        .def_prop_ro("channel_heads", &head_gdf, nb::sig("def channel_heads(self) -> geopandas.GeoDataFrame"), "Channel heads near the divides with their metrics, as points.")
+        .def_prop_ro("pair_summary", &summary_table, nb::sig("def pair_summary(self) -> pandas.DataFrame"), "One row per pair of adjacent units: across-divide differences and their uncertainties.");
     module.def("divide_migration", &divide_migration, nb::arg("flow"), nb::arg("dem"), nb::arg("outlets"),
         nb::arg("clusters") = nb::none(), nb::arg("source_pixels") = 1000,
         nb::arg("snapping") = "downstream", nb::arg("outlet_control") = "complete_only",
         nb::arg("min_outlet_elevation") = -std::numeric_limits<double>::infinity(),
         nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0,
         nb::arg("uncertainty") = "std_err", nb::arg("bootstrap_replicates") = 1000, nb::arg("seed") = 5489u,
-        "Compare channel-head elevation, chi, relief, and gradient across adjacent outlet-defined basin divides.");
+        R"doc(Compare channel-head elevation, chi, relief, and gradient across adjacent outlet-defined basin divides.
+
+Basins are defined by the supplied outlets (grouped into units by
+``clusters``); for every pair of adjacent units the channel heads on either
+side of their shared divide are compared, as evidence for the direction of
+divide migration.
+
+Parameters
+----------
+flow : FlowInfo
+    Flow topology of the conditioned DEM.
+dem : Raster
+    The conditioned DEM (m) on the flow grid.
+outlets : array-like of int
+    N x 2 array of ``(row, col)`` outlet pixels (at least two).
+clusters : array-like or None, default=None
+    One label per outlet grouping outlets into units (outlets with the same
+    label form one side); None makes every outlet its own unit.
+source_pixels : int, default=1000
+    Channel threshold (contributing pixels) for sources, snapping and chi.
+snapping : {"downstream", "none"}, default="downstream"
+    Snap outlets downstream onto the channel network, or use them as given.
+outlet_control : {"none", "complete_only", "elevation", "max_out_elevation"}, default="complete_only"
+    ``complete_only``: drop basins touching nodata or an open edge;
+    ``elevation``: drop outlets below ``min_outlet_elevation``;
+    ``max_out_elevation``: put every basin on a common base level (the
+    highest outlet elevation) before comparing chi; ``none``: no control.
+min_outlet_elevation : float, default=-inf
+    Lowest outlet elevation (m) kept by ``outlet_control="elevation"``.
+m_over_n : float, default=0.45
+    Concavity index for chi (positive).
+reference_area : float, default=1.0
+    Chi reference area A0 (m^2, positive).
+uncertainty : {"std_err", "std_dev", "bootstrap", "ttest"}, default="std_err"
+    How the uncertainty of each across-divide difference is reported.
+bootstrap_replicates : int, default=1000
+    Replicates for ``uncertainty="bootstrap"``.
+seed : int, default=5489
+    Random seed for the bootstrap.
+
+Returns
+-------
+DivideMigrationResult
+    Channel network, chi, basin labels, and the outlet, unit, divide,
+    channel-head and pair-summary tables.
+)doc");
 }
 } // namespace lsdtt3_python

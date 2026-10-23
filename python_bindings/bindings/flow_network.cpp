@@ -496,48 +496,590 @@ Raster inversion_u_star(const ChiInversion& result, std::size_t basin){if(basin>
 
 void bind_flow_network(nb::module_& module, nb::class_<FlowInfo>& flow)
 {
-    nb::class_<ChannelScope>(module, "ChannelScope")
-        .def_prop_ro("mode", [](const ChannelScope& s) { const auto m = s.native().mode; return m == lsdtt::channel_scope_mode::all_channels_threshold ? "all_channels_threshold" : m == lsdtt::channel_scope_mode::user_sources ? "user_sources" : "user_sources_bounded"; })
-        .def_prop_ro("mask", &scope_mask).def_prop_ro("source_id", &scope_source_id)
-        .def_prop_ro("sources", [](const ChannelScope& s) { return pixels_array(s.flow(), s.native().resolved_sources); })
-        .def_prop_ro("outlets", [](const ChannelScope& s) { return pixels_array(s.flow(), s.native().resolved_outlets); })
-        .def("nodes", &scope_nodes, nb::arg("source_id"))
-        .def("table", &scope_table, "Return ordered channel nodes as a pandas DataFrame.");
-    nb::class_<ChannelNetwork>(module, "ChannelNetwork")
-        .def_prop_ro("n_channel_cells", [](const ChannelNetwork& n) { return n.native().n_channel_cells(); })
-        .def_prop_ro("n_junctions", [](const ChannelNetwork& n) { return n.native().n_junctions(); })
-        .def_prop_ro("channel_mask", &network_mask).def_prop_ro("junction_id", &network_junction_id)
-        .def("junctions", &network_junctions, "Return junction topology as a pandas DataFrame.")
-        .def("links", &network_links, "Return junction-to-junction links as a pandas DataFrame.")
-        .def("points_geodataframe", &network_points_geodataframe, "Return channel pixels as a GeoPandas point layer.")
-        .def("lines_geodataframe", &network_lines_geodataframe, "Return compact non-outlet channel links as a GeoPandas line layer.")
-        .def("junctions_geodataframe", &network_junctions_geodataframe, "Return channel junctions as a GeoPandas point layer.")
-        .def("link_profiles", &network_link_profiles, nb::arg("values"), nb::arg("junctions") = nb::none(), "Sample a raster along compact downstream channel links.")
-        .def("link_bearings", &network_link_bearings, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("anchor") = "upstream", nb::arg("min_nodes") = 2, "Fit compass bearings to compact channel links.")
-        .def("junction_angles", &network_junction_angles, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("min_nodes") = 2, "Measure two-donor confluence angles in compass degrees.")
-        .def("basin_com_bearings", &network_basin_com_bearings, "Return outlet-to-basin-centre-of-mass bearings for each junction basin.")
-        .def("chi", &network_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Extract outlet-seeded chi coordinates on this channel network.")
-        .def("chi_sweep", &chi_sweep, nb::arg("dem"), nb::arg("m_over_n_values"), nb::arg("outlets") = nb::none(), nb::arg("reference_area") = 1.0, nb::arg("critical_divergence_metres") = 5.0f, nb::arg("denominator") = nb::none(), "Fit each tested m/n and return per-basin disorder.")
-        .def("donors", [](const ChannelNetwork& n, std::int32_t junction) { const auto slice = n.native().donor_junctions(junction); return std::vector<std::int32_t>(slice.begin(), slice.end()); }, nb::arg("junction_id"));
-    nb::class_<ChiCollection>(module, "ChiCollection")
-        .def_prop_ro("n_basins", [](const ChiCollection& c) { return c.native().basins.size(); })
-        .def("nodes", &chi_nodes, "Return extracted channel chi nodes as a pandas DataFrame.")
-        .def("raster", &chi_raster, "Return chi values as a masked Raster.")
-        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", "Fit piecewise-linear channel profiles in chi-elevation space.");
-    nb::class_<ChiFit>(module, "ChiFit")
-        .def_prop_ro("nodes", &chi_fit_nodes).def_prop_ro("segments", &chi_fit_segments)
-        .def_prop_ro("summary", &chi_fit_summary)
-        .def("disorder", &chi_fit_disorder, "Return full-network chi-disorder per basin.")
-        .def("disorder_subset_sensitivity", &chi_fit_subset, nb::arg("n_side_branches") = 3, "Evaluate disorder across mainstem-plus-tributary subsets.")
-        .def("disorder_jackknife", &chi_fit_jackknife, "Leave-one-side-branch-out disorder samples.")
-        .def("disorder_bootstrap", &chi_fit_bootstrap, nb::arg("replicates") = 1000, nb::arg("seed") = 5489u, nb::arg("sample_full_tributary_count") = true, nb::arg("n_side_branches") = 3, nb::arg("with_replacement") = true, "Bootstrap disorder over side branches.")
-        .def("invert_ksn", &invert_ksn, nb::arg("m_over_n_values"), nb::arg("reference_area") = 1.0, nb::arg("coarse_cell_size_metres") = 2000.0, nb::arg("roughness_weight") = 1.e4, nb::arg("diagonal_jitter") = 1.e-8, nb::arg("use_mae") = true, "Run regularised spatial ksn/u-star inversion over m/n trials.");
-    nb::class_<ChiInversion>(module, "ChiInversion").def_prop_ro("trials", &inversion_trials).def_prop_ro("summary", &inversion_summary).def_prop_ro("nodes", &inversion_nodes).def("u_star_raster", &inversion_u_star, nb::arg("basin_id") = 0).def("support_raster", &inversion_support, nb::arg("basin_id") = 0);
+    nb::class_<ChannelScope>(module, "ChannelScope", R"doc(
+The set of channel pixels selected for analysis, and the source of each.
+
+Made by ``FlowInfo.channel_scope`` (or ``FlowInfo.scope_from_heads``). The
+mode depends on what was supplied: ``"all_channels_threshold"`` (no
+sources: every pixel with at least the threshold contributing pixels),
+``"user_sources"`` (each source traced downstream to its outlet) or
+``"user_sources_bounded"`` (each traced channel stops at its matched
+outlet). Pass it to ``FlowInfo.channel_network`` to build a junction graph.
+)doc")
+        .def_prop_ro("mode", [](const ChannelScope& s) { const auto m = s.native().mode; return m == lsdtt::channel_scope_mode::all_channels_threshold ? "all_channels_threshold" : m == lsdtt::channel_scope_mode::user_sources ? "user_sources" : "user_sources_bounded"; },
+            "Scope mode: 'all_channels_threshold', 'user_sources' or 'user_sources_bounded'.")
+        .def_prop_ro("mask", &scope_mask, "0/1 Raster of in-scope channel pixels.")
+        .def_prop_ro("source_id", &scope_source_id, nb::sig("def source_id(self) -> numpy.ndarray"),
+            "Int32 array (n_rows, n_cols): index of the source that first claims each channel pixel, -1 elsewhere.")
+        .def_prop_ro("sources", [](const ChannelScope& s) { return pixels_array(s.flow(), s.native().resolved_sources); },
+            nb::sig("def sources(self) -> numpy.ndarray"),
+            "Resolved (snapped) source pixels as an N x 2 int64 (row, col) array; unsnappable inputs are dropped.")
+        .def_prop_ro("outlets", [](const ChannelScope& s) { return pixels_array(s.flow(), s.native().resolved_outlets); },
+            nb::sig("def outlets(self) -> numpy.ndarray"),
+            "Per resolved source, the (row, col) where its channel is cut, or (-1, -1) if it runs to the DEM outlet.")
+        .def("nodes", &scope_nodes, nb::arg("source_id"), R"doc(
+Return the ordered channel pixels of one source, upstream to downstream.
+
+Parameters
+----------
+source_id : int
+    Zero-based index into ``sources``.
+
+Returns
+-------
+numpy.ndarray
+    N x 2 int64 array of ``(row, col)``. In ``"all_channels_threshold"``
+    mode a list stops where it joins a channel claimed by an earlier source.
+)doc")
+        .def("table", &scope_table, R"doc(
+Return ordered channel nodes as a pandas DataFrame.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``source_id`` (index into ``sources``), ``node_index`` (0 at the
+    source, increasing downstream), ``flat``, ``row``, ``col``.
+)doc");
+    nb::class_<ChannelNetwork>(module, "ChannelNetwork", R"doc(
+A D8 channel network as a graph of junctions and links.
+
+Made by ``FlowInfo.channel_network(scope)``: every resolved source of the
+``ChannelScope`` is traced downstream to its D8 outlet (outlet truncation in
+the scope does not cut the network). A junction is a source, a confluence or
+an outlet pixel; a link is the channel between a junction and the next
+junction downstream. Stream orders are Strahler orders. Use
+``lines_geodataframe()`` / ``points_geodataframe()`` for GIS layers,
+``channel_mask`` as the ``channels`` raster of HAND, and ``chi()`` for chi
+analysis.
+)doc")
+        .def_prop_ro("n_channel_cells", [](const ChannelNetwork& n) { return n.native().n_channel_cells(); },
+            "Number of channel pixels in the network.")
+        .def_prop_ro("n_junctions", [](const ChannelNetwork& n) { return n.native().n_junctions(); },
+            "Number of junctions (sources, confluences and outlets).")
+        .def_prop_ro("channel_mask", &network_mask,
+            "0/1 Raster: 1 on network channel pixels, 0 on other valid pixels.")
+        .def_prop_ro("junction_id", &network_junction_id, nb::sig("def junction_id(self) -> numpy.ndarray"),
+            "Int32 array (n_rows, n_cols) of the junction ID at junction pixels, -1 elsewhere.")
+        .def("junctions", &network_junctions, R"doc(
+Return junction topology as a pandas DataFrame.
+
+Returns
+-------
+pandas.DataFrame
+    One row per junction: ``junction_id``, ``flat``, ``row``, ``col``,
+    ``receiver_junction`` (next junction downstream, -1 at an outlet),
+    ``donor_count`` (junctions draining directly into it), ``stream_order``
+    (Strahler), ``is_outlet``.
+)doc")
+        .def("links", &network_links, R"doc(
+Return junction-to-junction links as a pandas DataFrame.
+
+Returns
+-------
+pandas.DataFrame
+    One row per link: ``upstream_junction``, ``downstream_junction``,
+    ``stream_order`` (Strahler order of the upstream junction),
+    ``length_metres`` (D8 path length).
+)doc")
+        .def("points_geodataframe", &network_points_geodataframe, R"doc(
+Return channel pixels as a GeoPandas point layer.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    One point per channel pixel at the pixel centre, in the DEM CRS. Columns
+    ``flat``, ``row``, ``col``, ``junction_id`` (junction of the link the
+    pixel belongs to), ``is_junction``, ``drainage_area`` (m^2),
+    ``flow_distance_to_outlet`` (m), ``geometry``.
+)doc")
+        .def("lines_geodataframe", &network_lines_geodataframe, R"doc(
+Return compact non-outlet channel links as a GeoPandas line layer.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    One LineString per link (pixel centres from a junction down to the next
+    junction), in the DEM CRS. Columns ``upstream_junction``,
+    ``downstream_junction``, ``stream_order`` (Strahler), ``length_metres``,
+    ``drainage_area`` (m^2, at the upstream junction), ``geometry``.
+)doc")
+        .def("junctions_geodataframe", &network_junctions_geodataframe, R"doc(
+Return channel junctions as a GeoPandas point layer.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    Columns as ``junctions()`` plus ``geometry`` (pixel centres, DEM CRS).
+)doc")
+        .def("link_profiles", &network_link_profiles, nb::arg("values"), nb::arg("junctions") = nb::none(), R"doc(
+Sample a raster along compact downstream channel links.
+
+Parameters
+----------
+values : Raster
+    Raster on the network grid to sample (for example the DEM).
+junctions : array-like of int or None, default=None
+    Upstream junction IDs of the links to sample; None samples every link.
+
+Returns
+-------
+pandas.DataFrame
+    One row per link pixel: ``upstream_junction``, ``downstream_junction``,
+    ``node_index``, ``flat``, ``row``, ``col``,
+    ``distance_from_upstream_metres``, ``value`` (NaN where nodata).
+)doc")
+        .def("link_bearings", &network_link_bearings, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("anchor") = "upstream", nb::arg("min_nodes") = 2, R"doc(
+Fit compass bearings to compact channel links.
+
+Parameters
+----------
+junctions : array-like of int or None, default=None
+    Upstream junction IDs of the links to fit; None fits every link.
+mode : {"full_link", "fixed_length", "fixed_n_pixels"}, default="full_link"
+    Fit the whole link, or only a sub-chain of the link.
+fixed_length_metres : float, default=0
+    Sub-chain path length (m) for ``mode="fixed_length"``; must be positive
+    in that mode.
+fixed_n_pixels : int, default=0
+    Sub-chain length in pixels for ``mode="fixed_n_pixels"`` (at least 2).
+anchor : {"upstream", "downstream"}, default="upstream"
+    End of the link the sub-chain starts from.
+min_nodes : int, default=2
+    Minimum number of pixels a fit needs (at least 2).
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``upstream_junction``, ``downstream_junction``,
+    ``stream_order``, ``upstream_flat``, ``downstream_flat``,
+    ``drainage_area_m2``, ``n_nodes_total``, ``n_nodes_used``,
+    ``total_length_metres``, ``sampled_length_metres``, ``direction_x``,
+    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = north,
+    clockwise), ``fit_linearity``, ``representative_flat``,
+    ``representative_x``, ``representative_y``.
+)doc")
+        .def("junction_angles", &network_junction_angles, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("min_nodes") = 2, R"doc(
+Measure two-donor confluence angles in compass degrees.
+
+``donor_opening_angle_deg`` is the angle between the two donor channels
+(the "junction angle" of Strong and Mudd 2023); ``donor_1/2_receiver_angle_deg``
+are the angles between each donor and the receiver.
+
+Parameters
+----------
+junctions : array-like of int or None, default=None
+    Junction IDs to measure; None measures every two-donor junction.
+mode, fixed_length_metres, fixed_n_pixels, min_nodes
+    How much of each link is fitted, as in ``link_bearings``.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``junction_id``, ``donor_1``, ``donor_2``, ``receiver``,
+    ``stream_order``, ``donor_1_area_m2``, ``donor_2_area_m2``,
+    ``junction_area_m2``, ``donor_opening_angle_deg``,
+    ``donor_1_receiver_angle_deg``, ``donor_2_receiver_angle_deg``,
+    ``bending_angle_signed_deg``, ``bending_angle_abs_deg``.
+)doc")
+        .def("basin_com_bearings", &network_basin_com_bearings, R"doc(
+Return outlet-to-basin-centre-of-mass bearings for each junction basin.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``junction_id``, ``stream_order``, ``outlet_x``, ``outlet_y``,
+    ``centre_of_mass_x``, ``centre_of_mass_y``, ``bearing_deg`` (compass
+    degrees from the outlet to the centre of mass), ``distance_metres``,
+    ``n_pixels``.
+)doc")
+        .def("chi", &network_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), R"doc(
+Extract outlet-seeded chi coordinates on this channel network.
+
+chi is the integral of ``(A0 / A)**m_over_n`` along the channel from the
+outlet upstream (trapezoidal rule on D8 steps), so it has units of metres
+and is 0 at each outlet. Plotting elevation against chi gives straight
+lines where channel steepness is uniform.
+
+Parameters
+----------
+outlets : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` outlet pixels on the network, one basin
+    each. None uses every outlet of the network.
+m_over_n : float, default=0.45
+    Concavity index theta = m/n (dimensionless, positive).
+reference_area : float, default=1.0
+    Reference drainage area A0 in m^2 (positive). With A0 = 1 m^2 the
+    fitted chi-elevation slope equals the steepness index k_sn.
+denominator : Raster or None, default=None
+    Replacement for drainage area A in the integrand (for example a
+    discharge raster, in the same units as A0); must be positive on the
+    channels. None uses D8 drainage area (m^2).
+
+Returns
+-------
+ChiCollection
+    Chi values for each outlet's channel pixels.
+)doc")
+        .def("chi_sweep", &chi_sweep, nb::arg("dem"), nb::arg("m_over_n_values"), nb::arg("outlets") = nb::none(), nb::arg("reference_area") = 1.0, nb::arg("critical_divergence_metres") = 5.0f, nb::arg("denominator") = nb::none(), R"doc(
+Fit each tested m/n and return per-basin disorder.
+
+For each value the chi profiles are fitted (``ChiCollection.fit`` with
+``mainstem="max_flow_length"``) and the chi disorder is computed; the m/n
+with the lowest disorder is the best-collapsing concavity.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the network grid.
+m_over_n_values : array-like of float
+    Concavity values to test (non-empty).
+outlets, reference_area, denominator
+    As in ``chi``.
+critical_divergence_metres : float, default=5.0
+    As in ``ChiCollection.fit``.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``m_over_n``, ``basin_id``, ``outlet_flat``, ``disorder``.
+)doc")
+        .def("donors", [](const ChannelNetwork& n, std::int32_t junction) { const auto slice = n.native().donor_junctions(junction); return std::vector<std::int32_t>(slice.begin(), slice.end()); }, nb::arg("junction_id"), R"doc(
+Return the IDs of the junctions that drain directly into a junction.
+
+Parameters
+----------
+junction_id : int
+    Junction ID (see ``junctions()``).
+
+Returns
+-------
+list of int
+    Donor junction IDs; empty for a source.
+)doc");
+    nb::class_<ChiCollection>(module, "ChiCollection", R"doc(
+Chi coordinates of the channel pixels of one or more basins.
+
+Made by ``ChannelNetwork.chi()``. Basin ``basin_id`` (0-based) is the
+``basin_id``-th outlet. Chi (m) is 0 at each outlet and increases upstream.
+``nodes()`` gives the values as a table, ``raster()`` as a Raster, and
+``fit(dem)`` fits piecewise-linear segments in chi-elevation space to give
+channel steepness (k_sn).
+)doc")
+        .def_prop_ro("n_basins", [](const ChiCollection& c) { return c.native().basins.size(); },
+            "Number of basins (outlets).")
+        .def("nodes", &chi_nodes, R"doc(
+Return extracted channel chi nodes as a pandas DataFrame.
+
+Returns
+-------
+pandas.DataFrame
+    One row per channel pixel: ``basin_id`` (0-based), ``outlet_flat``,
+    ``flat``, ``receiver_flat`` (downstream pixel, negative at the outlet),
+    ``row``, ``col``, ``chi`` (m).
+)doc")
+        .def("raster", &chi_raster, R"doc(
+Return chi values as a masked Raster.
+
+Returns
+-------
+Raster
+    Chi (m) on the channel pixels of every basin; nodata elsewhere.
+)doc")
+        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", R"doc(
+Fit piecewise-linear channel profiles in chi-elevation space.
+
+Each basin's main stem and then each tributary is fitted with straight
+segments between its ends; a segment is split at its worst-fitting pixel
+while the elevation misfit there exceeds ``critical_divergence_metres``.
+Each segment's slope dz/dchi is its k_sn.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the network grid, normally the conditioned DEM.
+critical_divergence_metres : float, default=5.0
+    Largest allowed vertical misfit (m) between the observed profile and a
+    segment before the segment is split (non-negative). Larger values give
+    fewer, longer segments; noisier DEMs need larger values (for example
+    10 m on a 30 m DEM).
+mainstem : {"max_flow_length", "max_chi"}, default="max_flow_length"
+    How the main stem of each basin is chosen: the longest D8 flow path,
+    or the path reaching the largest chi.
+
+Returns
+-------
+ChiFit
+    Fitted nodes, segments and per-basin k_sn summaries.
+)doc");
+    nb::class_<ChiFit>(module, "ChiFit", R"doc(
+Piecewise-linear fits of channel profiles in chi-elevation space.
+
+Made by ``ChiCollection.fit(dem)``. Each segment is a straight line in
+(chi, elevation); its slope ``ksn = dz/dchi`` is the channel steepness
+index. With ``reference_area = 1`` m^2 this is k_sn in m^(2 theta), where
+theta = m_over_n; with another A0 it is k_sn / A0**theta (dimensionless).
+All three tables are pandas DataFrames; ``basin_id`` is 0-based and
+``flat`` values are flat indices (row = flat // n_cols, col = flat % n_cols;
+or ``FlowInfo.row_col(flat)``). lsdviztools3 chi plots expect the column
+names ``basin_index`` and ``k_sn``: rename with
+``df.rename(columns={"basin_id": "basin_index", "ksn": "k_sn"})``.
+
+Attributes
+----------
+nodes : pandas.DataFrame
+    One row per channel pixel: ``basin_id``, ``outlet_flat``, ``flat``,
+    ``receiver_flat``, ``chi`` (m), ``observed_elevation`` (m),
+    ``fitted_elevation`` (m), ``residual_elevation`` (observed - fitted, m),
+    ``abs_residual_elevation`` (m), ``branch_id``, ``is_main_stem``,
+    ``is_source``, ``is_junction``, ``is_split_point`` (pixel where segments
+    meet). There are no row/col columns: use ``flat`` as above.
+segments : pandas.DataFrame
+    One row per segment: ``basin_id``, ``outlet_flat``, ``segment_id``,
+    ``parent_segment_id``, ``branch_id``, ``downstream_flat``,
+    ``upstream_flat``, ``downstream_chi``, ``upstream_chi`` (m),
+    ``downstream_elevation``, ``upstream_elevation`` (m), ``ksn``,
+    ``max_abs_residual`` (m), ``n_nodes``.
+summary : pandas.DataFrame
+    One row per basin: ``basin_id``, ``outlet_flat``, ``n_segments``,
+    ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,
+    ``median_ksn``, ``min_ksn``, ``max_ksn``, ``chi_weighted_mean_ksn``,
+    ``main_stem_mean_ksn``, ``main_stem_median_ksn``.
+)doc")
+        .def_prop_ro("nodes", &chi_fit_nodes, nb::sig("def nodes(self) -> pandas.DataFrame"),
+            "Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.")
+        .def_prop_ro("segments", &chi_fit_segments, nb::sig("def segments(self) -> pandas.DataFrame"),
+            "Per-segment k_sn table (pandas.DataFrame); see the class documentation for columns.")
+        .def_prop_ro("summary", &chi_fit_summary, nb::sig("def summary(self) -> pandas.DataFrame"),
+            "Per-basin k_sn summary table (pandas.DataFrame); see the class documentation for columns.")
+        .def("disorder", &chi_fit_disorder, R"doc(
+Return full-network chi-disorder per basin.
+
+Disorder measures how badly tributary profiles fail to collapse onto the
+main stem in chi-elevation space; lower is better.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``basin_id``, ``outlet_flat``, ``n_nodes``,
+    ``n_main_stem_nodes``, ``n_branches``, ``n_side_branches``, ``disorder``.
+)doc")
+        .def("disorder_subset_sensitivity", &chi_fit_subset, nb::arg("n_side_branches") = 3, R"doc(
+Evaluate disorder across mainstem-plus-tributary subsets.
+
+Parameters
+----------
+n_side_branches : int, default=3
+    Number of side branches combined with the main stem in each subset.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``basin_id``, ``full_disorder``, ``sample_id``, ``disorder``,
+    ``n_nodes``, ``branch_ids``.
+)doc")
+        .def("disorder_jackknife", &chi_fit_jackknife, R"doc(
+Leave-one-side-branch-out disorder samples.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``basin_id``, ``full_disorder``, ``replicate_id``,
+    ``removed_branch_id``, ``disorder``, ``n_nodes``, ``mean``,
+    ``standard_error``.
+)doc")
+        .def("disorder_bootstrap", &chi_fit_bootstrap, nb::arg("replicates") = 1000, nb::arg("seed") = 5489u, nb::arg("sample_full_tributary_count") = true, nb::arg("n_side_branches") = 3, nb::arg("with_replacement") = true, R"doc(
+Bootstrap disorder over side branches.
+
+Parameters
+----------
+replicates : int, default=1000
+    Number of bootstrap replicates (positive).
+seed : int, default=5489
+    Random seed, for reproducible samples.
+sample_full_tributary_count : bool, default=True
+    Draw as many side branches as the basin has; if False draw
+    ``n_side_branches`` per replicate.
+n_side_branches : int, default=3
+    Side branches per replicate when ``sample_full_tributary_count`` is False.
+with_replacement : bool, default=True
+    Sample side branches with replacement.
+
+Returns
+-------
+pandas.DataFrame
+    Columns ``basin_id``, ``full_disorder``, ``replicate_id``, ``disorder``,
+    ``n_nodes``, ``mean``, ``standard_deviation``, ``percentile_2p5``,
+    ``percentile_97p5``.
+)doc")
+        .def("invert_ksn", &invert_ksn, nb::arg("m_over_n_values"), nb::arg("reference_area") = 1.0, nb::arg("coarse_cell_size_metres") = 2000.0, nb::arg("roughness_weight") = 1.e4, nb::arg("diagonal_jitter") = 1.e-8, nb::arg("use_mae") = true, R"doc(
+Run regularised spatial ksn/u-star inversion over m/n trials.
+
+For each tested m/n, solves on a coarse grid for the regularised field of
+u-star (normalised uplift) that best reproduces the channel elevations, and
+selects the m/n with the lowest misfit.
+
+Parameters
+----------
+m_over_n_values : array-like of float
+    Concavity values to test (non-empty).
+reference_area : float, default=1.0
+    Reference drainage area A0 (m^2) used for chi.
+coarse_cell_size_metres : float, default=2000.0
+    Cell size (m) of the coarse grid on which u-star is solved.
+roughness_weight : float, default=1e4
+    Weight of the roughness (smoothness) regularisation term.
+diagonal_jitter : float, default=1e-8
+    Small value added to the normal-equation diagonal for numerical
+    stability.
+use_mae : bool, default=True
+    Select the best m/n by mean absolute error (True) or RMSE (False).
+
+Returns
+-------
+ChiInversion
+    Trial, summary and node tables, and u-star rasters.
+)doc");
+    nb::class_<ChiInversion>(module, "ChiInversion", R"doc(
+Results of ``ChiFit.invert_ksn``: per-basin m/n trials and u-star fields.
+)doc")
+        .def_prop_ro("trials", &inversion_trials, nb::sig("def trials(self) -> pandas.DataFrame"),
+            "One row per basin and m/n trial: basin_id, trial_id, m_over_n, mae, rmse, n_nodes, n_parameters, n_constrained_parameters.")
+        .def_prop_ro("summary", &inversion_summary, nb::sig("def summary(self) -> pandas.DataFrame"),
+            "Best trial per basin: basin_id, best_trial_id, best_m_over_n, mae, rmse.")
+        .def_prop_ro("nodes", &inversion_nodes, nb::sig("def nodes(self) -> pandas.DataFrame"),
+            "Per channel pixel of the best trial: basin_id, flat, receiver_flat, chi, observed_elevation, predicted_elevation, residual_elevation, u_star, coarse_cell_id.")
+        .def("u_star_raster", &inversion_u_star, nb::arg("basin_id") = 0, R"doc(
+Return the best-trial u-star field of one basin as a Raster.
+
+Parameters
+----------
+basin_id : int, default=0
+    Zero-based basin index.
+
+Returns
+-------
+Raster
+)doc")
+        .def("support_raster", &inversion_support, nb::arg("basin_id") = 0, R"doc(
+Return the number of channel nodes supporting each coarse cell of one basin.
+
+Parameters
+----------
+basin_id : int, default=0
+    Zero-based basin index.
+
+Returns
+-------
+Raster
+)doc");
     flow.def("channel_scope", &make_scope, nb::arg("threshold_contributing_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
-        "Resolve threshold or supplied source paths into a ChannelScope.")
-        .def("channel_network", &network_from_scope, nb::arg("scope"), "Build a compact junction graph from a ChannelScope.")
-        .def("flow_lines_geodataframe", &flow_lines_geodataframe, "Return all D8 receiver edges as a GeoPandas line layer.")
-        .def("chi_from_outlets", &full_basin_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Integrate zero-based chi across complete upstream raster domains.");
-    flow.def("chi_from_outlets_inherited", &inherited_basin_chi, nb::arg("outlets"), nb::arg("seed_chi"), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), "Integrate chi from supplied outlets using seed-raster base values.");
+        R"doc(
+Resolve threshold or supplied source paths into a ChannelScope.
+
+With no ``sources``, every pixel whose contributing-pixel count reaches the
+threshold is a channel. With ``sources``, only the channels traced
+downstream from those points are used, optionally stopped at ``outlets``.
+
+Parameters
+----------
+threshold_contributing_pixels : int
+    Channel threshold: a pixel is a channel when the number of pixels
+    draining through it (including itself) is >= this value; positive.
+    Threshold area in m^2 is this times ``metadata.pixel_area`` (for
+    example 1000 pixels on a 30 m grid is 0.9 km^2).
+sources : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` channel-head pixels (valid pixels). Each
+    is traced downstream to its D8 outlet. None selects all channels.
+outlets : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` points where traced channels stop; needs
+    ``sources``. Each outlet is matched to the nearest pixel on a traced
+    path, and that path is cut there.
+snap_sources : bool, default=True
+    Move each source to the nearest pixel that meets the threshold
+    (expanding-square search); sources that cannot be snapped are dropped.
+    If False sources are used as given.
+source_snap_max_radius_pixels : int, default=25
+    Largest search radius, in pixels, for source snapping.
+outlet_snap_max_distance_metres : float, default=0.0
+    Largest distance (m) from an outlet point to the traced path it cuts;
+    outlets farther away are ignored. 0 or negative means unlimited.
+auto_detect_roles : bool, default=False
+    Pass all points as ``sources`` and let roles be inferred: a point that
+    lies downstream of another supplied point becomes an outlet that cuts
+    that channel. Requires ``outlets=None``; sources are always snapped.
+
+Returns
+-------
+ChannelScope
+    Selected channel pixels, resolved sources and outlets.
+)doc")
+        .def("channel_network", &network_from_scope, nb::arg("scope"), R"doc(
+Build a compact junction graph from a ChannelScope.
+
+Parameters
+----------
+scope : ChannelScope
+    Made by this ``FlowInfo``'s ``channel_scope`` (or ``scope_from_heads``);
+    must have at least one resolved source. Each resolved source is traced
+    to its D8 outlet.
+
+Returns
+-------
+ChannelNetwork
+)doc")
+        .def("flow_lines_geodataframe", &flow_lines_geodataframe, R"doc(
+Return all D8 receiver edges as a GeoPandas line layer.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    One two-point LineString (pixel centre to receiver centre) per
+    non-outlet pixel, in the DEM CRS. Columns ``flat``, ``receiver_flat``,
+    ``row``, ``col``, ``receiver_row``, ``receiver_col``, ``length_metres``,
+    ``geometry``. Large for big DEMs.
+)doc")
+        .def("chi_from_outlets", &full_basin_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), R"doc(
+Integrate zero-based chi across complete upstream raster domains.
+
+Unlike ``ChannelNetwork.chi``, chi is computed on every pixel upslope of
+each outlet, not only on channels.
+
+Parameters
+----------
+outlets : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` outlet pixels; None uses every outlet.
+m_over_n : float, default=0.45
+    Concavity index theta (positive).
+reference_area : float, default=1.0
+    Reference drainage area A0 in m^2 (positive).
+denominator : Raster or None, default=None
+    Replacement for drainage area A (m^2) in the integrand; None uses D8
+    drainage area.
+
+Returns
+-------
+Raster
+    Chi (m), 0 at each outlet; nodata outside the selected basins.
+)doc");
+    flow.def("chi_from_outlets_inherited", &inherited_basin_chi, nb::arg("outlets"), nb::arg("seed_chi"), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), R"doc(
+Integrate chi from supplied outlets using seed-raster base values.
+
+Each outlet starts at the value of ``seed_chi`` at that pixel instead of 0,
+so chi can be continued from a larger (for example coarser) domain.
+
+Parameters
+----------
+outlets : array-like of int
+    N x 2 array of ``(row, col)`` outlet pixels (non-empty).
+seed_chi : Raster
+    Chi (m) on the flow grid giving each outlet's starting value.
+m_over_n, reference_area, denominator
+    As in ``chi_from_outlets``.
+
+Returns
+-------
+Raster
+    Chi (m) upslope of the outlets.
+)doc");
 }
 } // namespace lsdtt3_python
