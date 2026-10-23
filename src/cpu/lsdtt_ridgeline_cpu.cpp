@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_ridgeline_cpu.hpp"
+
 #include "lsdtt_flowinfo_cpu.hpp" // For dynamic_cast accessing CPU-specific config
 #include "../utils/lsdtt_regression.hpp"
 #include "../utils/lsdtt_signal1d.hpp"
@@ -16,7 +17,6 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
-#include <stdexcept>
 #include <unordered_set>
 #include <set>
 #include <sstream>
@@ -440,15 +440,27 @@ void lsdtt_ridgeline_cpu::segment_ridgeline_snout_by_curvature(float smoothing_w
     snoutidx_ = knees.empty() ? 0 : static_cast<int>(knees.front());
 }
 
-void lsdtt_ridgeline_cpu::fit_ridgeline_profile(bool use_polynomial, bool use_constant)
+void lsdtt_ridgeline_cpu::fit_ridgeline_profile(
+    bool use_polynomial, bool use_constant, int moving_average_window_pixels,
+    bool additional_output)
 {
     if (static_cast<std::size_t>(snoutidx_) >= nodes_.size()) return;
+    if (moving_average_window_pixels < 1 ||
+        (moving_average_window_pixels > 1 && moving_average_window_pixels % 2 == 0))
+    {
+        throw std::invalid_argument(
+            "ridgeline detrend moving-average window must be a positive odd number of pixels");
+    }
+    const int configured_moving_average_window = moving_average_window_pixels;
 
     std::vector<double> dist_main(distances_.begin() + snoutidx_, distances_.end());
     std::vector<double> elev_main(elevations_.begin() + snoutidx_, elevations_.end());
 
-    fitted_elevations_.assign(nodes_.size(), divide_grid_meta_.no_data_value);
-    detrended_elevations_.assign(nodes_.size(), divide_grid_meta_.no_data_value);
+    if (!additional_output)
+    {
+        fitted_elevations_.assign(nodes_.size(), divide_grid_meta_.no_data_value);
+        detrended_elevations_.assign(nodes_.size(), divide_grid_meta_.no_data_value);
+    }
 
     // Always compute polynomial fit coefficients for the statistics
     lsdtt_polynomial2_regression_result poly_fit = compute_polynomial2_regression(dist_main, elev_main);
@@ -462,6 +474,58 @@ void lsdtt_ridgeline_cpu::fit_ridgeline_profile(bool use_polynomial, bool use_co
     slope_fit_     = static_cast<float>(lin_fit.slope);
     intercept_fit_ = static_cast<float>(lin_fit.intercept);
     r2_fit_        = static_cast<float>(lin_fit.r_squared);
+
+    if (additional_output)
+    {
+        auto existing = std::find(moving_window_sizes_pixels_.begin(),
+                                  moving_window_sizes_pixels_.end(),
+                                  configured_moving_average_window);
+        if (existing != moving_window_sizes_pixels_.end())
+            throw std::invalid_argument("duplicate moving-window ridgeline fit size");
+        std::vector<float> moving_fitted(nodes_.size(), divide_grid_meta_.no_data_value);
+        std::vector<float> moving_detrended(nodes_.size(), divide_grid_meta_.no_data_value);
+        const int radius = configured_moving_average_window / 2;
+        const std::size_t profile_size = nodes_.size() - snoutidx_;
+        for (std::size_t i = snoutidx_; i < nodes_.size(); ++i)
+        {
+            const std::size_t local_i = i - snoutidx_;
+            std::size_t first = 0;
+            std::size_t last = 0;
+            if (profile_size >= static_cast<std::size_t>(configured_moving_average_window))
+            {
+                first = local_i > static_cast<std::size_t>(radius)
+                    ? local_i - static_cast<std::size_t>(radius) : 0;
+                if (first + static_cast<std::size_t>(configured_moving_average_window) > profile_size)
+                    first = profile_size - static_cast<std::size_t>(configured_moving_average_window);
+                last = first + static_cast<std::size_t>(configured_moving_average_window) - 1;
+            }
+            else
+            {
+                first = 0;
+                last = profile_size - 1;
+            }
+            double sum = 0.0;
+            std::size_t count = 0;
+            for (std::size_t j = first; j <= last; ++j)
+            {
+                const float z = elevations_[snoutidx_ + j];
+                if (std::isfinite(z) && !divide_grid_meta_.is_nodata(z))
+                {
+                    sum += z;
+                    ++count;
+                }
+            }
+            const float fit_z = count > 0
+                ? static_cast<float>(sum / static_cast<double>(count))
+                : elevations_[i];
+            moving_fitted[i] = fit_z;
+            moving_detrended[i] = elevations_[i] - fit_z;
+        }
+        moving_window_sizes_pixels_.push_back(configured_moving_average_window);
+        moving_window_fitted_elevations_.push_back(std::move(moving_fitted));
+        moving_window_detrended_elevations_.push_back(std::move(moving_detrended));
+    }
+    if (additional_output) return;
 
     if (use_constant)
     {
@@ -897,6 +961,14 @@ std::vector<std::vector<std::string>> lsdtt_ridgeline_cpu::get_ridgeline_csv_row
                 ? format_float(nearest_channel_elevations_left_[i]) : "NaN");
             row.push_back((i < nearest_channel_elevations_right_.size())
                 ? format_float(nearest_channel_elevations_right_[i]) : "NaN");
+        }
+        for (std::size_t window_index = 0;
+             window_index < moving_window_sizes_pixels_.size(); ++window_index)
+        {
+            const auto& fitted = moving_window_fitted_elevations_[window_index];
+            const auto& detrended = moving_window_detrended_elevations_[window_index];
+            row.push_back(i < fitted.size() ? format_float(fitted[i]) : "NaN");
+            row.push_back(i < detrended.size() ? format_float(detrended[i]) : "NaN");
         }
         rows.push_back(std::move(row));
     }
