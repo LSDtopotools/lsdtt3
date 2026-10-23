@@ -45,6 +45,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_warp.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -411,6 +412,9 @@ int main(int argc, char* argv[])
         "Empty uses <write_fname>_maximum_d50_slope_area.csv.",
         "Output", "param", ""};
 
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -445,6 +449,20 @@ int main(int argc, char* argv[])
                                      parser.get_read_fname() +
                                      parser.get_read_ext();
         lsdtt::lsdtt_raster_cpu dem = read_raster(dem_path);
+        // Interior nodata: kept as sinks or filled (interior_nodata_method).
+        try
+        {
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             dem, sf.at("interior_nodata_method"),
+                             sf.at("nodata_fill_method_choice"),
+                             ii.at("nodata_fill_max_iter"), ii.at("n_threads"))
+                      << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+            return 1;
+        }
         if (bf.at("fill_before_routing"))
         {
             dem = lsdtt::fill_pits(

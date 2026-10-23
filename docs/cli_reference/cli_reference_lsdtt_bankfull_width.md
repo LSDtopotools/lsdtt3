@@ -266,4 +266,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `reach_template_min_reach_length_metres` | `float` | `30.0` | `param` | `generate_reach_template` | Minimum reach length (shorter reaches merged). | Ensures reaches are geomorphically meaningful. For gullies: 20-50 m. For large rivers: 300-1000 m. |
 | `reach_template_n_reference_xs` | `int` | `10` | `param` | `generate_reach_template` | Number of reference cross-section candidates per reach. | Evenly spaced by position (not distance) along each reach. Use these to pick a reference XS for discharge calculation. |
 
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
 <!-- END GENERATED CLI PARAMETERS -->

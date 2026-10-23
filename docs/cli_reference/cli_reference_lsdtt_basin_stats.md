@@ -62,7 +62,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `min_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. Negative values apply as given; `-9999` disables. |
 | `fill_before_routing` | bool | `true` | Fill DEM pits before building flow routing. Recommended. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
 
@@ -301,7 +301,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation are set to nodata. | Default of 0.0 removes sea and ocean pixels from many DEM products. |
+| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation are set to nodata. -9999 disables. | Default of 0.0 removes sea and ocean pixels from many DEM products. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. |
 
 ### Pit filling
 
@@ -362,5 +362,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_basin_pdf_cdf_csv` | `bool` | `false` | `switch` | - | Write PDF/CDF CSV output for each basin. | If true, writes one CSV per basin containing histogram counts, probabilities, PDF, and CDF of basin elevations. |
 | `n_histogram_bins` | `int` | `100` | `param` | `write_basin_pdf_cdf_csv` | Number of bins used for basin elevation histogram/PDF/CDF output. | Used when write_basin_pdf_cdf_csv is true. Default is 100 bins. |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
 
 <!-- END GENERATED CLI PARAMETERS -->

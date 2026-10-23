@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -590,11 +591,46 @@ int main(int argc, char* argv[])
     hyd_opts.adaptive_dt_growth_factor = ff["adaptive_dt_growth_factor"];
     hyd_opts.adaptive_dt_shrink_factor = ff["adaptive_dt_shrink_factor"];
 
+    // Active node states (1 or 3) need bed elevations. Report every such cell
+    // on nodata rather than letting the solver refuse the first one.
+    {
+        const auto& bed = routed_dem.get_data_array();
+        const auto& bed_mask = routed_dem.get_mask_array();
+        std::int64_t n_bad = 0;
+        int first_row = -1;
+        int first_col = -1;
+        for (int row = 0; row < routed_dem.n_rows(); ++row)
+        for (int col = 0; col < routed_dem.n_cols(); ++col)
+        {
+            if (node_state(row, col) == 0) continue;
+            if (bed_mask(row, col) != 0 && std::isfinite(bed(row, col))) continue;
+            if (n_bad++ == 0) { first_row = row; first_col = col; }
+        }
+        if (n_bad > 0)
+        {
+            std::cerr << "FATAL: " << n_bad << " cell(s) are active in "
+                      << "hydraulic_node_state_fname (1 or 3) but nodata in the DEM; "
+                      << "the first is at row " << first_row << ", col " << first_col
+                      << ". Set node state 0 (outside) on nodata cells.\n";
+            return 1;
+        }
+    }
+
     std::cout << "\n--- Initialising stationary hydraulic solver ---\n";
     std::cout << "Routing: " << routing_method << ", BC: " << fg_opts.boundary_conditions << "\n";
-    lsdtt::lsdtt_hydraulic_graph_cpu hydraulic(
-        routed_dem, node_state, fg_opts, hyd_opts,
-        ff["hydraulic_fill_slope_epsilon"], bf["check_valid_outlet"]);
+    std::optional<lsdtt::lsdtt_hydraulic_graph_cpu> hydraulic_solver;
+    try
+    {
+        hydraulic_solver.emplace(
+            routed_dem, node_state, fg_opts, hyd_opts,
+            ff["hydraulic_fill_slope_epsilon"], bf["check_valid_outlet"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: could not initialise the hydraulic solver: " << e.what() << "\n";
+        return 1;
+    }
+    lsdtt::lsdtt_hydraulic_graph_cpu& hydraulic = *hydraulic_solver;
 
     const auto load_field = [&](const std::string& fname, const char* label)
     {

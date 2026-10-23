@@ -197,6 +197,21 @@ void declare_fill_flat_resolution_parameter(
     const std::string&                  prefix = "",
     const std::string&                  min_slope_key = "fill_min_slope");
 
+// Interior nodata: nodata pixels not connected to the raster edge through
+// nodata (isolated voids, moulins, lakes masked out). Edge-connected nodata,
+// such as sea removed by min_elevation, is always an open boundary.
+//
+//   interior_nodata_method      string  "sink"       sink | fill
+//   nodata_fill_method_choice   string  "laplacian"  laplacian | iterative_weighted_average
+//   nodata_fill_max_iter        int     10000
+//
+// Apply with lsdtt::apply_interior_nodata_method (lsdtt_raster_nodata_filling_cpu).
+void declare_interior_nodata_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
 // Channel-initiation threshold.
 void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,

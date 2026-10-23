@@ -384,9 +384,12 @@ int main(int argc, char* argv[])
     // --- Threshold masking ---
     float_default_map["min_elevation"] = 0.0f;
     help_map["min_elevation"] = {"float","0.0",
-        "Pixels at or below this elevation (metres) are set to nodata.",
+        "Pixels at or below this elevation (metres) are set to nodata. -9999 disables.",
         "Default of 0.0 removes ocean and below-sea-level artefacts common "
-        "in global DEMs. Set to a large negative number to disable.",
+        "in global DEMs. Negative values apply as given: for a basin below sea "
+        "level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest "
+        "land. -9999 (or lower) disables masking. Sea removed this way is "
+        "connected to the DEM edge and acts as an open boundary.",
         "Threshold masking", "param", ""};
 
     float_default_map["maximum_elevation"] = 30000.0f;
@@ -423,22 +426,15 @@ int main(int argc, char* argv[])
     help_map["write_filled_nodata_raster"] = {"bool","false",
         "Write a DEM with interior nodata pixels filled.",
         "Only fills nodata pixels completely surrounded by valid data. "
-        "Does not fill nodata that touches the raster edge.",
+        "Does not fill nodata that touches the raster edge. Uses "
+        "nodata_fill_method_choice. On its own this only writes the file; set "
+        "interior_nodata_method: fill to also use the filled DEM in the later "
+        "steps (breaching, pit filling).",
         "Interior nodata filling", "switch", ""};
 
-    string_default_map["nodata_fill_method_choice"] = "laplacian";
-    help_map["nodata_fill_method_choice"] = {"string","laplacian",
-        "Method for filling interior nodata pixels.",
-        "laplacian: smooth Dirichlet interpolation (recommended). "
-        "iterative_weighted_average: fast, well-suited to thin voids.",
-        "Interior nodata filling", "param", "write_filled_nodata_raster"};
-
-    int_default_map["nodata_fill_max_iter"] = 10000;
-    help_map["nodata_fill_max_iter"] = {"int","10000",
-        "Maximum iterations for iterative nodata fill methods.",
-        "Only used when nodata_fill_method_choice is laplacian or "
-        "iterative_weighted_average.",
-        "Interior nodata filling", "param", "write_filled_nodata_raster"};
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter.
+    // The fill controls also drive write_filled_nodata_raster.
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
     // --- Clip to rectangle ---
     bool_default_map["write_clipped_rectangle_raster"] = false;
@@ -1440,7 +1436,8 @@ int main(int argc, char* argv[])
     };
     const std::size_t valid_before_masking = count_valid(dem);
 
-    if (min_elev >= 0.0f)
+    // -9999 (or lower) disables; any other value, negative included, applies.
+    if (min_elev > -9998.0f)
     {
         std::cout << "\nMasking pixels at or below " << min_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, min_elev, true);
@@ -1678,32 +1675,39 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
     bool did_nodata_fill = false;
 
-    if (bf["write_filled_nodata_raster"])
+    std::cout << "\n--- Interior nodata ---\n";
+    try
     {
-        std::cout << "\n--- Interior nodata filling ---\n";
-
-        lsdtt::nodata_fill_method nfm = lsdtt::nodata_fill_method::laplacian;
-        if (sf["nodata_fill_method_choice"] == "iterative_weighted_average")
+        const bool fill_interior = sf["interior_nodata_method"] == "fill";
+        if (fill_interior || bf["write_filled_nodata_raster"])
         {
-            nfm = lsdtt::nodata_fill_method::iterative_weighted_average;
-        }
-
-        try
-        {
-            nodata_filled_dem = lsdtt::fill_interior_nodata(
-                dem, nfm, ifs["nodata_fill_max_iter"], 1e-6f, n_threads
-            );
-
-            std::string o = pp.make_output_path( "_nodata_filled.tif");
-            std::cout << "Writing: " << o << "\n";
-            loader.write_full(nodata_filled_dem.get_data(),
-                              nodata_filled_dem.get_meta(), o, out_fmt);
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             nodata_filled_dem, "fill", sf["nodata_fill_method_choice"],
+                             ifs["nodata_fill_max_iter"], n_threads)
+                      << "\n";
             did_nodata_fill = true;
+            if (bf["write_filled_nodata_raster"])
+            {
+                std::string o = pp.make_output_path( "_nodata_filled.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(nodata_filled_dem.get_data(),
+                                  nodata_filled_dem.get_meta(), o, out_fmt);
+            }
         }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: nodata filling failed: " << e.what() << "\n";
-        }
+        // The later steps use the filled DEM only when asked to; "sink" (or an
+        // invalid value) goes through the helper to be reported or refused.
+        if (fill_interior)
+            dem = nodata_filled_dem;
+        else
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             dem, sf["interior_nodata_method"], sf["nodata_fill_method_choice"],
+                             ifs["nodata_fill_max_iter"], n_threads)
+                      << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
     }
 
     // -------------------------------------------------------------------------

@@ -75,6 +75,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
@@ -597,8 +598,11 @@ int main(int argc, char* argv[])
     // --- Sea removal ---
     float_default_map["min_elevation"] = 0.0f;
     help_map["min_elevation"] = {"float","0.0",
-        "Pixels at or below this elevation are set to nodata.",
-        "Default of 0.0 removes sea and ocean pixels from many DEM products.",
+        "Pixels at or below this elevation are set to nodata. -9999 disables.",
+        "Default of 0.0 removes sea and ocean pixels from many DEM products. "
+        "Negative values apply as given: for a basin below sea level (Death "
+        "Valley -86 m, Dead Sea -430 m) set it just below the lowest land. "
+        "-9999 (or lower) disables masking.",
         "Sea removal", "param", ""};
 
     // --- Routing preparation ---
@@ -756,6 +760,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -965,7 +972,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Remove seas
     // -------------------------------------------------------------------------
-    if (ff["min_elevation"] >= 0.0f)
+    // -9999 (or lower) disables; any other value, negative included, applies.
+    if (ff["min_elevation"] > -9998.0f)
     {
         std::cout << "\nMasking pixels at or below "
                   << ff["min_elevation"] << " m\n";
@@ -975,6 +983,21 @@ int main(int argc, char* argv[])
             ff["min_elevation"],
             true
         );
+    }
+
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), ifs.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
     }
 
     // -------------------------------------------------------------------------

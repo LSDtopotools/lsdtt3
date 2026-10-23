@@ -178,7 +178,7 @@ class RasterPreprocessingAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm)
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.MINIMUM_ELEVATION,
-                "Minimum elevation (pixels at or below become nodata; negative disables)",
+                "Minimum elevation (pixels at or below become nodata; -9999 disables)",
                 type=QgsProcessingParameterNumber.Double,
                 defaultValue=0.0,
             )

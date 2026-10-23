@@ -386,9 +386,9 @@ def run_cli(exe: pathlib.Path, run_dir: pathlib.Path, src: pathlib.Path,
         "fill_min_slope": "0",
         "write_fill_raster": "true",
         # The default (0) masks every cell at or below 0 m to nodata, which
-        # would delete the floor of the +0, -0 and -50 m valleys. Negative
-        # disables it.
-        "min_elevation": "-1",
+        # would delete the floor of the +0, -0 and -50 m valleys. -9999
+        # disables it (other negative values apply as thresholds).
+        "min_elevation": "-9999",
     }
     params.update(extra)
     pfile = run_dir / f"{stem}.param"

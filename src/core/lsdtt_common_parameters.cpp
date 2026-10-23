@@ -131,6 +131,46 @@ void declare_fill_before_routing_parameter(
 }
 
 // -----------------------------------------------------------------------------
+void declare_interior_nodata_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Interior nodata");
+    const std::string method_key = prefixed_parameter_key(prefix, "interior_nodata_method");
+    string_default_map[method_key] = "sink";
+    help_map[method_key] = {"string", "sink",
+        "How nodata pixels inside the DEM are treated: sink or fill.",
+        "Interior nodata are nodata pixels not connected to the raster edge "
+        "through other nodata (isolated voids, moulins, masked lakes). sink (the "
+        "default, unchanged behaviour): they are outlets, so flow that reaches "
+        "them ends there, as at the DEM edge; use this for real internal "
+        "drainage (e.g. moulins on an ice sheet). fill: they are interpolated "
+        "with nodata_fill_method_choice before any filling or routing, so flow "
+        "passes across them; use this for data voids. Nodata connected to the "
+        "edge (e.g. sea removed by min_elevation) is never filled and always "
+        "acts as an open boundary.",
+        group, "param", ""};
+
+    const std::string choice_key = prefixed_parameter_key(prefix, "nodata_fill_method_choice");
+    string_default_map[choice_key] = "laplacian";
+    help_map[choice_key] = {"string", "laplacian",
+        "Method for filling interior nodata pixels.",
+        "laplacian: smooth Dirichlet interpolation (recommended). "
+        "iterative_weighted_average: fast, well-suited to thin voids. Used when "
+        + method_key + " is fill.",
+        group, "param", method_key + "=fill"};
+
+    const std::string iter_key = prefixed_parameter_key(prefix, "nodata_fill_max_iter");
+    int_default_map[iter_key] = 10000;
+    help_map[iter_key] = {"int", "10000",
+        "Maximum iterations for iterative nodata fill methods.",
+        "Used when " + method_key + " is fill.",
+        group, "param", method_key + "=fill"};
+}
+
+// -----------------------------------------------------------------------------
 void declare_fill_min_slope_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

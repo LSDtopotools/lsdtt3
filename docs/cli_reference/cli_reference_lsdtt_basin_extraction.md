@@ -332,4 +332,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_basins_raster` | `bool` | `false` | `switch` | - | Write the selected basins as a labelled raster. | Basins are labelled by junction number since that uniquely identifies extracted basins. Nested basins are printed on top of parent basins. |
 | `write_basins_datamap` | `bool` | `false` | `switch` | - | Write selected basin datamap as CSV. | For each basin, there is a row containing the junction number and outlet flat index. This can be helpful for debugging. |
 
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
 <!-- END GENERATED CLI PARAMETERS -->

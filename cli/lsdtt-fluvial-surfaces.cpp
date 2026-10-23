@@ -76,6 +76,7 @@
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
 #include "../src/cpu/lsdtt_proximity_cpu.hpp"
@@ -1079,6 +1080,9 @@ int main(int argc, char* argv[])
         "Output file: <stem>_junction_network_points.fgb.",
         "Outputs","switch","write_channel_network"};
 
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -1300,6 +1304,20 @@ int main(int argc, char* argv[])
         std::cout << "  rows=" << dem.get_meta().n_rows
                   << "  cols=" << dem.get_meta().n_cols
                   << "  cell=" << dem.get_meta().cell_size << " m\n\n";
+    }
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ip.at("nodata_fill_max_iter"), ip.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
     }
     const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
     const std::size_t n_pixels =

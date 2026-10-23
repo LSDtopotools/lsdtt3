@@ -75,6 +75,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
@@ -553,6 +554,9 @@ int main(int argc, char* argv[])
         "cores; hyperthreads add nothing.",
         "Performance", "param", ""};
 
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -676,6 +680,20 @@ int main(int argc, char* argv[])
                       << ff.at("min_elevation") << " m to nodata\n";
             dem_raw = lsdtt::mask_to_nodata_using_threshold(
                 dem_raw, ff.at("min_elevation"), true);
+        }
+        // Interior nodata: kept as sinks or filled (interior_nodata_method).
+        try
+        {
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             dem_raw, sf.at("interior_nodata_method"),
+                             sf.at("nodata_fill_method_choice"),
+                             ip.at("nodata_fill_max_iter"), ip.at("n_threads"))
+                      << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+            return 1;
         }
         const lsdtt::lsdtt_raster_meta meta = dem_raw.get_meta();
         const int nr = meta.n_rows, nc = meta.n_cols;

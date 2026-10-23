@@ -30,6 +30,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../src/cpu/lsdtt_internal_drainage_cpu.hpp"
@@ -751,6 +752,9 @@ int main(int argc, char* argv[])
     add_bool_help("calculate_sink_chi", false, "Calculate full-raster sink-aware chi.", "Chi");
     add_bool_help("write_chi_raster", true, "Write sink-aware chi raster.", "Chi");
 
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -851,7 +855,21 @@ int main(int argc, char* argv[])
         loader.open_raster(pp.get_full_read_path());
         loader.print_raster_info();
         loader.get_meta().check_projected_metres();
-        const lsdtt::lsdtt_raster_cpu dem(loader);
+        lsdtt::lsdtt_raster_cpu dem(loader);
+        // Interior nodata: kept as sinks or filled (interior_nodata_method).
+        try
+        {
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             dem, sf.at("interior_nodata_method"),
+                             sf.at("nodata_fill_method_choice"),
+                             ip.at("nodata_fill_max_iter"), ip.at("n_threads"))
+                      << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+            return 1;
+        }
 
         lsdtt::sink_detection_options detection_options;
         detection_options.method = algorithm == "fill_difference"

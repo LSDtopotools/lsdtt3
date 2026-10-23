@@ -808,6 +808,62 @@ add_lsdtt_cli_smoke_test(
     --expect-valid-percent-100 tiny_nodata_nodata_filled.tif
 )
 
+# interior_nodata_method (shared by lsdtt-raster-preprocessing and the analysis
+# CLIs). tiny_dem_nodata has one interior nodata pixel; tiny_dem_edge_nodata has
+# one on the edge, which is never filled. sink is the default and unchanged
+# behaviour: the pixel stays nodata and flow ends there.
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_fill_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_fill.param.in
+    da_interior_fill_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: 1 pixel(s) filled by laplacian"
+    --expect-valid-percent-100 da_interior_fill_d8_drainage_area.tif
+)
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_sink_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_sink.param.in
+    da_interior_sink_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: 1 pixel(s), kept as sinks"
+    --expect-valid-percent da_interior_sink_d8_drainage_area.tif:96
+)
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_edge_not_filled_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_edge_nodata_fill.param.in
+    da_edge_fill_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: none (interior_nodata_method: fill)"
+)
+add_lsdtt_cli_smoke_test(
+    failure_interior_nodata_invalid_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_invalid.param.in
+    da_interior_bad_d8_drainage_area.tif
+    --expect-failure
+    --stderr-contains "interior_nodata_method must be sink or fill, not 'filled'"
+)
+# In preprocessing, fill also feeds the later steps: the pit-filled DEM has no
+# interior void (write_filled_nodata_raster alone only writes a file).
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_fill_preprocessing
+    lsdtt-raster-preprocessing
+    raster_preprocessing_interior_nodata_fill.param.in
+    tiny_interior_fill_fill.tif
+    --stdout-contains "Interior nodata: 1 pixel(s) filled by laplacian"
+    --expect-valid-percent-100 tiny_interior_fill_fill.tif
+)
+# A negative min_elevation is a threshold, not "disabled" (only -9999 or lower
+# disables): on tiny_dem lowered by 160 m (-88 to -60), -80 masks 7 cells.
+add_lsdtt_cli_smoke_test(
+    smoke_nodata_min_elevation_negative_preprocessing
+    lsdtt-raster-preprocessing
+    raster_preprocessing_min_elevation_negative.param.in
+    tiny_below_sea_fill.tif
+    --stdout-contains "Threshold masking changed 7 pixel(s)"
+    --expect-raster-stat tiny_below_sea_fill.tif:min:-79:-79
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_nodata_edge_unfilled
     lsdtt-raster-preprocessing
@@ -2465,6 +2521,17 @@ add_lsdtt_cli_smoke_test(
     hydraulic_routing_smoke.param.in
     tiny_hydraulic_water_depth.tif
     --expect tiny_hydraulic_water_surface.tif
+)
+
+# Active node states on nodata DEM cells: a FATAL message with the count and
+# the first cell, not an uncaught exception from the solver's constructor.
+add_lsdtt_cli_smoke_test(
+    failure_hydraulic_routing_active_on_nodata
+    lsdtt-graphflood
+    hydraulic_routing_active_on_nodata.param.in
+    tiny_hydraulic_nodata_water_depth.tif
+    --expect-failure
+    --stderr-contains "are active in hydraulic_node_state_fname (1 or 3) but nodata in the DEM"
 )
 
 add_lsdtt_cli_smoke_test(

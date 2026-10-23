@@ -39,7 +39,7 @@ Steps run in this order when enabled:
 | 2. Threshold masking | `min_elevation`, `maximum_elevation` |
 | 2b. Binary mask | `run_binary_mask: true` |
 | 2c. Clip to polygon | `clip_raster_to_polygon: true` |
-| 3. Interior nodata fill | `write_filled_nodata_raster: true` |
+| 3. Interior nodata | `interior_nodata_method: fill` (later steps use the filled DEM) or `write_filled_nodata_raster: true` (writes the filled DEM only) |
 | 4. Clip to max-valid rectangle | `write_clipped_rectangle_raster: true` |
 | 5. Depression breaching | `write_breached_raster: true` or `breach_before_fill: true` |
 | 6. Pit filling | `write_fill_raster: true` or `write_fill_diff_raster: true` |
@@ -107,7 +107,7 @@ Pixels outside the elevation range are set to nodata. The masked raster is writt
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `min_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number (e.g. `-9999`) to disable. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given (for a basin below sea level, set it just below the lowest land); `-9999` disables. |
 | `maximum_elevation` | float | `30000` | Pixels above this elevation (metres) are set to nodata. Reduce to remove artefacts in low-relief study areas. |
 
 ---
@@ -189,7 +189,8 @@ Output: `<write_fname>_nodata_filled.tif`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_filled_nodata_raster` | bool | `false` | Enable interior nodata filling and write the result. |
+| `interior_nodata_method` | string | `sink` | `sink`: interior nodata stay nodata and flow ends there. `fill`: they are filled with `nodata_fill_method_choice` and breaching and pit filling run on the filled DEM. Nodata touching the raster edge is never filled. |
+| `write_filled_nodata_raster` | bool | `false` | Fill interior nodata and write the result. On its own, the later steps still use the unfilled DEM. |
 | `nodata_fill_method_choice` | string | `laplacian` | Filling algorithm. `laplacian`: smooth Dirichlet interpolation (recommended). `iterative_weighted_average`: faster; well-suited to thin voids. |
 | `nodata_fill_max_iter` | int | `10000` | Maximum iterations for iterative methods. |
 
@@ -462,7 +463,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number to disable. |
+| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. -9999 disables. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. Sea removed this way is connected to the DEM edge and acts as an open boundary. |
 | `maximum_elevation` | `float` | `30000` | `param` | - | Pixels above this elevation (metres) are set to nodata. | Default covers the full range of terrestrial elevations. Reduce to remove artefacts in low-relief study areas. |
 
 ### Binary mask
@@ -476,9 +477,15 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_filled_nodata_raster` | `bool` | `false` | `switch` | - | Write a DEM with interior nodata pixels filled. | Only fills nodata pixels completely surrounded by valid data. Does not fill nodata that touches the raster edge. |
-| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `write_filled_nodata_raster` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. |
-| `nodata_fill_max_iter` | `int` | `10000` | `param` | `write_filled_nodata_raster` | Maximum iterations for iterative nodata fill methods. | Only used when nodata_fill_method_choice is laplacian or iterative_weighted_average. |
+| `write_filled_nodata_raster` | `bool` | `false` | `switch` | - | Write a DEM with interior nodata pixels filled. | Only fills nodata pixels completely surrounded by valid data. Does not fill nodata that touches the raster edge. Uses nodata_fill_method_choice. On its own this only writes the file; set interior_nodata_method: fill to also use the filled DEM in the later steps (breaching, pit filling). |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
 
 ### Clip to rectangle
 
