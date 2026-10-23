@@ -1,6 +1,10 @@
 # CLI reference: lsdtt-linear-stats
 
-Extracts statistics from linear features (channels, ridges, faults) in raster or vector form. Computes bearing analysis, sinuosity, length distributions, and optional rose diagrams.
+Samples a raster along each line feature in a vector file and writes
+descriptive statistics of the sampled values for every line. Points are taken
+every `interpolating_step_length` metres along each line; samples that fall
+outside the raster are skipped, and a line wholly outside it gets no
+statistics.
 
 ## Usage
 
@@ -19,7 +23,8 @@ lsdtt-linear-stats  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
@@ -28,91 +33,33 @@ Keys use `snake_case`. All keys and their defaults are listed below.
 
     Shapefiles are the commonest source of multipart data, and **versions before August 2026 discarded it silently** — see [Vector data](../what_is_lsdtt3/vector_data.md).
 
-## Pipeline overview
+## Example
 
-Steps run in this order:
+```
+read_path: /home/alice/data/
+read_fname: my_dem.tif
+vector_fname: /home/alice/data/faults.fgb
+interpolating_step_length: 5
+```
 
-| Step | Description |
-|---|---|
-| 1. Input parsing | Load raster or vector linear features |
-| 2. Skeletonisation | Extract 1-pixel-wide centrelines (if raster input) |
-| 3. Bearing calculation | Compute local bearing angle along features |
-| 4. Statistics | Compute sinuosity, length, orientation distribution |
-| 5. Outputs | Write CSV statistics and optional rose diagram |
+`vector_fname` is opened as given, **not** relative to `read_path`, so give
+the full path (or a path relative to the directory you run the tool from).
+Only the first layer of the vector file is read, and the lines must be in the
+raster's projected CRS; they are not reprojected. The raster must be in a
+projected CRS with metre units.
 
----
+## Output
 
-## Input / output parameters
+`<write_fname>_linear_stats.fgb` (or `.gpkg` with `write_vector_format: gpkg`):
+the input lines (lines wholly outside the raster are left out), each with
+these attributes of the raster values sampled along it. The input file's own
+attributes are not carried over.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing input data. |
-| `read_fname` | string | parameter file stem | Input feature filename (raster or vector). |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-
----
-
-## Input source
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `input_type` | string | `raster` | Input type: `raster` (binary mask) or `vector` (polyline layer). |
-| `vector_format` | string | `gpkg` | Vector input format (when `input_type: vector`): `gpkg`, `flatgeobuf`, `shapefile`. |
-
----
-
-## Raster processing
-
-Used only when `input_type: raster`.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `skeletonise_raster` | bool | `true` | Extract 1-pixel centreline via skeletonisation. |
-| `skeleton_prune_length_pixels` | int | `3` | Prune skeleton spurs shorter than this (pixels). |
-
----
-
-## Bearing analysis
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `bearing_window_pixels` | int | `11` | Window size (pixels) for local bearing estimation. Odd integers only. |
-| `bearing_bin_width_degrees` | float | `10.0` | Bin width (degrees) for bearing histogram. |
-
----
-
-## Output: Statistics CSV
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_segment_statistics` | bool | `true` | Write per-segment statistics (length, sinuosity, mean bearing). |
-| `write_bearing_histogram` | bool | `true` | Write bearing histogram CSV. |
-| `write_sinuosity_statistics` | bool | `true` | Write sinuosity distribution statistics. |
-
-Output files:
-- `<write_fname>_segment_stats.csv`
-- `<write_fname>_bearing_histogram.csv`
-- `<write_fname>_sinuosity_stats.csv`
-
----
-
-## Output: Rose diagram
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_rose_diagram_raster` | bool | `false` | Write bearing distribution as a polar raster (rose diagram). |
-| `rose_diagram_size_pixels` | int | `512` | Size of rose diagram raster (pixels × pixels). |
-
-Output file: `<write_fname>_rose_diagram.tif`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_vector_format` | string | `flatgeobuf` | Linear-statistics vector format: `flatgeobuf` / `fgb` or `gpkg`. CSV is not supported. |
+`length` (m), `n_values`, `min`, `max`, `range`, `sum`, `mean`, `median`,
+`variance_population`, `variance_sample`, `stddev_population`,
+`stddev_sample`, `mean_absolute_deviation` (about the mean),
+`median_absolute_deviation` (about the median), `mad_normal_scaled` (the
+median absolute deviation × 1.4826), `q25`, `q75`, `iqr`.
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters

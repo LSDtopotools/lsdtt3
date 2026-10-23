@@ -8,7 +8,13 @@ def display_array(raster):
     return np.ma.masked_where(~raster.mask_numpy(), raster.to_numpy())
 
 
-dem = lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif")
+# Fetch a small 30 m Copernicus DEM of the Green River canyon beside
+# Canyonlands National Park, Utah (projected to UTM zone 12N). The tile is
+# cached in dem_cache/ so later runs do not download it again.
+dem = lsdtt3.fetch_dem(
+    west=-110.10, south=38.36, east=-109.96, north=38.47,
+    grid_spacing=30.0, cache_dir="dem_cache",
+)
 rows, cols = dem.shape
 with_edge_nodata = lsdtt3.set_nodata_rectangle(dem, 0, rows, 0, cols // 10)
 clipped = lsdtt3.clip_to_maximum_rectangle(with_edge_nodata)

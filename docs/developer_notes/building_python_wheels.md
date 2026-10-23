@@ -46,8 +46,12 @@ CIBW_CONTAINER_ENGINE=podman CIBW_MANYLINUX_X86_64_IMAGE=manylinux_2_28 \
 On Linux `cibuildwheel` builds inside the manylinux container, and it uses
 Docker unless told otherwise. This project does not use Docker: set
 `CIBW_CONTAINER_ENGINE=podman` (`sudo apt install podman`).
-`tools/make_all_packages.sh --only wheel` does all of this for you, for one
-Python version, from a tag.
+`tools/make_all_packages.sh --only wheel` does all of this for you, from a tag.
+
+If you have Apptainer but no podman (and no sudo to install it), see
+[Building the manylinux wheels with Apptainer](#building-the-manylinux-wheels-with-apptainer).
+`make_all_packages.sh` picks podman first, then Apptainer, then falls back to
+a host wheel; `--wheel-engine podman|apptainer|host` forces one.
 
 `cibuildwheel` will build one wheel per supported Python version, which takes
 a while. To build a single wheel for the interpreter you already have, bypass
@@ -60,6 +64,139 @@ CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON" python -m build --wheel python_bind
 
 That wheel is **not** self-contained — it links whatever GDAL your machine has.
 Fine for a local check, not for distribution.
+
+---
+
+## Building the manylinux wheels with Apptainer
+
+cibuildwheel can only drive Docker or podman. On Linux, though, all it does is
+run three steps inside the manylinux_2_28 image, and that image already holds
+every CPython the wheels target and `auditwheel`. So
+`tools/build_manylinux_wheel_apptainer.sh` runs the same three steps under
+Apptainer:
+
+1. **build**: `pip wheel python_bindings`, with `CMAKE_ARGS` from
+   `[tool.cibuildwheel] environment`;
+2. **repair**: `auditwheel repair`, which vendors GDAL, PROJ, FFTW and netCDF
+   into `lsdtt3.libs/`;
+3. **test**: a clean venv holding only the repaired wheel, then the
+   `[tool.cibuildwheel] test-command` (the three checks in
+   [What is tested before a wheel ships](#what-is-tested-before-a-wheel-ships)).
+
+The Python versions, the system dependencies (`before-all`), the environment
+and the test command are all read from `python_bindings/pyproject.toml`, so
+this route and the cibuildwheel route (CI, or podman) build the same wheels.
+The result is a real manylinux wheel, fit to upload.
+
+The image is defined in `apptainer_def/manylinux_wheel.def`: the
+`quay.io/pypa/manylinux_2_28_x86_64` image with `before-all` already run. The
+script builds it once and reuses it. It is named after a hash of the `.def`
+file, the `before-all` command and the script that command runs, so it is
+rebuilt only when one of those changes, not at every release. The first build
+takes 10 to 20 minutes, because `before-all` compiles PROJ, GDAL, GEOS, SQLite and curl
+(see [The Linux wheel's GDAL and PROJ](#the-linux-wheels-gdal-and-proj)).
+
+The podman route is unchanged: on a machine with podman,
+`make_all_packages.sh` still uses cibuildwheel exactly as before.
+
+### What you need on the server
+
+- **Apptainer 1.1 or newer** (`apptainer --version`). From 1.1 an ordinary
+  user can run `apptainer build --fakeroot`, which is how the image is built.
+  **No sudo is needed.** If your account has `/etc/subuid` and `/etc/subgid`
+  entries Apptainer uses them; if not, it falls back to its unprivileged
+  fakeroot mode, which needs user namespaces enabled on the server and the
+  `fakeroot` program available. `apptainer build --fakeroot` reports which
+  of these is missing.
+- **Network access** to `quay.io` (the base image, first build only), to the
+  package mirrors the image's `dnf` uses and to `www.sqlite.org`, `curl.se`, `download.osgeo.org`
+  and `github.com` for the PROJ, GDAL, GEOS, SQLite and curl sources (first build
+  only), and to PyPI
+  (`scikit-build-core`, `nanobind` and `pytest`, at every build).
+- **Disk space**: a few GB for the image (default
+  `~/.cache/lsdtt3/manylinux_2_28-lsdtt3-<hash>.sif`, or `--sif <path>` /
+  `$LSDTT_WHEEL_SIF`), the same again transiently in Apptainer's cache
+  (`~/.apptainer/cache`; set `APPTAINER_CACHEDIR` to put it elsewhere, and
+  `apptainer cache clean` once the image exists), and a staged copy of the
+  source tree under `$TMPDIR` during the build.
+- **git**, **bash**, `awk` and `sha256sum`. No Python, pixi or conda
+  environment is needed on the host for this route: everything Python runs
+  inside the image. The one host Python call is `make_all_packages.sh`'s
+  version stamp, which works with any `python3`.
+
+Everything runs as you. The build uses `apptainer exec --cleanenv`, so an
+activated pixi or conda shell's `GDAL_DATA`, `PROJ_LIB` or `PYTHONPATH` cannot
+leak into it.
+
+### The steps
+
+```bash
+git clone <lsdtt3 repo> && cd lsdtt3      # or git fetch --tags in an existing clone
+
+# 1. Check: apptainer found, image path, Python versions.
+tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
+    --wheel-engine apptainer --wheel-python all --check-only
+
+# 2. Build the image once (optional: step 3 does it if it is missing).
+#    Runs the image's %test section afterwards.
+tools/build_manylinux_wheel_apptainer.sh --image-only
+apptainer cache clean                      # reclaim the cache once the .sif exists
+
+# 3. Build, repair and test one wheel per Python version, from the tag.
+tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
+    --wheel-engine apptainer --wheel-python all
+```
+
+The wheels land in `dist/v0.7.1/`, five of them for CPython 3.10 to 3.14,
+each with a `manylinux` platform tag in its name (`auditwheel` picks the
+exact tag). Upload them as
+described in [`publishing_to_pypi.md`](publishing_to_pypi.md).
+
+`--clean --tag` builds exactly what the tag contains, but the wheel script
+and image definition are taken from your checkout, so the route also works
+for tags that predate it. While iterating, `--wheel-python 3.12` builds a
+single wheel, and the script can be run on its own against the working tree:
+
+```bash
+tools/build_manylinux_wheel_apptainer.sh --python 3.12     # wheels in ./wheelhouse
+tools/build_manylinux_wheel_apptainer.sh --help
+```
+
+### If the image build fails
+
+- `apptainer build --fakeroot` refused: your Apptainer is older than 1.1, or
+  the administrator has disabled user namespaces. Ask for Apptainer >= 1.1, or
+  build the `.sif` on another machine and copy it over with `--sif <path>`
+  (the script's error message gives the exact command).
+- `faked: ... GLIBC_2.33 not found` (followed by `fakeroot: error while
+  starting the faked daemon`): your account has no `/etc/subuid` entry, so
+  Apptainer runs `%post` under the host's fakeroot helper. That helper needs a
+  newer glibc than the manylinux_2_28 image has. The script now detects the
+  missing entry and builds with `--ignore-fakeroot-command`, and the `.def`
+  runs `before-all` under the image's own fakeroot. If you still see this
+  error, your copy of the script is older than that fix: pull and rerun.
+- `no space left on device` during `%post`: the build unpacks the image and
+  installs the packages in `APPTAINER_TMPDIR` (default `/tmp`), which needs
+  about 3 GB. The script warns if there is less than 4 GB free. Set
+  `APPTAINER_TMPDIR` and `APPTAINER_CACHEDIR` to directories on local disk.
+  NFS often fails for fakeroot builds.
+- `cpio: chown` or `unpacking of archive failed` from `dnf`: the build ran
+  without `/etc/subuid` entries and the image's own `fakeroot` could not be
+  installed. Ask for subuid/subgid entries, or build the `.sif` on a machine
+  that has them and pass it with `--sif`.
+- Once the image exists, `pip` fails to reach PyPI: the build runs with
+  `--cleanenv`. The script passes the proxy variables, `PIP_INDEX_URL`,
+  `PIP_EXTRA_INDEX_URL`, `PIP_TRUSTED_HOST` and the certificate variables
+  through, so set those in the shell you run it from.
+- `c++: fatal error: Killed signal terminated program cc1plus`: the compiler
+  ran out of memory. Lower `--jobs`.
+- A failure in `build_manylinux_native_deps.sh` (a download, a checksum, a
+  compile, or its closing driver check): that script is `before-all`, shared
+  with CI. Fix it there and every route picks it up. The image hash changes,
+  so the next run rebuilds the image.
+- A build or test failure after the image exists is a code or packaging
+  failure, the same as it would be in CI: see
+  [When a wheel build fails](#when-a-wheel-build-fails).
 
 ---
 
@@ -81,9 +218,57 @@ either the Linux leg alone or all four (the workflow's `platforms` input; see
 | macOS Intel | `macos-15-intel` | `x86_64` | `MACOSX_DEPLOYMENT_TARGET=15.0` |
 | Windows x86_64 | `windows-2025` | `AMD64` | vcpkg toolchain; **OpenMP off** |
 
-System dependencies come from `before-all`: `dnf`/`yum` inside the manylinux
-image, Homebrew on macOS, and vcpkg on Windows (with the installed tree cached
-between runs).
+System dependencies come from `before-all`: inside the manylinux image,
+`python_bindings/tools/build_manylinux_native_deps.sh`; Homebrew on macOS; and
+vcpkg on Windows (with the installed tree cached between runs).
+
+### The Linux wheel's GDAL and PROJ
+
+The Linux wheel bundles whatever GDAL and PROJ the manylinux image has. In
+AlmaLinux 8 (the base of manylinux_2_28), EPEL 8 has only GDAL 3.0.4 and
+PROJ 6.3. PROJ before 7.2 cannot convert a CRS that uses a datum ensemble,
+which is how current pyproj and GDAL describe WGS 84 and most CRSs based on
+it. With those versions, reprojection fails with `DatumEnsemble can only be
+exported to WKT2:2019`. So `build_manylinux_native_deps.sh` compiles the
+following from pinned, checksummed source tarballs, using the image's own
+compiler (gcc-toolset):
+
+- PROJ 9.5.1
+- GDAL 3.10.3
+- GEOS 3.13.1. GDAL needs 3.8 or newer.
+- SQLite 3.47.2. GDAL needs 3.31 or newer, and AlmaLinux 8 has 3.26.
+- curl 8.11.1. GDAL needs curl 7.68 or newer for `/vsicurl`, and AlmaLinux 8
+  has 7.61.
+
+Using the image's compiler keeps the result manylinux-compliant. Libraries
+from conda-forge are not, because they need a newer libstdc++.
+
+GDAL is built with `GDAL_USE_EXTERNAL_LIBS=OFF`, so it uses only the
+libraries the script names (those above, zlib, and glibc's iconv) plus GDAL's
+own internal copies of libtiff, libgeotiff, libpng, libjpeg, json-c and a few
+others. Every GDAL driver that needs nothing more is built. Drivers that need
+another library are not, for example netCDF, HDF5, JPEG 2000, WebP and Parquet.
+At the end, the script checks that the formats lsdtt3 reads and writes are
+present: GTiff/COG, MEM, VRT, PNG, JPEG, ENVI/EHdr, AAIGrid and HFA for
+rasters, and Shapefile, GeoJSON, GPKG, FlatGeobuf, MVT and CSV for vectors.
+It fails if any of them is missing. If lsdtt3 starts depending on another
+format, add it to that check.
+
+The script also has a local-test mode. Run it as an ordinary user with
+`LSDTT_NATIVE_DEPS_PREFIX` set to a writable directory. It then skips `dnf`
+and `ldconfig` and runs the downloads, the builds and the closing checks on
+the host. That is a quick way to check a version bump before rebuilding the
+image.
+
+This adds 10 to 20 minutes to every run of the CI Linux leg, and to the first
+Apptainer image build. The Apptainer image is then reused. The macOS and
+Windows legs are unchanged.
+
+The bundled curl only knows AlmaLinux's CA-certificate path. On Debian,
+Ubuntu (including Colab) and other distributions, `lsdtt3/__init__` sets
+`CURL_CA_BUNDLE` to the system certificate bundle at import, unless
+`CURL_CA_BUNDLE` or `SSL_CERT_FILE` is already set. Without that, every
+`https://` read through `/vsicurl` would fail certificate verification.
 
 !!! warning "Windows wheels are single-threaded"
 
@@ -136,11 +321,11 @@ x86_64 leg: five wheels (CPython 3.10–3.14), each tested as above, on one
 `ubuntu-24.04` runner.
 
 From the Actions tab: *Build Python wheels* → **Run workflow** → tag
-`v0.7.0`, platforms **linux**, upload ticked or not. Or from a terminal with an
+`v0.7.1`, platforms **linux**, upload ticked or not. Or from a terminal with an
 authenticated `gh`:
 
 ```bash
-gh workflow run python-wheels.yml -f tag=v0.7.0 -f platforms=linux -f upload=true
+gh workflow run python-wheels.yml -f tag=v0.7.1 -f platforms=linux -f upload=true
 gh run watch                       # follow it; or: gh run list --workflow python-wheels.yml
 ```
 
@@ -156,7 +341,7 @@ the same tag later; with *upload* ticked, the second run replaces the Linux
 wheels the first one attached.
 
 The local alternative costs no minutes at all: `tools/make_all_packages.sh
---clean --tag v0.7.0 --only wheel` builds one Linux manylinux wheel, for the
+--clean --tag v0.7.1 --only wheel` builds one Linux manylinux wheel, for the
 interpreter it runs under, inside `podman` (see [Building locally](#building-locally)).
 
 Before building anything the workflow checks the tag against the tagged tree:

@@ -166,17 +166,27 @@ void bind_channel_heads(nb::module_& module, nb::class_<FlowInfo>& flow)
     nb::class_<ChannelHeads>(module, "ChannelHeads", R"doc(
 Channel-head locations resolved from a D8 flow topology.
 
-Use ``pixels`` as explicit ``FlowInfo.channel_scope(..., sources=...)`` input.
+Made by :func:`extract_channel_heads`. Use ``pixels`` as explicit
+``FlowInfo.channel_scope(..., sources=heads.pixels)`` input, or pass the
+object to ``FlowInfo.scope_from_heads``. The diagnostic rasters are None
+unless ``method="wiener"`` and ``diagnostics=True``.
 )doc")
-        .def_prop_ro("method", &ChannelHeads::method)
-        .def_prop_ro("n_heads", [](const ChannelHeads& self) { return self.flats().size(); })
-        .def_prop_ro("pixels", &pixels)
-        .def_prop_ro("table", &head_table)
-        .def_prop_ro("filtered_dem", [](const ChannelHeads& self) { return optional_raster(self.filtered_dem()); })
-        .def_prop_ro("tangential_curvature", [](const ChannelHeads& self) { return optional_raster(self.tangential_curvature()); })
-        .def_prop_ro("channel_mask", [](const ChannelHeads& self) { return optional_raster(self.channel_mask()); })
-        .def_prop_ro("skeleton", [](const ChannelHeads& self) { return optional_raster(self.skeleton()); })
-        .def_prop_ro("qq_table", &qq_table);
+        .def_prop_ro("method", &ChannelHeads::method, "Method used: 'threshold' or 'wiener'.")
+        .def_prop_ro("n_heads", [](const ChannelHeads& self) { return self.flats().size(); }, "Number of channel heads.")
+        .def_prop_ro("pixels", &pixels, nb::sig("def pixels(self) -> numpy.ndarray"),
+            "Channel heads as an N x 2 int64 array of (row, col).")
+        .def_prop_ro("table", &head_table, nb::sig("def table(self) -> pandas.DataFrame"),
+            "One row per head: head_id, flat, row, col, x, y (pixel centre, CRS units), drainage_area (m^2), flow_distance_to_outlet (m).")
+        .def_prop_ro("filtered_dem", [](const ChannelHeads& self) { return optional_raster(self.filtered_dem()); },
+            nb::sig("def filtered_dem(self) -> Raster | None"), "Wiener-filtered DEM (m), or None.")
+        .def_prop_ro("tangential_curvature", [](const ChannelHeads& self) { return optional_raster(self.tangential_curvature()); },
+            nb::sig("def tangential_curvature(self) -> Raster | None"), "Tangential curvature (1/m) of the filtered DEM, or None.")
+        .def_prop_ro("channel_mask", [](const ChannelHeads& self) { return optional_raster(self.channel_mask()); },
+            nb::sig("def channel_mask(self) -> Raster | None"), "0/1 candidate channel mask after pruning, or None.")
+        .def_prop_ro("skeleton", [](const ChannelHeads& self) { return optional_raster(self.skeleton()); },
+            nb::sig("def skeleton(self) -> Raster | None"), "0/1 thinned skeleton of the channel mask, or None.")
+        .def_prop_ro("qq_table", &qq_table, nb::sig("def qq_table(self) -> pandas.DataFrame"),
+            "Quantile-quantile table of positive curvature: standard_normal_variate, data_quantile, normal_reference (empty unless diagnostics).");
 
     module.def("extract_channel_heads", &extract_channel_heads,
         nb::arg("dem"), nb::arg("flow"), nb::arg("method") = "threshold",
@@ -187,15 +197,65 @@ Use ``pixels`` as explicit ``FlowInfo.channel_scope(..., sources=...)`` input.
         nb::arg("diagnostics") = false,
         R"doc(Extract D8 channel heads by drainage threshold or Wiener curvature.
 
-``method='wiener'`` requires FFTW and a projected-metre DEM. With
-``diagnostics=True``, the result retains the filtered DEM, tangential
-curvature, candidate channel mask, skeleton, and QQ table.
+``method='threshold'`` returns the upstream ends of all pixels with at least
+``threshold_contributing_pixels`` contributing pixels (as
+``FlowInfo.sources``). ``method='wiener'`` Wiener-filters the DEM, computes
+tangential curvature, keeps pixels whose positive curvature exceeds a
+quantile-quantile threshold, prunes by drainage area and component size,
+thins the mask to a skeleton and uses its end points as heads; it requires
+FFTW and a projected-metre DEM. With ``diagnostics=True``, the result
+retains the filtered DEM, tangential curvature, candidate channel mask,
+skeleton, and QQ table.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid (same grid and validity mask).
+flow : FlowInfo
+    Flow topology built from the (conditioned) DEM.
+method : {"threshold", "wiener"}, default="threshold"
+    Head-detection method.
+threshold_contributing_pixels : int, default=1000
+    ``"threshold"`` only: channel threshold in contributing pixels
+    (including self); positive.
+pruning_drainage_area_m2 : float, default=1000.0
+    ``"wiener"`` only: candidate channel pixels with a smaller D8 drainage
+    area (m^2) are removed.
+surface_fitting_radius_metres : float, default=6.0
+    ``"wiener"`` only: polyfit length scale (m) used for curvature, as
+    ``lambda_metres`` in ``polyfit_metrics``.
+connected_components_threshold_pixels : int, default=100
+    ``"wiener"`` only: connected channel patches with fewer pixels (D8
+    connectivity) are removed.
+diagnostics : bool, default=False
+    ``"wiener"`` only: keep the intermediate rasters and QQ table.
+
+Returns
+-------
+ChannelHeads
+    Head pixels and (optionally) diagnostics.
 )doc");
 
     flow.def("scope_from_heads", &scope_from_heads, nb::arg("heads"),
         nb::arg("outlets") = nb::none(),
-        nb::arg("outlet_snap_max_distance_metres") = 0.0,
-        "Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.");
-}
+        nb::arg("outlet_snap_max_distance_metres") = 0.0, R"doc(
+Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.
 
+Equivalent to ``channel_scope`` with ``sources=heads.pixels`` and no source
+snapping.
+
+Parameters
+----------
+heads : ChannelHeads
+    Heads extracted with this ``FlowInfo``.
+outlets : array-like of int or None, default=None
+    N x 2 array of ``(row, col)`` points where traced channels stop.
+outlet_snap_max_distance_metres : float, default=0.0
+    Largest distance (m) from an outlet to the path it cuts; 0 = unlimited.
+
+Returns
+-------
+ChannelScope
+)doc");
+}
 } // namespace lsdtt3_python

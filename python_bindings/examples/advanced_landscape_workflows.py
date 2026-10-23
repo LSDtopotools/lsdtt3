@@ -5,7 +5,13 @@ import numpy as np
 import lsdtt3
 
 
-dem = lsdtt3.Raster.read("perso_tests/dem/green_river_1.tif")
+# Fetch a small 30 m Copernicus DEM of the Green River canyon beside
+# Canyonlands National Park, Utah (projected to UTM zone 12N). The tile is
+# cached in dem_cache/ so later runs do not download it again.
+dem = lsdtt3.fetch_dem(
+    west=-110.10, south=38.36, east=-109.96, north=38.47,
+    grid_spacing=30.0, cache_dir="dem_cache",
+)
 channels = lsdtt3.crn_uniform_raster(dem, 0.0)
 
 # Conservative cellular transport can also run independently of fluvial incision.
@@ -28,8 +34,8 @@ print(hierarchy.nodes[["depression_id", "parent_id", "volume_m3"]].head())
 # One present-to-past erosion history drives Be-10, Al-26, and C-14 together.
 column = lsdtt3.CRNColumn()
 column.set_erosion_history(
-    [20_000.0, 5_000.0, -9_999.0],
-    [2.0e-4, 8.0e-4, 2.0e-4],
+    [5_000.0, 20_000.0, -9_999.0],
+    [8.0e-4, 2.0e-4, 2.0e-4],
     [0.0, 0.0, 0.0],
 )
 production = lsdtt3.crn_uniform_raster(final_surface, 1.0)

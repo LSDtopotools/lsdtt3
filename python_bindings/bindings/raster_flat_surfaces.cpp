@@ -244,14 +244,24 @@ Results from texture- and relief-based flat-surface detection.
         .def_prop_ro("healed_flat_mask", [](const FlatSurfaceResult& r) { return Raster(r.native().healed_flat_mask); })
         .def_prop_ro("labelled_flat_mask", [](const FlatSurfaceResult& r) { return Raster(r.native().labelled_flat_mask); })
         .def_prop_ro("relief", [](const FlatSurfaceResult& r) { return Raster(r.native().relief); });
-    nb::class_<FlatSurfaceClassification>(m, "FlatSurfaceClassification")
+    nb::class_<FlatSurfaceClassification>(m, "FlatSurfaceClassification", R"doc(
+Floodplain and terrace classification of labelled flats.
+
+Made by :func:`classify_flat_surfaces` or
+:func:`classify_flat_surfaces_with_scope`. ``table`` has one row per label:
+``label``, ``surface_class`` (``"floodplain"``, ``"terrace"`` or
+``"none"``), ``source_id``, ``n_pixels``, ``median_height``,
+``mean_height`` (HAND, m), ``min_distance_to_channel_metres``,
+``adjacent_to_channel``.
+)doc")
         .def_prop_ro("surface_class", [](const FlatSurfaceClassification& r) { return Raster(r.native().surface_class_raster); })
         .def_prop_ro("floodplain_mask", [](const FlatSurfaceClassification& r) { return Raster(r.native().floodplain_mask); })
         .def_prop_ro("hand_band", [](const FlatSurfaceClassification& r) { return Raster(r.native().hand_band_raster); })
         .def_prop_ro("n_floodplain_labels", [](const FlatSurfaceClassification& r) { return r.native().n_floodplain_labels; })
         .def_prop_ro("n_terrace_labels", [](const FlatSurfaceClassification& r) { return r.native().n_terrace_labels; })
         .def_prop_ro("global_breaks_metres", [](const FlatSurfaceClassification& r) { return r.native().global_breaks_m; })
-        .def_prop_ro("table", &class_table);
+        .def_prop_ro("table", &class_table, nb::sig("def table(self) -> pandas.DataFrame"),
+            "One row per flat label; columns as in the class documentation.");
 
     m.def("find_flat_surfaces", &find_flat_surfaces, nb::arg("dem"),
         nb::arg("use_madk2") = true, nb::arg("madk2_window_radius_metres") = 100.0,
@@ -273,7 +283,73 @@ Results from texture- and relief-based flat-surface detection.
         nb::arg("relief_window_side_pixels") = 5,
         nb::arg("relief_threshold_metres") = 1.0,
         nb::arg("remove_risers") = false, nb::arg("n_threads") = 0,
-        "Detect and label flat surfaces from texture and local relief.");
+        R"doc(Detect and label flat surfaces from texture and local relief.
+
+Each enabled roughness metric is computed in a moving window and thresholded
+at a percentile of its own distribution (low roughness = flat); the metric
+masks are combined, local relief must also be below
+``relief_threshold_metres``, and connected flats are labelled.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m).
+use_madk2 : bool, default=True
+    Use MADk2 roughness (median absolute deviation of second differences;
+    insensitive to uniform slope).
+madk2_window_radius_metres : float, default=100.0
+    MADk2 window radius (m).
+madk2_threshold_percentile : float, default=25.0
+    Pixels below this percentile of MADk2 count as flat.
+use_residual_iqr : bool, default=True
+    Use the interquartile range of residuals to a smooth reference surface.
+iqr_method : {"fftw_highpass", "wavelet_quadratic", "moving_window_mean"}, default="fftw_highpass"
+    How the reference surface is removed (the first two need FFTW).
+iqr_fit_lambda_metres : float, default=500.0
+    Reference-surface wavelength (m) for ``fftw_highpass`` and
+    ``wavelet_quadratic``.
+iqr_detrend_radius_metres : float, default=500.0
+    Moving-window radius (m) for ``moving_window_mean``.
+iqr_window_radius_metres : float, default=50.0
+    Radius (m) of the window in which the IQR is computed.
+iqr_window_shape : {"circular", "square"}, default="circular"
+    Shape of that window.
+iqr_threshold_percentile : float, default=25.0
+    Pixels below this percentile of the IQR count as flat.
+use_nvd : bool, default=False
+    Use normal-vector dispersion (needs FFTW).
+nvd_polyfit_lambda : float, default=10.0
+    Wavelength (m) of the surface fit giving the normals.
+nvd_window_radius_metres : float, default=100.0
+    NVD window radius (m).
+nvd_window_shape : {"circular", "square"}, default="circular"
+    NVD window shape.
+nvd_threshold_percentile : float, default=25.0
+    Pixels below this percentile of NVD count as flat.
+require_all_metrics_pass : bool, default=True
+    True: a pixel must pass every enabled metric (AND); False: any (OR).
+directional_close_line_length_pixels : int, default=0
+    Length (pixels) of the line used to close small gaps in narrow non-flat
+    corridors (channels, scarps) before labelling; below 3 disables it.
+directional_close_n_angles : int, default=18
+    Number of line orientations tried (18 = 10-degree steps).
+min_component_pixels : int, default=100
+    Smallest labelled flat (pixels).
+relief_window_side_pixels : int, default=5
+    Side (pixels, odd, >= 3) of the square local-relief window.
+relief_threshold_metres : float, default=1.0
+    Pixels with local relief (max - min, m) at or above this are not flat.
+remove_risers : bool, default=False
+    Fit a plane to each flat and remove pixels with high residual relief
+    (risers between terrace levels), then relabel.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+FlatSurfaceResult
+    Roughness rasters, per-metric and combined masks, and labelled flats.
+)doc");
     m.def("classify_flat_surfaces", &classify_flat_surfaces,
         nb::arg("labelled_flat_mask"), nb::arg("height_above_channel"),
         nb::arg("channel_source_ids"), nb::arg("floodplain_max_height_metres") = 1.0,
@@ -287,6 +363,45 @@ Classify labelled flats as floodplain or terrace from HAND and channel IDs.
 
 ``channel_source_ids`` is a co-registered Raster containing non-negative
 source IDs on in-scope channel pixels and negative values elsewhere.
+
+Parameters
+----------
+labelled_flat_mask : Raster
+    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).
+height_above_channel : Raster
+    HAND (m) on the same grid (``FlowInfo.height_above_channel``).
+channel_source_ids : Raster
+    Source ID of each in-scope channel pixel, negative elsewhere.
+floodplain_max_height_metres : float, default=1.0
+    A channel-adjacent label is floodplain when its median HAND (m) is at
+    most this.
+terrace_min_height_metres : float, default=0.0
+    A label linked to a channel is terrace when its median HAND (m) is at
+    least this (and it is not floodplain).
+channel_adjacency_radius_metres : float, default=0.0
+    A label is channel-adjacent when a pixel lies within this distance (m)
+    of an in-scope channel; 0 means touching (8-neighbour).
+terrace_max_distance_to_channel_metres : float, default=0.0
+    A terrace must have a pixel within this distance (m) of a channel,
+    excluding upland flats; 0 means no limit.
+enable_leak_split : bool, default=True
+    Split a label whose HAND distribution is bimodal (a floodplain leaking
+    into a terrace across a broken riser) at the antimode.
+enable_hand_banding : bool, default=False
+    Split labels into reach-relative HAND bands along the channel before
+    classifying.
+donor_flat : array-like of int or None, default=None
+    HAND banding only: flat index of the channel pixel each pixel drains to
+    (``FlowInfo.height_above_channel_with_donor()["channel_donor"]``).
+channel_flow_distance : Raster or None, default=None
+    HAND banding only: flow distance (m) used to place donors along the
+    channel.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+FlatSurfaceClassification
 )doc");
     m.def("classify_flat_surfaces_with_scope", &classify_flat_surfaces_with_scope,
         nb::arg("labelled_flat_mask"), nb::arg("dem"), nb::arg("scope"),
@@ -300,6 +415,39 @@ Classify flat surfaces using a ``ChannelScope``.
 
 HAND, its nearest-channel donors, flow distance, channel mask, and source IDs
 are derived from the scope's retained D8 flow topology.
+
+Parameters
+----------
+labelled_flat_mask : Raster
+    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).
+dem : Raster
+    Elevation (m) on the scope's flow grid.
+scope : ChannelScope
+    In-scope channels (``FlowInfo.channel_scope``).
+floodplain_max_height_metres : float, default=1.0
+    A channel-adjacent label is floodplain when its median HAND (m) is at
+    most this.
+terrace_min_height_metres : float, default=0.0
+    A label linked to a channel is terrace when its median HAND (m) is at
+    least this (and it is not floodplain).
+channel_adjacency_radius_metres : float, default=0.0
+    A label is channel-adjacent when a pixel lies within this distance (m)
+    of an in-scope channel; 0 means touching (8-neighbour).
+terrace_max_distance_to_channel_metres : float, default=0.0
+    A terrace must have a pixel within this distance (m) of a channel,
+    excluding upland flats; 0 means no limit.
+enable_leak_split : bool, default=True
+    Split a label whose HAND distribution is bimodal (a floodplain leaking
+    into a terrace across a broken riser) at the antimode.
+enable_hand_banding : bool, default=False
+    Split labels into reach-relative HAND bands along the channel before
+    classifying.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+FlatSurfaceClassification
 )doc");
 }
 

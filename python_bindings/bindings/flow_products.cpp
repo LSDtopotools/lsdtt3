@@ -96,20 +96,215 @@ Raster downstream_sum(const FlowInfo& f, const Raster& values, const Raster& sin
 
 void bind_flow_products(nb::class_<FlowInfo>& flow)
 {
-    flow.def("flow_direction", [](const FlowInfo& s) { return as_raster(s.native().get_d8_flow_direction_raster()); })
-        .def("contributing_pixels", [](const FlowInfo& s) { return as_raster(s.native().get_n_contributing_pixels_raster()); })
-        .def("drainage_area", [](const FlowInfo& s) { return as_raster(s.native().get_drainage_area_raster()); })
-        .def("flow_distance_to_outlet", [](const FlowInfo& s) { return as_raster(s.native().get_distance_from_outlet_raster()); })
-        .def("channel_mask", &channel_mask, nb::arg("threshold_contributing_pixels"), "Return a 0/1 raster where contributing pixels meet the threshold.")
-        .def("sources", &sources, nb::arg("threshold_contributing_pixels"), "Return channel sources as an N by 2 (row, col) array.")
-        .def("accumulate", &accumulate, nb::arg("weights") = nb::none(), "Accumulate weights downstream; default weights are cell areas.")
-        .def("height_above_channel", &hand, nb::arg("dem"), nb::arg("channels"), "Compute HAND from an explicit 0/1 channel raster.")
-        .def("height_above_channel_with_donor", &hand_donor, nb::arg("dem"), nb::arg("channels"))
-        .def("distance_to_channel", [](const FlowInfo& s, int threshold_contributing_pixels) { return as_raster(s.native().get_distance_to_channel_raster(threshold_contributing_pixels)); }, nb::arg("threshold_contributing_pixels"))
-        .def("upslope_sum", &upslope_sum, nb::arg("values"), nb::arg("include_self") = true)
-        .def("upslope_mean", &upslope_mean, nb::arg("values"), nb::arg("include_self") = true)
-        .def("downstream_sum", &downstream_sum, nb::arg("values"), nb::arg("sinks"))
-        .def("height_to_farthest_ridge", [](const FlowInfo& s, const Raster& dem) { require_compatible(s, dem, "dem"); return as_raster(s.native().get_height_to_farthest_ridge_raster(dem.native().get_data(), dem.native().get_mask())); }, nb::arg("dem"))
-        .def("distance_to_farthest_ridge", [](const FlowInfo& s) { return as_raster(s.native().get_distance_to_farthest_ridge_raster()); });
+    flow.def("flow_direction", [](const FlowInfo& s) { return as_raster(s.native().get_d8_flow_direction_raster()); }, R"doc(
+Return the D8 receiver direction of every pixel as a Raster of codes.
+
+Codes are ``0`` north, ``1`` north-east, ``2`` east, ``3`` south-east,
+``4`` south, ``5`` south-west, ``6`` west, ``7`` north-west (clockwise from
+north). Outlet pixels carry the code of the edge they drain across.
+
+Returns
+-------
+Raster
+    Direction codes 0-7; nodata where the DEM is nodata.
+)doc")
+        .def("contributing_pixels", [](const FlowInfo& s) { return as_raster(s.native().get_n_contributing_pixels_raster()); }, R"doc(
+Return the number of pixels draining through each pixel, including itself.
+
+Returns
+-------
+Raster
+    Pixel counts (1 at a ridge or headwater pixel). Multiply by
+    ``metadata.pixel_area`` for area in m^2, or use ``drainage_area()``.
+)doc")
+        .def("drainage_area", [](const FlowInfo& s) { return as_raster(s.native().get_drainage_area_raster()); }, R"doc(
+Return the D8 drainage area of every pixel, including the pixel itself.
+
+Returns
+-------
+Raster
+    Drainage area in m^2: ``contributing_pixels * cell_size**2``.
+)doc")
+        .def("flow_distance_to_outlet", [](const FlowInfo& s) { return as_raster(s.native().get_distance_from_outlet_raster()); }, R"doc(
+Return the D8 flow-path length from each pixel to its outlet.
+
+Returns
+-------
+Raster
+    Distance in metres along the D8 path (cardinal steps ``cell_size``,
+    diagonal steps ``cell_size * sqrt(2)``); 0 at outlets.
+)doc")
+        .def("channel_mask", &channel_mask, nb::arg("threshold_contributing_pixels"), R"doc(
+Return a 0/1 raster where contributing pixels meet the threshold.
+
+Parameters
+----------
+threshold_contributing_pixels : int
+    A pixel is a channel (1) when its contributing-pixel count, including
+    itself, is >= this value; must be positive. Area threshold in m^2 is
+    this times ``metadata.pixel_area``.
+
+Returns
+-------
+Raster
+    1 for channel pixels, 0 elsewhere; nodata where the DEM is nodata.
+)doc")
+        .def("sources", &sources, nb::arg("threshold_contributing_pixels"), R"doc(
+Return channel sources (channel heads) as an N by 2 (row, col) array.
+
+A source is a channel pixel (contributing pixels >= the threshold) that
+has no channel pixel draining into it.
+
+Parameters
+----------
+threshold_contributing_pixels : int
+    Channel threshold in contributing pixels (including self); positive.
+
+Returns
+-------
+numpy.ndarray
+    N x 2 int64 array of ``(row, col)``; usable as ``channel_scope(sources=...)``.
+)doc")
+        .def("accumulate", &accumulate, nb::arg("weights") = nb::none(), R"doc(
+Accumulate per-pixel weights downstream; default weights are cell areas.
+
+Parameters
+----------
+weights : Raster or None, default=None
+    Per-pixel values on the flow grid (same grid and validity mask) added to
+    every downstream pixel, for example runoff depth x area (m^3) or
+    sediment supply. Nodata weights count as 0. None uses each pixel's area
+    (``cell_size**2``, m^2), which gives drainage area.
+
+Returns
+-------
+Raster
+    Sum of the weights of each pixel and everything upslope of it, in the
+    units of ``weights`` (m^2 by default).
+)doc")
+        .def("height_above_channel", &hand, nb::arg("dem"), nb::arg("channels"), R"doc(
+Compute HAND (height above nearest drainage) from an explicit channel raster.
+
+HAND (Nobre et al. 2011) is the elevation of each pixel minus the elevation
+of the first channel pixel reached by following D8 flow downstream.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid (same grid and validity mask).
+channels : Raster
+    0/1 raster on the flow grid marking channel pixels (values > 0.5), for
+    example ``ChannelNetwork.channel_mask`` or ``channel_mask(threshold)``.
+
+Returns
+-------
+Raster
+    Height above the channel in metres; 0 on channel pixels; nodata where
+    the flow path reaches an outlet without meeting a channel.
+)doc")
+        .def("height_above_channel_with_donor", &hand_donor, nb::arg("dem"), nb::arg("channels"), R"doc(
+Compute HAND and the channel pixel ("donor") each pixel drains to.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid.
+channels : Raster
+    0/1 channel raster on the flow grid (values > 0.5 are channel).
+
+Returns
+-------
+dict
+    ``"height"``: HAND Raster in metres (as ``height_above_channel``);
+    ``"channel_donor"``: int64 array (n_rows, n_cols) of the flat index of
+    the channel pixel that sets each pixel's HAND, -1 where undefined.
+)doc")
+        .def("distance_to_channel", [](const FlowInfo& s, int threshold_contributing_pixels) { return as_raster(s.native().get_distance_to_channel_raster(threshold_contributing_pixels)); }, nb::arg("threshold_contributing_pixels"), R"doc(
+Return the D8 flow-path length from each pixel to the nearest downstream channel.
+
+Parameters
+----------
+threshold_contributing_pixels : int
+    Channel threshold in contributing pixels (including self).
+
+Returns
+-------
+Raster
+    Distance in metres; 0 on channel pixels; nodata where no channel is
+    reached downstream.
+)doc")
+        .def("upslope_sum", &upslope_sum, nb::arg("values"), nb::arg("include_self") = true, R"doc(
+Sum a raster over the upslope area of every pixel.
+
+Parameters
+----------
+values : Raster
+    Values on the flow grid; nodata pixels contribute 0.
+include_self : bool, default=True
+    Include the pixel's own value; if False only strictly upslope pixels
+    count (headwaters give 0).
+
+Returns
+-------
+Raster
+    Upslope sums, in the units of ``values``.
+)doc")
+        .def("upslope_mean", &upslope_mean, nb::arg("values"), nb::arg("include_self") = true, R"doc(
+Average a raster over the upslope area of every pixel.
+
+Parameters
+----------
+values : Raster
+    Values on the flow grid; nodata pixels are excluded from the mean.
+include_self : bool, default=True
+    Include the pixel's own value.
+
+Returns
+-------
+Raster
+    Upslope means, in the units of ``values``; nodata where no valid value
+    is upslope.
+)doc")
+        .def("downstream_sum", &downstream_sum, nb::arg("values"), nb::arg("sinks"), R"doc(
+Sum a raster along each pixel's D8 path down to the first sink pixel.
+
+Parameters
+----------
+values : Raster
+    Values on the flow grid summed along the path (the pixel itself
+    included, the sink excluded).
+sinks : Raster
+    0/1 raster on the flow grid; pixels > 0.5 stop the sum (for example a
+    channel mask).
+
+Returns
+-------
+Raster
+    Path sums in the units of ``values``; nodata on sink pixels.
+)doc")
+        .def("height_to_farthest_ridge", [](const FlowInfo& s, const Raster& dem) { require_compatible(s, dem, "dem"); return as_raster(s.native().get_height_to_farthest_ridge_raster(dem.native().get_data(), dem.native().get_mask())); }, nb::arg("dem"), R"doc(
+Return the elevation difference to the farthest upslope ridge pixel.
+
+The farthest ridge pixel is the pixel in the upslope area with the longest
+D8 flow path to this pixel.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m) on the flow grid.
+
+Returns
+-------
+Raster
+    Ridge elevation minus pixel elevation, in metres.
+)doc")
+        .def("distance_to_farthest_ridge", [](const FlowInfo& s) { return as_raster(s.native().get_distance_to_farthest_ridge_raster()); }, R"doc(
+Return the longest D8 flow-path length from any upslope pixel to this pixel.
+
+Returns
+-------
+Raster
+    Distance in metres; 0 at headwater pixels.
+)doc");
 }
 } // namespace lsdtt3_python

@@ -8,21 +8,11 @@ Canonical convergence names are used throughout. Legacy tol_* keywords warn and 
 
 Reduced-domain result and prepass diagnostics.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
+Construct it as
 
-Attributes
-----------
-See the generated binding signature for available properties and methods.
+    GraphFloodInducedResult(result: Any, prepass: Any, active_mask: numpy.ndarray, active_fraction: float, expansion_results: tuple[typing.Any, ...], source_discharge: float, outlet_qin: float, relative_mass_error: float)
 
-Notes
------
-Reduced-domain result and prepass diagnostics.
+It is also returned by ``run_graphflood_induced()``.
 
 Parameters
 ----------
@@ -48,10 +38,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 (result: Any, prepass: Any, active_mask: numpy.ndarray, active_fraction: float, expansion_results: tuple[typing.Any, ...], source_discharge: float, outlet_qin: float, relative_mass_error: float) -> None
 ```
@@ -72,21 +58,11 @@ Initialize self.  See help(type(self)) for accurate signature.
 
 Final result plus every coarse-to-fine level.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
+Construct it as
 
-Attributes
-----------
-See the generated binding signature for available properties and methods.
+    GraphFloodMultigridResult(result: Any, level_results: tuple[typing.Any, ...], factors: tuple[int, ...])
 
-Notes
------
-Final result plus every coarse-to-fine level.
+It is also returned by ``run_graphflood_multigrid()``.
 
 Parameters
 ----------
@@ -101,10 +77,6 @@ level_results : tuple
     Backend result at each requested factor.
 factors : tuple of int
     Coarsening factors in execution order.
-
-Authors
--------
-B. Gailleton
 
 Authors
 -------
@@ -128,23 +100,32 @@ Initialize self.  See help(type(self)) for accurate signature.
 
 ## `GraphFloodOptimisedPerformance`
 
-No additional binding notes are available.
+Timing (seconds) and work counters of an optimised GraphFlood run.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
+The ``*_seconds`` attributes are wall-clock time spent in each solver phase;
+the other attributes count operations, for profiling only.
+
+Returned by ``GraphFloodOptimisedResult.performance``; not constructible directly.
 
 Attributes
 ----------
-See the generated binding signature for available properties and methods.
-
-Notes
------
-No additional binding notes are available.
+boundary_routed_cells : int
+convergence_seconds : float
+depth_update_seconds : float
+dirty_tiles_checked : int
+friction_seconds : float
+full_topology_checks : int
+interior_routed_cells : int
+persistent_working_bytes : int
+projected_cells : int
+projection_seconds : float
+radix_redistributions : int
+routed_cells : int
+routing_seconds : float
+scratch_reallocations : int
+topology_check_seconds : float
+topology_rebuilds : int
+topology_reuses : int
 
 Authors
 -------
@@ -224,23 +205,42 @@ B. Gailleton
 
 ## `GraphFloodOptimisedResult`
 
-No additional binding notes are available.
+Result of ``run_graphflood_optimised`` and ``run_graphflood_optimised_v2``.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
+Same hydraulic fields as ``HydraulicResult`` plus solver performance counters.
+
+Returned by ``run_graphflood_optimised()``, ``run_graphflood_optimised_v2()``; not constructible directly.
 
 Attributes
 ----------
-See the generated binding signature for available properties and methods.
-
-Notes
------
-No additional binding notes are available.
+bed : Raster
+    Bed elevation used for routing (m), after any conditioning.
+converged : bool
+    True if the convergence tolerances were met.
+dhw : Raster
+    Depth change over the last step (m).
+hydraulic_slope : Raster
+    Water-surface slope used in the flow law (m/m).
+performance : GraphFloodOptimisedPerformance
+    Timing and work counters (GraphFloodOptimisedPerformance).
+projection_volume : float
+    Water volume (m^3) added by priority-flood projection of the surface (not conserved).
+qin : Raster
+    Discharge into each cell (m^3/s).
+qout : Raster
+    Discharge out of each cell from the flow law (m^3/s).
+specific_discharge : Raster
+    Discharge per unit width (m^2/s).
+step_count : int
+    Number of time steps taken.
+total_discharge : Raster
+    Total discharge through each cell (m^3/s).
+total_water_volume : float
+    Water stored on the grid (m^3).
+water_depth : Raster
+    Water depth h (m).
+water_surface : Raster
+    Water surface elevation z + h (m).
 
 Authors
 -------
@@ -250,59 +250,59 @@ B. Gailleton
 
 #### `bed`
 
-(self) -> lsdtt3.Raster
+Bed elevation used for routing (m), after any conditioning.
 
 #### `converged`
 
-(self) -> bool
+True if the convergence tolerances were met.
 
 #### `dhw`
 
-(self) -> lsdtt3.Raster
+Depth change over the last step (m).
 
 #### `hydraulic_slope`
 
-(self) -> lsdtt3.Raster
+Water-surface slope used in the flow law (m/m).
 
 #### `performance`
 
-(self) -> lsdtt3.GraphFloodOptimisedPerformance
+Timing and work counters (GraphFloodOptimisedPerformance).
 
 #### `projection_volume`
 
-(self) -> float
+Water volume (m^3) added by priority-flood projection of the surface (not conserved).
 
 #### `qin`
 
-(self) -> lsdtt3.Raster
+Discharge into each cell (m^3/s).
 
 #### `qout`
 
-(self) -> lsdtt3.Raster
+Discharge out of each cell from the flow law (m^3/s).
 
 #### `specific_discharge`
 
-(self) -> lsdtt3.Raster
+Discharge per unit width (m^2/s).
 
 #### `step_count`
 
-(self) -> int
+Number of time steps taken.
 
 #### `total_discharge`
 
-(self) -> lsdtt3.Raster
+Total discharge through each cell (m^3/s).
 
 #### `total_water_volume`
 
-(self) -> float
+Water stored on the grid (m^3).
 
 #### `water_depth`
 
-(self) -> lsdtt3.Raster
+Water depth h (m).
 
 #### `water_surface`
 
-(self) -> lsdtt3.Raster
+Water surface elevation z + h (m).
 
 ---
 
@@ -310,25 +310,42 @@ B. Gailleton
 
 Result of stationary GraphFlood-style hydraulic routing.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
-
-Attributes
-----------
-See the generated binding signature for available properties and methods.
-
-Notes
------
-Result of stationary GraphFlood-style hydraulic routing.
-
 All raster properties use the routed hydraulic domain. ``projection_volume``
 is the explicitly non-conservative volume added while priority-flood projects
 the evolving ``z + h`` surface.
+
+Returned by ``run_graphflood()``; not constructible directly.
+
+Attributes
+----------
+bed : Raster
+    Bed elevation used for routing (m), after any conditioning.
+converged : bool
+    True if the convergence tolerances were met.
+current_time : float
+    Model time at the end of the run (s).
+dhw : Raster
+    Depth change over the last step (m).
+hydraulic_slope : Raster
+    Water-surface slope used in the flow law (m/m).
+projection_volume : float
+    Water volume (m^3) added by priority-flood projection of the surface (not conserved).
+qin : Raster
+    Discharge into each cell (m^3/s).
+qout : Raster
+    Discharge out of each cell from the flow law (m^3/s).
+specific_discharge : Raster
+    Discharge per unit width (m^2/s).
+step_count : int
+    Number of time steps taken.
+total_discharge : Raster
+    Total discharge through each cell (m^3/s).
+total_water_volume : float
+    Water stored on the grid (m^3).
+water_depth : Raster
+    Water depth h (m).
+water_surface : Raster
+    Water surface elevation z + h (m).
 
 Authors
 -------
@@ -338,59 +355,59 @@ B. Gailleton
 
 #### `bed`
 
-(self) -> lsdtt3.Raster
+Bed elevation used for routing (m), after any conditioning.
 
 #### `converged`
 
-(self) -> bool
+True if the convergence tolerances were met.
 
 #### `current_time`
 
-(self) -> float
+Model time at the end of the run (s).
 
 #### `dhw`
 
-(self) -> lsdtt3.Raster
+Depth change over the last step (m).
 
 #### `hydraulic_slope`
 
-(self) -> lsdtt3.Raster
+Water-surface slope used in the flow law (m/m).
 
 #### `projection_volume`
 
-(self) -> float
+Water volume (m^3) added by priority-flood projection of the surface (not conserved).
 
 #### `qin`
 
-(self) -> lsdtt3.Raster
+Discharge into each cell (m^3/s).
 
 #### `qout`
 
-(self) -> lsdtt3.Raster
+Discharge out of each cell from the flow law (m^3/s).
 
 #### `specific_discharge`
 
-(self) -> lsdtt3.Raster
+Discharge per unit width (m^2/s).
 
 #### `step_count`
 
-(self) -> int
+Number of time steps taken.
 
 #### `total_discharge`
 
-(self) -> lsdtt3.Raster
+Total discharge through each cell (m^3/s).
 
 #### `total_water_volume`
 
-(self) -> float
+Water stored on the grid (m^3).
 
 #### `water_depth`
 
-(self) -> lsdtt3.Raster
+Water depth h (m).
 
 #### `water_surface`
 
-(self) -> lsdtt3.Raster
+Water surface elevation z + h (m).
 
 ---
 
@@ -398,24 +415,19 @@ B. Gailleton
 
 Priority-flood projection of a hydraulic surface towards selected outlets.
 
-Parameters
-----------
-*args
-    Constructor arguments described by the generated binding signature.
-**kwargs
-    Constructor keyword arguments described by the generated binding
-    signature.
+``added_depth`` and ``added_volume`` quantify the explicitly non-conservative
+water required to remove local minima in the supplied surface.
+
+Returned by ``fill_hydraulic_surface()``; not constructible directly.
 
 Attributes
 ----------
-See the generated binding signature for available properties and methods.
-
-Notes
------
-Priority-flood projection of a hydraulic surface towards selected outlets.
-
-``added_depth`` and ``added_volume`` quantify the explicitly non-conservative
-water required to remove local minima in the supplied surface.
+added_depth : Raster
+    Depth added by filling (m): filled_surface - surface.
+added_volume : float
+    Volume added by filling (m^3).
+filled_surface : Raster
+    Filled surface elevation (m).
 
 Authors
 -------
@@ -425,43 +437,45 @@ B. Gailleton
 
 #### `added_depth`
 
-(self) -> lsdtt3.Raster
+Depth added by filling (m): filled_surface - surface.
 
 #### `added_volume`
 
-(self) -> float
+Volume added by filling (m^3).
 
 #### `filled_surface`
 
-(self) -> lsdtt3.Raster
+Filled surface elevation (m).
 
 ---
 
 ## `fill_hydraulic_surface`
-
-fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, boundary_conditions: str = 'nnnn', slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, priority_flood_backend: str = 'binary') -> lsdtt3.HydraulicSurfaceFill
 
 Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 
 The node-state raster uses 0 for excluded cells, 1 for active cells, and 3
 for outlets. Unlike terrain pit filling, excluded/nodata cells are walls, not
 drains. Code-3 cells are prescribed sinks wherever they occur.
+
+Parameters
+----------
+surface : Raster
+    Water-surface (or bed) elevation (m) to fill.
+node_state : Raster
+    Same grid: 0 excluded, 1 active, 3 outlet.
+boundary_conditions : str, default='nnnn'
+    Four NESW codes ``o``, ``n`` or ``p`` (periodic edges wrap).
+slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across filled flats so they drain.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation; both give the same result.
+
+Returns
+-------
+HydraulicSurfaceFill
+    Filled surface, added depth (m) and added volume (m^3).
 
 Authors
 -------
@@ -475,40 +489,90 @@ def fill_hydraulic_surface(surface: lsdtt3.Raster, node_state: lsdtt3.Raster, bo
 
 ## `run_graphflood`
 
-run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, n_threads: int = 0, initial_water_depth: object | None = None) -> lsdtt3.HydraulicResult
+Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
+
+GraphFlood-style solver (Gailleton et al. 2024): rain falls on every active
+cell, discharge is routed downslope over the water surface ``z + h`` (bed
+plus water depth) and the depth ``h`` is updated each step until inflow and
+outflow balance. Water leaves the domain ONLY through cells marked 3 in
+``node_state``, whatever the edge codes in ``boundary_conditions``; to
+drain across all four raster edges, mark them as outlets::
+
+    edges = lsdtt3.make_outlet_mask(bed, True, True, True, True).to_numpy()
+    node_state = lsdtt3.Raster.from_numpy(1 + 2 * edges, bed.mask_numpy(),
+                                          bed.metadata)
+
+With ``check_valid_outlet=True`` (the default) every connected group of
+active cells must contain a code-3 cell, otherwise ``ValueError`` is raised.
 
 Parameters
 ----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
+bed : Raster
+    Bed (terrain) elevation (m) in a projected metre CRS.
+node_state : Raster
+    Same grid as ``bed``: 0 excluded (wall), 1 active, 3 outlet (water
+    leaving here is removed). Nodata pixels are excluded.
+rainfall_rate : Raster
+    Same grid: rainfall (effective runoff) rate in m/s, for example
+    ``10 mm/h = 10 / 1000 / 3600 = 2.78e-6`` m/s.
+friction_coefficient : Raster
+    Same grid: coefficient ``K`` of the flow law ``q = K * h**a * S**b``
+    (``q`` discharge per unit width, m^2/s). For Manning, ``K = 1 / n``
+    (n in s m^(-1/3), for example n = 0.033 gives K = 30).
+method : {"mfd", "dinf"}, default="mfd"
+    Routing over the water surface: multiple-flow-direction or D-infinity.
+boundary_conditions : str, default='oooo'
+    Four NESW codes ``o``, ``n`` or ``p`` setting the neighbour topology of
+    the edges (``p`` wraps to the opposite edge and must be paired). Edges
+    do not drain by themselves: see ``node_state``.
+mfd_exponent : float, default=1.0
+    Exponent on slope used to split MFD discharge among receivers
+    (positive).
+condition_bed : {"none", "fill"}, default="none"
+    ``"fill"`` priority-floods the bed towards the code-3 cells before
+    routing.
+fill_slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across flats when the water surface (or
+    bed) is priority-flooded towards the outlets.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+friction_depth_exponent : float, default=5/3
+    Exponent ``a`` on depth in the flow law (5/3 for Manning).
+friction_slope_exponent : float, default=0.5
+    Exponent ``b`` on hydraulic slope in the flow law (1/2 for Manning).
+dt : float, default=0.001
+    Time step in seconds of the depth update.
+min_slope : float, default=0.0001
+    Floor (m/m) on the hydraulic slope used in the flow law, so flat water
+    surfaces still discharge.
+point_inflows : array-like of float or None, default=None
+    N x 3 array of ``(row, col, discharge_m3_s)``: extra inflow (m^3/s)
+    added at given pixels, for example a river entering the domain.
+max_steps : int, default=100
+    Maximum number of time steps.
+run_until_converged : bool, default=True
+    Stop early when converged; if False run exactly ``max_steps`` steps.
+convergence_check_every : int, default=10
+    Check convergence every this many steps (positive).
+median_dhw_convergence_tolerance_metres : float, default=1e-6
+    Converged when the median absolute depth change per step (m) is at most
+    this ...
+median_dhw_relative_convergence_tolerance : float, default=0.0001
+    ... and the median relative depth change is at most this.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+initial_water_depth : Raster or None, default=None
+    Starting water depth (m) on the bed grid; None starts dry.
 
 Returns
 -------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, n_threads: int = 0, initial_water_depth: object | None = None) -> lsdtt3.HydraulicResult
-
-Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
-
-``node_state`` is a raster on the bed grid: 0 means excluded/impermeable, 1
-means active, and 3 is a selected outlet/sink. Open edges do not drain unless
-a cell is marked 3. With ``check_valid_outlet=True``, every connected active
-component must contain a code-3 cell.
-Closed edges use ``n`` and periodic edges use paired ``p`` codes. By default,
-every connected active component must contain an outlet.
-
-``rainfall_rate`` and ``friction_coefficient`` are required same-grid rasters.
-The friction law is ``q / width = coefficient * h**a * S**b``. Point inflows
-are an N by 3 array of ``(row, col, discharge_m3_s)``.
+HydraulicResult
+    Water depth (m), water surface, discharges and convergence state.
 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -522,22 +586,6 @@ def run_graphflood(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate:
 
 ## `run_graphflood_induced`
 
-Run GraphFlood on a discharge-selected domain and floodplain halo.
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
 Run GraphFlood on a discharge-selected domain and floodplain halo.
 
 Parameters
@@ -556,6 +604,14 @@ max_expansions : int, default=2
     Maximum number of domain expansions after the first solve.
 point_inflows : array-like, optional
     Rows of ``(row, col, discharge_m3_s)``.
+median_dhw_convergence_tolerance_metres : float or None, default=None
+    Stop a solve when the median absolute water-depth change per step
+    (m) is at most this value (and the relative test below also holds).
+    None uses the backend's own default.
+median_dhw_relative_convergence_tolerance : float or None, default=None
+    Relative counterpart: the median depth change divided by the depth
+    must also be at most this value (dimensionless). None uses the
+    backend's own default.
 **backend_options
     Options forwarded to the backend.
 
@@ -567,10 +623,7 @@ GraphFloodInducedResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -588,22 +641,6 @@ Run a compatible GraphFlood backend from coarse to fine grids.
 
 Parameters
 ----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-Run a compatible GraphFlood backend from coarse to fine grids.
-
-Parameters
-----------
 bed, node_state, rainfall_rate, friction_coefficient : Raster
     Full-resolution hydraulic inputs.
 backend : str or callable, default="optimised_v2"
@@ -616,6 +653,14 @@ point_inflows : array-like, optional
     Rows of ``(row, col, discharge_m3_s)``.
 initial_water_depth : Raster, optional
     Full-resolution initial depth.
+median_dhw_convergence_tolerance_metres : float or None, default=None
+    Stop a solve when the median absolute water-depth change per step
+    (m) is at most this value (and the relative test below also holds).
+    None uses the backend's own default.
+median_dhw_relative_convergence_tolerance : float or None, default=None
+    Relative counterpart: the median depth change divided by the depth
+    must also be at most this value (dimensionless). None uses the
+    backend's own default.
 **backend_options
     Options forwarded to every backend call.
 
@@ -627,10 +672,7 @@ GraphFloodMultigridResult
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -644,32 +686,79 @@ B. Gailleton
 
 ## `run_graphflood_optimised`
 
-run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, initial_water_depth: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, initial_water_depth: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
-
 Run the separate CPU-optimised stationary MFD GraphFlood implementation.
 
 The reference ``run_graphflood`` path is unchanged. This implementation uses
-direct raster MFD routing and validates a cached topology before reuse.
+direct raster MFD routing and validates a cached topology before reuse. The
+physics and inputs are those of ``run_graphflood`` (MFD routing only): water
+leaves only through ``node_state`` 3 cells.
+
+Parameters
+----------
+bed : Raster
+    Bed (terrain) elevation (m) in a projected metre CRS.
+node_state : Raster
+    Same grid as ``bed``: 0 excluded (wall), 1 active, 3 outlet (water
+    leaving here is removed). Nodata pixels are excluded.
+rainfall_rate : Raster
+    Same grid: rainfall (effective runoff) rate in m/s, for example
+    ``10 mm/h = 10 / 1000 / 3600 = 2.78e-6`` m/s.
+friction_coefficient : Raster
+    Same grid: coefficient ``K`` of the flow law ``q = K * h**a * S**b``
+    (``q`` discharge per unit width, m^2/s). For Manning, ``K = 1 / n``
+    (n in s m^(-1/3), for example n = 0.033 gives K = 30).
+boundary_conditions : str, default='oooo'
+    Four NESW codes ``o``, ``n`` or ``p`` setting the neighbour topology of
+    the edges (``p`` wraps to the opposite edge and must be paired). Edges
+    do not drain by themselves: see ``node_state``.
+mfd_exponent : float, default=1.0
+    Exponent on slope used to split MFD discharge among receivers
+    (positive).
+condition_bed : {"none", "fill"}, default="none"
+    ``"fill"`` priority-floods the bed towards the code-3 cells before
+    routing.
+fill_slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across flats when the water surface (or
+    bed) is priority-flooded towards the outlets.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+friction_depth_exponent : float, default=5/3
+    Exponent ``a`` on depth in the flow law (5/3 for Manning).
+friction_slope_exponent : float, default=0.5
+    Exponent ``b`` on hydraulic slope in the flow law (1/2 for Manning).
+dt : float, default=0.001
+    Time step in seconds of the depth update.
+min_slope : float, default=0.0001
+    Floor (m/m) on the hydraulic slope used in the flow law, so flat water
+    surfaces still discharge.
+point_inflows : array-like of float or None, default=None
+    N x 3 array of ``(row, col, discharge_m3_s)``: extra inflow (m^3/s)
+    added at given pixels, for example a river entering the domain.
+max_steps : int, default=100
+    Maximum number of time steps.
+run_until_converged : bool, default=True
+    Stop early when converged; if False run exactly ``max_steps`` steps.
+convergence_check_every : int, default=10
+    Check convergence every this many steps (positive).
+median_dhw_convergence_tolerance_metres : float, default=1e-6
+    Converged when the median absolute depth change per step (m) is at most
+    this ...
+median_dhw_relative_convergence_tolerance : float, default=0.0001
+    ... and the median relative depth change is at most this.
+reuse_topology : bool, default=True
+    Reuse the cached routing order between steps when it is still valid.
+initial_water_depth : Raster or None, default=None
+    Starting water depth (m) on the bed grid; None starts dry.
+
+Returns
+-------
+GraphFloodOptimisedResult
+    Water depth (m), discharges, convergence state and timing counters.
 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.
@@ -683,24 +772,6 @@ def run_graphflood_optimised(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rain
 
 ## `run_graphflood_optimised_v2`
 
-run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, dirty_tile_size: int = 64, full_validation_every: int = 128, initial_water_depth: object | None = None, prescribed_qin: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-run_graphflood_optimised_v2(bed: lsdtt3.Raster, node_state: lsdtt3.Raster, rainfall_rate: lsdtt3.Raster, friction_coefficient: lsdtt3.Raster, boundary_conditions: str = 'oooo', mfd_exponent: float = 1.0, condition_bed: str = 'none', fill_slope_epsilon: float = 9.99999993922529e-09, check_valid_outlet: bool = True, friction_depth_exponent: float = 1.6666666666666667, friction_slope_exponent: float = 0.5, dt: float = 0.001, min_slope: float = 0.0001, point_inflows: object | None = None, max_steps: int = 100, run_until_converged: bool = True, convergence_check_every: int = 10, median_dhw_convergence_tolerance_metres: float = 1e-06, median_dhw_relative_convergence_tolerance: float = 0.0001, reuse_topology: bool = True, dirty_tile_size: int = 64, full_validation_every: int = 128, initial_water_depth: object | None = None, prescribed_qin: object | None = None) -> lsdtt3.GraphFloodOptimisedResult
-
 Run GraphFlood with the incremental v2 CPU kernels.
 
 V2 uses a monotone radix heap in Priority-Flood, a bounds-free interior MFD
@@ -711,9 +782,79 @@ cached order. ``full_validation_every=0`` disables periodic full audits.
 ``prescribed_qin`` downslope while its depth and capacity-limited ``qout``
 evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
 
+Parameters
+----------
+bed : Raster
+    Bed (terrain) elevation (m) in a projected metre CRS.
+node_state : Raster
+    Same grid as ``bed``: 0 excluded (wall), 1 active, 3 outlet (water
+    leaving here is removed). Nodata pixels are excluded.
+rainfall_rate : Raster
+    Same grid: rainfall (effective runoff) rate in m/s, for example
+    ``10 mm/h = 10 / 1000 / 3600 = 2.78e-6`` m/s.
+friction_coefficient : Raster
+    Same grid: coefficient ``K`` of the flow law ``q = K * h**a * S**b``
+    (``q`` discharge per unit width, m^2/s). For Manning, ``K = 1 / n``
+    (n in s m^(-1/3), for example n = 0.033 gives K = 30).
+boundary_conditions : str, default='oooo'
+    Four NESW codes ``o``, ``n`` or ``p`` setting the neighbour topology of
+    the edges (``p`` wraps to the opposite edge and must be paired). Edges
+    do not drain by themselves: see ``node_state``.
+mfd_exponent : float, default=1.0
+    Exponent on slope used to split MFD discharge among receivers
+    (positive).
+condition_bed : {"none", "fill"}, default="none"
+    ``"fill"`` priority-floods the bed towards the code-3 cells before
+    routing.
+fill_slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across flats when the water surface (or
+    bed) is priority-flooded towards the outlets.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+friction_depth_exponent : float, default=5/3
+    Exponent ``a`` on depth in the flow law (5/3 for Manning).
+friction_slope_exponent : float, default=0.5
+    Exponent ``b`` on hydraulic slope in the flow law (1/2 for Manning).
+dt : float, default=0.001
+    Time step in seconds of the depth update.
+min_slope : float, default=0.0001
+    Floor (m/m) on the hydraulic slope used in the flow law, so flat water
+    surfaces still discharge.
+point_inflows : array-like of float or None, default=None
+    N x 3 array of ``(row, col, discharge_m3_s)``: extra inflow (m^3/s)
+    added at given pixels, for example a river entering the domain.
+max_steps : int, default=100
+    Maximum number of time steps.
+run_until_converged : bool, default=True
+    Stop early when converged; if False run exactly ``max_steps`` steps.
+convergence_check_every : int, default=10
+    Check convergence every this many steps (positive).
+median_dhw_convergence_tolerance_metres : float, default=1e-6
+    Converged when the median absolute depth change per step (m) is at most
+    this ...
+median_dhw_relative_convergence_tolerance : float, default=0.0001
+    ... and the median relative depth change is at most this.
+reuse_topology : bool, default=True
+    Reuse the cached routing order between steps when it is still valid.
+dirty_tile_size : int, default=64
+    Side (pixels) of the tiles whose routing is re-checked after a change.
+full_validation_every : int, default=128
+    Run a full topology audit every this many steps; 0 disables it.
+initial_water_depth : Raster or None, default=None
+    Starting water depth (m) on the bed grid; None starts dry.
+prescribed_qin : Raster or None, default=None
+    Fixed inflow discharge (m^3/s) of ``node_state`` 2 ghost cells; None
+    means zero.
+
+Returns
+-------
+GraphFloodOptimisedResult
+    Water depth (m), discharges, convergence state and timing counters.
+
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 **Deprecated compatibility names:**
 - `tol_median_abs_dhw` -> `median_dhw_convergence_tolerance_metres`; earliest removal: following minor.

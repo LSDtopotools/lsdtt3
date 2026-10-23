@@ -207,11 +207,15 @@ int main(int argc, char* argv[])
     help_map["basin_outlet_snapping_method"] = {"string", "downstream", 
         "Method to snap CSV points to the routing object.", 
         "none: uses mapped pixel. downstream: follows flow path. "
-        "expanding_square: searches outward until channel hit.",
+        "expanding_square: searches outward until channel hit. "
+        "largest_area: the pixel with the most contributing pixels within "
+        "basin_outlet_snap_max_search_radius_pixels.",
         "Snapping options", "param", ""};
     
-    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
-    help_map["basin_outlet_contributing_pixels_threshold"] = {"int", "1000", 
+    int_default_map["basin_outlet_contributing_pixels_threshold"] =
+        lsdtt::default_basin_outlet_contributing_pixels_threshold;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int",
+        std::to_string(lsdtt::default_basin_outlet_contributing_pixels_threshold), 
         "Pixel threshold for confirming an outlet snap.", 
         "Defines the required D8 accumulation to arrest snapping.",
         "Snapping options", "param", ""};
@@ -225,7 +229,8 @@ int main(int argc, char* argv[])
     int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int", "25",
         "Maximum expanding-square search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square.",
+        "Used only when basin_outlet_snapping_method is expanding_square or "
+        "largest_area (the half-width of the square searched).",
         "Snapping options", "param", "basin_outlet_snapping_method"};
 
     // --- Smoothing Scales & Polyfit ---
@@ -361,9 +366,9 @@ int main(int argc, char* argv[])
     const std::string snap_method =
         lsdtt::to_lower_ascii(sf["basin_outlet_snapping_method"]);
     if (snap_method != "none" && snap_method != "downstream" &&
-        snap_method != "expanding_square") {
+        snap_method != "expanding_square" && snap_method != "largest_area") {
         std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
-                     "none, downstream, expanding_square.\n";
+                     "none, downstream, expanding_square, largest_area.\n";
         return 1;
     }
 
@@ -588,7 +593,8 @@ int main(int argc, char* argv[])
             } else {
                 std::cerr << "Warning: outlet " << out.point_id
                           << " could not be snapped "
-                          << (snap_method == "downstream" ? "downstream" : "with expanding_square")
+                          << (snap_method == "downstream" ? std::string("downstream")
+                                                          : "with " + snap_method)
                           << " ("
                           << lsdtt::snap_status_to_string(snapped.status)
                           << "); skipping.\n";

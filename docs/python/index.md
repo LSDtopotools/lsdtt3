@@ -20,6 +20,12 @@ files.
 - `FlowGraph` provides distributed D-infinity or MFD routing products.
 - Result objects retain related rasters and tables rather than writing files
   implicitly.
+- The wheels carry their own GDAL and PROJ, with their data files, and
+  `lsdtt3` points itself at them internally. It does not set `GDAL_DATA`,
+  `PROJ_DATA` or `PROJ_LIB`, so other geospatial libraries in the same Python
+  session (pyproj, rasterio, GMT) keep using their own data. (The 0.7.1 wheels
+  did set them; if pyproj then fails to open its database, remove the three
+  variables after `import lsdtt3`.)
 
 The [API reference](../python_api/index.md) is generated from the installed
 Python API. Guides explain a workflow; API pages specify the exact callable.
@@ -34,8 +40,14 @@ release, and you install the file for your Python and platform into a virtual,
 conda or pixi environment:
 
 ```bash
-python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
 ```
+
+Each wheel is for one Python version (`cp312` is Python 3.12) and keeps its
+original file name, which pip reads. In Google Colab, which runs Python 3.13 on
+Linux, the `python_binding_examples` notebook in the lsdtt3_notebooks
+repository installs the `cp313` wheel and runs a complete basin, slope-area and
+chi workflow.
 
 The [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)
 has the details. For development from this checkout, see

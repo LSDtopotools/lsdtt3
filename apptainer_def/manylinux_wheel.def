@@ -1,0 +1,85 @@
+Bootstrap: docker
+From: quay.io/pypa/manylinux_2_28_x86_64
+
+# manylinux_wheel.def
+#
+# The manylinux_2_28 image cibuildwheel uses for the Linux wheels, with the
+# system dependencies already installed. It lets the Linux wheels be built
+# with Apptainer instead of podman, for example on a server where you have
+# Apptainer but no sudo.
+#
+# Do not build this by hand: tools/build_manylinux_wheel_apptainer.sh builds it
+# (once, then reuses it) and runs the wheel build inside it. The script runs
+# `apptainer build` from a staging directory that holds copies of
+# python_bindings/pyproject.toml and
+# python_bindings/tools/build_manylinux_native_deps.sh, which is what the
+# %files lines below copy.
+#
+# The dependency list is NOT repeated here. %post runs the
+# [tool.cibuildwheel.linux] before-all command from that pyproject.toml, the
+# same command cibuildwheel runs in CI and under podman, so the routes cannot
+# drift apart. That command runs build_manylinux_native_deps.sh, which builds
+# PROJ, GDAL, GEOS, SQLite and curl from source; the first image build therefore takes
+# 10-20 minutes. The script names the image after a hash of this file, that
+# command and the deps script, so changing any of them produces a new image.
+#
+# The base image carries every CPython the wheels target (/opt/python/cp3XX-*)
+# and auditwheel.
+
+%labels
+    Maintainer Simon M. Mudd
+    Description lsdtt3 manylinux_2_28 wheel build image (Apptainer route)
+
+%files
+    pyproject.toml /opt/lsdtt3/pyproject.toml
+    build_manylinux_native_deps.sh /opt/lsdtt3/python_bindings/tools/build_manylinux_native_deps.sh
+
+%post
+    set -eu
+
+    # Any CPython >= 3.11 in the image has tomllib.
+    PY=""
+    for candidate in /opt/python/cp312-cp312/bin/python /opt/python/cp311-cp311/bin/python /opt/python/cp313-cp313/bin/python; do
+        if [ -x "$candidate" ]; then PY="$candidate"; break; fi
+    done
+    [ -n "$PY" ] || { echo "no CPython >= 3.11 found in /opt/python" >&2; exit 1; }
+
+    BEFORE_ALL="$("$PY" - <<'EOF'
+import tomllib
+with open("/opt/lsdtt3/pyproject.toml", "rb") as f:
+    print(tomllib.load(f)["tool"]["cibuildwheel"]["linux"]["before-all"])
+EOF
+)"
+    # Without /etc/subuid entries for the user, the script builds this image
+    # with --ignore-fakeroot-command: %post runs as root in a namespace that
+    # maps only that one uid, so an RPM that sets a file to another owner
+    # would fail. The image's own fakeroot fakes those chowns. It is not
+    # always installable; if not, run without it.
+    command -v fakeroot >/dev/null 2>&1 || dnf install -y fakeroot || true
+    WRAP=""
+    command -v fakeroot >/dev/null 2>&1 && WRAP="fakeroot"
+
+    # cibuildwheel replaces {project} with the project root; here the files
+    # the command needs are under /opt/lsdtt3.
+    BEFORE_ALL="$(printf '%s' "$BEFORE_ALL" | sed 's#{project}#/opt/lsdtt3#g')"
+
+    echo "Running before-all from pyproject.toml${WRAP:+ (under fakeroot)}:"
+    echo "    $BEFORE_ALL"
+    $WRAP bash -c "$BEFORE_ALL"
+
+    dnf clean all >/dev/null 2>&1 || yum clean all >/dev/null 2>&1 || true
+    rm -rf /var/cache/dnf /var/cache/yum
+
+%runscript
+    echo "lsdtt3 manylinux_2_28 wheel build image"
+    echo "  Pythons: $(ls /opt/python | tr '\n' ' ')"
+    echo "  GDAL:    $(gdal-config --version)"
+    echo "  CMake:   $(cmake --version | head -1)"
+
+%test
+    gdal-config --version
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion proj
+    cmake --version | head -1
+    pkg-config --modversion fftw3
+    pkg-config --modversion netcdf
+    command -v auditwheel

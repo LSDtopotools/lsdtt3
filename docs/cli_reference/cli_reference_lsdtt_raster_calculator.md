@@ -1,6 +1,10 @@
 # CLI reference: lsdtt-raster-calculator
 
-Two-raster map algebra calculator. Performs element-wise arithmetic operations (addition, subtraction, multiplication, division) on pairs of rasters. Handles automatic reprojection, coregistration, and nodata harmonisation.
+Two-raster algebra: sum, product, ratio, difference, absolute difference, and
+each raster masked to where both are valid. A typical use is a DEM of
+difference. The second raster is warped onto the first raster's grid when the
+two differ, and can optionally be coregistered to the first (Nuth and Kääb
+2011) before any algebra.
 
 ## Usage
 
@@ -19,102 +23,57 @@ lsdtt-raster-calculator  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
-## Pipeline overview
+## Pipeline
 
-Steps run in this order:
+1. Load the first raster (`read_fname`) and the second (`second_raster_read_fname`).
+2. If the grids differ, warp the second raster onto the first raster's grid
+   with `resampling_method` (default `bilinear`; use `near` for categorical
+   values). With `resample_second_to_first_grid: false` the tool stops instead.
+3. Give the second raster the first raster's nodata value.
+4. Optionally coregister the second raster to the first
+   (`run_dem_coregistration: true`).
+5. Build the overlap mask: pixels valid in both rasters.
+6. Compute and write the selected outputs. Pixels outside the overlap are
+   nodata, and so is a division by zero in the ratio.
 
-| Step | Description |
+## Example: a DEM of difference
+
+```
+read_fname: dem_2020.tif
+second_raster_read_fname: dem_2010.tif
+write_difference_raster: true
+run_dem_coregistration: true
+write_dem_coreg_diagnostics_csv: true
+```
+
+`write_difference_raster` is on by default; the other outputs are off.
+
+## Outputs
+
+`<pair>` below is `<write_fname>_and_<second_raster_write_fname>`, with
+`_coreg` appended when `run_dem_coregistration: true`.
+`second_raster_write_fname` defaults to the stem of
+`second_raster_read_fname`.
+
+| File | Written when |
 |---|---|
-| 1. Load first raster | Read primary input DEM or raster |
-| 2. Load second raster | Read secondary raster |
-| 3. Reproject second raster | If CRS mismatch, warp to first raster grid |
-| 4. Coregister *(optional)* | Align second raster to first raster if requested |
-| 5. Harmonise nodata | Ensure consistent nodata values and mask |
-| 6. Compute overlap mask | Identify valid pixels in both rasters |
-| 7. Calculate outputs | Perform requested algebra operations |
-| 8. Write outputs | Save result rasters |
+| `<pair>_difference.tif` (first − second) | `write_difference_raster: true` (default) |
+| `<pair>_absolute_difference.tif` | `write_absolute_difference_raster: true` |
+| `<pair>_sum.tif` | `write_sum_raster: true` |
+| `<pair>_multiply.tif` | `write_multiply_raster: true` |
+| `<pair>_ratio.tif` (first / second) | `write_ratio_raster: true` |
+| `<pair>_first_on_overlap.tif`, `<pair>_second_on_overlap.tif` | `write_first_on_overlap_raster` / `write_second_on_overlap_raster` |
+| `<pair>_overlap_mask.tif` (1 = both valid) | `write_overlap_mask_raster: true` |
+| `<second_raster_write_fname>_resampled_to_<write_fname>.tif` | whenever the second raster had to be warped |
+| `<second_raster_write_fname>_coregistered_to_<write_fname>.tif` | `write_second_coregistered_raster: true` |
+| `<pair>_diagnostics.csv` (`<pair>` ends in `_coreg` here) | `write_dem_coreg_diagnostics_csv: true` |
 
----
-
-## Input / output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input rasters. |
-| `read_fname` | string | parameter file stem | First raster filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `second_raster_read_fname` | string | _(required)_ | Filename of second raster. |
-| `second_raster_read_path` | string | same as `read_path` | Directory containing second raster. |
-
----
-
-## Reprojection
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `reproject_second_raster_to_first` | bool | `true` | Automatically reproject second raster to first raster grid if CRS differs. |
-| `resampling_method` | string | `bilinear` | GDAL method for warping the second raster. Bilinear avoids cubic overshoot before raster algebra; use `near` for categorical values. |
-
----
-
-## Coregistration
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `coregister_second_raster` | bool | `false` | Coregister second raster to first using cross-correlation or other methods. |
-| `coregistration_window_pixels` | int | `64` | Window size (pixels) for coregistration search. |
-| `coregistration_search_distance_pixels` | int | `10` | Search distance (pixels) for offset detection. |
-
----
-
-## Operations
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `calculate_sum` | bool | `false` | Output: first + second |
-| `calculate_difference` | bool | `true` | Output: first - second |
-| `calculate_absolute_difference` | bool | `false` | Output: abs(first - second) |
-| `calculate_multiply` | bool | `false` | Output: first × second |
-| `calculate_divide` | bool | `false` | Output: first ÷ second |
-| `calculate_ratio` | bool | `false` | Output: first / second (alias for divide) |
-| `calculate_first_on_overlap` | bool | `false` | Output: first raster where both are valid |
-| `calculate_second_on_overlap` | bool | `false` | Output: second raster where both are valid |
-
----
-
-## Output handling
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `set_nodata_to_zero` | bool | `false` | Replace nodata with `0` in output (careful: may introduce false signal). |
-| `preserve_first_raster_nodata` | bool | `true` | Use first raster's nodata value for outputs. |
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog` (Cloud-Optimised GeoTIFF, preferred), `gtiff`, `same_as_input`. |
-
----
-
-## Output filenames
-
-Operations produce outputs named according to the operation:
-
-- `<write_fname>_sum.tif`
-- `<write_fname>_difference.tif`
-- `<write_fname>_absolute_difference.tif`
-- `<write_fname>_product.tif`
-- `<write_fname>_ratio.tif`
-- `<write_fname>_first_on_overlap.tif`
-- `<write_fname>_second_on_overlap.tif`
+The output extension follows `write_output_format` (default `cog`).
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters

@@ -109,7 +109,7 @@ viewer if you wrote PNG. A hillshade is the fastest way to confirm that your
 DEM loaded with the geometry you expected — if it looks inverted or striped,
 something is wrong with the data before any analysis starts.
 
-!!! warning "Check your vertical units"
+!!! warning "Check your vertical units" (applies to people working in the USA, which inexplicably still uses imperial units)
 
     A DEM in feet on a metre grid is undetectable from the file alone and
     produces plausible-looking but wrong slopes everywhere downstream. If your
@@ -120,8 +120,10 @@ something is wrong with the data before any analysis starts.
 ## Worked example 2: a channel network
 
 Channel extraction needs a DEM without pits, so the pipeline is: fill the
-pits, then extract. `lsdtt-channel-extraction` does the flow routing itself —
-you just point it at the DEM.
+pits, then extract. `lsdtt-channel-extraction` does both itself: it fills the
+pits and routes the flow, so you just point it at the DEM. If your DEM is
+already filled (for example by `lsdtt-raster-preprocessing`), set
+`raster_is_filled: true` to skip the fill.
 
 ```
 # channels.param

@@ -381,15 +381,20 @@ int main(int argc, char* argv[])
     help_map["basin_outlet_snapping_method"] = {"string","downstream",
         "Optional snapping of basin outlet CSV points to pixels that exceed "
         "a contributing-pixel threshold.",
-        "Allowed values: none, expanding_square, downstream. "
+        "Allowed values: none, expanding_square, downstream, largest_area. "
         "none: use the mapped raster pixel directly. "
         "expanding_square: search outward ring-by-ring until a qualifying pixel "
         "is found. downstream: follow the D8 receiver chain until a qualifying "
-        "pixel is found.",
+        "pixel is found. largest_area: take the pixel with the most "
+        "contributing pixels in the square of half-width "
+        "basin_outlet_snap_max_search_radius_pixels, if it is a qualifying "
+        "pixel (a large radius can jump onto a bigger neighbouring river).",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
 
-    int_default_map["basin_outlet_contributing_pixels_threshold"] = 1000;
-    help_map["basin_outlet_contributing_pixels_threshold"] = {"int","1000",
+    int_default_map["basin_outlet_contributing_pixels_threshold"] =
+        lsdtt::default_basin_outlet_contributing_pixels_threshold;
+    help_map["basin_outlet_contributing_pixels_threshold"] = {"int",
+        std::to_string(lsdtt::default_basin_outlet_contributing_pixels_threshold),
         "Contributing-pixel threshold used for optional basin outlet snapping.",
         "This is the total number of upslope contributing pixels from the "
         "flow-routing object, not the number of direct donors to a pixel.",
@@ -405,8 +410,10 @@ int main(int argc, char* argv[])
     int_default_map["basin_outlet_snap_max_search_radius_pixels"] = 25;
     help_map["basin_outlet_snap_max_search_radius_pixels"] = {"int","25",
         "Maximum expanding-square snapping search radius in pixels.",
-        "Used only when basin_outlet_snapping_method is expanding_square. "
-        "The search stops at the first radius containing one or more qualifying pixels.",
+        "Used only when basin_outlet_snapping_method is expanding_square or "
+        "largest_area. For expanding_square the search stops at the first radius "
+        "containing one or more qualifying pixels; for largest_area it is the "
+        "half-width of the square searched.",
         "Basin outlet snapping", "param", "write_basin_outlet_points"};
     
     bool_default_map["write_basin_outlet_points"] = false;
@@ -802,10 +809,11 @@ int main(int argc, char* argv[])
 
     if (basin_outlet_snapping_method != "none" &&
         basin_outlet_snapping_method != "expanding_square" &&
-        basin_outlet_snapping_method != "downstream")
+        basin_outlet_snapping_method != "downstream" &&
+        basin_outlet_snapping_method != "largest_area")
     {
         std::cerr << "FATAL: basin_outlet_snapping_method must be one of: "
-                  << "none, expanding_square, downstream.\n";
+                  << "none, expanding_square, downstream, largest_area.\n";
         return 1;
     }
 
@@ -896,6 +904,11 @@ int main(int argc, char* argv[])
                 std::cout << "Snapping min search radius   : "
                           << ifs["basin_outlet_snap_min_search_radius_pixels"] << "\n";
                 std::cout << "Snapping max search radius   : "
+                          << ifs["basin_outlet_snap_max_search_radius_pixels"] << "\n";
+            }
+            else if (basin_outlet_snapping_method == "largest_area")
+            {
+                std::cout << "Snapping search half-width   : "
                           << ifs["basin_outlet_snap_max_search_radius_pixels"] << "\n";
             }
         }
@@ -1928,7 +1941,8 @@ int main(int argc, char* argv[])
                             std::cerr << "Warning: basin outlet " << outlet.point_id
                                       << " could not be snapped "
                                       << (basin_outlet_snapping_method == "downstream"
-                                              ? "downstream" : "with expanding_square")
+                                              ? std::string("downstream")
+                                              : "with " + basin_outlet_snapping_method)
                                       << " ("
                                       << lsdtt::snap_status_to_string(snapped.status)
                                       << "); skipping.\n";
@@ -1940,7 +1954,8 @@ int main(int argc, char* argv[])
                     col  = snapped.snapped_col;
                     flat = snapped.snapped_flat;
 
-                    if (basin_outlet_snapping_method == "expanding_square")
+                    if (basin_outlet_snapping_method == "expanding_square" ||
+                        basin_outlet_snapping_method == "largest_area")
                     {
                         std::cout << "  Snapped      : row=" << row
                                   << " col=" << col

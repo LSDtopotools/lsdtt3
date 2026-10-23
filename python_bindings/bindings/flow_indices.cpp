@@ -187,20 +187,133 @@ SoilTopographicIndexResult soil_topographic_index(const Raster& twi, const STICa
 
 void bind_flow_indices(nb::module_& module)
 {
-    module.def("topographic_wetness_index", &topographic_wetness_index, nb::arg("drainage_area"), nb::arg("slope"), R"doc(Compute ``log((A / cell_area) / slope)`` from drainage area and slope rasters.)doc");
+    module.def("topographic_wetness_index", &topographic_wetness_index, nb::arg("drainage_area"), nb::arg("slope"), R"doc(Compute ``log((A / cell_area) / slope)`` from drainage area and slope rasters.
+
+Parameters
+----------
+drainage_area : Raster
+    Drainage area (m^2), for example ``FlowInfo.drainage_area()`` or
+    ``FlowGraph.drainage_area()``.
+slope : Raster
+    Gradient (m/m) on the same grid, for example ``slope(dem)``.
+
+Returns
+-------
+Raster
+    Natural-log wetness index; nodata where area or slope is not positive.
+)doc");
     nb::class_<ConnectivityResult>(module, "ConnectivityResult", "Sediment-connectivity rasters following Cavalli et al. (2013).")
         .def_prop_ro("index", &ConnectivityResult::index, nb::rv_policy::reference_internal).def_prop_ro("weight", &ConnectivityResult::weight, nb::rv_policy::reference_internal)
         .def_prop_ro("upstream", &ConnectivityResult::upstream, nb::rv_policy::reference_internal).def_prop_ro("downstream", &ConnectivityResult::downstream, nb::rv_policy::reference_internal);
-    module.def("sediment_connectivity_index", &sediment_connectivity_index, nb::arg("flow"), nb::arg("roughness"), nb::arg("slope"), nb::arg("drainage_area"), nb::arg("area_threshold_m2"), "Compute sediment connectivity using D8 topology; drainage area may be D8, MFD, or D-infinity.");
+    module.def("sediment_connectivity_index", &sediment_connectivity_index, nb::arg("flow"), nb::arg("roughness"), nb::arg("slope"), nb::arg("drainage_area"), nb::arg("area_threshold_m2"), R"doc(Compute sediment connectivity using D8 topology; drainage area may be D8, MFD, or D-infinity.
+
+Cavalli et al. (2013) index ``IC = log10(D_up / D_down)`` with
+``D_up = mean(W) * mean(S) * sqrt(A)`` over the upslope area and
+``D_down`` the sum of ``d / (W S)`` along the D8 path to the nearest sink;
+``W = max(1 - R / R_max, 0.001)`` from the roughness R.
+
+Parameters
+----------
+flow : FlowInfo
+    D8 flow topology.
+roughness : Raster
+    Surface roughness on the flow grid (for example a local standard
+    deviation of residual elevation, m).
+slope : Raster
+    Gradient (m/m); values below 0.001 are clipped in ``D_down``.
+drainage_area : Raster
+    Drainage area (m^2) from any routing scheme.
+area_threshold_m2 : float
+    Pixels with at least this drainage area (m^2) are sinks (channels).
+
+Returns
+-------
+ConnectivityResult
+    ``index``, ``weight`` (W), ``upstream`` (D_up) and ``downstream``
+    (D_down) Rasters.
+)doc");
     nb::class_<STILnkdTable>(module, "STILnkdTable", "Parsed soil hydraulic-conductivity lookup table.").def_prop_ro("summary", &STILnkdTable::summary);
     nb::class_<STISprTable>(module, "STISprTable", "Parsed soil-profile runoff lookup table.").def_prop_ro("summary", &STISprTable::summary);
     nb::class_<STICategoricalRaster>(module, "STICategoricalRaster", "Rasterized categorical STI field and code lookup.").def_prop_ro("codes", &STICategoricalRaster::codes).def_prop_ro("lookup", &STICategoricalRaster::lookup);
     nb::class_<SoilTopographicIndexResult>(module, "SoilTopographicIndexResult", "Soil-topographic-index outputs and diagnostics.")
         .def_prop_ro("sti", &SoilTopographicIndexResult::sti, nb::rv_policy::reference_internal).def_prop_ro("term", &SoilTopographicIndexResult::term, nb::rv_policy::reference_internal)
         .def_prop_ro("valid_mask", &SoilTopographicIndexResult::valid_mask, nb::rv_policy::reference_internal).def_prop_ro("stats", &SoilTopographicIndexResult::stats).def_prop_ro("lookup", &SoilTopographicIndexResult::lookup);
-    module.def("load_sti_lnkd_table", &load_sti_lnkd_table, nb::arg("csv_path"), nb::arg("depth_cap_cm") = 100.0, nb::arg("min_valid_depth_cm") = 30.0, nb::arg("ks_unit_scale_to_m_per_day") = 1.0, nb::arg("eps") = 1.0e-12, "Load the KSD STI lookup table from a soil-profile CSV.");
-    module.def("load_sti_spr_table", &load_sti_spr_table, nb::arg("csv_path"), nb::arg("eps") = 1.0e-12, "Load the SPR STI lookup table from a CSV.");
-    module.def("rasterize_sti_categories", &rasterize_sti_categories, nb::arg("reference"), nb::arg("vector_path"), nb::arg("field_name"), nb::arg("layer_name"), nb::arg("oversample") = 8, "Rasterize a string vector attribute and retain its categorical lookup.");
-    module.def("soil_topographic_index", &soil_topographic_index, nb::arg("twi"), nb::arg("series_codes"), nb::arg("land_use"), nb::arg("lnkd_table"), nb::arg("spr_table"), nb::arg("mode") = "ksd", nb::arg("spr_transform") = "ln_1_minus_spr", nb::arg("eps") = 1.0e-12, "Compute STI from TWI, categorical rasters, and lookup tables.");
+    module.def("load_sti_lnkd_table", &load_sti_lnkd_table, nb::arg("csv_path"), nb::arg("depth_cap_cm") = 100.0, nb::arg("min_valid_depth_cm") = 30.0, nb::arg("ks_unit_scale_to_m_per_day") = 1.0, nb::arg("eps") = 1.0e-12, R"doc(Load the KSD STI lookup table from a soil-profile CSV.
+
+Parameters
+----------
+csv_path : str
+    Soil-profile CSV with saturated hydraulic conductivity by horizon.
+depth_cap_cm : float, default=100.0
+    Depth (cm) to which profiles are integrated.
+min_valid_depth_cm : float, default=30.0
+    Profiles shallower than this (cm) are rejected.
+ks_unit_scale_to_m_per_day : float, default=1.0
+    Factor converting the CSV conductivity to m/day.
+eps : float, default=1e-12
+    Small positive floor that avoids log(0).
+
+Returns
+-------
+STILnkdTable
+)doc");
+    module.def("load_sti_spr_table", &load_sti_spr_table, nb::arg("csv_path"), nb::arg("eps") = 1.0e-12, R"doc(Load the SPR STI lookup table from a CSV.
+
+Parameters
+----------
+csv_path : str
+    CSV of standard percentage runoff (SPR) values.
+eps : float, default=1e-12
+    Small positive floor that avoids log(0).
+
+Returns
+-------
+STISprTable
+)doc");
+    module.def("rasterize_sti_categories", &rasterize_sti_categories, nb::arg("reference"), nb::arg("vector_path"), nb::arg("field_name"), nb::arg("layer_name"), nb::arg("oversample") = 8, R"doc(Rasterize a string vector attribute and retain its categorical lookup.
+
+Parameters
+----------
+reference : Raster
+    Raster whose grid is used.
+vector_path : str
+    Polygon vector file.
+field_name : str
+    Attribute holding the category (for example a soil series code).
+layer_name : str
+    Layer in the vector file.
+oversample : int, default=8
+    Sub-pixel oversampling used to pick each pixel's majority category.
+
+Returns
+-------
+STICategoricalRaster
+    Integer codes plus the code-to-category lookup.
+)doc");
+    module.def("soil_topographic_index", &soil_topographic_index, nb::arg("twi"), nb::arg("series_codes"), nb::arg("land_use"), nb::arg("lnkd_table"), nb::arg("spr_table"), nb::arg("mode") = "ksd", nb::arg("spr_transform") = "ln_1_minus_spr", nb::arg("eps") = 1.0e-12, R"doc(Compute STI from TWI, categorical rasters, and lookup tables.
+
+Parameters
+----------
+twi : Raster
+    Topographic wetness index (``topographic_wetness_index``).
+series_codes : STICategoricalRaster
+    Soil series categories (``rasterize_sti_categories``).
+land_use : STICategoricalRaster
+    Land-use categories on the same grid.
+lnkd_table : STILnkdTable
+    Conductivity lookup (``load_sti_lnkd_table``).
+spr_table : STISprTable
+    Runoff lookup (``load_sti_spr_table``).
+mode : {"ksd", "spr"}, default="ksd"
+    Soil term from conductivity x depth or from standard percentage runoff.
+spr_transform : {"ln_1_minus_spr", "ln_spr"}, default="ln_1_minus_spr"
+    Transform of the SPR term.
+eps : float, default=1e-12
+    Small positive floor that avoids log(0).
+
+Returns
+-------
+SoilTopographicIndexResult
+)doc");
 }
 } // namespace lsdtt3_python

@@ -234,7 +234,67 @@ void bind_tidal_workflows(nb::module_& module)
         nb::arg("connect_max_facing_angle_degrees") = 35., nb::arg("connect_max_heading_misalignment_degrees") = 45.,
         nb::arg("connect_max_candidate_score") = 1., nb::arg("connect_route_corridor_half_width_pixels") = 12.,
         nb::arg("compute_upl") = true, nb::arg("n_threads") = 0,
-        "Extract tidal channels as multiscale local topographic lows or a flood mask.");
+        R"doc(Extract tidal channels as multiscale local topographic lows or a flood mask.
+
+At each scale the residual ``moving-window median(dem) - dem`` is computed;
+pixels lying at least the residual threshold below their local median are
+channel (a TidalGeoPro-style channelness signal). Optional cleanup,
+skeletonisation and gap bridging follow.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m) of a marsh or tidal flat.
+use_flood_mask : bool, default=False
+    Skip the median workflow: pixels with elevation <= the flood elevation
+    are channel.
+flood_elevation_metres : float, default=0.0
+    Flood elevation (m) for ``use_flood_mask``.
+median_window_radii_metres : list of float, default=[5.0, 10.0, 20.0]
+    Radii (m) of the median windows, one per scale.
+residual_thresholds_metres : list of float, default=[0.1]
+    Residual (m) a pixel must reach below the median; one value for all
+    scales or one per scale.
+scale_mode : {"any", "all"}, default="any"
+    A pixel is channel if it passes at any scale or at every scale.
+apply_binary_closing : bool, default=False
+    Close the channel mask with a disk.
+binary_closing_radius_metres : float, default=0.0
+    Radius (m) of that disk.
+fill_holes : bool, default=False
+    Fill enclosed holes in the channel mask.
+min_channel_component_pixels : int, default=1
+    Smallest channel component kept (pixels).
+extract_skeleton : bool, default=True
+    Thin the channel mask to a one-pixel skeleton.
+skeleton_spur_max_pixels : int, default=10
+    Remove skeleton spurs up to this length (pixels).
+skeleton_terminal_loop_max_pixels : int, default=10
+    Remove terminal skeleton loops up to this size (pixels).
+skeleton_min_component_pixels : int, default=1
+    Smallest skeleton component kept (pixels).
+connect_skeleton_segments : bool, default=False
+    Bridge gaps between facing skeleton end points.
+connect_max_gap_pixels : float, default=20.0
+    Largest gap (pixels) bridged.
+connect_max_facing_angle_degrees : float, default=35.0
+    Largest angle (degrees) between an end point's heading and the gap.
+connect_max_heading_misalignment_degrees : float, default=45.0
+    Largest misalignment (degrees) between the two end headings.
+connect_max_candidate_score : float, default=1.0
+    Largest combined (normalised) score of an accepted bridge.
+connect_route_corridor_half_width_pixels : float, default=12.0
+    Half-width (pixels) of the corridor in which a bridge is routed.
+compute_upl : bool, default=True
+    Compute ``upl``: the Euclidean distance (m) from each pixel to the
+    nearest channel pixel.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+TidalChannelResult
+)doc");
     nb::class_<TidalSkeletonMetricsResult>(module, "TidalSkeletonMetricsResult", "Tidal skeleton topology and station metrics.")
         .def_prop_ro("node_ids", &TidalSkeletonMetricsResult::node_ids)
         .def_prop_ro("section_ids", &TidalSkeletonMetricsResult::section_ids)
@@ -256,6 +316,45 @@ void bind_tidal_workflows(nb::module_& module)
         nb::arg("cross_section_half_length_metres") = 25., nb::arg("cross_section_sample_spacing_metres") = 1.,
         nb::arg("max_width_ratio") = 3., nb::arg("compute_station_strip_metrics") = true,
         nb::arg("strip_values") = nb::none(), nb::arg("n_threads") = 0,
-        "Analyse an existing tidal-channel skeleton into sections, orders, and station metrics.");
+        R"doc(Analyse an existing tidal-channel skeleton into sections, orders, and station metrics.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m).
+channel_mask : Raster
+    0/1 channel mask on the same grid (``TidalChannelResult.channel_mask``).
+skeleton : Raster
+    0/1 skeleton on the same grid (``TidalChannelResult.skeleton``).
+outlet_mask : Raster or None, default=None
+    0/1 outlet mask, needed for ``outlet_mode="outlet_mask"``.
+outlet_mode : {"edge_nodes", "endpoint_nodes", "outlet_mask", "lowest_endpoint"}, default="edge_nodes"
+    Outlets for downstream distances: skeleton end points touching the
+    raster edge, all end points, the masked nodes, or the single lowest
+    end point.
+station_spacing_metres : float, default=5.0
+    Spacing (m) of measurement stations along each section (positive).
+compute_cross_sections : bool, default=True
+    Cast cross sections at each station to measure width.
+tangent_support_points : int, default=2
+    Neighbouring stations used to estimate the local channel direction.
+cross_section_half_length_metres : float, default=25.0
+    Half-length (m) of each cross section.
+cross_section_sample_spacing_metres : float, default=1.0
+    Sample spacing (m) along a cross section.
+max_width_ratio : float, default=3.0
+    Reject cross sections implausibly long relative to local width; <= 0
+    disables.
+compute_station_strip_metrics : bool, default=True
+    Assign every pixel to its nearest station and compute strip metrics.
+strip_values : dict of str to Raster or None, default=None
+    Extra co-registered rasters integrated over the station strips.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+TidalSkeletonMetricsResult
+)doc");
 }
 } // namespace lsdtt3_python

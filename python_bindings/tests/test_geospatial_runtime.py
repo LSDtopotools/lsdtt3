@@ -168,6 +168,13 @@ def test_import_pins_the_package_directory_when_data_is_bundled(tmp_path):
     staged_root = tmp_path / "site"
     staged_pkg = staged_root / "lsdtt3"
     shutil.copytree(package_dir, staged_pkg)
+    # A wheel repaired by auditwheel keeps its bundled libraries (GDAL, PROJ,
+    # ...) in a sibling lsdtt3.libs/ directory, which _core finds through an
+    # RPATH of $ORIGIN/../lsdtt3.libs. The staged copy needs it beside it too,
+    # or importing _core fails.
+    libs_dir = package_dir.parent / "lsdtt3.libs"
+    if libs_dir.is_dir():
+        shutil.copytree(libs_dir, staged_root / "lsdtt3.libs")
     staged_proj = staged_pkg / "share" / "proj"
     staged_proj.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_db, staged_proj / "proj.db")

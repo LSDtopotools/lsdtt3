@@ -232,11 +232,11 @@ and the DEM is a measure of valley incision.
 | `write_cloth_envelope_raster` | bool | `false` | Write the resting cloth surface. Output `_cloth_envelope.tif`. |
 | `write_cloth_incision_raster` | bool | `false` | Write envelope minus DEM. Positive = how far terrain lies below the envelope (incision depth). Output `_cloth_incision.tif`. |
 | `write_cloth_crest_mask_raster` | bool | `false` | Write the contact mask: `1` where a cloth particle was pinned by terrain (ridge or summit), `0` where it settled freely. Useful for diagnosing whether the cloth is too rigid or too slack. Output `_cloth_crest_mask.tif`. |
-| `cloth_rigidity` | int | *(see `-h`)* | Stiffness of the sheet: higher spans wider valleys without sagging. |
-| `cloth_gravity` | float | *(see `-h`)* | Step size for the fall. |
-| `cloth_max_iterations` | int | *(see `-h`)* | Iteration cap. |
-| `cloth_convergence_tolerance_metres` | float | *(see `-h`)* | Movement below which the cloth is considered settled. |
-| `cloth_class_threshold` | float | *(see `-h`)* | Contact distance for the crest mask. |
+| `cloth_rigidity` | float | `1.0` | Stiffness of the sheet: higher spans wider valleys without sagging. |
+| `cloth_gravity` | float | `0.3` | Step size for the fall. |
+| `cloth_max_iterations` | int | `500` | Iteration cap. |
+| `cloth_convergence_tolerance_metres` | float | `0.005` | Movement below which the cloth is considered settled. |
+| `cloth_class_threshold` | float | `0.5` | Contact distance for the crest mask. |
 
 Run `lsdtt-surface-metrics -h <parameter>` for the current defaults and the
 full guidance on each.

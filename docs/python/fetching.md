@@ -18,8 +18,12 @@ dem = lsdtt3.fetch_dem(
 dem.write("carpathians_dem.tif")
 ```
 
-Bounds are WGS84 longitude/latitude. The returned DEM is projected to a local
-working CRS suitable for its extent. Use `bounds_from_vector` for a vector
+Bounds are WGS84 longitude/latitude. The default `source`, `"cop30_aws"`, is
+the Copernicus GLO-30 DEM on AWS, which needs no account or API key. The
+returned DEM is reprojected to `target_epsg`; the default, `0`, means the UTM
+zone at the centre of the box (`lsdtt3.utm_epsg_for_point(lon, lat)` gives the
+code), so the pixels are square and in metres. The Copernicus DEM stores the
+sea as 0 m rather than nodata: `lsdtt3.mask_to_nodata(dem, 0.0)` removes it. Use `bounds_from_vector` for a vector
 study area, or `fetch_dem_for_outlets` when the task starts from outlet points
 and needs complete upstream basins.
 

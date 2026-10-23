@@ -406,9 +406,10 @@ lsdtt_erosion_rate_basins_result delineate_erosion_rate_basins(
 {
     const std::string& method = o.snapping_method;
     if (method != "reported_area" && method != "expanding_square" && method != "downstream" &&
-        method != "none")
+        method != "largest_area" && method != "none")
         throw std::invalid_argument("erosion_rate_snapping_method must be one of reported_area, "
-                                    "expanding_square, downstream, none (got '" + method + "')");
+                                    "expanding_square, downstream, largest_area, none (got '" +
+                                    method + "')");
     if (o.nested_policy != "keep" && o.nested_policy != "outermost" && o.nested_policy != "innermost")
         throw std::invalid_argument("erosion_rate_nested_basins must be one of keep, outermost, "
                                     "innermost (got '" + o.nested_policy + "')");

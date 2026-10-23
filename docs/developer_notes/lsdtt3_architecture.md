@@ -463,7 +463,10 @@ measures.
 **`docs/developer_notes/python_bindings_architecture.md`**
 explains the in-memory Python backend, public API contract, nanobind adapters,
 manifest/check tooling, bundled CLI drivers, and the safe binding change
-workflow.
+workflow. Any change to a binding's signature or default also changes
+`python_bindings/api/public_api.json`. Regenerate that file with
+`generate_public_api_manifest.py --update` against a rebuilt extension; never
+edit it by hand (see "Changing A Public Signature Or Default" there).
 
 
 ---

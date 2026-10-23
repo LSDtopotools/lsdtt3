@@ -1,12 +1,18 @@
 # Installing lsdtt3
 
-Every route on this page installs a **pre-built release package**. You do not
+The main option for installation of `lsdtt3` is the **pre-built release package** which 
+installs a series of command line interface programs: you run these in a Linux terminal (or a terminal on your operating system).
+This method is the way the developers primarily use this software, and is built for automated, repeatable analysis of large topographic datasets. 
+
+However, you can also use `lsdtt3` in [Google Colab](#google-colab), in our [QGIS plugin](#qgis-plugin), and using our [Python package](#python-package)
+
+For the **pre-built release package** you do not
 need a compiler, you do not need to install GDAL or any other library, and on
 Linux you do not need `sudo` — the package carries the command-line tools and
 every library they depend on.
 
 > **Want the very latest code instead of a release?**
-> Then you need to compile it yourself. If you are not a developer do not do this. That activity is
+> Then you need to compile it yourself. If you are not a developer you really do not want to do this. That activity is
 > documented separately in
 > [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
 
@@ -19,14 +25,14 @@ Both of these hold the same files. Use whichever you can reach.
 | Source | Notes |
 |---|---|
 | [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. While the repository is in private beta you need to be a collaborator to see it. |
-| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they go out of date.  |
+| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they are more likeley to be out of date.  |
 
 File names look like this:
 
 ```
-lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.6.0.zip               Windows (native)
-lsdtt3-qgis-plugin-0.7.0.zip                       QGIS plugin (shares the number from 0.7.0)
+lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
+lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native, but limited to QGIS packages)
+lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 
 `core` and `qgis` are **profiles** — which set of command-line tools the
@@ -42,7 +48,7 @@ subset the QGIS plugin drives.
 > but don't assume it is the current one. The authoritative version is line 2
 > of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` (we do not recommend reading beyond this line or you will get a headache) and
 > release tags and package filenames are derived from it directly (`VERSION
-> 0.6.0` → tag `v0.6.0` → `...-v0.6.0.tar.gz`). If you cannot see the
+> 0.7.1` → tag `v0.7.1` → `...-v0.7.1.tar.gz`). If you cannot see the
 > repository, take the newest file from one of the two download locations
 > above instead. Substitute that number throughout.
 
@@ -77,14 +83,14 @@ This is the main way to install, and in other operating systems you just end up 
 ### 1. Download and unpack
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
 ```
 
 ### 2. Activate it
 
 ```bash
-source lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh
+source lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh
 ```
 
 `setenv.sh` must be **`source`d**, not run with `bash`. All it does is export
@@ -106,7 +112,7 @@ in every new terminal, append the same line, with the **full** path, to the
 end of your `~/.bashrc`:
 
 ```bash
-echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.6.0/setenv.sh" >> ~/.bashrc
+echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh" >> ~/.bashrc
 ```
 
 ### What you need
@@ -165,10 +171,10 @@ Follow [Linux package](#linux-package) inside the Ubuntu terminal.
 
 If you downloaded the tarball with a Windows browser it is on your Windows
 disk, which WSL2 mounts under `/mnt/`. A file at
-`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz` is:
+`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz` is:
 
 ```
-/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
 ```
 
 You will need to update this path unless your username is Alice.
@@ -230,7 +236,7 @@ WSL2 is unavailable on a managed machine — use [WSL2](#windows-via-wsl2).
 Unzip it, then in PowerShell:
 
 ```powershell
-cd lsdtt3-backend-win64-qgis-v0.6.0
+cd lsdtt3-backend-win64-qgis-v0.7.1
 . .\setenv.ps1
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
@@ -275,8 +281,8 @@ installed on your own machine at all. Two things differ from a normal terminal.
 Download and unpack in a code cell (`!` runs a shell command):
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
-!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.6.0.tar.gz
+!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
 ```
 
 **Or get the URL from https://www.geos.ed.ac.uk/~smudd/lsdtt_packages** 
@@ -288,7 +294,7 @@ Python instead, once per session:
 ```python
 import os
 
-root = "/content/lsdtt3-backend-linux-x86_64-core-v0.6.0"
+root = "/content/lsdtt3-backend-linux-x86_64-core-v0.7.1"
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
 os.environ["GDAL_DATA"] = f"{root}/share/gdal"
@@ -342,12 +348,27 @@ for releases where the Python API is supported, so a version missing from PyPI
 or from a release page is expected.
 
 **It is not on PyPI yet** while the repository is in private beta. When a
-release has wheels, they are attached to its GitHub release; install the one
-for your Python and platform:
+release has wheels, they are attached to its GitHub release and put in the
+[download directory](https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/). Each
+wheel is for one Python version (`cp312` is Python 3.12, `cp313` is Python
+3.13) and platform. Keep its original file name, since pip reads the version
+and platform from it, and install it from the file or straight from its URL:
 
 ```bash
-python -m pip install lsdtt3-0.7.0-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
 ```
+
+**In Google Colab**, which runs Python 3.13, use the `cp313` wheel in a code
+cell:
+
+```python
+!pip install https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
+```
+
+You do not need the backend tarball or the `os.environ` cell from
+[Google Colab](#google-colab) for the Python package; the wheel finds its own
+GDAL and PROJ data.
 
 The wheel is self-contained: it bundles GDAL and PROJ, and also installs the
 command-line tools as commands. Install it into a virtual environment, conda
@@ -360,6 +381,9 @@ python -c "import lsdtt3; print(lsdtt3.__version__, lsdtt3._core.lsdtt3_version(
 To use the Python package from unreleased code, build it from a clone; see
 [`docs/developer_notes/building_python_wheels.md`](../developer_notes/building_python_wheels.md).
 The [Python guide](../python/index.md) shows what to do once it is installed.
+Every function is documented in the package itself (`help(lsdtt3.FlowInfo)`),
+and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for
+you or for an AI assistant such as Gemini in Colab.
 
 ---
 
@@ -426,7 +450,7 @@ lsdtt-raster-preprocessing -v
 ```
 
 ```
-lsdtt-raster-preprocessing (lsdtt3 0.7.0, stable)
+lsdtt-raster-preprocessing (lsdtt3 0.7.1, stable)
 GDAL 3.8.4, PROJ 9.3.1
   proj data: bundled: /home/you/lsdtt3/share/proj
   GDAL data: bundled: /home/you/lsdtt3/share/gdal

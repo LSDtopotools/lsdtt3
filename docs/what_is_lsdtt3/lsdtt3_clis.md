@@ -1,7 +1,7 @@
 # The lsdtt3 command-line tools
 
-lsdtt3 ships **40 command-line programs**. This page lists all of them, grouped
-by what they are for, so you can find the one you need without reading forty
+lsdtt3 ships **45 command-line programs**. This page lists all of them, grouped
+by what they are for, so you can find the one you need without reading 45
 reference pages.
 
 Every tool is driven by a parameter file rather than command-line flags — if
@@ -24,6 +24,7 @@ list, and the same content is on this site under
 | Tool | What it does |
 |---|---|
 | `lsdtt-fetch-raster` | Fetch a DEM for a bounding box and write it as a raster. Keyless COP30 and Planetary Computer sources; OpenTopography needs a key. |
+| `lsdtt-fetch-lithology` | Fetch geological map units from Macrostrat (keyless, CC BY 4.0) for a bounding box, as a polygon layer in the box's UTM zone, with an attribution file. |
 | `lsdtt-fetch-erosion-rates` | Fetch basin-averaged cosmogenic erosion rates from OCTOPUS (keyless) for a bounding box: an erosion-rate sample CSV, the basin polygons, a suggested DEM box and the CC BY 4.0 attribution. |
 | `lsdtt-raster-preprocessing` | The preparation pipeline: projection enforcement and reprojection, masking, nodata filling, breaching, pit filling, hillshade. |
 | `lsdtt-raster-calculator` | Two-raster algebra. |
@@ -38,8 +39,10 @@ list, and the same content is on this site under
 | `lsdtt-feature-finder` | Experimental terrain-feature detection for LiDAR-derived DEMs. |
 | `lsdtt-mountain-front` | Identifies mountain masses via adaptive relief thresholding. |
 | `lsdtt-linear-stats` | Statistics of a raster sampled along linear vector features. |
+| `lsdtt-slope-area` | Slope–area statistics for one or more polynomial-fit smoothing lengths, binned by logarithmic drainage area. |
 | `lsdtt-swath-profile` | Swath profile along an ordered polyline baseline. |
 | `lsdtt-cross-sections` | Channel network from supplied source points, with extracted cross sections. |
+| `lsdtt-bankfull-width` | Bankfull channel width and depth per cross section from Manning's equation, on a high-resolution DEM. Needs source points and a reach table of Manning's *n* and target discharge. |
 
 ## Flow routing and drainage
 
@@ -88,7 +91,7 @@ list, and the same content is on this site under
 
 | Tool | What it does |
 |---|---|
-| `lsdtt-distributed-hydrology` | A raster TOPMODEL: time-evolving, rainfall-driven runoff simulation with distributed stores. |
+| `lsdtt-distributed-hydrology` | Two hydrologic models, one driven by TOPMODEL equations and the other driven by S-HYPE: time-evolving, rainfall-driven runoff simulation with distributed stores. |
 | `lsdtt-graphflood` | Stationary graph-based hydraulic routing. Solves for steady-state flow depths given a rainfall-rate field. |
 
 See [Hydrological modelling](../design_and_algorithms/hydrological_modelling.md)
@@ -118,6 +121,8 @@ The physics, the scaling schemes and the CRONUS/OCTOPUS comparisons are in
 | Tool | What it does |
 |---|---|
 | `lsdtt-lem` | Landscape evolution model descended from MuddPILE and DONKmodel. Fluvial incision plus a choice of hillslope solvers. |
+| `lsdtt-advection-diffusion` | A deliberately small transient model (D8 or D-infinity fluvial incision, linear hillslope diffusion, uniform uplift) for controlled numerical experiments. |
+| `lsdtt-lithology-erodibility` | Turns a lithology map and a lithology → erodibility table into an erodibility (K) raster for `lsdtt-lem`. |
 | `lsdtt-synthetic-surfaces` | Synthetic rasters for testing analysis routines. |
 | `lsdtt-synthetic-networks` | Synthetic Optimal Channel Networks with tunable branching. |
 

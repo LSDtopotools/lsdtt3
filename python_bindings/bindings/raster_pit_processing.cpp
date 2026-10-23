@@ -292,11 +292,66 @@ Raster fill_pits_boundary_aware(
             priority_flood_backend(backend)));
     }
 
-    Raster outlets = make_outlet_mask(
-        raster, boundary[0] != 'n', boundary[1] != 'n',
-        boundary[2] != 'n', boundary[3] != 'n'
-    );
-    return fill_pits_with_outlets(raster, outlets, min_slope, n_threads, backend);
+    // Without a closed edge this is the fill the CLIs run: the raster border
+    // and every valid cell touching nodata are spill points.
+    if (boundary.find('n') == std::string::npos)
+    {
+        return Raster(lsdtt::fill_pits(
+            raster.native(), min_slope, boundary, n_threads,
+            priority_flood_backend(backend)));
+    }
+
+    // Closed edges: seed the valid pixels of the other edges, plus every valid
+    // cell touching nodata (a closed edge included), because nodata in a
+    // downloaded DEM marks where the data ends, not a wall.
+    const auto& metadata = raster.native().get_meta();
+    const auto& mask = raster.native().get_mask();
+    const int n_rows = metadata.n_rows;
+    const int n_cols = metadata.n_cols;
+    const auto valid = [&](int row, int col) {
+        return mask[static_cast<std::size_t>(row) * n_cols + col] != 0;
+    };
+    std::vector<int> rows;
+    std::vector<int> cols;
+    for (int row = 0; row < n_rows; ++row)
+    {
+        for (int col = 0; col < n_cols; ++col)
+        {
+            if (!valid(row, col)) continue;
+            bool seed = (row == 0 && boundary[0] != 'n') ||
+                        (col == n_cols - 1 && boundary[1] != 'n') ||
+                        (row == n_rows - 1 && boundary[2] != 'n') ||
+                        (col == 0 && boundary[3] != 'n');
+            for (int dr = -1; dr <= 1 && !seed; ++dr)
+            {
+                for (int dc = -1; dc <= 1 && !seed; ++dc)
+                {
+                    const int r = row + dr;
+                    const int c = col + dc;
+                    if (r >= 0 && r < n_rows && c >= 0 && c < n_cols && !valid(r, c))
+                    {
+                        seed = true;
+                    }
+                }
+            }
+            if (seed)
+            {
+                rows.push_back(row);
+                cols.push_back(col);
+            }
+        }
+    }
+    if (rows.empty())
+    {
+        throw std::invalid_argument(
+            "boundary_conditions leave no outlet: every edge is closed and no "
+            "valid pixel touches nodata"
+        );
+    }
+    return Raster(lsdtt::fill_pits_with_boundary(
+        raster.native(), min_slope, {rows}, {cols}, {"outlet"}, "outlet", n_threads,
+        priority_flood_backend(backend)
+    ));
 }
 
 lsdtt::breach_least_cost_options least_cost_options(
@@ -400,20 +455,117 @@ void bind_raster_pit_processing(nb::module_& m)
 {
     m.def("fill_pits", &fill_pits, nb::arg("raster"),
         nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
-        nb::arg("priority_flood_backend") = "binary",
-        "Fill depressions while imposing an optional minimum drainage slope.");
+        nb::arg("priority_flood_backend") = "binary", R"doc(
+Fill depressions while imposing an optional minimum drainage slope.
+
+Priority-Flood filling (Barnes et al. 2014): every pit and closed depression
+is raised to its spill level, so all water can drain to the raster edge or
+to nodata. The raster edge and pixels next to nodata act as outlets. Use the
+result to build a ``FlowInfo``.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation: ``"binary"`` heap or ``"radix"``
+    (hybrid radix heap). Both give the same result; only speed differs.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("fill_pits_priority_flood", &fill_pits_priority_flood,
         nb::arg("raster"), nb::arg("min_slope") = 0.0001f,
-        nb::arg("n_threads") = 0, nb::arg("use_radix_heap") = false,
-        "Explicit Improved Priority-Flood; optionally use its radix-heap queue.");
+        nb::arg("n_threads") = 0, nb::arg("use_radix_heap") = false, R"doc(
+Explicit Improved Priority-Flood; optionally use its radix-heap queue.
+
+As ``fill_pits`` but always uses the Priority-Flood algorithm, even when
+``min_slope`` is 0.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+use_radix_heap : bool, default=False
+    Use the radix-heap priority queue instead of a binary heap.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("fill_depth", &fill_depth, nb::arg("raster"),
-        nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
-        "Return the non-negative elevation added by pit filling.");
+        nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0, R"doc(
+Return the non-negative elevation added by pit filling.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    ``fill_pits(raster) - raster`` in metres (0 outside depressions).
+)doc");
     m.def("breach_depressions", &breach_depressions, nb::arg("raster"),
-        nb::arg("n_threads") = 0,
-        "Breach depressions by carving drainage paths.");
-    m.def("carve_depth", &carve_depth, nb::arg("raster"), nb::arg("n_threads") = 0,
-        "Return the non-negative elevation removed by depression breaching.");
+        nb::arg("n_threads") = 0, R"doc(
+Breach depressions by carving drainage paths.
+
+Hybrid breaching (Lindsay 2016): each pit is drained by lowering a path out
+of it rather than raising the depression, which changes less of the DEM
+than filling in incised terrain. See also ``breach_least_cost``.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    Breached DEM (m).
+)doc");
+    m.def("carve_depth", &carve_depth, nb::arg("raster"), nb::arg("n_threads") = 0, R"doc(
+Return the non-negative elevation removed by depression breaching.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+Raster
+    ``raster - breach_depressions(raster)`` in metres.
+)doc");
     m.def("make_boundary_conditions", &make_boundary_conditions,
         nb::arg("north") = "open", nb::arg("east") = "open",
         nb::arg("south") = "open", nb::arg("west") = "open", R"doc(
@@ -422,36 +574,178 @@ Create an LSDTopoTools NESW boundary-condition string.
 Parameters
 ----------
 north, east, south, west : {"open", "closed", "periodic", "base_level"}
-    Boundary treatment. The returned string has NESW order.
+    Boundary treatment of each edge (``"no_flux"`` and the one-letter codes
+    ``o``, ``n``, ``p``, ``b`` are also accepted). ``open``: flow may leave
+    across the edge; ``closed``: no flow leaves; ``periodic``: the edge
+    wraps to the opposite one (give both opposite edges); ``base_level``:
+    every edge pixel is an outlet.
+
+Returns
+-------
+str
+    Four-character NESW code such as ``"onon"``, for ``FlowInfo``,
+    ``fill_pits_boundary_aware`` or ``run_graphflood``.
 )doc");
     m.def("make_outlet_mask", &make_outlet_mask, nb::arg("raster"),
         nb::arg("north") = false, nb::arg("east") = false,
-        nb::arg("south") = false, nb::arg("west") = false,
-        "Create a valid binary mask with selected raster edges set to one.");
+        nb::arg("south") = false, nb::arg("west") = false, R"doc(
+Create a valid binary mask with selected raster edges set to one.
+
+Parameters
+----------
+raster : Raster
+    Raster whose grid the mask uses.
+north, east, south, west : bool, default=False
+    Set the pixels of that edge (row 0, last column, last row, column 0) to 1.
+
+Returns
+-------
+Raster
+    0/1 raster with every pixel valid, for ``fill_pits_with_outlets`` or as
+    an outlet mask for ``run_graphflood``.
+)doc");
     m.def("mask_from_points", &mask_from_points, nb::arg("raster"), nb::arg("points"), R"doc(
 Create a binary mask from zero-based ``(row, col)`` point coordinates.
 
 Parameters
 ----------
+raster : Raster
+    Raster whose grid the mask uses.
 points : array-like, shape (n, 2)
-    Row-major NumPy coordinates. Points must be valid raster cells.
+    Integer ``(row, col)`` pixels (row 0 is the northern edge); each must be
+    a valid pixel of ``raster``.
+
+Returns
+-------
+Raster
+    0/1 raster, 1 at the points, every pixel valid.
 )doc");
     m.def("fill_pits_with_outlets", &fill_pits_with_outlets, nb::arg("raster"),
         nb::arg("outlet_mask"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
-        nb::arg("priority_flood_backend") = "binary",
-        "Fill pits using positive cells in outlet_mask as drainage outlets.");
+        nb::arg("priority_flood_backend") = "binary", R"doc(
+Fill pits using positive cells in outlet_mask as drainage outlets.
+
+Only the selected pixels act as outlets (the raster edge does not, unless
+selected), so a DEM can be filled towards chosen edges.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+outlet_mask : Raster
+    0/1 raster on the same grid; pixels > 0.5 are outlets (for example from
+    ``make_outlet_mask``). Must select at least one valid pixel.
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation: ``"binary"`` heap or ``"radix"``
+    (hybrid radix heap). Both give the same result; only speed differs.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("fill_pits_with_sinks", &fill_pits_with_sinks_mask, nb::arg("raster"),
         nb::arg("sinks"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
-        nb::arg("priority_flood_backend") = "binary",
-        "Fill pits while retaining positive cells in sinks as declared sinks.");
+        nb::arg("priority_flood_backend") = "binary", R"doc(
+Fill pits while retaining positive cells in sinks as declared sinks.
+
+Depressions draining to a declared sink (moulin, swallow hole, playa) are
+not filled; use the same pixels as ``forced_outlets`` of ``FlowInfo``.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+sinks : Raster
+    0/1 raster on the same grid; pixels > 0.5 are sinks.
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation: ``"binary"`` heap or ``"radix"``
+    (hybrid radix heap). Both give the same result; only speed differs.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("fill_pits_with_sinks", &fill_pits_with_sinks_points, nb::arg("raster"),
         nb::arg("sinks"), nb::arg("min_slope") = 0.0001f, nb::arg("n_threads") = 0,
-        nb::arg("priority_flood_backend") = "binary",
-        "Fill pits while retaining zero-based (row, col) sinks.");
+        nb::arg("priority_flood_backend") = "binary", R"doc(
+Fill pits while retaining zero-based (row, col) sinks.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+sinks : array-like of int
+    N x 2 array of ``(row, col)`` sink pixels (valid pixels).
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation: ``"binary"`` heap or ``"radix"``
+    (hybrid radix heap). Both give the same result; only speed differs.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("fill_pits_boundary_aware", &fill_pits_boundary_aware, nb::arg("raster"),
         nb::arg("boundary_conditions") = "oooo", nb::arg("min_slope") = 0.0001f,
-        nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary",
-        "Fill pits with NESW open, closed, periodic, or base-level boundaries.");
+        nb::arg("n_threads") = 0, nb::arg("priority_flood_backend") = "binary", R"doc(
+Fill pits with NESW open, closed, periodic, or base-level boundaries.
+
+Closed (``n``) edges are not outlets; periodic (``p``) edges wrap, so
+depressions spilling across the seam are filled to their true spill level.
+Fill with the same ``boundary_conditions`` you will give ``FlowInfo``.
+
+Every valid pixel touching nodata is also an outlet, including one on a
+closed edge, so DEMs with a nodata frame or voids (such as those from
+``fetch_dem``) drain out where the data ends. Nodata pixels on an open edge
+are skipped. Without a closed edge this is the same fill as ``fill_pits``.
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+boundary_conditions : str, default='oooo'
+    Four NESW codes ``o``, ``n``, ``p``, ``b`` (see
+    ``make_boundary_conditions``). Both axes cannot be periodic; with a
+    periodic axis the other edges must be open.
+min_slope : float, default=0.0001
+    Gradient (m/m) imposed across filled flats: each filled pixel is raised
+    at least ``min_slope * cell_size`` (``* sqrt(2)`` on a diagonal step)
+    above the pixel it drains to, so every pixel has a downhill route. 0
+    fills to a flat surface.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation: ``"binary"`` heap or ``"radix"``
+    (hybrid radix heap). Both give the same result; only speed differs.
+
+Returns
+-------
+Raster
+    Filled DEM (m).
+)doc");
     m.def("breach_least_cost", &breach_least_cost, nb::arg("raster"),
         nb::arg("max_distance") = nb::none(),
         nb::arg("max_cost") = (std::numeric_limits<float>::max)(),
@@ -464,6 +758,8 @@ A port of WhiteboxTools BreachDepressionsLeastCost (whitebox_workflows 2.0.6).
 
 Parameters
 ----------
+raster : Raster
+    Elevation raster (m).
 max_distance : int or None, default=None
     Maximum breach path length in cells, counted in steps from the pit (a
     diagonal step counts as one). 1 to 32767. None selects the edge policy's
@@ -496,7 +792,20 @@ fill_min_slope : float, default=0.0001
         nb::arg("prefer_shortest_path") = false, nb::arg("flat_increment") = 0.0f,
         nb::arg("fill_remainder") = true, nb::arg("n_threads") = 0,
         nb::arg("edge_policy") = "outlet", nb::arg("fill_min_slope") = 0.0001f,
-        "Return the non-negative elevation removed by least-cost breaching "
-        "(parameters as breach_least_cost).");
+        R"doc(
+Return the non-negative elevation removed by least-cost breaching (parameters as breach_least_cost).
+
+Parameters
+----------
+raster : Raster
+    Elevation raster (m).
+max_distance, max_cost, prefer_shortest_path, flat_increment, fill_remainder, n_threads, edge_policy, fill_min_slope
+    As in ``breach_least_cost``.
+
+Returns
+-------
+Raster
+    ``raster - breach_least_cost(raster, ...)`` in metres.
+)doc");
 }
 } // namespace lsdtt3_python

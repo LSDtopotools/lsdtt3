@@ -14,6 +14,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cpl_error.h>
 #include <cpl_vsi.h>
 #include <gdal_utils.h>
 #include <gdal_priv.h>
@@ -106,12 +107,16 @@ Raster gdal_warp(const Raster& raster, const std::vector<std::string>& arguments
     GDALWarpAppOptions* options = GDALWarpAppOptionsNew(argv.data(), nullptr);
     int usage_error = FALSE;
     GDALDatasetH source_handle = source;
+    CPLErrorReset();
     GDALDatasetH destination = GDALWarp(destination_path.c_str(), nullptr, 1, &source_handle, options, &usage_error);
     GDALWarpAppOptionsFree(options);
     if (!destination || usage_error) {
+        // Carry GDAL's own reason (often a PROJ error such as a missing or
+        // mismatched proj.db) into the exception, not just "failed".
+        const std::string reason = CPLGetLastErrorMsg();
         GDALClose(source);
         VSIUnlink(destination_path.c_str());
-        throw std::runtime_error("GDAL raster warp failed");
+        throw std::runtime_error("GDAL raster warp failed" + (reason.empty() ? std::string() : ": " + reason));
     }
     try {
         Raster output = raster_from_gdal_dataset(static_cast<GDALDataset*>(destination));
@@ -395,13 +400,20 @@ void bind_raster_geospatial(nb::module_& m)
         nb::arg("target_metadata"), nb::arg("resampling") = "bilinear", R"doc(
 Reproject and resample a raster onto an explicit target grid.
 
+Use it to put a second raster exactly on a DEM's grid, for example
+``reproject_to_grid(other, dem.metadata)``.
+
 Parameters
 ----------
 raster : Raster
+    Raster to warp (any CRS).
 target_metadata : RasterMeta
-    Target extent, resolution, dimensions, and CRS.
+    Target extent, cell size, dimensions, nodata value and CRS (must have a
+    CRS), usually another raster's ``.metadata``.
 resampling : str, default="bilinear"
-    GDAL resampling method.
+    GDAL resampling method: ``"near"``, ``"bilinear"``, ``"cubic"``,
+    ``"cubicspline"``, ``"lanczos"``, ``"average"``, ``"mode"``, ... Use
+    ``"near"`` for categorical rasters.
 
 Returns
 -------
@@ -414,12 +426,21 @@ Reproject a raster to an EPSG coordinate reference system.
 
 Parameters
 ----------
+raster : Raster
+    Raster to warp.
 epsg : int
-    Target EPSG identifier.
+    Target EPSG code, for example a UTM zone from ``utm_epsg_for_point``
+    (32633 is UTM 33N).
 cell_size : float, default=0
-    Target cell size. A non-positive value lets GDAL choose it.
+    Target cell size in target CRS units (m for UTM). A non-positive value
+    lets GDAL choose it.
 resampling : str, default="bilinear"
-    GDAL resampling method.
+    GDAL resampling method (``"near"``, ``"bilinear"``, ``"cubic"``, ...).
+
+Returns
+-------
+Raster
+    New raster in the target CRS; pixels outside the source are nodata.
 )doc");
     m.def("mosaic", &mosaic, nb::arg("rasters"), R"doc(
 Mosaic loaded rasters into their union extent.
@@ -427,8 +448,9 @@ Mosaic loaded rasters into their union extent.
 Parameters
 ----------
 rasters : sequence of Raster
-    Rasters with matching CRS, cell size, and pixel alignment. Later valid
-    pixels take precedence in overlaps.
+    Rasters with identical CRS, equal cell size and aligned pixel edges
+    (otherwise ``ValueError``). Later valid pixels take precedence in
+    overlaps. Use ``reproject_to_grid`` first to align rasters.
 
 Returns
 -------
@@ -441,15 +463,21 @@ Rasterize GeoPandas polygon geometries onto a raster grid.
 
 Parameters
 ----------
+raster : Raster
+    Raster whose grid is used.
 polygons : geopandas.GeoDataFrame
-    Polygon geometries with a CRS exactly matching raster.
+    Geometries with a CRS equivalent to the raster's (compared with GDAL
+    ``IsSame``); otherwise ``ValueError``. Reproject first with
+    ``gdf.to_crs(raster.metadata.crs_wkt)``.
 coverage : {"any", "majority", "full"}, default="majority"
-    Pixel-inclusion rule. ``"majority"`` tests the pixel centre.
+    Pixel-inclusion rule: ``"any"`` a pixel touched by a polygon;
+    ``"majority"`` the pixel centre lies inside (about 50% cover);
+    ``"full"`` the pixel lies wholly inside.
 
 Returns
 -------
 Raster
-    Binary mask raster with valid pixels throughout the reference grid.
+    0/1 mask (1 inside the polygons) with valid pixels throughout the grid.
 
 Raises
 ------
@@ -462,21 +490,36 @@ Crop to polygon bounds and set pixels outside polygons to nodata.
 
 Parameters
 ----------
+raster : Raster
+    Raster to clip.
 polygons : geopandas.GeoDataFrame
-    Polygon geometries with a CRS exactly matching raster.
+    Geometries with a CRS equivalent to the raster's (compared with GDAL
+    ``IsSame``); otherwise ``ValueError``. Reproject first with
+    ``gdf.to_crs(raster.metadata.crs_wkt)``.
 coverage : {"any", "majority", "full"}, default="majority"
-    Pixel-inclusion rule.
+    Pixel-inclusion rule, as in ``rasterize_polygons``.
 crop : bool, default=True
     Crop to polygon bounds before masking. False retains the source extent.
+
+Returns
+-------
+Raster
+    Raster with pixels outside the polygons set to nodata.
 )doc");
     m.def("sample_points", &sample_points, nb::arg("raster"), nb::arg("points"),
         nb::arg("column") = "raster_value", R"doc(
 Sample a raster at GeoPandas point geometries.
 
+Each point takes the value of the pixel it falls in (no interpolation).
+
 Parameters
 ----------
+raster : Raster
+    Raster to sample.
 points : geopandas.GeoDataFrame
-    Point geometries with a CRS exactly matching raster.
+    Point geometries with a CRS exactly matching raster. The CRS is
+    compared with GDAL ``IsSame``; reproject first with
+    ``gdf.to_crs(raster.metadata.crs_wkt)``.
 column : str, default="raster_value"
     Name of the output value column.
 

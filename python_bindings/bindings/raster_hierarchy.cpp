@@ -64,6 +64,19 @@ Level 0 is finest. Standard levels are exact factor-two grids; explicit
 integer factors can be added over the same extent.
 The hierarchy stores no solver state and each call returning a Raster returns
 a copy, consistent with the rest of the Python Raster API.
+
+Parameters
+----------
+finest : Raster
+    Finest-resolution raster (level 0).
+storage : {"active_only", "retain_allocated", "preallocated"}, default="retain_allocated"
+    Which level rasters are kept in memory: only the active level, every
+    level once allocated, or every level from the start.
+keep_finest : bool, default=True
+    Always keep level 0 in memory.
+levels : int, default=0
+    Number of standard factor-two levels to lay out; 0 uses every exact
+    factor-two level the grid allows.
 )doc")
         .def(nb::init<const Raster&, const std::string&, bool, std::size_t>(),
              nb::arg("finest"), nb::arg("storage") = "retain_allocated",

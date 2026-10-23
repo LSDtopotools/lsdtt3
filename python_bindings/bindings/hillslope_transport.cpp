@@ -261,10 +261,10 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("elevation", &HillslopeSteadyStateResult::elevation)
-        .def_prop_ro("n_iterations", &HillslopeSteadyStateResult::n_iterations)
+        .def_prop_ro("elevation", &HillslopeSteadyStateResult::elevation, "Steady-state elevation Raster (m).")
+        .def_prop_ro("n_iterations", &HillslopeSteadyStateResult::n_iterations, "Solver iterations used.")
         .def_prop_ro("final_residual", &HillslopeSteadyStateResult::final_residual)
-        .def_prop_ro("converged", &HillslopeSteadyStateResult::converged);
+        .def_prop_ro("converged", &HillslopeSteadyStateResult::converged, "True if the solver tolerance was met.");
 
     nb::class_<HillslopeTransportResult>(module, "HillslopeTransportResult", R"doc(
 Implicit hillslope-transport result and adaptive-solver diagnostics.
@@ -273,12 +273,12 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("elevation", &HillslopeTransportResult::elevation)
-        .def_prop_ro("n_substeps", &HillslopeTransportResult::n_substeps)
-        .def_prop_ro("n_rejected_substeps", &HillslopeTransportResult::n_rejected_substeps)
+        .def_prop_ro("elevation", &HillslopeTransportResult::elevation, "Elevation Raster (m) after the run.")
+        .def_prop_ro("n_substeps", &HillslopeTransportResult::n_substeps, "Accepted substeps.")
+        .def_prop_ro("n_rejected_substeps", &HillslopeTransportResult::n_rejected_substeps, "Substeps rejected by the limiter or divergence.")
         .def_prop_ro("total_picard_iterations", &HillslopeTransportResult::total_picard_iterations)
-        .def_prop_ro("final_dt", &HillslopeTransportResult::final_dt)
-        .def_prop_ro("max_slope_ratio", &HillslopeTransportResult::max_slope_ratio)
+        .def_prop_ro("final_dt", &HillslopeTransportResult::final_dt, "Last substep length (years).")
+        .def_prop_ro("max_slope_ratio", &HillslopeTransportResult::max_slope_ratio, "Largest S / S_c in the final surface.")
         .def_prop_ro("limiter_fired", &HillslopeTransportResult::limiter_fired);
 
     nb::class_<HillslopeCellularResult>(module, "HillslopeCellularResult", R"doc(
@@ -288,11 +288,11 @@ Authors
 -------
 B. Gailleton
 )doc")
-        .def_prop_ro("elevation", &HillslopeCellularResult::elevation)
+        .def_prop_ro("elevation", &HillslopeCellularResult::elevation, "Elevation Raster (m) after the run.")
         .def_prop_ro("n_substeps", &HillslopeCellularResult::n_substeps)
         .def_prop_ro("n_face_events", &HillslopeCellularResult::n_face_events)
-        .def_prop_ro("max_slope_ratio", &HillslopeCellularResult::max_slope_ratio)
-        .def_prop_ro("exported_volume_m3", &HillslopeCellularResult::exported_volume_m3)
+        .def_prop_ro("max_slope_ratio", &HillslopeCellularResult::max_slope_ratio, "Largest S / S_c reached.")
+        .def_prop_ro("exported_volume_m3", &HillslopeCellularResult::exported_volume_m3, "Net volume (m^3) exported through fixed-elevation (Dirichlet) cells.")
         .def_prop_ro("completed", &HillslopeCellularResult::completed)
         .def_prop_ro("message", &HillslopeCellularResult::message);
 
@@ -448,8 +448,23 @@ dem, channels : Raster
     Current elevation and same-grid binary fixed-channel mask.
 duration_years, diffusivity, uplift_rate, critical_slope : float
     Transport duration and physical flux-law parameters.
-r_match, cfl_safety, nonlocal_fraction : float, optional
-    Cellular stability and optional nonlocal-transfer controls.
+r_match : float, optional
+    Slope ratio S / S_c (0-1) above which the nonlinear mobility
+    ``1 / (1 - r**2)`` is continued linearly.
+cfl_safety : float, optional
+    Stability safety factor on the substep (0 < f <= 1).
+nonlocal_fraction : float, optional
+    Fraction of near-critical excess flux moved non-locally (0 = local only).
+nonlocal_activation_ratio : float, optional
+    Slope / S_c ratio above which non-local transfer starts.
+nonlocal_deposition_probability : float, optional
+    Probability (0-1] that non-local material deposits at each hop.
+nonlocal_max_hops : int, optional
+    Largest number of cells non-local material travels.
+boundary_conditions : str, optional
+    Four NESW codes ``o``, ``n``, ``p`` or ``b``.
+n_threads : int, optional
+    OpenMP thread count; 0 uses the runtime default.
 
 Returns
 -------

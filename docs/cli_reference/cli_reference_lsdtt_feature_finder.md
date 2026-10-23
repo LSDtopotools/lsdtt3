@@ -1,6 +1,10 @@
 # CLI reference: lsdtt-feature-finder
 
-Identifies geomorphic features on DEMs including terraces, piedmonts, hillslope morphology transitions, and other terrain classifications. Uses surface morphology analysis, relief thresholding, and optional vector data integration.
+Experimental detectors for small linear and areal features on high-resolution
+(lidar) DEMs: drains, channel candidates, valleys, roads and tracks. Each run
+does one `feature_type`. The tool is **experimental** and many of the
+detectors are not selective on real terrain; treat their outputs as
+candidates to check, not as a classification.
 
 ## Usage
 
@@ -19,107 +23,54 @@ lsdtt-feature-finder  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
-## Pipeline overview
+## Feature types
 
-Steps run in this order:
+Set `feature_type` to one of these (default `channel_candidates`). The
+parameters for each are in the matching group under [Parameters](#parameters).
 
-| Step | Description |
-|---|---|
-| 1. DEM preparation | Load DEM, verify projection, optionally fill pits |
-| 2. Surface analysis | Compute surface morphology metrics (curvature, relief, texture) |
-| 3. Feature detection | Classify pixels based on surface properties and thresholds |
-| 4. Post-processing | Morphological operations, smoothing, vectorisation |
-| 5. Outputs | Write feature masks and optional vector layers |
+| `feature_type` | What it does | Parameter group |
+|---|---|---|
+| `channel_candidates` | Multiscale curvature persistence combined with Hessian elongation; a channel-candidate score in [0, 1] and a mask | Hessian elongation filter |
+| `find_drains` | Frangi ridge/valley filter for narrow drainage ditches, then shape filtering | Drain finder |
+| `relief_ratio` | Local relief at a short radius divided by local relief at a long radius | Relief-ratio detector |
+| `relative_path_impact` | Relative Path Impact Index (Tarolli et al. 2013), D8 version: drainage area on the original versus a smoothed DEM | Relative Path Impact Index |
+| `local_median_relative_elevation` | Elevation relative to a local median, with drain, top, bottom and transition masks | Local median + relative elevation |
+| `find_valleys` | SMAP surface-shape classes on a smoothed DEM; the concave-up classes form the valley mask | Valley finder |
+| `find_roads` | Along-contour benches: Hessian elongation × contour alignment, gated by slope and curvature | Road finder |
+| `flow_road_discrimination` | Separates flow pathways from roads by comparing D8 flow bearing with the regional slope bearing | Flow-pathway road/channel discrimination |
+| `path_opening` | Grayscale path opening: keeps long, continuous bright threads and removes speckle | Path opening |
+| `structure_tensor` | Structure-tensor coherence (line-likeness) and orientation | Structure-tensor coherence |
+| `diffusion` | Coherence-enhancing diffusion | Coherence-enhancing diffusion |
+| `ridge_lines` | Oriented non-maximum suppression with hysteresis linking: one-pixel ridge centrelines | Ridge lines |
+| `track_spacing` | Local directional periodicity: the dominant spacing (m) of repeated linear features | Track spacing |
+| `extract_roads` | Composed road extractor (diffusion, coherence, ridge thinning, clean-up) | Road extractor |
+| `extract_roads_smooth` | Roads as smooth, low-roughness ribbons | Smoothness road extractor |
+| `roughness` | Roughness (standard deviation, or 1 − R for circular data such as an orientation raster) of an input raster | Generic roughness / consistency |
+| `thin_lines` | Separates thin lines from blobs and speckle | Thin-line extractor |
 
----
+`flow_road_discrimination` builds a D8 channel network from
+`threshold_contributing_pixels` (default 1000).
+`big_channel_threshold_contributing_pixels` (default 5000) selects the larger
+channels exported as valley-channel points. The former
+`flow_big_channel_threshold_pixels` spelling remains an unchanged-value
+alias.
 
-## Input / output parameters
+## Outputs
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename. Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
+Every output has its own `write_*` switch, listed with its file name in the
+parameter tables below. All rasters are named
+`<write_fname>_<descriptor>.<ext>`, with the extension set by
+`write_output_format` (default `cog`). `flow_road_discrimination` also writes
+two FlatGeobuf point layers, `<write_fname>_flow_divergent_points.fgb` and
+`<write_fname>_flow_valley_channel_points.fgb`.
 
----
-
-## Threading
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` = all available hardware threads. |
-| `boundary_conditions` | string | `oooo` | Four-character boundary condition string (N, E, S, W). |
-
----
-
-## DEM preparation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
-
----
-
-## Feature detection
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `feature_type` | string | `terrace` | Feature to detect. Options include `terrace`, `piedmont`, `hillslope_break`, and `flow_road_discrimination`. |
-| `relief_threshold_metres` | float | `5.0` | Local relief threshold (metres) for feature detection. |
-| `slope_threshold_degrees` | float | `5.0` | Slope threshold (degrees) for classification. |
-| `smoothing_scale_metres` | float | `50.0` | Smoothing scale (metres) for surface fitting prior to analysis. |
-
-For `feature_type: flow_road_discrimination`, `threshold_contributing_pixels`
-(int, default `1000`) defines the D8 channel network used to distinguish flow
-pathways from roads. `big_channel_threshold_contributing_pixels` (int, default
-`5000`) is the larger contributing-pixel threshold used by the valley-channel
-point export. The former `flow_big_channel_threshold_pixels` spelling remains
-an unchanged-value alias.
-
----
-
-## Post-processing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `minimum_component_size_pixels` | int | `100` | Minimum connected component size (pixels). Smaller components removed. |
-| `apply_morphological_opening` | bool | `true` | Apply morphological opening to remove thin features. |
-| `morphological_radius_pixels` | int | `3` | Radius (pixels) for morphological operations. |
-
----
-
-## Output: Feature mask raster
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_feature_mask` | bool | `true` | Write binary feature mask raster. |
-
-Output file: `<write_fname>_<feature_type>_mask.tif`
-
----
-
-## Output: Feature polygons
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_feature_polygons` | bool | `false` | Vectorise feature mask and write as polygon layer. |
-| `feature_polygon_format` | string | `flatgeobuf` | Output format: `flatgeobuf` / `fgb`, `gpkg`. |
-
-Output file: `<write_fname>_<feature_type>_polygons.<ext>`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format: `cog`, `gtiff`, `same_as_input`, `png`. `png` writes an 8-bit scaled image with a worldfile and PAM sidecar for quick visualisation only, not for analysis reuse. Output files take the extension of the chosen format. |
+Orientation outputs (`_orientation_deg`, `_spacing_orientation_deg`) are
+azimuths of the feature's direction in [0, 180), clockwise from north.
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters
@@ -141,7 +92,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `feature_type` | `string` | `channel_candidates` | `param` | - | Feature mode to run. | Supported values: channel_candidates, find_drains, relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, flow_road_discrimination, path_opening. |
+| `feature_type` | `string` | `channel_candidates` | `param` | - | Feature mode to run. | Supported values: channel_candidates, find_drains, relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, flow_road_discrimination, path_opening, structure_tensor, diffusion, ridge_lines, track_spacing, extract_roads, extract_roads_smooth, roughness, thin_lines. |
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all hardware threads. Applies to wavelet fitting and polyfit metric computation. |
 | `write_output_format` | `string` | `cog` | `io` | - | Output raster format. | Allowed values: cog, gtiff, same_as_input, png. cog: Cloud Optimised GeoTIFF (default). gtiff: plain compressed GeoTIFF. same_as_input: match the input raster format. png: 8-bit scaled image with a worldfile and PAM sidecar for georeferencing - for quick visualisation only, not for analysis reuse. Output files take the extension of the chosen format. |
 | `channel_lambda_min_metres` | `float` | `3.0` | `param` | - | Minimum wavelength for multiscale channel-candidate curvature analysis, in metres. | Use a value near the narrowest expected natural channel width or bottom width. |

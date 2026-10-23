@@ -98,10 +98,10 @@ A channel head is only ever matched to a divide that bounds **its own unit**. A 
 | `basin_outlet_fname` | string | `NULL` | **Required.** Point dataset of outlet locations: CSV with latitude/longitude columns, or a point vector (FGB, GPKG, shapefile). Points are reprojected into the raster CRS on load. At least two must land inside the DEM. |
 | `outlet_cluster_field` | string | `NULL` | Attribute field holding cluster labels. `NULL` or empty means one unit per outlet. |
 | `outlet_cluster_mode` | string | `auto` | How labels are interpreted: `auto` groups numerically when *every* label parses as an integer and as text otherwise; `integer` requires integer labels and rejects the run if any is not; `string` always groups on the raw text. `auto` and `string` differ only when labels look numeric — e.g. `01` and `1` are one group under `auto`, two under `string`. |
-| `basin_outlet_snapping_method` | string | `downstream` | `none` (use the point as given), `downstream` (walk downstream to the first cell above the threshold), or `expanding_square` (search outward for the nearest such cell). |
+| `basin_outlet_snapping_method` | string | `downstream` | `none` (use the point as given), `downstream` (walk downstream to the first cell above the threshold), `expanding_square` (search outward for the nearest such cell), or `largest_area` (the cell with the most contributing pixels in the square of half-width `basin_outlet_snap_max_search_radius_pixels`, if it is above the threshold). |
 | `basin_outlet_contributing_pixels_threshold` | int | `1000` | Contributing‑pixel threshold used when snapping. Higher values snap outlets onto larger channels. Must be > 0. |
 | `basin_outlet_snap_min_search_radius_pixels` | int | `0` | Minimum expanding‑square search radius. `expanding_square` only. |
-| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius. Must be ≥ the minimum. `expanding_square` only. |
+| `basin_outlet_snap_max_search_radius_pixels` | int | `25` | Maximum expanding‑square search radius, and the square's half-width for `largest_area`. Must be ≥ the minimum. `expanding_square` and `largest_area` only. |
 
 Outlets that fail to snap are dropped with a message naming the point and the reason; the run continues on the remainder.
 
@@ -464,10 +464,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `basin_outlet_fname` | `string` | `NULL` | `param` | - | Point dataset of outlet locations. | Required. Supports CSV latitude/longitude or point vectors (FGB/GPKG/etc.). |
 | `outlet_cluster_field` | `string` | `NULL` | `param` | - | Optional attribute field naming outlet clusters. | If NULL/empty, each outlet is treated as its own unit. |
 | `outlet_cluster_mode` | `string` | `auto` | `param` | `outlet_cluster_field` | How to interpret cluster field values. | Options: auto (numeric grouping if every label is an integer, otherwise string grouping), integer (labels must be integers, grouped numerically), string (labels always grouped as raw text, so 01 and 1 are different units). |
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Outlet snapping method. | Options: none, downstream, expanding_square. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Outlet snapping method. | Options: none, downstream, expanding_square, largest_area. largest_area takes the pixel with the most contributing pixels within basin_outlet_snap_max_search_radius_pixels. |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | `basin_outlet_snapping_method` | Contributing-pixel threshold used in outlet snapping. | Higher values snap outlets onto larger channels. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | `basin_outlet_snapping_method` | Minimum expanding-square snap radius (pixels). | Used only for basin_outlet_snapping_method=expanding_square. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square snap radius (pixels). | Used only for basin_outlet_snapping_method=expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square snap radius (pixels). | Used only for basin_outlet_snapping_method=expanding_square or largest_area (the half-width of the square searched). |
 
 ### Chi
 

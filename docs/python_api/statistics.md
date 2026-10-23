@@ -4,24 +4,6 @@ This page is generated from the built Python runtime manifest. Do not edit signa
 
 ## `compare_bearings`
 
-compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
-
 Compare two samples of bearings or axial orientations.
 
 NaN and infinite values are ignored. The result combines the existing native
@@ -47,10 +29,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def compare_bearings(first: object, second: object, axial: bool = False, rotation_invariant: bool = False) -> dict
 ```
@@ -59,42 +37,30 @@ def compare_bearings(first: object, second: object, axial: bool = False, rotatio
 
 ## `helper_for_llm`
 
-Return an ultra-compact, LLM-oriented API card.
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-Return an ultra-compact, LLM-oriented API card.
+Return a compact API guide for AI assistants (and for people in a hurry).
 
 Parameters
 ----------
 topic : str, default="index"
-    Topic name; use ``"symbol:<name>"`` for one public symbol,
-    ``"search:<words>"`` for a compact name search, or ``"all"``.
+    ``"index"`` (the default) lists the topics and the notation;
+    ``"workflow"`` is a runnable core analysis; ``"gotchas"`` lists common
+    mistakes; ``"all"`` is every topic, sized for pasting into an
+    assistant. ``"symbol:<name>"`` gives the documentation of one public
+    symbol and ``"search:<words>"`` ranks public symbols by how many of
+    the words their names and docstrings contain.
 
 Returns
 -------
 str
-    Machine-oriented API context with exact public identifiers.
+    Plain text with exact public identifiers. It is a ``str`` subclass
+    that notebooks display as text rather than as an escaped literal, so
+    ``lsdtt3.helper_for_llm("all")`` as the last line of a cell reads
+    well; ``print()`` works too.
 
 Authors
 -------
 B. Gailleton
-
-Authors
--------
-B. Gailleton
+S. M. Mudd
 
 ```python
 (topic='index')
@@ -103,24 +69,6 @@ B. Gailleton
 ---
 
 ## `linear_stats`
-
-linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
-
-Parameters
-----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
-
-Returns
--------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
 
 Sample a raster along line geometries and append descriptive statistics.
 
@@ -143,10 +91,6 @@ Authors
 -------
 B. Gailleton
 
-Authors
--------
-B. Gailleton
-
 ```python
 def linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 10.0) -> object
 ```
@@ -155,25 +99,22 @@ def linear_stats(raster: lsdtt3.Raster, lines: object, spacing_metres: float = 1
 
 ## `relief_ratio`
 
-relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster
+Return short-scale local relief divided by broad-scale local relief.
+
+Local relief is the elevation range in a circular window; narrow incised
+features have high short-range relief compared with their surroundings.
 
 Parameters
 ----------
-*args
-    Positional arguments described by the generated binding signature.
-**kwargs
-    Keyword arguments described by the generated binding signature.
+raster : Raster
+    Elevation raster (m).
+short_radius_metres, long_radius_metres : float, default=1.8, 8.0
+    Radii (m) of the short and broad windows.
 
 Returns
 -------
-object
-    Result described by the generated binding signature.
-
-Notes
------
-relief_ratio(raster: lsdtt3.Raster, short_radius_metres: float = 1.8, long_radius_metres: float = 8.0) -> lsdtt3.Raster
-
-Return short-scale local relief divided by broad-scale local relief.
+Raster
+    Dimensionless relief ratio.
 
 Authors
 -------

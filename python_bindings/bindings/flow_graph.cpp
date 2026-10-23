@@ -103,6 +103,24 @@ Fractional D-infinity or MFD flow-routing graph.
 
 Use ``FlowInfo`` for single-receiver D8 channel trees. Use ``FlowGraph`` for
 distributed-flow drainage area and later TWI/connectivity calculations.
+
+Parameters
+----------
+dem : Raster
+    Depression-conditioned elevation raster (m).
+method : {"mfd", "dinf"}, default="mfd"
+    ``mfd``: flow split among all downslope neighbours weighted by
+    slope**mfd_exponent (Quinn et al. 1991; Freeman 1991). ``dinf``:
+    D-infinity (Tarboton 1997), flow split between the two neighbours of
+    the steepest triangular facet.
+boundary_conditions : str, default='oooo'
+    Four NESW edge codes, as for ``FlowInfo``.
+interior_nodata_is_outlet : bool, default=True
+    Pixels next to nodata may drain into it.
+mfd_exponent : float, default=1.0
+    Exponent on slope in the MFD split (1.0 Quinn, 1.1 Freeman).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
 )doc")
         .def(nb::init<const Raster&, const std::string&, const std::string&, bool, float, int>(),
             nb::arg("dem"), nb::arg("method") = "mfd", nb::arg("boundary_conditions") = "oooo",
@@ -112,14 +130,17 @@ distributed-flow drainage area and later TWI/connectivity calculations.
         .def_prop_ro("shape", [](const FlowGraph& g) { return nb::make_tuple(g.native().meta().n_rows, g.native().meta().n_cols); })
         .def_prop_ro("method", [](const FlowGraph& g) { return g.native().options().method == lsdtt::lsdtt_flowgraph_method::mfd ? "mfd" : "dinf"; })
         .def_prop_ro("n_valid_cells", [](const FlowGraph& g) { return g.native().n_valid_cells(); })
-        .def_prop_ro("outlets", &outlets)
-        .def_prop_ro("valid_mask", [](const FlowGraph& g) { return grid_array(g.native().valid_cells(), g.native().meta(), "bool"); })
-        .def_prop_ro("donor_count", [](const FlowGraph& g) { return grid_array(g.native().donor_count(), g.native().meta(), "uint8"); })
-        .def("is_outlet", [](const FlowGraph& g, int row, int col) { return g.native().is_outlet_cell(row, col); }, nb::arg("row"), nb::arg("col"))
+        .def_prop_ro("outlets", &outlets, nb::sig("def outlets(self) -> numpy.ndarray"), "Outlet pixels as an N x 2 (row, col) array.")
+        .def_prop_ro("valid_mask", [](const FlowGraph& g) { return grid_array(g.native().valid_cells(), g.native().meta(), "bool"); }, nb::sig("def valid_mask(self) -> numpy.ndarray"), "Bool array (n_rows, n_cols), True for valid pixels.")
+        .def_prop_ro("donor_count", [](const FlowGraph& g) { return grid_array(g.native().donor_count(), g.native().meta(), "uint8"); }, nb::sig("def donor_count(self) -> numpy.ndarray"), "Uint8 array: number of cells draining into each cell.")
+        .def("is_outlet", [](const FlowGraph& g, int row, int col) { return g.native().is_outlet_cell(row, col); }, nb::arg("row"), nb::arg("col"),
+            "Return True if the pixel (row, col) is an outlet.")
         .def("receivers_of", &receivers_of, nb::arg("row"), nb::arg("col"), "Return fractional receiver pixels and weights.")
         .def("accumulate", &accumulate, nb::arg("weights") = nb::none(), "Accumulate weights through fractional receivers; default weights are cell areas.")
-        .def("drainage_area", [](const FlowGraph& g) { return as_raster(g.native().accumulate_raster()); })
-        .def("outlet_mask", [](const FlowGraph& g) { return as_raster(g.native().outlet_raster()); })
+        .def("drainage_area", [](const FlowGraph& g) { return as_raster(g.native().accumulate_raster()); },
+            "Return the distributed-flow drainage area (m^2) as a Raster.")
+        .def("outlet_mask", [](const FlowGraph& g) { return as_raster(g.native().outlet_raster()); },
+            "Return a 0/1 Raster of outlet pixels.")
         .def("slope", [](const FlowGraph& g) { if (g.native().options().method != lsdtt::lsdtt_flowgraph_method::d_infinity) throw std::runtime_error("slope is available only for method='dinf'"); return as_raster(g.native().dinf_slopes()); })
         .def("direction", [](const FlowGraph& g) { if (g.native().options().method != lsdtt::lsdtt_flowgraph_method::d_infinity) throw std::runtime_error("direction is available only for method='dinf'"); return as_raster(g.native().dinf_flow_direction()); });
 }

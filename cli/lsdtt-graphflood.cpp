@@ -328,9 +328,29 @@ int main(int argc, char* argv[])
         "Output controls", "io", ""};
 
     bool_default_map["write_hydraulic_slope_raster"] = false;
+    help_map["write_hydraulic_slope_raster"] = {"bool","false",
+        "Write final hydraulic (water-surface) slope raster, as a gradient (m/m).",
+        "Output suffix: _hydraulic_slope.tif",
+        "Output controls", "switch", ""};
+
     bool_default_map["write_specific_discharge_raster"] = false;
+    help_map["write_specific_discharge_raster"] = {"bool","false",
+        "Write final specific discharge raster: discharge per unit width (m^2/s).",
+        "Output suffix: _specific_discharge.tif",
+        "Output controls", "switch", ""};
+
     bool_default_map["write_total_discharge_raster"] = false;
+    help_map["write_total_discharge_raster"] = {"bool","false",
+        "Write final total discharge raster (m^3/s).",
+        "Output suffix: _total_discharge.tif",
+        "Output controls", "switch", ""};
+
     bool_default_map["write_effective_width_raster"] = false;
+    help_map["write_effective_width_raster"] = {"bool","false",
+        "Write effective flow width raster: total / specific discharge (m).",
+        "Output suffix: _effective_width.tif. 0 where the specific discharge "
+        "is effectively zero.",
+        "Output controls", "switch", ""};
 
 
 

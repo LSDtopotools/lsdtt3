@@ -86,9 +86,10 @@ lsdtt_outlet_basin_verification_result verify_outlet_group_basins(
     }
 
     const std::string snapping = lower_copy(options.snapping_method);
-    if (snapping != "none" && snapping != "expanding_square" && snapping != "downstream")
+    if (snapping != "none" && snapping != "expanding_square" && snapping != "downstream" &&
+        snapping != "largest_area")
     {
-        out.message = "snapping_method must be none, expanding_square, or downstream";
+        out.message = "snapping_method must be none, expanding_square, downstream, or largest_area";
         return out;
     }
     lsdtt_square_snap_options square_options;

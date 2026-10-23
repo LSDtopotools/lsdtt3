@@ -177,7 +177,9 @@ int main(int argc, char* argv[])
         "Feature mode to run.",
         "Supported values: channel_candidates, find_drains, relief_ratio, "
         "relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
-        "flow_road_discrimination, path_opening.",
+        "flow_road_discrimination, path_opening, structure_tensor, diffusion, "
+        "ridge_lines, track_spacing, extract_roads, extract_roads_smooth, "
+        "roughness, thin_lines.",
         "General", "param", ""};
 
     int_default_map["n_threads"] = 0;

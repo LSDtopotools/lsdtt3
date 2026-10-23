@@ -196,7 +196,7 @@ script export, configure and build it in a scratch folder (this configure line,
 the `qgis` profile's targets, then packaging):
 
 ```powershell
-.\tools\package_windows_backend.ps1 -Version 0.7.0 -Tag v0.7.0
+.\tools\package_windows_backend.ps1 -Version 0.7.1 -Tag v0.7.1
 ```
 
 ### 4. Verify

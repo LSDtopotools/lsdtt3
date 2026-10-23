@@ -95,7 +95,46 @@ Results and diagnostics from marsh-platform extraction.
         nb::arg("apply_scarp_closing") = false,
         nb::arg("scarp_closing_radius_metres") = 0.0,
         nb::arg("n_threads") = 0,
-        "Extract marsh platforms and scarps from a projected DEM.");
+        R"doc(Extract marsh platforms and scarps from a projected DEM.
+
+Scarps (the steep edges between marsh platform and tidal flat) are seeded and
+grown from slope and relative relief, then platforms are grown from seeds
+above them and cut at an elevation chosen from the elevation histogram.
+
+Parameters
+----------
+dem : Raster
+    Elevation raster (m) of the marsh.
+slope : Raster or None, default=None
+    Gradient (m/m) on the same grid; None computes it.
+slope_method : {"gradient_3x3", "polyfit"}, default="gradient_3x3"
+    How the slope is computed when ``slope`` is None.
+slope_polyfit_lambda_metres : float, default=5.0
+    Polyfit length scale (m) for ``slope_method="polyfit"``.
+histogram_n_bins : int, default=100
+    Number of histogram bins used to choose thresholds.
+search_space_histogram_derivative_threshold : float, default=-2.0
+    Histogram-derivative value that sets the search-space threshold (the
+    first bin where the derivative rises above it).
+max_scarp_growth_iterations : int, default=50
+    Iterations of scarp growth after seeding.
+max_platform_growth_iterations : int, default=100
+    Iterations of platform growth.
+min_platform_component_pixels : int, default=1
+    Smallest platform component kept (pixels).
+preserve_scarps_in_final_platform : bool, default=True
+    Include the cleaned scarps in the final platform mask.
+apply_scarp_closing : bool, default=False
+    Close small gaps in the scarp mask before platform seeding.
+scarp_closing_radius_metres : float, default=0.0
+    Radius (m) of that closing.
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+MarshPlatformResult
+)doc");
 }
 
 } // namespace lsdtt3_python

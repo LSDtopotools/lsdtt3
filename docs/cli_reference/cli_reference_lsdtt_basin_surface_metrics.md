@@ -1,6 +1,11 @@
 # CLI reference: lsdtt-basin-surface-metrics
 
-Extracts predefined basins from outlet coordinates and computes multiscale surface metrics (slope, curvature, roughness, etc.) along basin outlines and within basin interiors. Outputs per-basin statistics and optional polygon layers with metrics as attributes.
+Extracts basins from a CSV of outlet points and measures multiscale surface
+metrics (polynomial-fit slope, maximum curvature and others) along each basin
+outline and inside each basin. For each smoothing length in `lambda_scales`
+it can report how often curvature changes sign along the divide, log-binned
+slope–area distributions, and the drainage area at which the median slope
+peaks.
 
 ## Usage
 
@@ -19,115 +24,54 @@ lsdtt-basin-surface-metrics  -c                      # print citation and exit
 key: value
 ```
 
-Keys use `snake_case`. All keys and their defaults are listed below.
+Keys use `snake_case`. All keys and their defaults are listed under
+[Parameters](#parameters) below.
 
 ---
 
-## Pipeline overview
+## Pipeline
 
-Steps run in this order:
+1. Load the DEM, fill pits (skipped with `raster_is_filled: true`) and build
+   D8 routing.
+2. Read the outlets from `basin_outlet_fname` (a CSV with `latitude` and
+   `longitude` columns, WGS84), snap them with `basin_outlet_snapping_method`
+   (default `downstream`; also `expanding_square`, `largest_area` and `none`)
+   and extract each basin.
+3. Trace each basin's outline.
+4. If a slope–area output is requested, build D-infinity routing on the filled
+   DEM for the drainage area.
+5. For each smoothing length λ in `lambda_scales` (default `10,50,100` m), fit
+   the polynomial surface to the unfilled DEM and compute the metrics in
+   `polyfit_metrics` (default `slope,maximum_curvature`).
+6. Write the requested outputs.
 
-| Step | Description |
-|---|---|
-| 1. DEM preparation | Load DEM, verify projection, optionally fill pits |
-| 2. D8 flow routing | Build the D8 flow-info object |
-| 3. Basin outlet parsing | Read outlet coordinates from CSV |
-| 4. Basin extraction | Extract basin boundaries and outlines |
-| 5. Metric computation | Compute surface metrics at multiple scales |
-| 6. Outputs | Write basin statistics and optional polygons |
+## Example
 
----
+```
+read_fname: my_dem.tif
+basin_outlet_fname: outlets.csv
+lambda_scales: 10,50,100
+polyfit_metrics: slope,maximum_curvature
+write_basin_slope_area_stats: true
+write_outline_curvature_flips: true
+write_outline_polygons_with_flipstats: true
+```
 
-## Input / output parameters
+## Outputs
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | directory of parameter file | Directory containing the input DEM. |
-| `read_fname` | string | parameter file stem | Input DEM filename (with or without extension). Any GDAL-supported format. |
-| `write_path` | string | same as `read_path` | Directory for output files. |
-| `write_fname` | string | same as `read_fname` | Output filename stem. |
-| `basin_outlet_fname` | string | _(empty)_ | Path to CSV file with basin outlets. Required columns: `latitude`, `longitude`. Optional: `gauge_id`, `gauge_name`. |
+Every output is off by default. `<outlet_flat>` is the flat index of a
+basin's snapped outlet pixel, and `<metric>_lambda<λ>` is, for example,
+`slope_lambda50`.
 
----
-
-## Threading
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of OpenMP threads. `0` = all available hardware threads. |
-| `boundary_conditions` | string | `oooo` | Four-character boundary condition string (N, E, S, W). `o` = open, `n` = no-flux, `p` = periodic. |
-
----
-
-## DEM preparation
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `raster_is_filled` | bool | `false` | Set `true` if DEM is already pit-filled. If `false`, `fill_pits()` is called automatically. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. Used only when `raster_is_filled` is `false`. |
-| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel sources used to snap basin outlets. |
-
----
-
-## Basin extraction
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `snap_outlet_to_channel` | bool | `true` | Snap outlet coordinates to the nearest D8 channel pixel before basin extraction. |
-| `outlet_snapping_search_radius_cells` | int | `10` | Search radius (pixels) for outlet snapping. |
-
----
-
-## Surface metrics
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `lambda_scales` | vector of floats | `[10, 20, 50, 100]` | Smoothing scales (metres) for polynomial surface fitting. |
-| `polyfit_method` | string | `direct` | Polynomial fitting method: `direct` (rolling-moment, preferred) or `wavelet`. |
-| `write_slope_raster` | bool | `false` | Write slope (gradient magnitude) raster. |
-| `write_curvature_raster` | bool | `false` | Write curvature raster. |
-| `write_roughness_raster` | bool | `false` | Write surface roughness raster. |
-
----
-
-## Output: Basin statistics CSV
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_basin_statistics_csv` | bool | `true` | Write per-basin hydromorphic statistics CSV. |
-| `calculate_shape_metrics` | bool | `false` | Compute basin planform shape metrics (elongation, circularity, etc.). |
-| `calculate_centre_of_mass_bearing` | bool | `false` | Compute centre-of-mass bearing from outlet. |
-
-Output file: `<write_fname>_basin_stats.csv`
-
----
-
-## Output: Basin outlines polygon
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_basin_polygons` | bool | `false` | Write basin outlines as polygon features. |
-| `write_vector_format` | string | `flatgeobuf` | Basin polygon format: `flatgeobuf` / `fgb` (preferred), `gpkg`. |
-
-Output file: `<write_fname>_basin_polygons.<ext>`
-
----
-
-## Output: Basin outline CSV
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_basin_outline_csv` | bool | `false` | Write basin outline as CSV with elevation and metrics sampled along perimeter. |
-
-Output file: `<write_fname>_basin_outline.csv`
-
----
-
-## Output format
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_output_format` | string | `cog` | Raster output format. `cog`: Cloud-Optimised GeoTIFF (preferred). `gtiff`: GeoTIFF. `same_as_input`: same as input DEM format. |
+| File | Written when | Contents |
+|---|---|---|
+| `<write_fname>_basin_<outlet_flat>_outline.csv` | `write_basin_outlines_csv` | One file per basin: distance along the outline, elevation and each metric at each λ |
+| `<write_fname>_outline_curvature_flips.csv` | `write_outline_curvature_flips` (needs `maximum_curvature`) | Per basin and λ, how often and how far apart maximum curvature changes sign along the outline |
+| `<write_fname>_basin_<outlet_flat>_slope_area_histogram.csv` | `write_basin_slope_area_csv` | One file per basin: slope percentiles (p05, p25, p50, p75, p95) in bins of log10 area, `slope_area_log_bin_width` wide |
+| `<write_fname>_slope_area_stats.csv` | `write_basin_slope_area_stats` (needs `slope`) | Per basin and λ, the drainage area (m²) at which the median slope is greatest |
+| `<write_fname>_basin_polygons.fgb` (or `.gpkg`) | `write_outline_polygons_with_flipstats` | Basin polygons with the curvature-flip and slope–area statistics for each λ as attributes. Turning this on also computes those statistics. |
+| `<write_fname>_<metric>_lambda<λ>.tif` | `write_polyfit_rasters` | Each metric raster at each λ |
+| `<write_fname>_dinf_area.tif`, `<write_fname>_dinf_log10area.tif` | `write_dinf_area_raster`, `write_dinf_area_log10_raster` | D-infinity drainage area (m²) and its log10 |
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters
@@ -177,10 +121,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Method to snap CSV points to the routing object. | none: uses mapped pixel. downstream: follows flow path. expanding_square: searches outward until channel hit. |
+| `basin_outlet_snapping_method` | `string` | `downstream` | `param` | - | Method to snap CSV points to the routing object. | none: uses mapped pixel. downstream: follows flow path. expanding_square: searches outward until channel hit. largest_area: the pixel with the most contributing pixels within basin_outlet_snap_max_search_radius_pixels. |
 | `basin_outlet_contributing_pixels_threshold` | `int` | `1000` | `param` | - | Pixel threshold for confirming an outlet snap. | Defines the required D8 accumulation to arrest snapping. |
 | `basin_outlet_snap_min_search_radius_pixels` | `int` | `0` | `param` | `basin_outlet_snapping_method` | Minimum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
-| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square. |
+| `basin_outlet_snap_max_search_radius_pixels` | `int` | `25` | `param` | `basin_outlet_snapping_method` | Maximum expanding-square search radius in pixels. | Used only when basin_outlet_snapping_method is expanding_square or largest_area (the half-width of the square searched). |
 
 ### Smoothing Scales &amp; Polyfit
 

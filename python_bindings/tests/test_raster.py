@@ -221,6 +221,33 @@ class RasterTest(unittest.TestCase):
             ).to_numpy()[2, 2],
             10.0,
         )
+
+        # A nodata frame on the edges, as fetch_dem leaves after warping, must
+        # neither be rejected as an outlet nor stop cells beside it draining.
+        framed_values = np.full((7, 7), 10.0, dtype=np.float32)
+        framed_values[1:6, 1:6] = 5.0
+        framed_values[3, 3] = 0.0
+        framed_valid = np.ones((7, 7), dtype=bool)
+        framed_valid[0, :] = False
+        framed_valid[:, 0] = False
+        framed = lsdtt3.Raster.from_numpy(
+            framed_values, framed_valid, lsdtt3.RasterMeta.from_shape(7, 7)
+        )
+        np.testing.assert_array_equal(
+            lsdtt3.fill_pits_boundary_aware(
+                framed, "oooo", min_slope=0.0, n_threads=1
+            ).to_numpy(),
+            lsdtt3.fill_pits(framed, min_slope=0.0, n_threads=1).to_numpy(),
+        )
+        # Only the north and west edges are nodata and both are closed; the
+        # valid cells beside the frame are the outlets, so the 10 m rim on the
+        # south and east is not needed to drain the 5 m interior.
+        closed = lsdtt3.fill_pits_boundary_aware(
+            framed, "nnnn", min_slope=0.0, n_threads=1
+        ).to_numpy()
+        self.assertEqual(closed[3, 3], 5.0)
+        self.assertEqual(closed[1, 1], 5.0)
+
         self.assertEqual(
             lsdtt3.breach_least_cost(depression, n_threads=1).shape,
             depression.shape,

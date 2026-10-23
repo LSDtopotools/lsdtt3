@@ -219,7 +219,7 @@ formula : {"wong_parker", "wilcock_crowe", "engelund_hansen"}, optional
     Bedload transport-capacity relation.
 n_timesteps, timestep_seconds : int, float, optional
     Number and duration of routing timesteps.
- porosity, active_layer_depth_metres : float, optional
+porosity, active_layer_depth_metres : float, optional
     Sediment porosity and initial active-layer depth; a non-positive depth uses
     twice D90.
 width_coefficient, width_exponent : float, optional

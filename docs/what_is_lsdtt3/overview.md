@@ -6,7 +6,7 @@
 
 ## What it does
 
-`lsdtt3` provides a collection of **40 command-line programs** for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. Much of the same functionality is also available through **Python bindings**, and a subset through a **QGIS plugin**. The tools cover:
+`lsdtt3` provides a collection of **45 command-line programs** for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. Much of the same functionality is also available through **Python bindings**, and a subset through a **QGIS plugin**. The tools cover:
 
 - **DEM preparation** — reprojection, depression filling, breaching, nodata handling.
 - **Surface morphology** — curvature, roughness, hillshade, local relief, cloth-drape upper envelope, Frangi vessel filter.
@@ -38,11 +38,10 @@ And many other features.
 
 ## Memory use
 
-Memory, not speed, is usually what stops a large DEM being processed at all. The
+Memory, not speed, is usually what stops a large DEM being processed, and was a major limiting factor for LSDTopoTools2. The
 object that dominates is the flow-routing structure both codebases build before
 almost any drainage analysis: `lsdtt_flowinfo` in lsdtt3, `LSDFlowInfo` in
-LSDTopoTools2. Neither stores the elevation raster itself — this is the cost of
-the topology on top of the DEM.
+LSDTopoTools2. Neither stores the elevation raster itself, it stores the relationship between pixels. 
 
 For a **10 000 × 10 000 float32 DEM (10^8 cells, all valid)**:
 
@@ -67,9 +66,9 @@ pointer-chasing:
 - Construction transients are scoped so they are released before the object is
   returned, rather than staying alive until the constructor exits.
 
-**Where lsdtt3 deliberately pays more:** every node index is 64-bit, against
+**Where lsdtt3 deliberately uses more memory:** every node index is 64-bit, against
 32-bit in LSDTopoTools2. That doubles the cost of the index arrays, and lsdtt3
-is still smaller overall. It is also what makes the next point possible.
+is still smaller overall. Wer sink this cost in order to retain the ability to process very large rasters. 
 
 ### Very large DEMs
 
@@ -113,7 +112,7 @@ lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and eart
 - run reproducible analyses from parameter files,
 - integrate topographic analysis into scripted pipelines.
 
-[The lsdtt3 command-line tools](lsdtt3_clis.md) lists all 40 and what each is
+[The lsdtt3 command-line tools](lsdtt3_clis.md) lists all 45 and what each is
 for. For reproducible multi-stage pipelines with Snakemake + Pixi, see
 [Workflows](workflows.md).
 
@@ -126,14 +125,14 @@ The command line is the primary interface, but not the only one:
 - **[Python bindings](../python/index.md).** Much of the library is exposed
   directly to Python, which suits exploratory work and stitching steps
   together without writing parameter files. There are guides for loading and
-  saving DEMs, flow and basins, chi and k₁₅ₙ, channel-head extraction,
-  cosmogenics and GraphFlood, plus a full
+  saving DEMs, fetching DEMs, flow and basins, chi and k<sub>sn</sub>,
+  channel-head extraction, cosmogenics and GraphFlood, plus a full
   [API reference](../python_api/index.md). Note that the Python package is for
   **driving** lsdtt3; the numerical work stays in the C++ library.
 - **[QGIS plugin](../qgis.md).** A reduced set of core analyses, run from
   inside QGIS.
 
-It is not a GIS — it has no interactive GUI. Inputs and outputs are files. However we have provided a lightweight QGIS plugin (which is under development). The QGIS plugin has a reduced feature set to the full `lsdtt3` command line interface collection. But for many users, the "core" analyses tools that are in the QGIS plugin should be sufficient for everyday use. 
+lsdtt3 is not a GIS — it has no interactive GUI. Inputs and outputs are files. However we have provided a lightweight QGIS plugin (which is under development). The QGIS plugin has a reduced feature set to the full `lsdtt3` command line interface collection. But for many users, the "core" analyses tools that are in the QGIS plugin should be sufficient for everyday use. 
 
 The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R. `lsdviztools3` is for **visualisation**: computation belongs in lsdtt3 itself.
 
@@ -155,6 +154,6 @@ install it. They are self-contained: no compiler, no library installation, no
 - **macOS** — no macOS package yet. Run the Linux package inside a Multipass
   Ubuntu VM.
 - **Google Colab** — the Linux package works there with nothing installed
-  locally at all.
+  locally at all, and so does the Python package (the `cp313` wheel).
 
 See [Installation](install_lsdtt3.md) for all of these.

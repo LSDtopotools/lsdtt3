@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
@@ -606,10 +607,82 @@ nb::tuple run_graphflood_optimised_v2_multigrid_native(
 
 } // namespace
 
+// Parameter descriptions shared by the GraphFlood entry points.
+constexpr const char* kGraphfloodInputParameters = R"doc(bed : Raster
+    Bed (terrain) elevation (m) in a projected metre CRS.
+node_state : Raster
+    Same grid as ``bed``: 0 excluded (wall), 1 active, 3 outlet (water
+    leaving here is removed). Nodata pixels are excluded.
+rainfall_rate : Raster
+    Same grid: rainfall (effective runoff) rate in m/s, for example
+    ``10 mm/h = 10 / 1000 / 3600 = 2.78e-6`` m/s.
+friction_coefficient : Raster
+    Same grid: coefficient ``K`` of the flow law ``q = K * h**a * S**b``
+    (``q`` discharge per unit width, m^2/s). For Manning, ``K = 1 / n``
+    (n in s m^(-1/3), for example n = 0.033 gives K = 30).
+)doc";
+constexpr const char* kGraphfloodSolverParameters = R"doc(boundary_conditions : str, default='oooo'
+    Four NESW codes ``o``, ``n`` or ``p`` setting the neighbour topology of
+    the edges (``p`` wraps to the opposite edge and must be paired). Edges
+    do not drain by themselves: see ``node_state``.
+mfd_exponent : float, default=1.0
+    Exponent on slope used to split MFD discharge among receivers
+    (positive).
+condition_bed : {"none", "fill"}, default="none"
+    ``"fill"`` priority-floods the bed towards the code-3 cells before
+    routing.
+fill_slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across flats when the water surface (or
+    bed) is priority-flooded towards the outlets.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+friction_depth_exponent : float, default=5/3
+    Exponent ``a`` on depth in the flow law (5/3 for Manning).
+friction_slope_exponent : float, default=0.5
+    Exponent ``b`` on hydraulic slope in the flow law (1/2 for Manning).
+dt : float, default=0.001
+    Time step in seconds of the depth update.
+min_slope : float, default=0.0001
+    Floor (m/m) on the hydraulic slope used in the flow law, so flat water
+    surfaces still discharge.
+point_inflows : array-like of float or None, default=None
+    N x 3 array of ``(row, col, discharge_m3_s)``: extra inflow (m^3/s)
+    added at given pixels, for example a river entering the domain.
+max_steps : int, default=100
+    Maximum number of time steps.
+run_until_converged : bool, default=True
+    Stop early when converged; if False run exactly ``max_steps`` steps.
+convergence_check_every : int, default=10
+    Check convergence every this many steps (positive).
+median_dhw_convergence_tolerance_metres : float, default=1e-6
+    Converged when the median absolute depth change per step (m) is at most
+    this ...
+median_dhw_relative_convergence_tolerance : float, default=0.0001
+    ... and the median relative depth change is at most this.
+)doc";
+constexpr const char* kGraphfloodInitialDepth = R"doc(initial_water_depth : Raster or None, default=None
+    Starting water depth (m) on the bed grid; None starts dry.
+)doc";
+
+
+// nanobind keeps a pointer to each docstring, so docstrings assembled at run
+// time are stored here for the lifetime of the module.
+static const char* persistent_doc(std::string text)
+{
+    static std::deque<std::string> storage;
+    storage.push_back(std::move(text));
+    return storage.back().c_str();
+}
+
 void bind_hydraulic_routing(nb::module_& module)
 {
     nb::class_<GraphFloodOptimisedPerformance>(
-        module, "GraphFloodOptimisedPerformance")
+        module, "GraphFloodOptimisedPerformance", R"doc(
+Timing (seconds) and work counters of an optimised GraphFlood run.
+
+The ``*_seconds`` attributes are wall-clock time spent in each solver phase;
+the other attributes count operations, for profiling only.
+)doc")
         .def_prop_ro("topology_check_seconds", &GraphFloodOptimisedPerformance::topology_check_seconds)
         .def_prop_ro("projection_seconds", &GraphFloodOptimisedPerformance::projection_seconds)
         .def_prop_ro("routing_seconds", &GraphFloodOptimisedPerformance::routing_seconds)
@@ -628,21 +701,25 @@ void bind_hydraulic_routing(nb::module_& module)
         .def_prop_ro("boundary_routed_cells", &GraphFloodOptimisedPerformance::boundary_routed_cells)
         .def_prop_ro("persistent_working_bytes", &GraphFloodOptimisedPerformance::persistent_working_bytes);
 
-    nb::class_<GraphFloodOptimisedResult>(module, "GraphFloodOptimisedResult")
-        .def_prop_ro("bed", &GraphFloodOptimisedResult::bed)
-        .def_prop_ro("water_depth", &GraphFloodOptimisedResult::water_depth)
-        .def_prop_ro("water_surface", &GraphFloodOptimisedResult::water_surface)
-        .def_prop_ro("qin", &GraphFloodOptimisedResult::qin)
-        .def_prop_ro("qout", &GraphFloodOptimisedResult::qout)
-        .def_prop_ro("dhw", &GraphFloodOptimisedResult::dhw)
-        .def_prop_ro("hydraulic_slope", &GraphFloodOptimisedResult::slope)
-        .def_prop_ro("specific_discharge", &GraphFloodOptimisedResult::specific_discharge)
-        .def_prop_ro("total_discharge", &GraphFloodOptimisedResult::total_discharge)
-        .def_prop_ro("performance", &GraphFloodOptimisedResult::performance)
-        .def_prop_ro("converged", &GraphFloodOptimisedResult::converged)
-        .def_prop_ro("step_count", &GraphFloodOptimisedResult::step_count)
-        .def_prop_ro("total_water_volume", &GraphFloodOptimisedResult::total_water_volume)
-        .def_prop_ro("projection_volume", &GraphFloodOptimisedResult::projection_volume);
+    nb::class_<GraphFloodOptimisedResult>(module, "GraphFloodOptimisedResult", R"doc(
+Result of ``run_graphflood_optimised`` and ``run_graphflood_optimised_v2``.
+
+Same hydraulic fields as ``HydraulicResult`` plus solver performance counters.
+)doc")
+        .def_prop_ro("bed", &GraphFloodOptimisedResult::bed, "Bed elevation used for routing (m), after any conditioning.")
+        .def_prop_ro("water_depth", &GraphFloodOptimisedResult::water_depth, "Water depth h (m).")
+        .def_prop_ro("water_surface", &GraphFloodOptimisedResult::water_surface, "Water surface elevation z + h (m).")
+        .def_prop_ro("qin", &GraphFloodOptimisedResult::qin, "Discharge into each cell (m^3/s).")
+        .def_prop_ro("qout", &GraphFloodOptimisedResult::qout, "Discharge out of each cell from the flow law (m^3/s).")
+        .def_prop_ro("dhw", &GraphFloodOptimisedResult::dhw, "Depth change over the last step (m).")
+        .def_prop_ro("hydraulic_slope", &GraphFloodOptimisedResult::slope, "Water-surface slope used in the flow law (m/m).")
+        .def_prop_ro("specific_discharge", &GraphFloodOptimisedResult::specific_discharge, "Discharge per unit width (m^2/s).")
+        .def_prop_ro("total_discharge", &GraphFloodOptimisedResult::total_discharge, "Total discharge through each cell (m^3/s).")
+        .def_prop_ro("performance", &GraphFloodOptimisedResult::performance, "Timing and work counters (GraphFloodOptimisedPerformance).")
+        .def_prop_ro("converged", &GraphFloodOptimisedResult::converged, "True if the convergence tolerances were met.")
+        .def_prop_ro("step_count", &GraphFloodOptimisedResult::step_count, "Number of time steps taken.")
+        .def_prop_ro("total_water_volume", &GraphFloodOptimisedResult::total_water_volume, "Water stored on the grid (m^3).")
+        .def_prop_ro("projection_volume", &GraphFloodOptimisedResult::projection_volume, "Water volume (m^3) added by priority-flood projection of the surface (not conserved).");
 
     nb::class_<HydraulicSurfaceFill>(module, "HydraulicSurfaceFill", R"doc(
 Priority-flood projection of a hydraulic surface towards selected outlets.
@@ -650,9 +727,9 @@ Priority-flood projection of a hydraulic surface towards selected outlets.
 ``added_depth`` and ``added_volume`` quantify the explicitly non-conservative
 water required to remove local minima in the supplied surface.
 )doc")
-        .def_prop_ro("filled_surface", &HydraulicSurfaceFill::filled_surface)
-        .def_prop_ro("added_depth", &HydraulicSurfaceFill::added_depth)
-        .def_prop_ro("added_volume", &HydraulicSurfaceFill::added_volume);
+        .def_prop_ro("filled_surface", &HydraulicSurfaceFill::filled_surface, "Filled surface elevation (m).")
+        .def_prop_ro("added_depth", &HydraulicSurfaceFill::added_depth, "Depth added by filling (m): filled_surface - surface.")
+        .def_prop_ro("added_volume", &HydraulicSurfaceFill::added_volume, "Volume added by filling (m^3).");
 
     nb::class_<HydraulicResult>(module, "HydraulicResult", R"doc(
 Result of stationary GraphFlood-style hydraulic routing.
@@ -661,20 +738,20 @@ All raster properties use the routed hydraulic domain. ``projection_volume``
 is the explicitly non-conservative volume added while priority-flood projects
 the evolving ``z + h`` surface.
 )doc")
-        .def_prop_ro("bed", &HydraulicResult::bed)
-        .def_prop_ro("water_depth", &HydraulicResult::water_depth)
-        .def_prop_ro("water_surface", &HydraulicResult::water_surface)
-        .def_prop_ro("qin", &HydraulicResult::qin)
-        .def_prop_ro("qout", &HydraulicResult::qout)
-        .def_prop_ro("dhw", &HydraulicResult::dhw)
-        .def_prop_ro("hydraulic_slope", &HydraulicResult::slope)
-        .def_prop_ro("specific_discharge", &HydraulicResult::specific_discharge)
-        .def_prop_ro("total_discharge", &HydraulicResult::total_discharge)
-        .def_prop_ro("converged", &HydraulicResult::converged)
-        .def_prop_ro("step_count", &HydraulicResult::step_count)
-        .def_prop_ro("current_time", &HydraulicResult::current_time)
-        .def_prop_ro("total_water_volume", &HydraulicResult::total_water_volume)
-        .def_prop_ro("projection_volume", &HydraulicResult::projection_volume);
+        .def_prop_ro("bed", &HydraulicResult::bed, "Bed elevation used for routing (m), after any conditioning.")
+        .def_prop_ro("water_depth", &HydraulicResult::water_depth, "Water depth h (m).")
+        .def_prop_ro("water_surface", &HydraulicResult::water_surface, "Water surface elevation z + h (m).")
+        .def_prop_ro("qin", &HydraulicResult::qin, "Discharge into each cell (m^3/s).")
+        .def_prop_ro("qout", &HydraulicResult::qout, "Discharge out of each cell from the flow law (m^3/s).")
+        .def_prop_ro("dhw", &HydraulicResult::dhw, "Depth change over the last step (m).")
+        .def_prop_ro("hydraulic_slope", &HydraulicResult::slope, "Water-surface slope used in the flow law (m/m).")
+        .def_prop_ro("specific_discharge", &HydraulicResult::specific_discharge, "Discharge per unit width (m^2/s).")
+        .def_prop_ro("total_discharge", &HydraulicResult::total_discharge, "Total discharge through each cell (m^3/s).")
+        .def_prop_ro("converged", &HydraulicResult::converged, "True if the convergence tolerances were met.")
+        .def_prop_ro("step_count", &HydraulicResult::step_count, "Number of time steps taken.")
+        .def_prop_ro("current_time", &HydraulicResult::current_time, "Model time at the end of the run (s).")
+        .def_prop_ro("total_water_volume", &HydraulicResult::total_water_volume, "Water stored on the grid (m^3).")
+        .def_prop_ro("projection_volume", &HydraulicResult::projection_volume, "Water volume (m^3) added by priority-flood projection of the surface (not conserved).");
 
     module.def("fill_hydraulic_surface", &fill_hydraulic_surface,
         nb::arg("surface"), nb::arg("node_state"),
@@ -688,6 +765,26 @@ Priority-flood a hydraulic ``z + h`` surface towards selected outlets.
 The node-state raster uses 0 for excluded cells, 1 for active cells, and 3
 for outlets. Unlike terrain pit filling, excluded/nodata cells are walls, not
 drains. Code-3 cells are prescribed sinks wherever they occur.
+
+Parameters
+----------
+surface : Raster
+    Water-surface (or bed) elevation (m) to fill.
+node_state : Raster
+    Same grid: 0 excluded, 1 active, 3 outlet.
+boundary_conditions : str, default='nnnn'
+    Four NESW codes ``o``, ``n`` or ``p`` (periodic edges wrap).
+slope_epsilon : float, default=1e-8
+    Small gradient (m/m) imposed across filled flats so they drain.
+check_valid_outlet : bool, default=True
+    Require an outlet (code 3) in every connected active region.
+priority_flood_backend : {"binary", "radix"}, default="binary"
+    Priority-queue implementation; both give the same result.
+
+Returns
+-------
+HydraulicSurfaceFill
+    Filled surface, added depth (m) and added volume (m^3).
 )doc");
 
     module.def("run_graphflood", &run_graphflood,
@@ -706,20 +803,35 @@ drains. Code-3 cells are prescribed sinks wherever they occur.
         nb::arg("median_dhw_convergence_tolerance_metres") = 1.0e-6,
         nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-4, nb::arg("n_threads") = 0,
         nb::arg("initial_water_depth") = nb::none(),
-        R"doc(
+        persistent_doc(R"doc(
 Run stationary graph-based hydraulic routing on an evolving ``z + h`` surface.
 
-``node_state`` is a raster on the bed grid: 0 means excluded/impermeable, 1
-means active, and 3 is a selected outlet/sink. Open edges do not drain unless
-a cell is marked 3. With ``check_valid_outlet=True``, every connected active
-component must contain a code-3 cell.
-Closed edges use ``n`` and periodic edges use paired ``p`` codes. By default,
-every connected active component must contain an outlet.
+GraphFlood-style solver (Gailleton et al. 2024): rain falls on every active
+cell, discharge is routed downslope over the water surface ``z + h`` (bed
+plus water depth) and the depth ``h`` is updated each step until inflow and
+outflow balance. Water leaves the domain ONLY through cells marked 3 in
+``node_state``, whatever the edge codes in ``boundary_conditions``; to
+drain across all four raster edges, mark them as outlets::
 
-``rainfall_rate`` and ``friction_coefficient`` are required same-grid rasters.
-The friction law is ``q / width = coefficient * h**a * S**b``. Point inflows
-are an N by 3 array of ``(row, col, discharge_m3_s)``.
-)doc");
+    edges = lsdtt3.make_outlet_mask(bed, True, True, True, True).to_numpy()
+    node_state = lsdtt3.Raster.from_numpy(1 + 2 * edges, bed.mask_numpy(),
+                                          bed.metadata)
+
+With ``check_valid_outlet=True`` (the default) every connected group of
+active cells must contain a code-3 cell, otherwise ``ValueError`` is raised.
+
+Parameters
+----------
+)doc" + std::string(kGraphfloodInputParameters) + R"doc(method : {"mfd", "dinf"}, default="mfd"
+    Routing over the water surface: multiple-flow-direction or D-infinity.
+)doc" + std::string(kGraphfloodSolverParameters) + R"doc(n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+)doc" + std::string(kGraphfloodInitialDepth) + R"doc(
+Returns
+-------
+HydraulicResult
+    Water depth (m), water surface, discharges and convergence state.
+)doc"));
 
     module.def("run_graphflood_optimised", &run_graphflood_optimised,
         nb::arg("bed"), nb::arg("node_state"),
@@ -740,12 +852,24 @@ are an N by 3 array of ``(row, col, discharge_m3_s)``.
         nb::arg("median_dhw_relative_convergence_tolerance") = 1.0e-4,
         nb::arg("reuse_topology") = true,
         nb::arg("initial_water_depth") = nb::none(),
-        R"doc(
+        persistent_doc(R"doc(
 Run the separate CPU-optimised stationary MFD GraphFlood implementation.
 
 The reference ``run_graphflood`` path is unchanged. This implementation uses
-direct raster MFD routing and validates a cached topology before reuse.
-)doc");
+direct raster MFD routing and validates a cached topology before reuse. The
+physics and inputs are those of ``run_graphflood`` (MFD routing only): water
+leaves only through ``node_state`` 3 cells.
+
+Parameters
+----------
+)doc" + std::string(kGraphfloodInputParameters) + std::string(kGraphfloodSolverParameters) + R"doc(reuse_topology : bool, default=True
+    Reuse the cached routing order between steps when it is still valid.
+)doc" + std::string(kGraphfloodInitialDepth) + R"doc(
+Returns
+-------
+GraphFloodOptimisedResult
+    Water depth (m), discharges, convergence state and timing counters.
+)doc"));
 
     module.def("run_graphflood_optimised_v2", &run_graphflood_optimised_v2,
         nb::arg("bed"), nb::arg("node_state"),
@@ -769,7 +893,7 @@ direct raster MFD routing and validates a cached topology before reuse.
         nb::arg("full_validation_every") = 128,
         nb::arg("initial_water_depth") = nb::none(),
         nb::arg("prescribed_qin") = nb::none(),
-        R"doc(
+        persistent_doc(R"doc(
 Run GraphFlood with the incremental v2 CPU kernels.
 
 V2 uses a monotone radix heap in Priority-Flood, a bounds-free interior MFD
@@ -779,7 +903,24 @@ cached order. ``full_validation_every=0`` disables periodic full audits.
 ``node_state=2`` is a flux-only ghost cell: it routes its fixed
 ``prescribed_qin`` downslope while its depth and capacity-limited ``qout``
 evolve normally. ``prescribed_qin=None`` means zero at ghost cells.
-)doc");
+
+Parameters
+----------
+)doc" + std::string(kGraphfloodInputParameters) + std::string(kGraphfloodSolverParameters) + R"doc(reuse_topology : bool, default=True
+    Reuse the cached routing order between steps when it is still valid.
+dirty_tile_size : int, default=64
+    Side (pixels) of the tiles whose routing is re-checked after a change.
+full_validation_every : int, default=128
+    Run a full topology audit every this many steps; 0 disables it.
+)doc" + std::string(kGraphfloodInitialDepth) + R"doc(prescribed_qin : Raster or None, default=None
+    Fixed inflow discharge (m^3/s) of ``node_state`` 2 ghost cells; None
+    means zero.
+
+Returns
+-------
+GraphFloodOptimisedResult
+    Water depth (m), discharges, convergence state and timing counters.
+)doc"));
 
     module.def("_run_graphflood_optimised_v2_multigrid_native",
         &run_graphflood_optimised_v2_multigrid_native,
