@@ -819,6 +819,7 @@ lsdtt_frame_from_feature_result frame_from_feature_file(
                                                        cell_size, base_geographic_wkt);
             break;
         case oblique_frame_definition::crs:   // never produced by the reader
+        case oblique_frame_definition::data_footprint:
             throw std::logic_error("frame_from_feature_file: unexpected feature kind");
         }
     }

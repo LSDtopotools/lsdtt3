@@ -130,6 +130,16 @@ struct lsdtt_reproject_result
 double snap_grid_spacing(double pixel_m);
 
 // -----------------------------------------------------------------------------
+// estimate_analysis_pixel_size
+//
+// The size in metres of one pixel at the raster centre once in the analysis
+// CRS that lsdtt_suggest_crs recommends (UTM, or polar stereographic beyond
+// 75 deg), before snap_grid_spacing. Throws std::runtime_error if the CRS
+// cannot be transformed.
+// -----------------------------------------------------------------------------
+double estimate_analysis_pixel_size(const lsdtt_raster_meta& meta);
+
+// -----------------------------------------------------------------------------
 // lsdtt_reproject_if_needed
 //
 // Inspect `meta` and reproject the file at `in_path` if necessary.

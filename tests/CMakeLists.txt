@@ -872,6 +872,86 @@ add_lsdtt_cli_smoke_test(
     --expect-valid-percent tiny_edge_nodata_filled.tif:96
 )
 
+# Oblique frames in lsdtt-raster-preprocessing: rotation by a line, a polygon
+# and the valid-data footprint, the rotate-back mode, and the refusals. The
+# frame geometry and the round trip onto the source pixels are asserted in
+# unit_oblique_frame_preprocess; these pin the plumbing, file names and frame
+# file keys. Fixtures in tests/data/rotation: WGS84 GeoJSON line and polygon
+# over flat_resolution_lakeland_crop_dem.tif (UTM 15N, 128 x 128 at 30 m), and
+# that DEM rotated by the line (lakeland_line_oblique.tif with its frame file),
+# written by this CLI.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_line
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_line.param.in
+    rotline_oblique.tif
+    --expect rotline_oblique_rotation_frame.txt
+    --expect-raster-size rotline_oblique.tif:144x40
+    --expect-raster-size rotline_fill.tif:144x40
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:frame_source: line"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:feature_fname: 'lakeland_line.geojson'"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_crs_epsg: 32615"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_origin_x: 564930.0"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_origin_y: 5600760.0"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:source_dem_fname: 'flat_resolution_lakeland_crop_dem.tif'"
+    --stdout-contains "Size    : 4320 m x 1200 m (144 x 40 cells of 30 m)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_polygon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_polygon.param.in
+    rotpoly_oblique.tif
+    --expect-raster-size rotpoly_oblique.tif:122x52
+    --expect-file-contains "rotpoly_oblique_rotation_frame.txt:frame_source: polygon"
+    --expect-file-contains "rotpoly_oblique_rotation_frame.txt:buffer_all_sides: true"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_footprint
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_footprint.param.in
+    rotfoot_oblique.tif
+    --expect-raster-size rotfoot_oblique.tif:150x150
+    --expect-file-contains "rotfoot_oblique_rotation_frame.txt:frame_source: data_footprint"
+    --stderr-contains "axis is ill-defined"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_back
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_back.param.in
+    lakeland_line_oblique_rotated_back.tif
+    --expect-raster-size lakeland_line_oblique_rotated_back.tif:136x125
+    --stdout-contains "Rotated back (near)"
+)
+
+foreach(_rp_case IN ITEMS
+        "rotate_both_switches|rotate_to_linear_feature and rotate_to_data_footprint cannot be combined"
+        "rotate_force_reproject|cannot be combined with force_reproject"
+        "rotate_missing_fname|needs rotation_feature_fname"
+        "rotate_back_with_fill|cannot be combined with: write_fill_raster"
+        "rotate_back_no_list|needs rotate_back_file_list"
+        "rotate_back_not_in_frame|not the frame CRS")
+    string(REPLACE "|" ";" _rp_parts "${_rp_case}")
+    list(GET _rp_parts 0 _rp_name)
+    list(GET _rp_parts 1 _rp_message)
+    add_lsdtt_cli_smoke_test(
+        failure_raster_preprocessing_${_rp_name}
+        lsdtt-raster-preprocessing
+        raster_preprocessing_${_rp_name}.param.in
+        unused_expected_output
+        --expect-failure
+        --stderr-contains "${_rp_message}"
+    )
+endforeach()
+
+add_test(NAME smoke_raster_preprocessing_help_rotation
+         COMMAND lsdtt-raster-preprocessing -h rotate_to_linear_feature)
+lsdtt_set_tests_properties(smoke_raster_preprocessing_help_rotation PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "minimum-area")
+
 add_lsdtt_cli_smoke_test(
     smoke_drainage_analysis
     lsdtt-drainage-analysis
@@ -4949,6 +5029,17 @@ add_test(NAME unit_oblique_frame_warp
          COMMAND lsdtt-test-oblique-frame-warp
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_warp_work")
 lsdtt_set_tests_properties(unit_oblique_frame_warp PROPERTIES LABELS "unit;raster")
+
+# Rotating an existing DEM into an oblique frame as lsdtt-raster-preprocessing
+# does (line, polygon, valid-data footprint; NAD83 source) and rotating its
+# products back onto the source pixels; fixtures are written by the test.
+add_executable(lsdtt-test-oblique-frame-preprocess cpp/test_oblique_frame_preprocess.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-preprocess PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_preprocess
+         COMMAND lsdtt-test-oblique-frame-preprocess
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_preprocess_work")
+lsdtt_set_tests_properties(unit_oblique_frame_preprocess PROPERTIES LABELS "unit;raster")
 
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.

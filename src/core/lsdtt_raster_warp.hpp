@@ -230,6 +230,58 @@ lsdtt_warp_result warp_raster_to_frame(
 );
 
 // -----------------------------------------------------------------------------
+// Rotating an existing DEM into a frame (lsdtt-raster-preprocessing)
+//
+// frame_cell_size_for_raster: grid_spacing if > 0; else the raster's own cell
+//   size when it is already in a suitable projected CRS (metres, and as
+//   lsdtt_suggest_crs judges it: not geographic, not Web Mercator); else the
+//   analysis pixel size snapped as reprojection does (snap_grid_spacing).
+//
+// rotation_target_for_raster: the lattice to rotate products back onto. A
+//   raster in a suitable projected CRS: its own CRS (the EPSG code if the WKT
+//   carries one as its authority, else WKT), cell size and lower-left
+//   corner, so rotate-back lands on its own pixels. Otherwise (geographic,
+//   Web Mercator, feet): the analysis CRS of the frame centre at the frame
+//   cell size on the lattice anchored at (0, 0), as after a fetch.
+//   source_dem_fname is the raster's file name.
+//
+// frame_from_valid_data: the polygon frame (frame_from_polygon_vertices) of
+//   the raster's valid cells: the outer corners of the first and last valid
+//   cell of every row, in the raster's own geographic CRS. definition is
+//   data_footprint. Never throws; ok is false (with the reason) for a raster
+//   with no CRS or no valid cells.
+//
+// rotate_raster_to_frame: warp_raster_to_frame, then write the frame file
+//   (write_rotation_frame) with the target from rotation_target_for_raster
+//   and provenance.rotated_dem_fname set to out_path's file name.
+// -----------------------------------------------------------------------------
+double frame_cell_size_for_raster(const lsdtt_raster_meta& meta, double grid_spacing);
+
+lsdtt_rotation_target rotation_target_for_raster(const lsdtt_raster_meta& meta,
+                                                 const std::string&       raster_path,
+                                                 const lsdtt_oblique_frame& frame);
+
+lsdtt_frame_from_feature_result frame_from_valid_data(const std::string& raster_path,
+                                                      double end_buffer_metres,
+                                                      double cell_size);
+
+struct lsdtt_rotate_to_frame_result
+{
+    lsdtt_warp_result warp;
+    lsdtt_rotation_target target;
+    std::string frame_file_path;
+};
+
+lsdtt_rotate_to_frame_result rotate_raster_to_frame(
+    const std::string&               in_path,
+    const lsdtt_oblique_frame&       frame,
+    const std::string&               out_path,
+    const std::string&               frame_file_path,
+    lsdtt_rotation_provenance        provenance,
+    const lsdtt_warp_options&        opts = lsdtt_warp_options{}
+);
+
+// -----------------------------------------------------------------------------
 // rotate_back_raster
 //
 // Warp a raster in a frame CRS back onto the rotate-back target lattice of a

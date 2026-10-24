@@ -12,6 +12,8 @@
 #include "lsdtt_raster_warp.hpp"
 #include "lsdtt_pixel_type_gdal.hpp"
 #include "lsdtt_gdal_init.hpp"
+#include "lsdtt_crs_suggest.hpp"
+#include "lsdtt_raster_reproject.hpp"
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 
@@ -26,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <algorithm>
+#include <filesystem>
 #include <gdal.h>
 #include <gdal_priv.h>
 #include <gdal_utils.h>
@@ -718,6 +721,164 @@ lsdtt_warp_result warp_raster_to_frame(
     const warp_request req = grid_warp_request(source_meta, frame_grid, opts, "frame");
     run_gdalwarp(in_path, out_path, req);
     return summarise_result(out_path, source_meta, frame_grid, true);
+}
+
+// -----------------------------------------------------------------------------
+// Rotating an existing DEM into a frame
+// -----------------------------------------------------------------------------
+namespace {
+
+bool suitable_projected(const lsdtt_raster_meta& meta)
+{
+    return !meta.crs_wkt.empty() && meta.is_in_metres() &&
+           lsdtt_suggest_crs(meta, false).already_projected;
+}
+
+// The EPSG code a WKT carries as its own authority, or 0.
+int epsg_authority_of(const std::string& wkt)
+{
+    OGRSpatialReference srs;
+    if (srs.importFromWkt(wkt.c_str()) != OGRERR_NONE) return 0;
+    const char* name = srs.GetAuthorityName(nullptr);
+    const char* code = srs.GetAuthorityCode(nullptr);
+    if (name == nullptr || code == nullptr || std::string(name) != "EPSG") return 0;
+    try { return std::stoi(code); } catch (...) { return 0; }
+}
+
+} // namespace
+
+double frame_cell_size_for_raster(const lsdtt_raster_meta& meta, double grid_spacing)
+{
+    if (grid_spacing > 0.0) return grid_spacing;
+    if (suitable_projected(meta)) return meta.cell_size;
+    return snap_grid_spacing(estimate_analysis_pixel_size(meta));
+}
+
+lsdtt_rotation_target rotation_target_for_raster(const lsdtt_raster_meta&   meta,
+                                                 const std::string&         raster_path,
+                                                 const lsdtt_oblique_frame& frame)
+{
+    lsdtt_rotation_target t;
+    t.source_dem_fname = std::filesystem::path(raster_path).filename().string();
+    if (suitable_projected(meta))
+    {
+        t.epsg = meta.epsg_code != 0 ? meta.epsg_code : epsg_authority_of(meta.crs_wkt);
+        if (t.epsg == 0) t.crs_wkt = meta.crs_wkt;
+        t.cell_size = meta.cell_size;
+        t.origin_x = meta.x_min;
+        t.origin_y = meta.y_min;
+    }
+    else
+    {
+        t.epsg = analysis_epsg_for_frame_centre(frame);
+        t.cell_size = frame.cell_size;
+    }
+    return t;
+}
+
+lsdtt_frame_from_feature_result frame_from_valid_data(const std::string& raster_path,
+                                                      double end_buffer_metres,
+                                                      double cell_size)
+{
+    lsdtt_frame_from_feature_result r;
+    const std::string where = "data footprint of " + raster_path + ": ";
+    try
+    {
+        lsdtt_data_loader loader;
+        loader.open_raster(raster_path);
+        const lsdtt_raster_tile tile = loader.read_full();
+        const lsdtt_raster_meta& meta = loader.get_meta();
+        if (meta.crs_wkt.empty())
+        {
+            r.message = where + "the raster has no CRS";
+            return r;
+        }
+        const std::string base_wkt = base_geographic_wkt_of(meta.crs_wkt);
+
+        // The outer corners of the first and last valid cell of each row
+        // hold the convex hull of all valid cells.
+        std::vector<double> xs;
+        std::vector<double> ys;
+        const double dx = meta.cell_size;
+        const double dy = meta.pixel_height();
+        const int nc = meta.n_cols;
+        for (int row = 0; row < meta.n_rows; ++row)
+        {
+            const std::size_t base = static_cast<std::size_t>(row) * nc;
+            int first = -1;
+            int last = -1;
+            for (int col = 0; col < nc; ++col)
+            {
+                if (tile.mask[base + col])
+                {
+                    if (first < 0) first = col;
+                    last = col;
+                }
+            }
+            if (first < 0) continue;
+            const double y_top = meta.y_max() - row * dy;
+            const double y_bottom = y_top - dy;
+            const double x_left = meta.x_min + first * dx;
+            const double x_right = meta.x_min + (last + 1) * dx;
+            for (double y : {y_top, y_bottom})
+            {
+                xs.push_back(x_left);
+                ys.push_back(y);
+                xs.push_back(x_right);
+                ys.push_back(y);
+            }
+        }
+        if (xs.empty())
+        {
+            r.message = where + "the raster has no valid cells";
+            return r;
+        }
+
+        OGRSpatialReference src;
+        OGRSpatialReference geo;
+        if (src.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE ||
+            geo.importFromWkt(base_wkt.c_str()) != OGRERR_NONE)
+            throw std::runtime_error("cannot parse the raster CRS");
+        src.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        geo.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        std::unique_ptr<OGRCoordinateTransformation> ct(
+            OGRCreateCoordinateTransformation(&src, &geo));
+        if (!ct) throw std::runtime_error("cannot create the CRS transform");
+        if (!ct->Transform(xs.size(), xs.data(), ys.data()))
+            throw std::runtime_error("footprint transform failed");
+
+        std::vector<lsdtt_lonlat> vertices(xs.size());
+        for (std::size_t i = 0; i < xs.size(); ++i) vertices[i] = {xs[i], ys[i]};
+        r.frame = frame_from_polygon_vertices(vertices, end_buffer_metres, cell_size, base_wkt);
+        r.frame.definition = oblique_frame_definition::data_footprint;
+    }
+    catch (const std::exception& e)
+    {
+        r.message = where + e.what();
+        return r;
+    }
+    r.warnings = r.frame.warnings;
+    r.message = "frame from the valid cells of " + raster_path;
+    r.ok = true;
+    return r;
+}
+
+lsdtt_rotate_to_frame_result rotate_raster_to_frame(
+    const std::string&         in_path,
+    const lsdtt_oblique_frame& frame,
+    const std::string&         out_path,
+    const std::string&         frame_file_path,
+    lsdtt_rotation_provenance  provenance,
+    const lsdtt_warp_options&  opts)
+{
+    const lsdtt_raster_meta source_meta = load_meta(in_path);
+    lsdtt_rotate_to_frame_result r;
+    r.target = rotation_target_for_raster(source_meta, in_path, frame);
+    r.warp = warp_raster_to_frame(in_path, frame, out_path, opts);
+    provenance.rotated_dem_fname = std::filesystem::path(out_path).filename().string();
+    write_rotation_frame(frame_file_path, frame, r.target, provenance);
+    r.frame_file_path = frame_file_path;
+    return r;
 }
 
 // -----------------------------------------------------------------------------

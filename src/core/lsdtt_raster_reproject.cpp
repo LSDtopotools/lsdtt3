@@ -333,6 +333,15 @@ double snap_grid_spacing(double pixel_m)
 }
 
 // -----------------------------------------------------------------------------
+// estimate_analysis_pixel_size
+// -----------------------------------------------------------------------------
+double estimate_analysis_pixel_size(const lsdtt_raster_meta& meta)
+{
+    const lsdtt_crs_suggestion sug = lsdtt_suggest_crs(meta, false, true);
+    return estimate_projected_pixel_size(meta, sug, sug.recommended_wkt);
+}
+
+// -----------------------------------------------------------------------------
 // lsdtt_reproject_if_needed
 // -----------------------------------------------------------------------------
 lsdtt_reproject_result lsdtt_reproject_if_needed(

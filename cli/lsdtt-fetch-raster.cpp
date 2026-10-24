@@ -1010,7 +1010,8 @@ int main(int argc, char* argv[])
         options.frame = feature_frame;
         options.frame_file_path = pp.make_output_path("_oblique_DEM_rotation_frame.txt");
         options.frame_provenance.created_by = k_tool_name;
-        options.frame_provenance.feature_fname = feature_file;
+        options.frame_provenance.feature_fname =
+            std::filesystem::path(feature_file).filename().string();
         options.frame_provenance.feature_layer = feature_layer;
     }
 

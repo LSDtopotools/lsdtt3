@@ -78,7 +78,7 @@ struct lsdtt_rotation_provenance
     std::string created_utc;      // empty on write: now, ISO 8601 with Z
     std::string created_by;       // the tool, e.g. "lsdtt-fetch-raster"
     std::string rotated_dem_fname;
-    std::string feature_fname;    // empty when the frame came from no file
+    std::string feature_fname;    // file name only; empty when the frame came from no file
     std::string feature_layer;
 };
 

@@ -391,6 +391,29 @@ void declare_linear_feature_fetch_parameters(
     lsdtt_help_registry&                help_map);
 
 // -----------------------------------------------------------------------------
+// Oblique frames in lsdtt-raster-preprocessing
+//
+// declare_linear_feature_rotation_parameters: rotate_to_linear_feature,
+//   rotation_feature_fname, rotation_feature_path, rotation_feature_layer,
+//   linear_feature_rotation_width, linear_feature_rotation_end_buffer,
+//   rotate_to_data_footprint. Rotate an existing DEM into the oblique frame
+//   of a feature file or of its own valid cells (lsdtt_oblique_frame.hpp).
+// declare_rotate_back_parameters: run_rotate_back, rotation_frame_fname,
+//   rotate_back_file_list, rotate_back_resampling_method, rotate_back_epsg.
+//   Warp rasters in a frame back onto the frame file's target lattice.
+// -----------------------------------------------------------------------------
+void declare_linear_feature_rotation_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+void declare_rotate_back_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+
+// -----------------------------------------------------------------------------
 // Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)
 //
 // declare_lithology_map_parameters: lithology_fname, lithology_source,

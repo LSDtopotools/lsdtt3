@@ -66,7 +66,8 @@ enum class oblique_frame_definition
     two_points,
     line,
     polygon,
-    crs          // rebuilt from a raster's own CRS (frame_from_crs_wkt)
+    crs,           // rebuilt from a raster's own CRS (frame_from_crs_wkt)
+    data_footprint // a raster's valid cells, as a polygon (frame_from_valid_data)
 };
 
 // Default end buffer, in cells, used when end_buffer_metres < 0.

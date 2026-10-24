@@ -83,6 +83,7 @@ std::string definition_token(oblique_frame_definition d)
     case oblique_frame_definition::line:       return "line";
     case oblique_frame_definition::polygon:    return "polygon";
     case oblique_frame_definition::crs:        return "crs";
+    case oblique_frame_definition::data_footprint: return "data_footprint";
     }
     return "line";
 }
@@ -451,10 +452,11 @@ lsdtt_rotation_frame_file read_rotation_frame(const std::string& path)
     else if (source == "line") f.definition = oblique_frame_definition::line;
     else if (source == "polygon") f.definition = oblique_frame_definition::polygon;
     else if (source == "crs") f.definition = oblique_frame_definition::crs;
+    else if (source == "data_footprint") f.definition = oblique_frame_definition::data_footprint;
     else
     {
         r.message = where + "frame_source '" + source +
-                    "' is not one of two_points, line, polygon, crs";
+                    "' is not one of two_points, line, polygon, crs, data_footprint";
         return r;
     }
     if (t.epsg == 0 && t.crs_wkt.empty())
