@@ -19,7 +19,13 @@
 #include <utility>
 
 #include <cpl_conv.h>
+#include <cpl_error.h>
+#include <gdal_priv.h>
+#include <ogr_geometry.h>
 #include <ogr_spatialref.h>
+#include <ogrsf_frmts.h>
+
+#include "lsdtt_gdal_init.hpp"
 
 namespace lsdtt {
 
@@ -480,6 +486,274 @@ lsdtt_oblique_frame frame_from_polygon_vertices(const std::vector<lsdtt_lonlat>&
         f.warnings.push_back(msg.str());
     }
     return f;
+}
+
+// -----------------------------------------------------------------------------
+// Feature files
+// -----------------------------------------------------------------------------
+namespace {
+
+struct dataset_closer
+{
+    void operator()(GDALDataset* ds) const { GDALClose(ds); }
+};
+
+struct geometry_destroyer
+{
+    void operator()(OGRGeometry* g) const { OGRGeometryFactory::destroyGeometry(g); }
+};
+
+std::vector<lsdtt_lonlat> curve_points(const OGRSimpleCurve& curve)
+{
+    std::vector<lsdtt_lonlat> out;
+    out.reserve(static_cast<std::size_t>(curve.getNumPoints()));
+    for (int i = 0; i < curve.getNumPoints(); ++i)
+        out.push_back({curve.getX(i), curve.getY(i)});
+    return out;
+}
+
+std::string crs_label(const OGRSpatialReference& srs)
+{
+    const char* code = srs.GetAuthorityCode(nullptr);
+    const char* name = srs.GetName();
+    if (code != nullptr) return std::string("EPSG:") + code;
+    return name != nullptr ? std::string(name) : std::string("(unnamed CRS)");
+}
+
+} // namespace
+
+lsdtt_frame_feature read_frame_feature(const std::string& path, const std::string& layer_name,
+                                       const std::string& base_geographic_wkt)
+{
+    lsdtt_frame_feature r;
+    try
+    {
+        if (path.empty())
+        {
+            r.message = "no feature file given";
+            return r;
+        }
+        gdal_init();
+        std::unique_ptr<GDALDataset, dataset_closer> ds;
+        CPLPushErrorHandler(CPLQuietErrorHandler);
+        ds.reset(GDALDataset::Open(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY));
+        CPLPopErrorHandler();
+        if (!ds)
+        {
+            r.message = "could not open '" + path + "' as a vector file (expected a "
+                        "GeoPackage, FlatGeobuf, shapefile, GeoJSON or another "
+                        "OGR-readable format)";
+            return r;
+        }
+        if (ds->GetLayerCount() <= 0)
+        {
+            r.message = "'" + path + "' contains no layers";
+            return r;
+        }
+        OGRLayer* layer = nullptr;
+        if (!layer_name.empty())
+        {
+            layer = ds->GetLayerByName(layer_name.c_str());
+            if (layer == nullptr)
+            {
+                r.message = "layer '" + layer_name + "' not found in '" + path + "'";
+                return r;
+            }
+        }
+        else
+        {
+            layer = ds->GetLayer(0);
+            if (ds->GetLayerCount() > 1)
+                r.warnings.push_back("'" + path + "' has " +
+                                     std::to_string(ds->GetLayerCount()) +
+                                     " layers; using the first ('" +
+                                     std::string(layer->GetName()) +
+                                     "'). Name the layer to choose another.");
+        }
+        r.layer_name = layer->GetName();
+
+        // GeoPackage stores "no CRS" as srs_id 0 / -1, which GDAL reports as
+        // a placeholder named "Undefined geographic SRS" / "Undefined
+        // Cartesian SRS"; neither places the geometry, so both count as none.
+        const OGRSpatialReference* layer_srs = layer->GetSpatialRef();
+        if (layer_srs != nullptr && layer_srs->GetName() != nullptr &&
+            std::string(layer_srs->GetName()).rfind("Undefined", 0) == 0)
+            layer_srs = nullptr;
+        if (layer_srs == nullptr)
+        {
+            r.message = "layer '" + r.layer_name + "' in '" + path + "' declares no CRS. "
+                        "A CRS is required to place the frame; assign one in a GIS "
+                        "(or save the file with a .prj) and try again";
+            return r;
+        }
+        r.source_crs = crs_label(*layer_srs);
+        OGRSpatialReference source(*layer_srs);
+        source.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        const OGRSpatialReference target = geographic_srs(base_geographic_wkt);
+        const ct_ptr ct = make_ct(source, target);
+
+        std::vector<std::vector<lsdtt_lonlat>> lines;
+        std::vector<lsdtt_lonlat> points;
+        std::vector<lsdtt_lonlat> ring_vertices;
+        int n_other = 0;
+        bool closed_line = false;
+
+        layer->ResetReading();
+        for (auto& feature : *layer)
+        {
+            const OGRGeometry* geometry = feature->GetGeometryRef();
+            if (geometry == nullptr || geometry->IsEmpty()) continue;
+            std::unique_ptr<OGRGeometry, geometry_destroyer> g(geometry->getLinearGeometry());
+            if (!g) continue;
+            if (g->transform(ct.get()) != OGRERR_NONE)
+            {
+                r.message = "could not reproject the geometry in '" + path + "' from " +
+                            r.source_crs + " to the frame's geographic CRS";
+                return r;
+            }
+            ++r.n_features;
+            const auto add_line = [&](const OGRLineString& line) {
+                std::vector<lsdtt_lonlat> part = curve_points(line);
+                if (part.size() < 2) return;
+                if (part.size() > 2 && part.front().longitude == part.back().longitude &&
+                    part.front().latitude == part.back().latitude)
+                    closed_line = true;
+                lines.push_back(std::move(part));
+            };
+            const auto add_polygon = [&](const OGRPolygon& polygon) {
+                const OGRLinearRing* ring = polygon.getExteriorRing();
+                if (ring == nullptr) return;
+                for (const auto& p : curve_points(*ring)) ring_vertices.push_back(p);
+            };
+            switch (wkbFlatten(g->getGeometryType()))
+            {
+            case wkbPoint:
+            {
+                const auto* pt = g->toPoint();
+                points.push_back({pt->getX(), pt->getY()});
+                break;
+            }
+            case wkbMultiPoint:
+                for (const OGRPoint* pt : *g->toMultiPoint())
+                    points.push_back({pt->getX(), pt->getY()});
+                break;
+            case wkbLineString:
+                add_line(*g->toLineString());
+                break;
+            case wkbMultiLineString:
+                for (const OGRLineString* line : *g->toMultiLineString()) add_line(*line);
+                break;
+            case wkbPolygon:
+                add_polygon(*g->toPolygon());
+                break;
+            case wkbMultiPolygon:
+                for (const OGRPolygon* polygon : *g->toMultiPolygon()) add_polygon(*polygon);
+                break;
+            default:
+                ++n_other;
+                break;
+            }
+        }
+
+        const int n_kinds = (lines.empty() ? 0 : 1) + (points.empty() ? 0 : 1) +
+                            (ring_vertices.empty() ? 0 : 1) + (n_other == 0 ? 0 : 1);
+        const std::string where = "layer '" + r.layer_name + "' in '" + path + "'";
+        if (n_kinds == 0)
+        {
+            r.message = where + " contains no usable geometry";
+            return r;
+        }
+        if (n_kinds > 1 || n_other > 0)
+        {
+            r.message = where + " mixes geometry types (or holds collections); a frame "
+                        "needs only lines, only polygons, or exactly two points";
+            return r;
+        }
+        if (!lines.empty())
+        {
+            if (closed_line)
+            {
+                r.message = where + " holds a closed line (first vertex = last vertex). "
+                            "A closed line has no end points; to use an outline, save it "
+                            "as a polygon";
+                return r;
+            }
+            r.kind = oblique_frame_definition::line;
+            r.line_parts = std::move(lines);
+        }
+        else if (!points.empty())
+        {
+            if (points.size() != 2)
+            {
+                r.message = where + " holds " + std::to_string(points.size()) +
+                            " point(s); a frame needs exactly two points (or a line, or "
+                            "a polygon)";
+                return r;
+            }
+            r.kind = oblique_frame_definition::two_points;
+            r.points = std::move(points);
+        }
+        else
+        {
+            r.kind = oblique_frame_definition::polygon;
+            r.points = std::move(ring_vertices);
+        }
+        r.ok = true;
+        r.message = std::to_string(r.n_features) + " feature(s) from " + where + " (" +
+                    r.source_crs + ")";
+    }
+    catch (const std::exception& e)
+    {
+        r.ok = false;
+        r.message = std::string("could not read the feature file: ") + e.what();
+    }
+    return r;
+}
+
+lsdtt_frame_from_feature_result frame_from_feature_file(
+    const std::string& path, const std::string& layer_name, double width_metres,
+    double end_buffer_metres, double cell_size, const std::string& base_geographic_wkt)
+{
+    lsdtt_frame_from_feature_result result;
+    const lsdtt_frame_feature feature = read_frame_feature(path, layer_name, base_geographic_wkt);
+    result.warnings = feature.warnings;
+    if (!feature.ok)
+    {
+        result.message = feature.message;
+        return result;
+    }
+    try
+    {
+        switch (feature.kind)
+        {
+        case oblique_frame_definition::line:
+            result.frame = frame_from_line_parts(feature.line_parts, width_metres,
+                                                 end_buffer_metres, cell_size,
+                                                 base_geographic_wkt);
+            break;
+        case oblique_frame_definition::two_points:
+            result.frame = frame_from_points(feature.points[0], feature.points[1], width_metres,
+                                             end_buffer_metres, cell_size, base_geographic_wkt);
+            break;
+        case oblique_frame_definition::polygon:
+            if (width_metres > 0.0)
+                result.warnings.push_back(
+                    "a width was given but the feature is a polygon; the width is the "
+                    "polygon's own short side, so the given width is ignored");
+            result.frame = frame_from_polygon_vertices(feature.points, end_buffer_metres,
+                                                       cell_size, base_geographic_wkt);
+            break;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        result.message = std::string(e.what()) + " (from " + feature.message + ")";
+        return result;
+    }
+    for (const auto& w : result.frame.warnings) result.warnings.push_back(w);
+    result.ok = true;
+    result.message = feature.message;
+    return result;
 }
 
 // -----------------------------------------------------------------------------

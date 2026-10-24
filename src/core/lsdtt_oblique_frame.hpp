@@ -152,6 +152,65 @@ lsdtt_oblique_frame frame_from_polygon_vertices(
     double cell_size,
     const std::string& base_geographic_wkt = "");
 
+// -----------------------------------------------------------------------------
+// Feature files
+//
+// One vector file (any OGR format; one layer) defines a frame:
+//   * lines (LineString / MultiLineString / curves, several features allowed):
+//     only part end points are used (frame_from_line_parts);
+//   * exactly two points (Point features or one MultiPoint);
+//   * polygons (Polygon / MultiPolygon / curved, all features together): the
+//     exterior-ring vertices (frame_from_polygon_vertices).
+// Curved geometries are linearised first; Z and M are ignored. Geometry is
+// reprojected from the layer CRS to the frame's base geographic CRS.
+//
+// Refused, with a message and before any download or warp: the file or layer
+// does not open; the layer has no CRS; no geometry; a mix of kinds; one point,
+// or three or more; a closed line (use a polygon); and everything the builders
+// refuse (width <= 0 for a line or points, end points under 3 cells apart,
+// collinear polygon).
+// -----------------------------------------------------------------------------
+struct lsdtt_frame_feature
+{
+    bool ok = false;
+    std::string message;               // why it failed, or a summary
+    std::vector<std::string> warnings;
+
+    oblique_frame_definition kind = oblique_frame_definition::line;
+    std::vector<std::vector<lsdtt_lonlat>> line_parts;   // kind == line
+    std::vector<lsdtt_lonlat> points;   // two_points: 2; polygon: ring vertices
+
+    std::string layer_name;
+    std::string source_crs;             // for reporting
+    int n_features = 0;
+};
+
+// Read and check a feature file. layer_name empty: the first layer (warned if
+// there are several). base_geographic_wkt empty: WGS84. Never throws.
+lsdtt_frame_feature read_frame_feature(
+    const std::string& path,
+    const std::string& layer_name = "",
+    const std::string& base_geographic_wkt = "");
+
+struct lsdtt_frame_from_feature_result
+{
+    bool ok = false;
+    std::string message;                // why it failed, or a summary
+    std::vector<std::string> warnings;  // reader and builder warnings
+    lsdtt_oblique_frame frame;
+};
+
+// read_frame_feature, then the matching builder. width_metres is required for
+// a line or two points and ignored (with a warning if > 0) for polygons.
+// Never throws.
+lsdtt_frame_from_feature_result frame_from_feature_file(
+    const std::string& path,
+    const std::string& layer_name,
+    double width_metres,
+    double end_buffer_metres,
+    double cell_size,
+    const std::string& base_geographic_wkt = "");
+
 // Repeated transforms between a frame and its base geographic CRS.
 class lsdtt_oblique_frame_projector
 {

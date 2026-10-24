@@ -3679,16 +3679,20 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Model run complete"
 )
 
-# D8 on a diverging hillslope manufactures channel heads, so the drainage
-# density would be an artefact of the router.
+# D8 on a diverging hillslope can manufacture channel heads, so the drainage
+# density may be an artefact of the router. Since 2026-10-16 (3d9f37f) an
+# explicit enable_d8_fluvial_erosion: true with coupled is honoured with a
+# warning rather than refused; this pins that the run completes AND the
+# warning is printed.
 add_lsdtt_cli_smoke_test(
-    failure_lem_coupling_d8_conflict
+    smoke_lem_coupling_d8_warning
     lsdtt-lem
     lem_coupling_d8_conflict.param.in
-    unused_expected_output
-    --expect-failure
-    --stderr-contains "enable_d8_fluvial_erosion"
-    --stderr-contains "manufactures channel"
+    tiny_coup_d8_modelled_topography.tif
+    --stdout-contains "Model run complete"
+    --stderr-contains "enable_d8_fluvial_erosion: true"
+    --stderr-contains "D8 can manufacture channel heads"
+    --stderr-contains "Continuing because D8/coupled was explicitly"
 )
 
 # The analytical steady-state path snaps channels then solves hillslopes against
@@ -4915,6 +4919,16 @@ target_link_libraries(lsdtt-test-oblique-frame PRIVATE lsdtt3_cpu)
 add_test(NAME unit_oblique_frame
          COMMAND lsdtt-test-oblique-frame)
 lsdtt_set_tests_properties(unit_oblique_frame PROPERTIES LABELS "unit;raster")
+
+# Feature files that define an oblique frame (line, two points, polygon) and
+# every refusal; fixtures are GeoPackages written by the test itself.
+add_executable(lsdtt-test-oblique-frame-feature cpp/test_oblique_frame_feature.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-feature PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_feature
+         COMMAND lsdtt-test-oblique-frame-feature
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_feature_work")
+lsdtt_set_tests_properties(unit_oblique_frame_feature PROPERTIES LABELS "unit;raster")
 
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.
