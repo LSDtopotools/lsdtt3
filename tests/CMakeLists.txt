@@ -4940,6 +4940,16 @@ add_test(NAME unit_oblique_frame_file
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_file_work")
 lsdtt_set_tests_properties(unit_oblique_frame_file PROPERTIES LABELS "unit;raster")
 
+# Warping a DEM into an oblique frame and rotating products back onto the
+# source or -tap lattice; fixtures are GeoTIFFs written by the test itself.
+add_executable(lsdtt-test-oblique-frame-warp cpp/test_oblique_frame_warp.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-warp PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_warp
+         COMMAND lsdtt-test-oblique-frame-warp
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_warp_work")
+lsdtt_set_tests_properties(unit_oblique_frame_warp PROPERTIES LABELS "unit;raster")
+
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.
 add_executable(lsdtt-test-crs-semantic-matching cpp/test_crs_semantic_matching.cpp)
@@ -6322,6 +6332,36 @@ add_lsdtt_cli_smoke_test(
 )
 
 # -h must work without a parameter file, and without touching the network.
+# Fetching along a linear feature into an oblique frame
+# (fetch_from_linear_feature): every other way of giving an area is refused,
+# and so are a missing feature file and a line without a width, all before
+# any network access. green_river_line.geojson is a three-vertex WGS84 line.
+foreach(_ff_case IN ITEMS
+        "with_bbox|cannot be combined with west/south/east/north"
+        "with_bounds_file|cannot be combined with bounds_fname"
+        "with_outlets|cannot be combined with bounds_mode vector or outlets"
+        "with_size_pixels|cannot be combined with size_pixels"
+        "missing_fname|needs fetch_feature_fname"
+        "no_width|a line or two points needs a width > 0")
+    string(REPLACE "|" ";" _ff_parts "${_ff_case}")
+    list(GET _ff_parts 0 _ff_name)
+    list(GET _ff_parts 1 _ff_message)
+    add_lsdtt_cli_smoke_test(
+        failure_fetch_raster_feature_${_ff_name}
+        lsdtt-fetch-raster
+        fetch_raster_feature_${_ff_name}.param.in
+        unused_expected_output
+        --expect-failure
+        --stderr-contains "${_ff_message}"
+    )
+endforeach()
+
+add_test(NAME smoke_fetch_raster_help_linear_feature
+         COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_linear_feature PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "minimum-area")
+
 add_test(NAME smoke_fetch_raster_help
          COMMAND lsdtt-fetch-raster -h)
 lsdtt_set_tests_properties(smoke_fetch_raster_help PROPERTIES
@@ -7082,6 +7122,26 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
         --expect-raster-size ortler_test_DEM.tif:128x128
     )
     lsdtt_set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
+
+    # A Green River reach fetched straight into its oblique frame: 17 880 m x
+    # 2 040 m at 30 m (596 x 68), all valid, with the frame file recording the
+    # line and the UTM 12N rotate-back target on the (0, 0) lattice.
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_linear_feature_cli
+        lsdtt-fetch-raster
+        fetch_raster_feature_network.param.in
+        ffgreen_oblique_DEM.tif
+        --expect ffgreen_oblique_DEM_rotation_frame.txt
+        --expect-raster-size ffgreen_oblique_DEM.tif:596x68
+        --expect-valid-percent-100 ffgreen_oblique_DEM.tif
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:frame_source: line"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:frame_x_min: -8940.0"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:target_crs_epsg: 32612"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:rotated_dem_fname: 'ffgreen_oblique_DEM.tif'"
+        --stdout-contains "oblique frame (rotate back to EPSG:32612)"
+    )
+    lsdtt_set_tests_properties(network_fetch_raster_linear_feature_cli
+        PROPERTIES LABELS "network;cli;fetch")
 
     add_lsdtt_cli_smoke_test(
         network_fetch_raster_outlets_cli

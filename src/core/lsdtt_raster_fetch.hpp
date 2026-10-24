@@ -47,6 +47,9 @@
 #include <string>
 #include <vector>
 
+#include "lsdtt_oblique_frame.hpp"
+#include "lsdtt_rotation_frame_file.hpp"
+
 namespace lsdtt {
 
 // -----------------------------------------------------------------------------
@@ -176,6 +179,21 @@ struct lsdtt_fetch_options
     int http_timeout_seconds = 60;
     int http_connect_timeout_seconds = 15;
     int http_max_retry = 3;
+
+    // Frame mode (lsdtt_oblique_frame.hpp). When use_frame is true the output
+    // is warped straight from the source tiles into the frame (one resampling
+    // pass; -te/-ts in frame metres, no -tap): the bounding box above is
+    // replaced by the frame's WGS84 envelope (fetch_bbox_for_frame), size_px
+    // must be 0, and target_epsg becomes the frame file's rotate-back target
+    // instead of the output CRS (0: the analysis CRS of the frame centre).
+    // frame.cell_size must equal grid_spacing.
+    bool use_frame = false;
+    lsdtt_oblique_frame frame;
+
+    // Frame mode only: where to write the rotation frame file (empty: none),
+    // and its provenance (rotated_dem_fname is filled from out_path).
+    std::string frame_file_path;
+    lsdtt_rotation_provenance frame_provenance;
 };
 
 
@@ -196,7 +214,9 @@ struct lsdtt_fetch_result
     std::string path;      // written raster (empty if not written)
     std::string message;   // human-readable outcome; safe to log
 
-    int    epsg         = 0;
+    int    epsg         = 0;       // output CRS; 0 in frame mode
+    bool   in_frame     = false;   // output is in options.frame
+    int    rotate_back_epsg = 0;   // frame mode: the frame file's target
     int    n_cols       = 0;
     int    n_rows       = 0;
     double grid_spacing = 0.0;
@@ -218,6 +238,12 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
 // -----------------------------------------------------------------------------
 // Helpers, exposed for testing and for callers that need them directly.
 // -----------------------------------------------------------------------------
+
+// The WGS84 envelope of a frame's rectangle (edges densified, 50 points per
+// side) padded by pad_metres on every side, for the tile request. Throws
+// std::runtime_error if the transform fails.
+void fetch_bbox_for_frame(const lsdtt_oblique_frame& frame, double pad_metres,
+                          double& west, double& south, double& east, double& north);
 
 // EPSG code of the UTM zone containing a point. Northern hemisphere -> 326xx,
 // southern -> 327xx.

@@ -1,0 +1,9 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffsize
+
+# A feature sets the extent, so size_pixels is refused.
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson
+linear_feature_fetch_width: 2000
+size_pixels: 128

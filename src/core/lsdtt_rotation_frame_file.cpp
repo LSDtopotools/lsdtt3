@@ -21,6 +21,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "lsdtt_crs_suggest.hpp"
+#include "lsdtt_data_loader.hpp"
 #include "lsdtt_param_parser.hpp"
 #include "lsdtt_raster_warp.hpp"
 
@@ -536,6 +538,69 @@ lsdtt_rotation_frame_file read_rotation_frame(const std::string& path)
         << f.cell_size << " m; rotate back to "
         << (t.epsg != 0 ? "EPSG:" + std::to_string(t.epsg) : std::string("the WKT target"))
         << " at " << t.cell_size << " m";
+    r.message = msg.str();
+    r.ok = true;
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// analysis_epsg_for_frame_centre
+// -----------------------------------------------------------------------------
+int analysis_epsg_for_frame_centre(const lsdtt_oblique_frame& frame)
+{
+    // A one-cell geographic raster at the centre, so lsdtt_suggest_crs applies
+    // its usual rule.
+    lsdtt_raster_meta centre;
+    centre.crs_wkt = frame.base_geographic_wkt.empty() ? base_geographic_wkt_of("")
+                                                       : frame.base_geographic_wkt;
+    centre.cell_size = 1e-6;
+    centre.n_cols = 1;
+    centre.n_rows = 1;
+    centre.x_min = frame.centre.longitude - 0.5e-6;
+    centre.y_min = frame.centre.latitude - 0.5e-6;
+    const lsdtt_crs_suggestion sug = lsdtt_suggest_crs(centre, false, true);
+    if (sug.recommended_epsg <= 0)
+        throw std::runtime_error("no analysis CRS for the frame centre");
+    return sug.recommended_epsg;
+}
+
+// -----------------------------------------------------------------------------
+// rotation_frame_from_raster
+// -----------------------------------------------------------------------------
+lsdtt_rotation_frame_file rotation_frame_from_raster(const std::string& raster_path)
+{
+    lsdtt_rotation_frame_file r;
+    const std::string where = "frame from raster " + raster_path + ": ";
+    try
+    {
+        lsdtt_data_loader loader;
+        loader.open_raster(raster_path);
+        const lsdtt_raster_meta meta = loader.get_meta();
+        r.frame = frame_from_crs_wkt(meta.crs_wkt, meta.cell_size, meta.x_min, meta.x_max(),
+                                     meta.y_min, meta.y_max());
+        r.warnings = r.frame.warnings;
+
+        r.target.epsg = analysis_epsg_for_frame_centre(r.frame);
+        r.target.cell_size = meta.cell_size;
+        r.target.origin_x = 0.0;
+        r.target.origin_y = 0.0;
+        r.provenance.rotated_dem_fname = raster_path;
+        r.version = rotation_frame_file_version;
+        r.warnings.push_back(
+            where + "no frame file; rotating back to EPSG:" + std::to_string(r.target.epsg) +
+            " on the lattice anchored at (0, 0). If the source DEM's origin was not on that "
+            "lattice, its exact pixels cannot be recovered without the frame file");
+    }
+    catch (const std::exception& e)
+    {
+        r.message = where + e.what();
+        return r;
+    }
+    std::ostringstream msg;
+    msg << std::setprecision(10) << "rotation frame rebuilt from " << raster_path
+        << ": centre (" << r.frame.centre.longitude << ", " << r.frame.centre.latitude
+        << "), azimuth " << r.frame.azimuth_degrees << " deg; rotate back to EPSG:"
+        << r.target.epsg;
     r.message = msg.str();
     r.ok = true;
     return r;

@@ -712,6 +712,78 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
         "Bounding box", "param", ""};
 }
 
+void declare_linear_feature_fetch_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    const std::string group = "Linear feature frame";
+    const std::string parent = "fetch_from_linear_feature";
+
+    bool_default_map["fetch_from_linear_feature"] = false;
+    help_map["fetch_from_linear_feature"] = {"bool","false",
+        "Fetch along a feature (a line, two points or a polygon) in fetch_feature_fname.",
+        "The area is a rectangle aligned with the feature: for a line or two "
+        "points, the geodesic between the end points (only the end points of a "
+        "curved or multipart line are used) lengthened by the end buffer and "
+        "linear_feature_fetch_width wide; for polygons, their minimum-area "
+        "enclosing rectangle, whose longest side is the axis. With "
+        "rotate_after_fetch the DEM is written in an oblique Mercator frame "
+        "with the feature along +x. Cannot be combined with west/south/east/"
+        "north, bounds_fname, bounds_mode vector or outlets, or size_pixels.",
+        group, "switch", ""};
+
+    string_default_map["fetch_feature_fname"] = "";
+    help_map["fetch_feature_fname"] = {"string","",
+        "Vector file holding the line, two points or polygon(s).",
+        "Any OGR-readable format (GeoPackage, FlatGeobuf, shapefile, ...) with a "
+        "CRS; it is reprojected to WGS84. Refused before any download: no CRS, "
+        "a mix of geometry kinds, one point or more than two, a closed line "
+        "(use a polygon), or end points less than three cells apart.",
+        group, "io", parent};
+
+    string_default_map["fetch_feature_path"] = "";
+    help_map["fetch_feature_path"] = {"string","",
+        "Optional directory for fetch_feature_fname.",
+        "If empty, read_path is used. Ignored when fetch_feature_fname is an "
+        "absolute path.",
+        group, "io", parent};
+
+    string_default_map["fetch_feature_layer"] = "";
+    help_map["fetch_feature_layer"] = {"string","",
+        "Layer name within fetch_feature_fname.",
+        "If empty, the first layer is used (with a warning when the file has "
+        "more than one).",
+        group, "io", parent};
+
+    float_default_map["linear_feature_fetch_width"] = 0.0f;
+    help_map["linear_feature_fetch_width"] = {"float","0.0",
+        "Full width (m) of the area across a line or two points, centred on it.",
+        "Required (> 0) for a line or two points. Ignored, with a warning, for "
+        "polygons, whose own short side is the width.",
+        group, "param", parent};
+
+    float_default_map["linear_feature_fetch_end_buffer"] = -1.0f;
+    help_map["linear_feature_fetch_end_buffer"] = {"float","-1.0",
+        "Buffer (m) added beyond each end of the axis.",
+        "-1 means 10 grid cells. For polygons it is added on all four sides.",
+        group, "param", parent};
+
+    bool_default_map["rotate_after_fetch"] = true;
+    help_map["rotate_after_fetch"] = {"bool","true",
+        "Write the DEM in the feature's oblique frame (feature along +x).",
+        "true: the DEM is warped straight from the source tiles into the frame "
+        "(one resampling) and written as <write_fname>_oblique_DEM.tif with "
+        "<write_fname>_oblique_DEM_rotation_frame.txt, which records the frame "
+        "and the lattice to rotate products back onto; target_epsg (or the "
+        "analysis CRS of the frame centre) is that rotate-back target. false: "
+        "an ordinary fetch in target_epsg (or UTM) covering the frame's "
+        "footprint, with no frame file. Read only when "
+        "fetch_from_linear_feature is true.",
+        group, "param", parent};
+}
+
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map)
 {

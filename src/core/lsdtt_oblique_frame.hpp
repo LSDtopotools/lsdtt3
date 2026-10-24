@@ -213,6 +213,7 @@ struct lsdtt_frame_from_feature_result
     bool ok = false;
     std::string message;                // why it failed, or a summary
     std::vector<std::string> warnings;  // reader and builder warnings
+    std::string layer_name;             // the layer read
     lsdtt_oblique_frame frame;
 };
 

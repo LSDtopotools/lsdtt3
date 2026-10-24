@@ -370,6 +370,7 @@ void declare_synthetic_noise_parameters(
 // declare_fetch_bounds_file_parameters: bounds_fname, bounds_path, bounds_layer.
 // declare_http_request_parameters: http_timeout_seconds,
 //   http_connect_timeout_seconds, http_max_retry.
+// declare_linear_feature_fetch_parameters: see its declaration below.
 // -----------------------------------------------------------------------------
 void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
                                    lsdtt_help_registry&                help_map);
@@ -377,6 +378,17 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
                                           lsdtt_help_registry&                help_map);
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map);
+
+// declare_linear_feature_fetch_parameters: fetch_from_linear_feature (the
+//   switch), fetch_feature_fname, fetch_feature_path, fetch_feature_layer,
+//   linear_feature_fetch_width, linear_feature_fetch_end_buffer,
+//   rotate_after_fetch. Fetch along a line, two points or a polygon into an
+//   oblique frame (lsdtt_oblique_frame.hpp).
+void declare_linear_feature_fetch_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
 
 // -----------------------------------------------------------------------------
 // Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)

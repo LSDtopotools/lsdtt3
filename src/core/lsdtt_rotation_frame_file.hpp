@@ -104,4 +104,17 @@ struct lsdtt_rotation_frame_file
 // Read and check a frame file. Never throws.
 lsdtt_rotation_frame_file read_rotation_frame(const std::string& path);
 
+// The analysis CRS lsdtt_suggest_crs picks for a frame's centre (UTM, or NSIDC
+// polar stereographic beyond 75 deg): the default rotate-back target.
+// Throws std::runtime_error if none is found.
+int analysis_epsg_for_frame_centre(const lsdtt_oblique_frame& frame);
+
+// The missing-frame-file fallback: the frame from the raster's own CRS and
+// extent (frame_from_crs_wkt), and as target the analysis CRS that
+// lsdtt_suggest_crs picks for the frame centre (UTM, or polar stereographic
+// beyond 75 deg), at the raster's cell size on the lattice anchored at (0, 0).
+// Always warns that an unsnapped source origin cannot be recovered. Never
+// throws; ok is false (with the reason) for a raster not in an lsdtt3 frame.
+lsdtt_rotation_frame_file rotation_frame_from_raster(const std::string& raster_path);
+
 } // namespace lsdtt

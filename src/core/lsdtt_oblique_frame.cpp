@@ -791,6 +791,7 @@ lsdtt_frame_from_feature_result frame_from_feature_file(
     lsdtt_frame_from_feature_result result;
     const lsdtt_frame_feature feature = read_frame_feature(path, layer_name, base_geographic_wkt);
     result.warnings = feature.warnings;
+    result.layer_name = feature.layer_name;
     if (!feature.ok)
     {
         result.message = feature.message;

@@ -1,0 +1,9 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffbounds
+
+# A feature and bounds_fname at once is refused.
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson
+linear_feature_fetch_width: 2000
+bounds_fname: bounds/bounds_polygon.fgb
