@@ -38,6 +38,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
@@ -776,7 +777,8 @@ int main(int argc, char* argv[])
     help_map["write_road_diagnostic_rasters"] = {"bool","false",
         "Write road-finder diagnostic rasters.",
         "Includes contour alignment, Hessian elongation, cross-feature curvature, "
-        "along-feature orientation (azimuth from north), and slope.",
+        "along-feature orientation (azimuth from grid north, or true north with "
+        "bearings_relative_to_true_north), and slope.",
         "Road finder (along-contour bench detector)", "switch", ""};
 
 
@@ -984,7 +986,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_orientation_raster"] = true;
     help_map["write_orientation_raster"] = {"bool","true",
         "Write the structure-tensor orientation raster (feature azimuth, [0,180) deg).",
-        "Azimuth clockwise from north along which the feature runs. Meaningful "
+        "Azimuth clockwise from grid north (true north with "
+        "bearings_relative_to_true_north) along which the feature runs. Meaningful "
         "only where coherence is high. Output: <write_fname>_orientation_deg.<ext>.",
         "Structure-tensor coherence (orientation / line-likeness)", "switch", ""};
 
@@ -1371,6 +1374,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
 
     if (cli_args.help_requested)
     {
@@ -1667,6 +1671,35 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Orientation and bearing rasters: grid-relative unless
+    // bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf.at("bearings_relative_to_true_north"), std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
+    // Writes an angle raster, converted to true north when that is on; the
+    // raster in memory stays grid-relative for the steps that use it later.
+    auto write_angle_raster = [&](const lsdtt::lsdtt_raster_cpu& r,
+                                  lsdtt::lsdtt_angle_kind kind,
+                                  const std::string& o)
+    {
+        if (!true_north)
+        {
+            loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
+            return;
+        }
+        std::vector<float> v = r.get_data();
+        lsdtt::convert_angle_raster_to_true_north(v, r.get_meta(), kind, *true_north);
+        loader.write_full(v, r.get_meta(), o, out_fmt);
+    };
     // Interior nodata: kept as sinks or filled (interior_nodata_method).
     try
     {
@@ -2484,7 +2517,7 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << o3 << "\n";
                 loader.write_full(result.cross_curvature.get_data(), result.cross_curvature.get_meta(), o3, out_fmt);
                 std::cout << "Writing: " << o4 << "\n";
-                loader.write_full(result.feature_orientation_deg.get_data(), result.feature_orientation_deg.get_meta(), o4, out_fmt);
+                write_angle_raster(result.feature_orientation_deg, lsdtt::lsdtt_angle_kind::axial_degrees, o4);
                 std::cout << "Writing: " << o5 << "\n";
                 loader.write_full(result.slope.get_data(), result.slope.get_meta(), o5, out_fmt);
             }
@@ -2505,6 +2538,17 @@ int main(int argc, char* argv[])
 
             lsdtt::road_flow_result result =
                 lsdtt::find_road_flow_discrimination(dem, road_flow_request);
+            // Both bearing rasters are outputs only (the raster files and the
+            // channel-pixel table below); flow_vs_slope_angle is a difference
+            // of the two and is unchanged.
+            if (true_north)
+            {
+                for (lsdtt::lsdtt_raster_cpu* r : {&result.regional_slope_bearing,
+                                                   &result.flow_path_bearing})
+                    lsdtt::convert_angle_raster_to_true_north(
+                        r->get_data(), r->get_meta(),
+                        lsdtt::lsdtt_angle_kind::bearing_degrees, *true_north);
+            }
 
             if (bf.at("write_flow_discrimination_rasters"))
             {
@@ -2723,7 +2767,7 @@ int main(int argc, char* argv[])
             {
                 const std::string o = pp.make_output_path("_orientation_deg" + output_ext);
                 std::cout << "Writing: " << o << "\n";
-                loader.write_full(st.orientation_deg.get_data(), st.orientation_deg.get_meta(), o, out_fmt);
+                write_angle_raster(st.orientation_deg, lsdtt::lsdtt_angle_kind::axial_degrees, o);
             }
             if (bf.at("write_energy_raster"))
             {
@@ -2846,7 +2890,7 @@ int main(int argc, char* argv[])
             {
                 const std::string o = pp.make_output_path("_spacing_orientation_deg" + output_ext);
                 std::cout << "Writing: " << o << "\n";
-                loader.write_full(sp.orientation_deg.get_data(), sp.orientation_deg.get_meta(), o, out_fmt);
+                write_angle_raster(sp.orientation_deg, lsdtt::lsdtt_angle_kind::axial_degrees, o);
             }
         }
         else if (feature_type == "extract_roads")

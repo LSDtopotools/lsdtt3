@@ -1,0 +1,15 @@
+# bearings_relative_to_true_north. A plane dipping to
+# TRUE azimuth 200 deg at its centre, in the oblique frame of
+# tests/data/rotation/lakeland_line_oblique.tif (true north 39.87 deg clockwise
+# of grid up). Its grid aspect is 239.87; converted, every cell reads 200
+# within the 0.01 deg change of convergence across the 1.9 km fixture. The
+# grid bearing was set with pyproj (tests/data/true_north), not lsdtt3.
+read_path: __READ_PATH__/true_north
+read_fname: plane_frame_true200.tif
+write_path: __WRITE_PATH__
+write_fname: tnframe
+write_output_format: gtiff
+
+polyfit_metrics: aspect_degrees
+polyfit_lambda_metres: 90
+bearings_relative_to_true_north: true

@@ -952,6 +952,124 @@ lsdtt_set_tests_properties(smoke_raster_preprocessing_help_rotation PROPERTIES
     LABELS "smoke;cli"
     PASS_REGULAR_EXPRESSION "minimum-area")
 
+# bearings_relative_to_true_north. Fixtures in tests/data/true_north: two
+# planar DEMs dipping to TRUE azimuth 200 deg at their centre, one in the
+# oblique frame of rotation/lakeland_line_oblique.tif (true north 39.87 deg
+# clockwise of grid up) and one in UTM 15N (0.73 deg anticlockwise), with the
+# grid bearing set from pyproj's meridian convergence; six outlets and the
+# lakeland line in the frame CRS for the basin tools. Raster outputs are
+# asserted against 200 (aspect) or 110 (contour orientation); table outputs
+# pin the plumbing (start-up line, columns), and the per-row conversion is
+# asserted in unit_true_north.
+set(_tn_on "bearings are converted to true north at each output's location")
+set(_tn_frame "Grid north is 39.9 deg anticlockwise of true north at the grid centre")
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_true_north_frame
+    lsdtt-surface-metrics
+    surface_metrics_true_north_frame.param.in
+    tnframe_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnframe_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnframe_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "${_tn_frame}"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_grid_north_frame
+    lsdtt-surface-metrics
+    surface_metrics_grid_north_frame.param.in
+    gnframe_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat gnframe_direct_polyfit_aspect_degrees.tif:min:239.86:239.88
+    --expect-raster-stat gnframe_direct_polyfit_aspect_degrees.tif:max:239.86:239.88
+    --stdout-contains "bearings are relative to grid north (bearings_relative_to_true_north is false)"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_true_north_utm
+    lsdtt-surface-metrics
+    surface_metrics_true_north_utm.param.in
+    tnutm_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnutm_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnutm_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "Grid north is 0.7 deg clockwise of true north at the grid centre"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_feature_finder_true_north_structure_tensor
+    lsdtt-feature-finder
+    feature_finder_true_north_structure_tensor.param.in
+    tnst_orientation_deg.tif
+    --expect-raster-stat tnst_orientation_deg.tif:min:105.0:110.0
+    --expect-raster-stat tnst_orientation_deg.tif:max:110.0:115.0
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_true_north
+    lsdtt-ridgeline-analysis
+    ridgeline_true_north.param.in
+    tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_surface_metrics_true_north
+    lsdtt-basin-surface-metrics
+    basin_surface_metrics_true_north.param.in
+    tnbsm_aspect_degrees_lambda90.tif
+    --stdout-contains "${_tn_frame}"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_stats_true_north
+    lsdtt-basin-stats
+    basin_stats_true_north.param.in
+    tnbs_basin_stats.csv
+    --expect-file-contains "tnbs_basin_stats.csv:com_bearing_deg"
+    --expect-file-contains "tnbs_basin_stats.csv:orientation_deg"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_true_north
+    lsdtt-basin-extraction
+    basin_extraction_true_north.param.in
+    tnbe_line_crossing_basins.csv
+    --expect-file-contains "tnbe_line_crossing_basins.csv:outlet_to_com_bearing_deg"
+    --stdout-contains "(6 basins)"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_true_north
+    lsdtt-channel-network-analysis
+    channel_network_true_north.param.in
+    tncn_channel_link_bearings.csv
+    --expect tncn_junction_angles.csv
+    --expect tncn_junction_angle_bearing_vectors.fgb
+    --expect tncn_junction_com_bearings.csv
+    --expect tncn_channel_bearing_group_summary.csv
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_true_north
+    lsdtt-flat-surface-finder
+    flat_surface_finder_true_north.param.in
+    tnfsf_plane_fits.csv
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_true_north
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_true_north.param.in
+    tnfs_surface_patches.csv
+    --expect-file-contains "tnfs_surface_patches.csv:terrain_aspect_degrees"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_true_north
+    lsdtt-spectral-analysis
+    spectral_true_north.param.in
+    tnsp_significant_frequencies_2d.csv
+    --expect-file-contains "tnsp_significant_frequencies_2d.csv:# grid_convergence_deg_at_grid_centre,39.8727"
+    --stdout-contains "${_tn_on}"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_drainage_analysis
     lsdtt-drainage-analysis
@@ -5040,6 +5158,15 @@ add_test(NAME unit_oblique_frame_preprocess
          COMMAND lsdtt-test-oblique-frame-preprocess
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_preprocess_work")
 lsdtt_set_tests_properties(unit_oblique_frame_preprocess PROPERTIES LABELS "unit;raster")
+
+# Grid convergence and bearings_relative_to_true_north: convergence against
+# pyproj, wrapping, a plane dipping to a known true azimuth in UTM and in
+# frames at several azimuths, raster lattice interpolation, start-up message.
+add_executable(lsdtt-test-true-north cpp/test_true_north.cpp)
+target_link_libraries(lsdtt-test-true-north PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_true_north COMMAND lsdtt-test-true-north)
+lsdtt_set_tests_properties(unit_true_north PROPERTIES LABELS "unit;raster")
 
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.
@@ -9414,7 +9541,7 @@ set(LSDTT_DOMAIN_RULES
     "junction_graph"         "network"
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
-    "connected_components|grid_geodesic|oblique_frame" "raster"
+    "connected_components|grid_geodesic|oblique_frame|true_north" "raster"
     "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"

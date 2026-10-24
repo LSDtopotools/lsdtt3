@@ -834,8 +834,10 @@ int main(int argc, char* argv[])
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
-        "Sun azimuth in degrees clockwise from north.",
-        "315 (northwest) is the cartographic convention.",
+        "Sun azimuth in degrees clockwise from grid north (grid up).",
+        "315 (northwest) is the cartographic convention. It is relative to the "
+        "raster grid, so in an oblique frame it lights from the frame's "
+        "north-west.",
         "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
@@ -879,7 +881,7 @@ int main(int argc, char* argv[])
 
     float_default_map["multidirectional_hillshade_start_azimuth"] = 0.0f;
     help_map["multidirectional_hillshade_start_azimuth"] = {"float","0.0",
-        "Starting azimuth in degrees clockwise from north for multidirectional hillshade.",
+        "Starting azimuth in degrees clockwise from grid north for multidirectional hillshade.",
         "Subsequent azimuths are sampled uniformly around 360 degrees.",
         "Hillshade", "param", "write_multidirectional_hillshade_raster"};
 

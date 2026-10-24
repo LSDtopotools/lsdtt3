@@ -1,0 +1,8 @@
+# bearings_relative_to_true_north. 2D spectrum bearings
+# on the lakeland frame DEM, converted with the convergence at the grid centre.
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tnsp
+significant_frequencies_2d_confidence: 0.95
+bearings_relative_to_true_north: true

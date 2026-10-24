@@ -311,6 +311,10 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             if (options.calculate_centre_of_mass_bearing)
             {
                 rec.com_bearing_deg = bearing_from_north_degrees(xy.x, xy.y, cx, cy);
+                if (options.true_north)
+                    rec.com_bearing_deg = options.true_north->to_true_north(
+                        rec.com_bearing_deg, lsdtt_angle_kind::bearing_degrees,
+                        0.5 * (xy.x + cx), 0.5 * (xy.y + cy));
                 rec.com_distance_m  = std::hypot(cx - xy.x, cy - xy.y);
             }
 
@@ -331,6 +335,9 @@ std::vector<basin_stats_outlet_result> compute_basin_stats(
             rec.solidity              = shape.solidity;
             rec.eccentricity          = shape.eccentricity;
             rec.orientation_deg       = shape.orientation_deg;
+            if (options.true_north && shape_ok)
+                rec.orientation_deg = options.true_north->to_true_north(
+                    rec.orientation_deg, lsdtt_angle_kind::axial_degrees, cx, cy);
             rec.hypsometric_integral  = shape.hypsometric_integral;
 
             if (has_channel_network)

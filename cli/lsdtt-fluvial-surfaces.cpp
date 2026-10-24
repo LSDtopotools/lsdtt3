@@ -75,6 +75,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
@@ -1082,6 +1083,7 @@ int main(int argc, char* argv[])
 
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
 
     if (cli_args.help_requested)
     {
@@ -1304,6 +1306,19 @@ int main(int argc, char* argv[])
         std::cout << "  rows=" << dem.get_meta().n_rows
                   << "  cols=" << dem.get_meta().n_cols
                   << "  cell=" << dem.get_meta().cell_size << " m\n\n";
+    }
+
+    // Patch aspects: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
     }
     // Interior nodata: kept as sinks or filled (interior_nodata_method).
     try
@@ -1799,6 +1814,7 @@ int main(int argc, char* argv[])
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
         creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
+        creq.true_north                  = true_north.get();
 
         std::vector<std::int32_t> src_ids =
             scope_resolved ? scope.channel_source_id
@@ -1981,7 +1997,7 @@ int main(int argc, char* argv[])
             banded = lsdtt::label_components_within_bands(
                 ladder.band_index, admitted, reference_field,
                 std::max(1, ip["min_component_pixels"]),
-                lsdtt::pixel_connectivity::d4);
+                lsdtt::pixel_connectivity::d4, nullptr, true_north.get());
         }
         catch (const std::exception& e)
         {

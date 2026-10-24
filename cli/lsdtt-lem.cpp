@@ -1143,8 +1143,8 @@ int main(int argc, char* argv[])
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
-        "Sun azimuth for hillshade, degrees clockwise from north.",
-        "315 = northwest (ESRI/QGIS default).",
+        "Sun azimuth for hillshade, degrees clockwise from grid north (grid up).",
+        "315 = northwest (ESRI/QGIS default), relative to the raster grid.",
         "Hillshade output (steady-state runs only)", "param", "write_hillshade_png"};
 
     float_default_map["hillshade_altitude"] = 45.0f;

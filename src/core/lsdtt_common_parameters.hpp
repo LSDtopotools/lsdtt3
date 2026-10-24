@@ -414,6 +414,18 @@ void declare_rotate_back_parameters(
     lsdtt_help_registry&                help_map);
 
 // -----------------------------------------------------------------------------
+// Orientations (every CLI that writes a bearing, aspect or orientation)
+//
+// declare_true_north_bearing_parameters: bearings_relative_to_true_north.
+//   Off: bearings are clockwise from grid north (grid up). On: each output is
+//   converted at its own location with the grid convergence
+//   (lsdtt_true_north.hpp). Hillshade illumination is never converted.
+// -----------------------------------------------------------------------------
+void declare_true_north_bearing_parameters(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map);
+
+// -----------------------------------------------------------------------------
 // Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)
 //
 // declare_lithology_map_parameters: lithology_fname, lithology_source,

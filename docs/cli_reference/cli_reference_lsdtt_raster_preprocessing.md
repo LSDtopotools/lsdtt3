@@ -600,12 +600,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_hillshade_raster` | `bool` | `false` | `switch` | - | Write a hillshade raster. | Uses the Zevenbergen and Thorne (1987) algorithm. Computed from the filled DEM when write_fill_raster is also true. |
-| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from north. | 315 (northwest) is the cartographic convention. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from grid north (grid up). | 315 (northwest) is the cartographic convention. It is relative to the raster grid, so in an oblique frame it lights from the frame's north-west. |
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_raster` | Sun altitude above the horizon in degrees. | 45 degrees is a typical default. |
 | `hillshade_z_factor` | `float` | `1.0` | `param` | `write_hillshade_raster` | Vertical exaggeration factor applied before computing hillshade. | Values greater than 1 emphasise relief in flat terrain. |
 | `write_multidirectional_hillshade_raster` | `bool` | `false` | `switch` | - | Write a multidirectional hillshade raster. | Computes hillshade from multiple azimuths and writes the mean illumination raster to reduce directional bias. |
 | `multidirectional_hillshade_n_directions` | `int` | `8` | `param` | `write_multidirectional_hillshade_raster` | Number of evenly spaced azimuth directions used for multidirectional hillshade. | Must be &gt;= 2. Typical values are 8 to 16. |
-| `multidirectional_hillshade_start_azimuth` | `float` | `0.0` | `param` | `write_multidirectional_hillshade_raster` | Starting azimuth in degrees clockwise from north for multidirectional hillshade. | Subsequent azimuths are sampled uniformly around 360 degrees. |
+| `multidirectional_hillshade_start_azimuth` | `float` | `0.0` | `param` | `write_multidirectional_hillshade_raster` | Starting azimuth in degrees clockwise from grid north for multidirectional hillshade. | Subsequent azimuths are sampled uniformly around 360 degrees. |
 
 ### Mosaic
 

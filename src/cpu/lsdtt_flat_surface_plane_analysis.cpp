@@ -411,6 +411,10 @@ plane_analysis_result analyse_flat_surface_planes(
             double asp = std::atan2(-a, -b) * k_rad2deg;
             if (asp < 0.0) asp += 360.0;
             pf.aspect_degrees = asp;
+            if (request.true_north)
+                pf.aspect_degrees = request.true_north->to_true_north(
+                    asp, lsdtt_angle_kind::bearing_degrees,
+                    meta.x_min + acc.mean_x, meta.y_min + acc.mean_y);
         }
         pf.valid           = true;
     }

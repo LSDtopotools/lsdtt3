@@ -63,6 +63,7 @@
 
 #include "lsdtt_raster_binary_mask_cpu.hpp"     // pixel_connectivity
 #include "lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_true_north.hpp"
 #include "lsdtt_raster_surface_fitting_cpu.hpp" // plane / poly2 coefficients
 
 namespace lsdtt
@@ -698,7 +699,11 @@ struct banded_label_result
     // Per-pixel TERRAIN aspect in degrees, co-registered. Optional; when given,
     // each patch gets a circular-mean aspect and a resultant length. See
     // patch_record.
-    const lsdtt_raster_cpu* terrain_aspect_degrees = nullptr
+    const lsdtt_raster_cpu* terrain_aspect_degrees = nullptr,
+    // bearings_relative_to_true_north: when set, aspect_degrees and
+    // terrain_aspect_degrees are from true north, converted at the patch
+    // centroid (lsdtt_true_north.hpp). Not owned.
+    const lsdtt_grid_convergence* true_north = nullptr
 );
 
 } // namespace lsdtt

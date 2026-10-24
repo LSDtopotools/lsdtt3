@@ -1,0 +1,16 @@
+# bearings_relative_to_true_north. Plane-fit aspect of
+# flat surfaces on the lakeland frame DEM.
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tnfsf
+n_threads: 1
+write_output_format: gtiff
+relief_window_side_pixels: 5
+relief_threshold_metres: 8.0
+adaptive_relief_threshold: false
+flat_closing_radius_metres: 0
+flat_opening_radius_metres: 0
+min_component_pixels: 15
+run_plane_analysis: true
+bearings_relative_to_true_north: true

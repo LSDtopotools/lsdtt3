@@ -1,0 +1,15 @@
+# bearings_relative_to_true_north. Polyfit aspect sampled
+# by lsdtt-basin-surface-metrics on the lakeland frame DEM, six outlets.
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tnbsm
+write_output_format: gtiff
+basin_outlet_fname: __READ_PATH__/true_north/lakeland_frame_outlets.csv
+basin_outlet_snapping_method: none
+threshold_contributing_pixels: 15
+lambda_scales: 90
+polyfit_metrics: aspect_degrees
+polyfit_method: direct
+write_polyfit_rasters: true
+bearings_relative_to_true_north: true

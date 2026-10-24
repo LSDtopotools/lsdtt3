@@ -953,7 +953,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_hillshade_png` | `bool` | `false` | `switch` | - | Write a hillshade PNG of the final steady-state elevation. | Computes a standard Horn (1981) hillshade and saves it as a PNG alongside the elevation output. If run_hillslope_steady_state is also true, a second hillshade of the combined fluvial+hillslope surface is written. PNG is always used regardless of write_output_format. |
-| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_png` | Sun azimuth for hillshade, degrees clockwise from north. | 315 = northwest (ESRI/QGIS default). |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_png` | Sun azimuth for hillshade, degrees clockwise from grid north (grid up). | 315 = northwest (ESRI/QGIS default), relative to the raster grid. |
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_png` | Sun altitude above the horizon for hillshade, degrees. | 45 is the standard default. |
 | `hillshade_z_factor` | `float` | `1` | `param` | `write_hillshade_png` | Vertical exaggeration factor for hillshade. | Use values &gt; 1 to emphasise relief on low-gradient landscapes. |
 

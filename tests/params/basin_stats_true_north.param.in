@@ -1,0 +1,13 @@
+# bearings_relative_to_true_north. com_bearing_deg and
+# orientation_deg of six basins on the lakeland frame DEM.
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tnbs
+write_output_format: gtiff
+basin_outlet_fname: __READ_PATH__/true_north/lakeland_frame_outlets.csv
+basin_outlet_snapping_method: none
+reject_nodata_edge_basins: false
+calculate_centre_of_mass_bearing: true
+calculate_shape_metrics: true
+bearings_relative_to_true_north: true

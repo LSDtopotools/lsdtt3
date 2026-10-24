@@ -875,7 +875,8 @@ std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_b
     const std::vector<std::int64_t>&     block_id,
     const channel_record_categories&     groups,
     const channel_record_categories*     strata,
-    const channel_bearing_statistics_options& options)
+    const channel_bearing_statistics_options& options,
+    const std::vector<double>*           grid_bearing_deg)
 {
     const std::size_t n = bearing_deg.size();
     check_sizes(n, groups, strata, "summarise_channel_link_bearings_by_category");
@@ -883,6 +884,11 @@ std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_b
     {
         throw std::invalid_argument(
             "summarise_channel_link_bearings_by_category: weights differ in size");
+    }
+    if (grid_bearing_deg != nullptr && grid_bearing_deg->size() != n)
+    {
+        throw std::invalid_argument(
+            "summarise_channel_link_bearings_by_category: grid bearings differ in size");
     }
 
     std::vector<channel_bearing_group_summary_row> rows;
@@ -906,6 +912,9 @@ std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_b
                 row.angular_type     = type;
                 row.n_blocks         = n_blocks;
                 row.summary          = summarise_channel_bearing_group(v, w, type);
+                if (grid_bearing_deg != nullptr)
+                    row.summary.fraction_on_d8_multiples =
+                        channel_bearing_fraction_on_d8_multiples(gather(*grid_bearing_deg, idx));
                 row.meets_min_group_size = row.summary.n >= options.min_group_size;
                 row.block_order      = options.block_order;
                 row.block_order_mode = options.block_order_mode;

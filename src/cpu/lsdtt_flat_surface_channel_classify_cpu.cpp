@@ -369,7 +369,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         banded = label_components_within_bands(
             lad.band_index, admitted, height_above_channel,
             std::max(1, request.band_min_component_pixels),
-            pixel_connectivity::d4, terrain_aspect_degrees);
+            pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
 
         banded_labels = banded.labels;
         used_ladder   = true;

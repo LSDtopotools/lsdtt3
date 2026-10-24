@@ -41,6 +41,7 @@
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"
+#include "../core/lsdtt_true_north.hpp"
 #include "../core/lsdtt_types.hpp"
 
 namespace lsdtt
@@ -509,9 +510,14 @@ void write_junction_angle_bearing_vectors(
     const std::string&                              out_path,
     vector_output_format                            format,
     const std::string&                              layer_name = "junction_angle_bearing_vectors",
-    bool                                            spatial_index = true
+    bool                                            spatial_index = true,
+    const lsdtt_grid_convergence*                   true_north = nullptr
 );
 
+
+// true_north (bearings_relative_to_true_north): the bearing_rad / bearing_deg
+// attributes are converted at the junction; the arms are still drawn along
+// the grid bearings, so the geometry is unchanged.
 
 // =============================================================================
 // Basin centre-of-mass bearing
@@ -562,6 +568,33 @@ std::vector<lsdtt_junction_com_bearing> calculate_junction_com_bearings(
 void write_junction_com_bearings(
     const std::vector<lsdtt_junction_com_bearing>& records,
     const std::string&                             out_path
+);
+
+// =============================================================================
+// bearings_relative_to_true_north (lsdtt_true_north.hpp)
+//
+// Copies of the records with every bearing converted from grid north to true
+// north at the record's own location: a link at its representative point
+// (NaN if it has none), junction arms at the junction pixel, a junction
+// basin's outlet -> centre-of-mass bearing at the midpoint of the two.
+// direction_x / direction_y stay grid components (they draw the vectors in
+// map coordinates), and angles between arms are unchanged.
+// =============================================================================
+std::vector<lsdtt_channel_link_bearing> channel_link_bearings_to_true_north(
+    const std::vector<lsdtt_channel_link_bearing>& records,
+    const lsdtt_grid_convergence&                  true_north
+);
+
+std::vector<lsdtt_junction_angle_record> junction_angle_bearings_to_true_north(
+    const std::vector<lsdtt_junction_angle_record>& records,
+    const lsdtt_flow_base&                          flow,
+    const lsdtt_junction_network_base&              network,
+    const lsdtt_grid_convergence&                   true_north
+);
+
+std::vector<lsdtt_junction_com_bearing> junction_com_bearings_to_true_north(
+    const std::vector<lsdtt_junction_com_bearing>& records,
+    const lsdtt_grid_convergence&                  true_north
 );
 
 

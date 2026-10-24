@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -48,6 +49,8 @@
 #include <vector>
 
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_backend_factory.hpp"   // compute-backend toggle
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -297,8 +300,10 @@ int main(int argc, char* argv[])
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
-        "Sun azimuth in degrees clockwise from north.",
-        "315 (northwest) is the cartographic convention.",
+        "Sun azimuth in degrees clockwise from grid north (grid up).",
+        "315 (northwest) is the cartographic convention. It is relative to the "
+        "raster grid, so in an oblique frame it lights from the frame's "
+        "north-west; bearings_relative_to_true_north never changes it.",
         "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
@@ -828,6 +833,8 @@ int main(int argc, char* argv[])
         "precision is not needed.",
         "Cloth drape", "param", ""};
 
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+
     // -------------------------------------------------------------------------
     // Parse - fills maps from the parameter file, falling back to defaults
     // -------------------------------------------------------------------------
@@ -1078,6 +1085,19 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
 
+    // Aspect and MADk2 DMC: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
+
     // -------------------------------------------------------------------------
     // Step 1 - Hillshade
     // -------------------------------------------------------------------------
@@ -1245,6 +1265,7 @@ int main(int argc, char* argv[])
                     const auto compute_t1 = std::chrono::steady_clock::now();
 
                     if (!metric_result.has(metric)) continue;
+                    lsdtt::convert_polyfit_aspects_to_true_north(metric_result, true_north.get());
 
                     const std::string o =
                         pp.make_output_path( lsdtt::polyfit_metric_output_suffix(metric, method_str, output_ext));
@@ -1571,6 +1592,11 @@ int main(int argc, char* argv[])
                 out_fmt
             );
 
+            if (true_north)
+                lsdtt::convert_angle_raster_to_true_north(
+                    madk2.direction_maximum_continuity.get_data(),
+                    madk2.direction_maximum_continuity.get_meta(),
+                    lsdtt::lsdtt_angle_kind::axial_degrees, *true_north);
             std::cout << "Writing: " << o_dmc << "\n";
             loader.write_full(
                 madk2.direction_maximum_continuity.get_data(),

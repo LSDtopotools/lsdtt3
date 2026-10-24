@@ -40,6 +40,7 @@
 
 #include "../core/lsdtt_raster_meta.hpp"
 #include "../core/lsdtt_point_input.hpp"
+#include "../core/lsdtt_true_north.hpp"
 #include "../core/lsdtt_vector_utils.hpp"
 #include "../core/lsdtt_junction_network_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
@@ -159,6 +160,12 @@ struct basin_stats_options
     // Off by default: it is the only part of the result that scales with basin
     // size rather than with the number of basins.
     bool collect_elevation_values = false;
+
+    // bearings_relative_to_true_north: when set, com_bearing_deg (converted
+    // at the midpoint of the outlet and the centre of mass) and
+    // orientation_deg (at the centroid) are from true north instead of grid
+    // north (lsdtt_true_north.hpp). Not owned.
+    const lsdtt_grid_convergence* true_north = nullptr;
 };
 
 // -----------------------------------------------------------------------------

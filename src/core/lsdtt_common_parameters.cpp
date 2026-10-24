@@ -917,6 +917,24 @@ void declare_rotate_back_parameters(
         group, "param", parent};
 }
 
+void declare_true_north_bearing_parameters(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map)
+{
+    bool_default_map["bearings_relative_to_true_north"] = false;
+    help_map["bearings_relative_to_true_north"] = {"bool","false",
+        "Write bearings, aspects and orientations clockwise from true north.",
+        "Off (default): they are clockwise from grid north (grid up), so in an "
+        "oblique frame with the feature along +x, 90 degrees means along the "
+        "feature. On: each value is converted with the grid convergence at its "
+        "own location (each cell of a raster, each row of a table), which also "
+        "removes the up to about 3 degree difference between UTM grid north and "
+        "true north. Angles between two directions (junction angles, "
+        "deflections, contrasts) are unchanged, and hillshade illumination "
+        "always stays relative to grid up. Needs a raster with a CRS.",
+        "Orientations", "param", ""};
+}
+
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map)
 {

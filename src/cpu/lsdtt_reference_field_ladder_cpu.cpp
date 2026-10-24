@@ -1357,7 +1357,8 @@ banded_label_result label_components_within_bands(
     const lsdtt_raster_cpu& reference_field,
     int                     min_component_pixels,
     pixel_connectivity      connectivity,
-    const lsdtt_raster_cpu* terrain_aspect_degrees)
+    const lsdtt_raster_cpu* terrain_aspect_degrees,
+    const lsdtt_grid_convergence* true_north)
 {
     static const char* fn = "lsdtt::label_components_within_bands";
 
@@ -1543,6 +1544,24 @@ banded_label_result label_components_within_bands(
                     deg = std::fmod(deg + 360.0, 360.0);
                     rec.terrain_aspect_degrees = deg;
                 }
+            }
+
+            // Both aspects from true north, at the patch centroid (cell
+            // centres; xs / ys above are offsets from the top-left centre).
+            if (true_north != nullptr && !xs.empty())
+            {
+                double sx = 0.0, sy = 0.0;
+                for (std::size_t k = 0; k < xs.size(); ++k) { sx += xs[k]; sy += ys[k]; }
+                const double cx = meta.x_min + 0.5 * meta.cell_size
+                                + sx / static_cast<double>(xs.size());
+                const double cy = meta.y_max() - 0.5 * meta.cell_size
+                                + sy / static_cast<double>(ys.size());
+                if (rec.aspect_degrees >= 0.0)
+                    rec.aspect_degrees = true_north->to_true_north(
+                        rec.aspect_degrees, lsdtt_angle_kind::bearing_degrees, cx, cy);
+                if (rec.terrain_aspect_degrees >= 0.0)
+                    rec.terrain_aspect_degrees = true_north->to_true_north(
+                        rec.terrain_aspect_degrees, lsdtt_angle_kind::bearing_degrees, cx, cy);
             }
 
             out.patches.push_back(std::move(rec));

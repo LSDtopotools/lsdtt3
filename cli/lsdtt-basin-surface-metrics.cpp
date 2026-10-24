@@ -60,6 +60,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
@@ -325,6 +326,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
 
     if (cli_args.help_requested)
     {
@@ -478,6 +480,19 @@ int main(int argc, char* argv[])
     }
     loader.get_meta().check_projected_metres();
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Aspect outputs: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
     // Interior nodata: kept as sinks or filled (interior_nodata_method).
     try
     {
@@ -763,6 +778,7 @@ int main(int argc, char* argv[])
         req.n_threads = ifs["n_threads"];
         lsdtt::polyfit_metric_result m_res = 
             lsdtt::compute_polyfit_metrics(fitted, req);
+        lsdtt::convert_polyfit_aspects_to_true_north(m_res, true_north.get());
 
         for (auto metric : polyfit_metrics) {
             std::string m_name = lsdtt::polyfit_metric_name(metric);

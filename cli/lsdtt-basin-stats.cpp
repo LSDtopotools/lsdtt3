@@ -60,6 +60,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -72,6 +73,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
@@ -636,8 +638,10 @@ int main(int argc, char* argv[])
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
-        "Sun azimuth in degrees clockwise from north.",
-        "315 is the standard cartographic northwest illumination.",
+        "Sun azimuth in degrees clockwise from grid north (grid up).",
+        "315 is the standard cartographic northwest illumination. It is "
+        "relative to the raster grid, so in an oblique frame it lights from the "
+        "frame's north-west; bearings_relative_to_true_north never changes it.",
         "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
@@ -699,8 +703,9 @@ int main(int argc, char* argv[])
         "Compute the bearing from each basin outlet to its centre of mass.",
         "Opt-in. The basin centre of mass is the planimetric centroid of all "
         "upslope pixels (already reported as centroid_x/centroid_y). This adds "
-        "com_bearing_deg (geographic bearing from North, clockwise, outlet -> "
-        "centre of mass) and com_distance_m columns. The outlet is the user-"
+        "com_bearing_deg (bearing clockwise from grid north, or from true north "
+        "with bearings_relative_to_true_north, outlet -> centre of mass) and "
+        "com_distance_m columns. The outlet is the user-"
         "supplied (optionally snapped) outlet pixel; the channel is not followed.",
         "Channel statistics", "switch", ""};
 
@@ -711,7 +716,9 @@ int main(int argc, char* argv[])
         "Opt-in; off by default so the original curated hydromorphic stat set is "
         "reproduced unless explicitly requested. When true, adds "
         "basin_length_m, elongation_ratio, form_factor, circularity_ratio, "
-        "gravelius_compactness, solidity, eccentricity, orientation_deg, and "
+        "gravelius_compactness, solidity, eccentricity, orientation_deg (principal "
+        "axis, [0, 180) clockwise from grid north, or from true north with "
+        "bearings_relative_to_true_north), and "
         "hypsometric_integral columns to the output CSV. When false, the outline "
         "is not traced and those columns are omitted, reproducing the original "
         "basin-stats output. See docs/tex_technical/basin_shape_metrics.tex.",
@@ -762,6 +769,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
 
     if (cli_args.help_requested)
     {
@@ -968,6 +976,20 @@ int main(int argc, char* argv[])
     // Load raster into CPU representation
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // com_bearing_deg and orientation_deg: grid-relative unless
+    // bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Remove seas
@@ -1411,6 +1433,7 @@ int main(int argc, char* argv[])
     stats_options.downstream_snap            = downstream_snap_options;
     stats_options.reject_nodata_edge_basins  = bf["reject_nodata_edge_basins"];
     stats_options.calculate_centre_of_mass_bearing = do_com_bearing;
+    stats_options.true_north                 = true_north.get();
     stats_options.calculate_shape_metrics    = do_shape_metrics;
     stats_options.basin_length_definition    = basin_length_definition;
     stats_options.shape_perimeter_simplify_cells =

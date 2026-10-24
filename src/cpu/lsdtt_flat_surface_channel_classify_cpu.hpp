@@ -226,6 +226,11 @@ struct flat_surface_classify_request
     double ladder_max_break_metres       = 0.0;
     bool   record_window_histograms      = false;
     int    window_hist_bins              = 80;
+
+    // bearings_relative_to_true_north: patch aspect_degrees and
+    // terrain_aspect_degrees from true north, at the patch centroid
+    // (label_components_within_bands). Not owned.
+    const lsdtt_grid_convergence* true_north = nullptr;
 };
 
 // -----------------------------------------------------------------------------
