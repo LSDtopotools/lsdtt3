@@ -54,7 +54,7 @@ def domain(name):
         return "cosmogenic"
     if "chi" in lower:
         return "chi"
-    if any(word in lower for word in ("fetch", "bounds", "cop30", "utm_epsg", "http_available")):
+    if any(word in lower for word in ("fetch", "bounds", "cop30", "utm_epsg", "http_available", "rotat")):
         return "fetch"
     if any(word in lower for word in ("landscape", "hillslope")):
         return "landscape"

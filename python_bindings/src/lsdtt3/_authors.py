@@ -23,6 +23,7 @@ DEFAULT_AUTHORS = ("B. Gailleton",)
 
 # Bindings S. M. Mudd wrote himself: he is first author, B. Gailleton second.
 WRITTEN_BY_MUDD = (
+    "RotationFrame",
     "absolute",
     "coherence_diffusion",
     "coregister_dem",
@@ -31,19 +32,26 @@ WRITTEN_BY_MUDD = (
     "perona_malik_smoothing",
     "proj_data_description",
     "proj_version",
+    "rotate_back",
+    "rotate_to_frame",
     "stencil_difference_magnitude",
     "vertical_units_to_metres",
 )
 
 # Bindings by B. Gailleton that S. M. Mudd changed: he is second author.
 CHANGED_BY_MUDD = (
+    "BasinCollection",
     "CRNColumn",
+    "ChannelNetwork",
     "FlowInfo",
     "LandscapeModel",
     "RasterMeta",
+    "aspect",
+    "basin_surface_metrics",
     "bounds_from_vector",
     "breach_least_cost",
     "crn_transient_history",
+    "detect_directional_periodicity",
     "divide",
     "extract_channel_heads",
     "extract_valley_centrelines",
@@ -52,10 +60,12 @@ CHANGED_BY_MUDD = (
     "find_flat_surfaces",
     "find_internal_drainage",
     "find_road_flow_discrimination",
+    "find_roads",
     "frangi_filter",
     "helper_for_llm",
     "least_cost_carve_depth",
     "mountain_front_outlets",
+    "polyfit_metrics",
     "route_sediment",
     "run_graphflood",
     "run_graphflood_induced",

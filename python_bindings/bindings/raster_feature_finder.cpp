@@ -9,6 +9,8 @@
 
 #include <cpu/lsdtt_raster_feature_finder_cpu.hpp>
 
+#include <core/lsdtt_true_north.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -190,23 +192,32 @@ ValleyResult find_valleys(const Raster& raster, double smoothing_window_metres,
 
 RoadResult find_roads(const Raster& dem, double smoothing_window_metres,
                       double score_threshold, bool use_bench_test,
-                      double bench_half_width_metres, int n_threads)
+                      double bench_half_width_metres, int n_threads,
+                      bool bearings_relative_to_true_north)
 {
+    const auto true_north = lsdtt::true_north_converter(dem.native().get_meta(), bearings_relative_to_true_north);
     lsdtt::road_request request;
     request.smoothing_window_metres = smoothing_window_metres;
     request.score_threshold = score_threshold;
     request.use_bench_test = use_bench_test;
     request.bench_half_width_metres = bench_half_width_metres;
     request.n_threads = n_threads;
-    return RoadResult(lsdtt::find_roads(dem.native(), request));
+    lsdtt::road_result result = lsdtt::find_roads(dem.native(), request);
+    if (true_north)
+        lsdtt::convert_angle_raster_to_true_north(
+            result.feature_orientation_deg.get_data(), result.feature_orientation_deg.get_meta(),
+            lsdtt::lsdtt_angle_kind::axial_degrees, *true_north);
+    return RoadResult(std::move(result));
 }
 
 RoadFlowResult find_road_flow_discrimination(
     const Raster& dem, double regional_smoothing_metres,
     int threshold_contributing_pixels, int flow_path_half_window,
     double intermediate_window_metres, double roughness_radius_metres,
-    bool raster_is_filled, const std::string& boundary_conditions, int n_threads)
+    bool raster_is_filled, const std::string& boundary_conditions, int n_threads,
+    bool bearings_relative_to_true_north)
 {
+    const auto true_north = lsdtt::true_north_converter(dem.native().get_meta(), bearings_relative_to_true_north);
     lsdtt::road_flow_request request;
     request.regional_smoothing_metres = regional_smoothing_metres;
     request.flow_accumulation_threshold_pixels = threshold_contributing_pixels;
@@ -216,7 +227,12 @@ RoadFlowResult find_road_flow_discrimination(
     request.dem_is_filled = raster_is_filled;
     request.boundary_conditions = boundary_conditions;
     request.n_threads = n_threads;
-    return RoadFlowResult(lsdtt::find_road_flow_discrimination(dem.native(), request));
+    lsdtt::road_flow_result result = lsdtt::find_road_flow_discrimination(dem.native(), request);
+    if (true_north)
+        for (lsdtt::lsdtt_raster_cpu* r : {&result.regional_slope_bearing, &result.flow_path_bearing})
+            lsdtt::convert_angle_raster_to_true_north(
+                r->get_data(), r->get_meta(), lsdtt::lsdtt_angle_kind::bearing_degrees, *true_north);
+    return RoadFlowResult(std::move(result));
 }
 
 RoadSmoothnessResult extract_roads_smooth(
@@ -319,7 +335,9 @@ Hillside road / bench detection output from :func:`find_roads`.
 ``score`` is elongation x contour alignment x edge strength, ``mask`` its
 gated threshold; ``contour_alignment`` and ``hessian_elongation`` are in
 [0, 1], ``cross_curvature`` in 1/m, ``feature_orientation_degrees`` the
-along-feature azimuth (0-180, from north) and ``slope`` the gradient (m/m).
+along-feature azimuth (0-180, from grid north, or true north when
+``find_roads`` was called with ``bearings_relative_to_true_north=True``) and
+``slope`` the gradient (m/m).
 )doc")
         .def_prop_ro("score", [](const RoadResult& r) { return Raster(r.native().score); })
         .def_prop_ro("mask", [](const RoadResult& r) { return Raster(r.native().mask); })
@@ -334,7 +352,9 @@ Flow-direction diagnostics from :func:`find_road_flow_discrimination`.
 Compares the local D8 flow-path bearing with the regional slope bearing:
 roads divert flow along the contour, so ``flow_vs_slope_angle`` is large on
 roads and small on natural slopes and channels. Bearings are compass
-degrees; slopes are m/m.
+degrees from grid north (true north with
+``bearings_relative_to_true_north=True``; the angle between them is the
+same either way); slopes are m/m.
 )doc")
         .def_prop_ro("regional_slope_bearing", [](const RoadFlowResult& r) { return Raster(r.native().regional_slope_bearing); })
         .def_prop_ro("regional_slope", [](const RoadFlowResult& r) { return Raster(r.native().regional_slope); })
@@ -544,7 +564,8 @@ ValleyResult
     m.def("find_roads", &find_roads, nb::arg("dem"),
         nb::arg("smoothing_window_metres") = 8.0, nb::arg("score_threshold") = 0.5,
         nb::arg("use_bench_test") = true, nb::arg("bench_half_width_metres") = 6.0,
-        nb::arg("n_threads") = 0, R"doc(Detect narrow, along-contour road benches from a DEM.
+        nb::arg("n_threads") = 0, nb::arg("bearings_relative_to_true_north") = false,
+        R"doc(Detect narrow, along-contour road benches from a DEM.
 
 Roads cut into hillslopes are elongated, low-curvature benches whose long axis
 follows the contour, unlike channels which run downslope. The score
@@ -566,6 +587,9 @@ bench_half_width_metres : float, default=6.0
     Distance (m) to each side at which the flank slopes are sampled.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``feature_orientation_degrees`` to true north at each pixel, as
+    the CLI's ``bearings_relative_to_true_north``; needs a DEM with a CRS.
 
 Returns
 -------
@@ -578,7 +602,7 @@ RoadResult
         nb::arg("intermediate_window_metres") = 15.0,
         nb::arg("roughness_radius_metres") = 2.5,
         nb::arg("raster_is_filled") = false, nb::arg("boundary_conditions") = "oooo",
-        nb::arg("n_threads") = 0,
+        nb::arg("n_threads") = 0, nb::arg("bearings_relative_to_true_north") = false,
         R"doc(Build flow-direction and terrain diagnostics for road/channel discrimination.
 
 Parameters
@@ -601,6 +625,10 @@ boundary_conditions : str, default='oooo'
     NESW boundary codes for the internal flow routing.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``regional_slope_bearing`` and ``flow_path_bearing`` to true
+    north at each pixel, as the CLI's ``bearings_relative_to_true_north``;
+    needs a DEM with a CRS.
 
 Returns
 -------

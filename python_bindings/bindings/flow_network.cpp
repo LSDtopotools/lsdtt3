@@ -8,6 +8,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <core/lsdtt_true_north.hpp>
+
 #include "binding_common.hpp"
 #include "flow_products.hpp"
 #include <cpu/lsdtt_channel_network_analysis_cpu.hpp>
@@ -321,11 +323,14 @@ nb::object network_link_profiles(const ChannelNetwork& network, const Raster& va
 
 nb::object network_link_bearings(const ChannelNetwork& network, nb::object junctions,
                                  const std::string& mode, double fixed_length_metres,
-                                 int fixed_n_pixels, const std::string& anchor, int min_nodes)
+                                 int fixed_n_pixels, const std::string& anchor, int min_nodes,
+                                 bool bearings_relative_to_true_north)
 {
-    const auto records = lsdtt::calculate_channel_link_bearings(
+    const auto true_north = lsdtt::true_north_converter(network.flow().meta(), bearings_relative_to_true_north);
+    auto records = lsdtt::calculate_channel_link_bearings(
         network.flow(), network.native(), junction_ids(network, junctions),
         sampling_options(mode, fixed_length_metres, fixed_n_pixels, min_nodes), sampling_anchor(anchor));
+    if (true_north) records = lsdtt::channel_link_bearings_to_true_north(records, *true_north);
     std::vector<std::int32_t> upstream, downstream, order;
     std::vector<std::int64_t> upstream_flat, downstream_flat, representative_flat;
     std::vector<std::size_t> n_total, n_used;
@@ -353,9 +358,11 @@ nb::object network_junction_angles(const ChannelNetwork& network, nb::object jun
     return nb::module_::import_("pandas").attr("DataFrame")(data);
 }
 
-nb::object network_basin_com_bearings(const ChannelNetwork& network)
+nb::object network_basin_com_bearings(const ChannelNetwork& network, bool bearings_relative_to_true_north)
 {
-    const auto records = lsdtt::calculate_junction_com_bearings(network.flow(), network.native());
+    const auto true_north = lsdtt::true_north_converter(network.flow().meta(), bearings_relative_to_true_north);
+    auto records = lsdtt::calculate_junction_com_bearings(network.flow(), network.native());
+    if (true_north) records = lsdtt::junction_com_bearings_to_true_north(records, *true_north);
     std::vector<std::int32_t> id, order; std::vector<std::int64_t> n_pixels;
     std::vector<double> ox, oy, cx, cy, bearing, distance;
     for (const auto& r : records) { id.push_back(r.junction_id); order.push_back(r.order); n_pixels.push_back(r.n_pixels); ox.push_back(r.outlet_x); oy.push_back(r.outlet_y); cx.push_back(r.com_x); cy.push_back(r.com_y); bearing.push_back(r.bearing_deg); distance.push_back(r.distance_m); }
@@ -628,7 +635,7 @@ pandas.DataFrame
     ``node_index``, ``flat``, ``row``, ``col``,
     ``distance_from_upstream_metres``, ``value`` (NaN where nodata).
 )doc")
-        .def("link_bearings", &network_link_bearings, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("anchor") = "upstream", nb::arg("min_nodes") = 2, R"doc(
+        .def("link_bearings", &network_link_bearings, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("anchor") = "upstream", nb::arg("min_nodes") = 2, nb::arg("bearings_relative_to_true_north") = false, R"doc(
 Fit compass bearings to compact channel links.
 
 Parameters
@@ -646,6 +653,12 @@ anchor : {"upstream", "downstream"}, default="upstream"
     End of the link the sub-chain starts from.
 min_nodes : int, default=2
     Minimum number of pixels a fit needs (at least 2).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up). True: converted to true north
+    with the grid convergence at each link's representative point (``representative_x``,
+    ``representative_y``); ``direction_x`` and ``direction_y`` stay grid
+    components, as the CLI's
+    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.
 
 Returns
 -------
@@ -654,8 +667,8 @@ pandas.DataFrame
     ``stream_order``, ``upstream_flat``, ``downstream_flat``,
     ``drainage_area_m2``, ``n_nodes_total``, ``n_nodes_used``,
     ``total_length_metres``, ``sampled_length_metres``, ``direction_x``,
-    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = north,
-    clockwise), ``fit_linearity``, ``representative_flat``,
+    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = grid north,
+    or true north as above, clockwise), ``fit_linearity``, ``representative_flat``,
     ``representative_x``, ``representative_y``.
 )doc")
         .def("junction_angles", &network_junction_angles, nb::arg("junctions") = nb::none(), nb::arg("mode") = "full_link", nb::arg("fixed_length_metres") = 0.0, nb::arg("fixed_n_pixels") = 0, nb::arg("min_nodes") = 2, R"doc(
@@ -681,15 +694,23 @@ pandas.DataFrame
     ``donor_1_receiver_angle_deg``, ``donor_2_receiver_angle_deg``,
     ``bending_angle_signed_deg``, ``bending_angle_abs_deg``.
 )doc")
-        .def("basin_com_bearings", &network_basin_com_bearings, R"doc(
+        .def("basin_com_bearings", &network_basin_com_bearings, nb::arg("bearings_relative_to_true_north") = false, R"doc(
 Return outlet-to-basin-centre-of-mass bearings for each junction basin.
+
+Parameters
+----------
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up). True: converted to true north
+    with the grid convergence at the midpoint of the outlet and the centre of mass, as the CLI's
+    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.
 
 Returns
 -------
 pandas.DataFrame
     Columns ``junction_id``, ``stream_order``, ``outlet_x``, ``outlet_y``,
     ``centre_of_mass_x``, ``centre_of_mass_y``, ``bearing_deg`` (compass
-    degrees from the outlet to the centre of mass), ``distance_metres``,
+    degrees from the outlet to the centre of mass, from grid north or true
+    north as above), ``distance_metres``,
     ``n_pixels``.
 )doc")
         .def("chi", &network_chi, nb::arg("outlets") = nb::none(), nb::arg("m_over_n") = 0.45, nb::arg("reference_area") = 1.0, nb::arg("denominator") = nb::none(), R"doc(

@@ -17,6 +17,9 @@ Depressions           fill_pits, breach_depressions, breach_least_cost,
                       depression_hierarchy, find_internal_drainage
 Fetching data         fetch_dem, fetch_dem_for_outlets, bounds_from_vector,
                       utm_epsg_for_point
+Oblique frames        RotationFrame (a grid aligned with a fault, river or
+                      range), fetch_dem(frame=...), rotate_to_frame,
+                      rotate_back
 Flow, channels,       FlowInfo (D8), FlowGraph (MFD, D-infinity),
 basins, outlets       FlowInfo.channel_scope, FlowInfo.channel_network,
                       FlowInfo.snap_points (lat/lon or x/y to (row, col)),
@@ -248,6 +251,7 @@ from ._core import (
     DivideMigrationResult,
     FrangiResult,
     RoadFlowResult,
+    RotationFrame,
     RoadResult,
     RoadSmoothnessResult,
     Ridgeline,
@@ -354,6 +358,8 @@ from ._core import (
     polyfit_metrics,
     rasterize_polygons,
     reproject,
+    rotate_back,
+    rotate_to_frame,
     reproject_to_grid,
     resample_raster,
     double_raster,
@@ -484,6 +490,7 @@ __all__ = [
     "DivideMigrationResult",
     "FrangiResult",
     "RoadFlowResult",
+    "RotationFrame",
     "RoadResult",
     "RoadSmoothnessResult",
     "Ridgeline",
@@ -592,6 +599,8 @@ __all__ = [
     "polyfit_metrics",
     "rasterize_polygons",
     "reproject",
+    "rotate_back",
+    "rotate_to_frame",
     "reproject_to_grid",
     "resample_raster",
     "double_raster",

@@ -24,6 +24,8 @@
 
 #include <core/lsdtt_raster_warp.hpp>
 
+#include <core/lsdtt_true_north.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -239,9 +241,11 @@ nb::object junction_basin_table(const JunctionBasinCollection& collection)
 }
 
 nb::object basin_statistics(const BasinCollection& collection, const Raster& dem, bool include_slope, bool include_flow_distance,
-                            bool include_shape_metrics, double perimeter_simplify_cells)
+                            bool include_shape_metrics, double perimeter_simplify_cells,
+                            bool bearings_relative_to_true_north)
 {
     const auto& flow = collection.flow();
+    const auto true_north = lsdtt::true_north_converter(flow.meta(), bearings_relative_to_true_north);
     if (dem.native().get_meta().n_rows != flow.n_rows() || dem.native().get_meta().n_cols != flow.n_cols())
         throw std::invalid_argument("dem must have the same grid shape as the basin flow topology");
     const auto slope_raster = include_slope ? lsdtt::compute_gradient_magnitude_3x3_square(dem.native()) : lsdtt::lsdtt_raster_cpu();
@@ -259,7 +263,7 @@ nb::object basin_statistics(const BasinCollection& collection, const Raster& dem
             if (!ring.empty() && (ring.front().x != ring.back().x || ring.front().y != ring.back().y)) ring.push_back(ring.front());
             const auto d = basin.get_basin_values(distance_raster); const auto shape = lsdtt::compute_basin_shape(ring, d.empty() ? 0.0 : *std::max_element(d.begin(), d.end()), zs.min, zs.mean, zs.max, perimeter_simplify_cells * flow.cell_size());
             double sum_x = 0.0, sum_y = 0.0; for (const auto flat : basin.get_slice()) { const auto rr = flow.row_from_flat_unchecked(flat); const auto cc = flow.col_from_flat_unchecked(flat); sum_x += flow.meta().x_min + (cc + 0.5) * flow.cell_size(); sum_y += flow.meta().y_max() - (rr + 0.5) * flow.cell_size(); }
-            const double n = static_cast<double>(basin.pixel_count()); row["centroid_x"] = sum_x / n; row["centroid_y"] = sum_y / n; row["basin_length_metres"] = shape.basin_length; row["elongation_ratio"] = shape.elongation_ratio; row["form_factor"] = shape.form_factor; row["circularity_ratio"] = shape.circularity_ratio; row["gravelius_compactness"] = shape.gravelius_compactness; row["solidity"] = shape.solidity; row["eccentricity"] = shape.eccentricity; row["orientation_degrees"] = shape.orientation_deg; row["hypsometric_integral"] = shape.hypsometric_integral;
+            const double n = static_cast<double>(basin.pixel_count()); row["centroid_x"] = sum_x / n; row["centroid_y"] = sum_y / n; row["basin_length_metres"] = shape.basin_length; row["elongation_ratio"] = shape.elongation_ratio; row["form_factor"] = shape.form_factor; row["circularity_ratio"] = shape.circularity_ratio; row["gravelius_compactness"] = shape.gravelius_compactness; row["solidity"] = shape.solidity; row["eccentricity"] = shape.eccentricity; row["orientation_degrees"] = true_north ? true_north->to_true_north(shape.orientation_deg, lsdtt::lsdtt_angle_kind::axial_degrees, sum_x / n, sum_y / n) : shape.orientation_deg; row["hypsometric_integral"] = shape.hypsometric_integral;
         }
         rows.append(std::move(row));
     }
@@ -507,8 +511,9 @@ BasinCollection line_crossing_basins(const ChannelNetwork& network, nb::object l
 
 nb::dict basin_surface_metrics(const BasinCollection& collection, const Raster& dem,
                                const std::vector<double>& scales, const std::vector<std::string>& metric_names,
-                               bool include_outline, int n_threads)
+                               bool include_outline, int n_threads, bool bearings_relative_to_true_north)
 {
+    const auto true_north = lsdtt::true_north_converter(dem.native().get_meta(), bearings_relative_to_true_north);
     if (scales.empty() || metric_names.empty()) throw std::invalid_argument("scales and metrics must not be empty");
     if (dem.native().get_meta().n_rows != collection.flow().n_rows() || dem.native().get_meta().n_cols != collection.flow().n_cols())
         throw std::invalid_argument("dem must have the same grid shape as the basin flow topology");
@@ -523,7 +528,8 @@ nb::dict basin_surface_metrics(const BasinCollection& collection, const Raster& 
     for (const double scale : scales) {
         if (scale <= 0.0) throw std::invalid_argument("scales must be positive");
         const auto fit = lsdtt::direct_polyfit(dem.native(), scale, n_threads); lsdtt::polyfit_metric_request request; request.metrics = metrics; request.n_threads = n_threads;
-        const auto result = lsdtt::compute_polyfit_metrics(fit, request);
+        auto result = lsdtt::compute_polyfit_metrics(fit, request);
+        lsdtt::convert_polyfit_aspects_to_true_north(result, true_north.get());
         for (std::size_t id = 0; id < collection.size(); ++id) {
             const auto& basin = collection.basin(id);
             for (std::size_t metric_id = 0; metric_id < metrics.size(); ++metric_id) {
@@ -675,6 +681,7 @@ numpy.ndarray
         .def("statistics", &basin_statistics, nb::arg("dem"), nb::arg("include_slope") = true,
              nb::arg("include_flow_distance") = true,
              nb::arg("include_shape_metrics") = false, nb::arg("perimeter_simplify_cells") = 1.0,
+             nb::arg("bearings_relative_to_true_north") = false,
              R"doc(
 Return per-basin elevation, slope, flow-distance, and optional shape statistics.
 
@@ -692,11 +699,16 @@ include_shape_metrics : bool, default=False
     Add planform shape metrics: ``centroid_x``, ``centroid_y``,
     ``basin_length_metres``, ``elongation_ratio``, ``form_factor``,
     ``circularity_ratio``, ``gravelius_compactness``, ``solidity``,
-    ``eccentricity``, ``orientation_degrees`` (compass, 0-180),
+    ``eccentricity``, ``orientation_degrees`` (principal axis, compass,
+    0-180, from grid north unless ``bearings_relative_to_true_north``),
     ``hypsometric_integral``.
 perimeter_simplify_cells : float, default=1.0
     Simplification tolerance of the outline, in cells, used for the
     perimeter in the shape metrics.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``orientation_degrees`` to true north with the grid convergence
+    at the basin centroid, as the CLI's ``bearings_relative_to_true_north``;
+    needs a flow grid with a CRS. False keeps it relative to grid north.
 
 Returns
 -------
@@ -878,7 +890,8 @@ pandas.DataFrame
     for k = 1 .. ``max_stream_order`` (D8 channel length in m).
 )doc");
     module.def("basin_surface_metrics", &basin_surface_metrics, nb::arg("basins"), nb::arg("dem"),
-        nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0, R"doc(
+        nb::arg("scales"), nb::arg("metrics"), nb::arg("include_outline") = true, nb::arg("n_threads") = 0,
+        nb::arg("bearings_relative_to_true_north") = false, R"doc(
 Summarise polyfit surface metrics inside each basin at several fitting scales.
 
 Parameters
@@ -899,6 +912,10 @@ include_outline : bool, default=True
     Also sample each metric along the basin outline.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``aspect_degrees`` to true north at each pixel before it is
+    summarised, as the CLI's ``bearings_relative_to_true_north``; needs a
+    DEM with a CRS. False keeps it relative to grid north.
 
 Returns
 -------

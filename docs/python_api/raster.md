@@ -183,7 +183,7 @@ edge (see ``RasterMeta``). Typical round trip::
     out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)
     out.write("doubled.tif")
 
-Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 243 more.
+Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 245 more.
 
 Attributes
 ----------
@@ -1039,7 +1039,8 @@ def add_uniform_noise(raster: lsdtt3.Raster, seed: int, magnitude: float) -> lsd
 Compute polyfit aspect in degrees; lambda_metres defaults to three cells.
 
 Aspect is the downslope direction the surface faces, in compass degrees
-(0 = north, 90 = east, clockwise), from the polyfit surface.
+(0 = north, 90 = east, clockwise), from the polyfit surface; north is grid
+north unless ``bearings_relative_to_true_north``.
 
 Parameters
 ----------
@@ -1052,6 +1053,11 @@ n_threads : int, default=0
 flat_slope_tolerance : float, default=1e-12
     Pixels whose fitted gradient (m/m) is below this are treated as flat
     (no defined aspect).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up), so in an oblique frame
+    (``RotationFrame``) 90 means along the feature. True: converted to
+    true north with the grid convergence at each pixel, as the CLIs'
+    ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------
@@ -1061,9 +1067,10 @@ Raster
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> lsdtt3.Raster
+def aspect(raster: lsdtt3.Raster, lambda_metres: float = 0.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12, bearings_relative_to_true_north: bool = False) -> lsdtt3.Raster
 ```
 
 ---
@@ -1518,19 +1525,24 @@ min_valid_fraction : float, default=0.6
     Windows with a smaller fraction of valid pixels are skipped.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``orientation_degrees`` to true north at each pixel, as the
+    CLI's ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------
 dict
     ``"strength"`` (peak prominence), ``"spacing_metres"`` and
-    ``"orientation_degrees"`` (line orientation) Rasters.
+    ``"orientation_degrees"`` (line orientation, 0-180, clockwise from grid
+    north or true north) Rasters.
 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0) -> dict
+def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = 0.6, n_threads: int = 0, bearings_relative_to_true_north: bool = False) -> dict
 ```
 
 ---
@@ -2631,7 +2643,8 @@ Valid metric names and units:
 - ``"slope"``: gradient magnitude ``sqrt(dzdx**2 + dzdy**2)`` (m/m)
 - ``"slope_degrees"``: the same slope as an angle (degrees)
 - ``"aspect_degrees"``, ``"aspect_radians"``: downslope direction,
-  clockwise from north
+  clockwise from grid north (true north with
+  ``bearings_relative_to_true_north``)
 - ``"laplacian"``: ``d2zdx2 + d2zdy2`` (1/m)
 - ``"hessian_determinant"`` (1/m^2)
 - ``"mean_curvature"`` (1/m), ``"gaussian_curvature"`` (1/m^2)
@@ -2667,6 +2680,12 @@ flat_slope_tolerance : float, default=1e-12
     Where the fitted gradient (m/m) is below this, the pixel is treated as
     too flat for direction-dependent metrics (aspect, plan, tangential and
     profile curvature, rotor).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up), so in an oblique frame
+    (``RotationFrame``) 90 means along the feature. True: converted to
+    true north with the grid convergence at each pixel (aspect metrics only; ``dzdx`` and ``dzdy`` stay grid
+    components), as the CLIs'
+    ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------
@@ -2676,9 +2695,10 @@ dict[str, Raster]
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12) -> dict
+def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = 0.0, z_factor: float = 1.0, n_threads: int = 0, flat_slope_tolerance: float = 1e-12, bearings_relative_to_true_north: bool = False) -> dict
 ```
 
 ---

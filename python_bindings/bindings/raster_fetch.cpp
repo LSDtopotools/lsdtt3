@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <cstdint>
@@ -7,6 +9,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <gdal_priv.h>
+#include <Python.h>
 
 #include <core/lsdtt_gdal_init.hpp>
 #include <core/lsdtt_secret.hpp>
@@ -14,6 +17,7 @@
 #include <cpu/lsdtt_outlet_basin_verification_cpu.hpp>
 
 #include "binding_common.hpp"
+#include "rotation_frames.hpp"
 
 namespace lsdtt3_python {
 namespace {
@@ -36,7 +40,10 @@ Raster fetch_dem(
     double grid_spacing, const std::string& resampling, double nodata_value,
     int size_pixels, const std::string& cache_dir, const std::string& ot_dem_type,
     const std::string& pc_collection, const std::string& pc_asset,
-    int http_timeout_seconds, int http_connect_timeout_seconds, int http_max_retry)
+    int http_timeout_seconds, int http_connect_timeout_seconds, int http_max_retry,
+    nb::object frame, bool fetch_from_linear_feature, const std::string& fetch_feature_fname,
+    const std::string& fetch_feature_layer, double linear_feature_fetch_width,
+    double linear_feature_fetch_end_buffer, bool rotate_after_fetch)
 {
     lsdtt::gdal_init();
     lsdtt::lsdtt_fetch_options options;
@@ -44,6 +51,74 @@ Raster fetch_dem(
     options.south = south;
     options.east = east;
     options.north = north;
+
+    // The area from a frame or a feature file (lsdtt-fetch-raster's
+    // fetch_from_linear_feature), refusing every other way of giving one.
+    const bool have_frame = !frame.is_none();
+    const bool any_edge = std::isfinite(west) || std::isfinite(south) ||
+                          std::isfinite(east) || std::isfinite(north);
+    if (have_frame || fetch_from_linear_feature)
+    {
+        const char* what = have_frame ? "frame" : "fetch_from_linear_feature";
+        if (have_frame && fetch_from_linear_feature)
+            throw std::invalid_argument("frame and fetch_from_linear_feature cannot be combined");
+        if (any_edge)
+            throw std::invalid_argument(std::string(what) + " defines the area itself, so it "
+                                        "cannot be combined with west/south/east/north");
+        if (size_pixels != 0)
+            throw std::invalid_argument(std::string(what) + " cannot be combined with size_pixels");
+    }
+    else if (!std::isfinite(west) || !std::isfinite(south) ||
+             !std::isfinite(east) || !std::isfinite(north))
+    {
+        throw std::invalid_argument(
+            "give west, south, east and north, or frame, or fetch_from_linear_feature");
+    }
+    if (!fetch_from_linear_feature && !fetch_feature_fname.empty())
+    {
+        if (PyErr_WarnEx(PyExc_UserWarning,
+                         "fetch_feature_fname is set but fetch_from_linear_feature is False, "
+                         "so it is ignored", 2) < 0)
+            throw nb::python_error();
+    }
+    if (have_frame)
+    {
+        const RotationFrame& rf = nb::cast<const RotationFrame&>(frame);
+        if (target_epsg != 0)
+            throw std::invalid_argument(
+                "target_epsg cannot be given with frame: the frame carries its rotate-back "
+                "target (RotationFrame.from_feature(..., target_epsg=...))");
+        if (std::abs(rf.native().frame.cell_size - grid_spacing) > 1e-9 * grid_spacing)
+            throw std::invalid_argument(
+                "grid_spacing (" + std::to_string(grid_spacing) + ") must equal the frame's "
+                "cell_size (" + std::to_string(rf.native().frame.cell_size) + ")");
+        options.use_frame = true;
+        options.frame = rf.native().frame;
+        options.target_epsg = rf.native().target.epsg;
+    }
+    else if (fetch_from_linear_feature)
+    {
+        if (fetch_feature_fname.empty())
+            throw std::invalid_argument(
+                "fetch_from_linear_feature needs fetch_feature_fname (a line, two points or "
+                "polygon file)");
+        const lsdtt::lsdtt_frame_from_feature_result fr = lsdtt::frame_from_feature_file(
+            fetch_feature_fname, fetch_feature_layer, linear_feature_fetch_width,
+            linear_feature_fetch_end_buffer, grid_spacing);
+        for (const auto& w : fr.warnings)
+            if (PyErr_WarnEx(PyExc_UserWarning, w.c_str(), 2) < 0) throw nb::python_error();
+        if (!fr.ok) throw std::invalid_argument(fr.message);
+        if (rotate_after_fetch)
+        {
+            options.use_frame = true;
+            options.frame = fr.frame;
+        }
+        else
+        {
+            lsdtt::fetch_bbox_for_frame(fr.frame, 0.0, options.west, options.south,
+                                        options.east, options.north);
+        }
+    }
     options.source = source_from_name(source);
     options.target_epsg = target_epsg;
     options.grid_spacing = grid_spacing;
@@ -454,8 +529,10 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
             return nb::make_tuple(result.west, result.south, result.east, result.north);
         });
 
+    constexpr double no_edge = std::numeric_limits<double>::quiet_NaN();
     module.def("fetch_dem", &fetch_dem,
-        nb::arg("west"), nb::arg("south"), nb::arg("east"), nb::arg("north"),
+        nb::arg("west") = no_edge, nb::arg("south") = no_edge,
+        nb::arg("east") = no_edge, nb::arg("north") = no_edge,
         nb::arg("source") = "cop30_aws",
         nb::arg("target_epsg") = 0, nb::arg("grid_spacing") = 30.0,
         nb::arg("resampling") = "cubic", nb::arg("nodata_value") = -9999.0,
@@ -463,6 +540,11 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
         nb::arg("ot_dem_type") = "COP30", nb::arg("pc_collection") = "cop-dem-glo-30",
         nb::arg("pc_asset") = "data", nb::arg("http_timeout_seconds") = 60,
         nb::arg("http_connect_timeout_seconds") = 15, nb::arg("http_max_retry") = 3,
+        nb::arg("frame") = nb::none(), nb::arg("fetch_from_linear_feature") = false,
+        nb::arg("fetch_feature_fname") = "", nb::arg("fetch_feature_layer") = "",
+        nb::arg("linear_feature_fetch_width") = 0.0,
+        nb::arg("linear_feature_fetch_end_buffer") = -1.0,
+        nb::arg("rotate_after_fetch") = true,
         R"doc(
 Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.
 
@@ -472,13 +554,21 @@ stores the sea as exactly 0 m, not as nodata, so mask it before flow
 routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
 footprint are nodata.
 
+Or, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,
+fetch a strip along a fault, river or range warped straight from the source
+tiles into an oblique frame (one resampling pass), with the feature along
++x. The return type is always ``Raster``; keep the ``RotationFrame`` to
+rotate products back with ``rotate_back``.
+
 Parameters
 ----------
-west, south, east, north : float
+west, south, east, north : float, optional
     WGS84 bounds in decimal degrees (longitude west/east, latitude
     south/north). Antimeridian-crossing requests are not supported:
     ``west`` must be less than ``east``. ``VectorBounds.bbox`` from
     ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.
+    Required unless ``frame`` or ``fetch_from_linear_feature`` gives the
+    area; refused with them.
 source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
     ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.
     OpenTopography reads its key only from the ``OT_API_KEY`` or
@@ -511,12 +601,37 @@ http_connect_timeout_seconds : int, optional
     Connection time limit per HTTP request in seconds.
 http_max_retry : int, optional
     Number of retries of a failed HTTP request.
+frame : RotationFrame or None, optional
+    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``
+    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
+    are refused (the frame carries its rotate-back target).
+fetch_from_linear_feature : bool, optional
+    Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster
+    does; the same as ``frame=RotationFrame.from_feature(fetch_feature_fname,
+    linear_feature_fetch_width, linear_feature_fetch_end_buffer,
+    grid_spacing, fetch_feature_layer)``, which is the frame to keep for
+    ``rotate_back``.
+fetch_feature_fname : str, optional
+    Line, two-point or polygon file (any OGR format and CRS).
+fetch_feature_layer : str, optional
+    Layer of the feature file; empty reads the first.
+linear_feature_fetch_width : float, optional
+    Full strip width in metres; required for a line or two points.
+linear_feature_fetch_end_buffer : float, optional
+    Length beyond each axis end in metres (all sides for a polygon);
+    negative means 10 cells.
+rotate_after_fetch : bool, optional
+    With ``fetch_from_linear_feature``: True (default) returns the strip in
+    the oblique frame; False returns the frame's WGS84 envelope in UTM, as a
+    plain fetch.
 
 Returns
 -------
 Raster
-    A projected raster of elevation (m). Network, GDAL, and invalid-request
-    failures raise ``RuntimeError``.
+    A projected raster of elevation (m): UTM (or ``target_epsg``), or the
+    oblique frame. Network, GDAL, and invalid-request failures raise
+    ``RuntimeError``; an inconsistent combination of arguments raises
+    ``ValueError``.
 )doc");
 
     module.def("fetch_dem_for_outlets", &fetch_dem_for_outlets,
