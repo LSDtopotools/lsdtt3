@@ -1,0 +1,39 @@
+{
+ "type": "FeatureCollection",
+ "name": "lakeland_polygon",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "strip"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -92.0735187,
+       50.5807661
+      ],
+      [
+       -92.0338955,
+       50.5712164
+      ],
+      [
+       -92.0383965,
+       50.5636477
+      ],
+      [
+       -92.0780143,
+       50.5731959
+      ],
+      [
+       -92.0735187,
+       50.5807661
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

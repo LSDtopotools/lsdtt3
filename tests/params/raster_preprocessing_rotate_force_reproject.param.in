@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+read_fname: flat_resolution_lakeland_crop_dem.tif
+write_path: __WRITE_PATH__
+write_output_format: gtiff
+write_fname: rotforce
+
+rotate_to_data_footprint: true
+force_reproject: true

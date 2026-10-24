@@ -1,0 +1,29 @@
+{
+ "type": "FeatureCollection",
+ "name": "lakeland_line",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "axis"
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -92.0766356,
+      50.5617618
+     ],
+     [
+      -92.0581047,
+      50.5706068
+     ],
+     [
+      -92.036669,
+      50.5830223
+     ]
+    ]
+   }
+  }
+ ]
+}
