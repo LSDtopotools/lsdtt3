@@ -65,7 +65,8 @@ enum class oblique_frame_definition
 {
     two_points,
     line,
-    polygon
+    polygon,
+    crs          // rebuilt from a raster's own CRS (frame_from_crs_wkt)
 };
 
 // Default end buffer, in cells, used when end_buffer_metres < 0.
@@ -121,6 +122,21 @@ std::string base_geographic_wkt_of(const std::string& crs_wkt);
 // Fold an azimuth in degrees into (-90, 90]. Values within 1e-4 deg above -90
 // are returned as 90: PROJ omerc misplaces the frame centre there.
 double fold_axis_azimuth(double azimuth_degrees);
+
+// Throw std::runtime_error unless the frame's centre maps to (0, 0) within
+// 1 mm and a point placed along its azimuth lands on +x within 0.01 %. Every
+// builder runs it; the frame-file reader runs it on what it read.
+void check_oblique_frame_axis(const lsdtt_oblique_frame& frame);
+
+// Rebuild a frame from a raster's own CRS (an lsdtt3 omerc frame: variant B,
+// rectified grid angle 90, scale 1, zero false origin, metres, folded
+// azimuth) and its extent in frame coordinates. The axis end points are put at
+// x_min and x_max on y = 0, width is the y extent, the buffer is 0, and
+// definition is crs; a warning says the original definition is not known.
+// Throws std::invalid_argument for any other CRS or an empty extent.
+lsdtt_oblique_frame frame_from_crs_wkt(const std::string& crs_wkt, double cell_size,
+                                       double x_min, double x_max,
+                                       double y_min, double y_max);
 
 // Frame along the geodesic between two points. width_metres must be > 0;
 // end_buffer_metres < 0 means 10 cells. base_geographic_wkt empty means WGS84.

@@ -4930,6 +4930,16 @@ add_test(NAME unit_oblique_frame_feature
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_feature_work")
 lsdtt_set_tests_properties(unit_oblique_frame_feature PROPERTIES LABELS "unit;raster")
 
+# The rotation frame file: exact write/read round trip, YAML-safe writing
+# rules, consistency checks and refusals, and the frame_from_crs_wkt fallback.
+add_executable(lsdtt-test-oblique-frame-file cpp/test_oblique_frame_file.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-file PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_file
+         COMMAND lsdtt-test-oblique-frame-file
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_file_work")
+lsdtt_set_tests_properties(unit_oblique_frame_file PROPERTIES LABELS "unit;raster")
+
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.
 add_executable(lsdtt-test-crs-semantic-matching cpp/test_crs_semantic_matching.cpp)

@@ -196,27 +196,7 @@ lsdtt_oblique_frame build_frame(lsdtt_lonlat a, lsdtt_lonlat b, double width_met
     f.y_max = snap_out(half_width, cell_size);
     f.y_min = -f.y_max;
 
-    // Axis self-check: the centre must map to (0, 0), and a point placed along
-    // the azimuth from it must land on +x at its geodesic distance (k = 1 on
-    // the central line).
-    const double d = std::max(0.5 * f.axis_length_metres, 10.0 * cell_size);
-    const lsdtt_lonlat probe = geodesic_direct(geog, f.centre, f.azimuth_degrees, d);
-    lsdtt_oblique_frame_projector projector(f);
-    double x0 = 0.0;
-    double y0 = 0.0;
-    projector.to_frame(f.centre.longitude, f.centre.latitude, x0, y0);
-    double x = 0.0;
-    double y = 0.0;
-    projector.to_frame(probe.longitude, probe.latitude, x, y);
-    if (!(std::abs(x0) <= 1e-3 && std::abs(y0) <= 1e-3 &&
-          std::abs(x - d) <= 1e-4 * d && std::abs(y) <= 1e-4 * d))
-    {
-        std::ostringstream msg;
-        msg << std::setprecision(10) << "lsdtt_oblique_frame: axis self-check failed; a point "
-            << d << " m along azimuth " << f.azimuth_degrees << " landed at (" << x << ", "
-            << y << ") and the centre at (" << x0 << ", " << y0 << ")";
-        throw std::runtime_error(msg.str());
-    }
+    check_oblique_frame_axis(f);
     return f;
 }
 
@@ -334,6 +314,100 @@ double fold_axis_azimuth(double azimuth_degrees)
     // as +90, so it is taken as +90 (at most 1e-4 deg of rotation).
     if (a <= -90.0 + azimuth_minus_90_guard_degrees) a = 90.0;
     return a;
+}
+
+void check_oblique_frame_axis(const lsdtt_oblique_frame& f)
+{
+    // The centre must map to (0, 0), and a point placed along the azimuth
+    // from it must land on +x at its geodesic distance (k = 1 on the central
+    // line).
+    const OGRSpatialReference geog = geographic_srs(f.base_geographic_wkt);
+    const double d = std::max(0.5 * f.axis_length_metres, 10.0 * f.cell_size);
+    const lsdtt_lonlat probe = geodesic_direct(geog, f.centre, f.azimuth_degrees, d);
+    lsdtt_oblique_frame_projector projector(f);
+    double x0 = 0.0;
+    double y0 = 0.0;
+    projector.to_frame(f.centre.longitude, f.centre.latitude, x0, y0);
+    double x = 0.0;
+    double y = 0.0;
+    projector.to_frame(probe.longitude, probe.latitude, x, y);
+    if (!(std::abs(x0) <= 1e-3 && std::abs(y0) <= 1e-3 &&
+          std::abs(x - d) <= 1e-4 * d && std::abs(y) <= 1e-4 * d))
+    {
+        std::ostringstream msg;
+        msg << std::setprecision(10) << "lsdtt_oblique_frame: axis self-check failed; a point "
+            << d << " m along azimuth " << f.azimuth_degrees << " landed at (" << x << ", "
+            << y << ") and the centre at (" << x0 << ", " << y0 << ")";
+        throw std::runtime_error(msg.str());
+    }
+}
+
+lsdtt_oblique_frame frame_from_crs_wkt(const std::string& crs_wkt, double cell_size,
+                                       double x_min, double x_max, double y_min, double y_max)
+{
+    if (!std::isfinite(cell_size) || cell_size <= 0.0)
+        throw std::invalid_argument("frame_from_crs_wkt: cell_size must be > 0");
+    if (!(std::isfinite(x_min) && std::isfinite(x_max) && std::isfinite(y_min) &&
+          std::isfinite(y_max) && x_max > x_min && y_max > y_min))
+        throw std::invalid_argument("frame_from_crs_wkt: the extent is empty or not finite");
+
+    OGRSpatialReference srs;
+    if (crs_wkt.empty() || srs.importFromWkt(crs_wkt.c_str()) != OGRERR_NONE)
+        throw std::invalid_argument("frame_from_crs_wkt: the CRS WKT does not parse");
+    const char* method = srs.GetAttrValue("PROJECTION");
+    if (method == nullptr ||
+        !EQUAL(method, SRS_PT_HOTINE_OBLIQUE_MERCATOR_AZIMUTH_CENTER))
+        throw std::invalid_argument(
+            std::string("frame_from_crs_wkt: the CRS is not an oblique Mercator (variant B) "
+                        "frame; its projection is ") + (method ? method : "none"));
+
+    OGRErr err = OGRERR_NONE;
+    const double lat = srs.GetProjParm(SRS_PP_LATITUDE_OF_CENTER, 0.0, &err);
+    const double lon = srs.GetProjParm(SRS_PP_LONGITUDE_OF_CENTER, 0.0, &err);
+    const double azimuth = srs.GetProjParm(SRS_PP_AZIMUTH, 0.0, &err);
+    const double gamma = srs.GetProjParm(SRS_PP_RECTIFIED_GRID_ANGLE, 0.0, &err);
+    const double k = srs.GetProjParm(SRS_PP_SCALE_FACTOR, 1.0, &err);
+    const double fe = srs.GetProjParm(SRS_PP_FALSE_EASTING, 0.0, &err);
+    const double fn = srs.GetProjParm(SRS_PP_FALSE_NORTHING, 0.0, &err);
+    const double unit = srs.GetLinearUnits();
+    if (std::abs(gamma - 90.0) > 1e-9 || std::abs(k - 1.0) > 1e-12 || fe != 0.0 || fn != 0.0 ||
+        std::abs(unit - 1.0) > 1e-12)
+    {
+        std::ostringstream msg;
+        msg << std::setprecision(12)
+            << "frame_from_crs_wkt: not an lsdtt3 frame (needs rectified grid angle 90, scale 1, "
+               "false easting/northing 0, metres); got angle " << gamma << ", scale " << k
+            << ", false origin (" << fe << ", " << fn << "), unit " << unit << " m";
+        throw std::invalid_argument(msg.str());
+    }
+
+    lsdtt_oblique_frame f;
+    f.definition = oblique_frame_definition::crs;
+    f.base_geographic_wkt = base_geographic_wkt_of(crs_wkt);
+    f.centre = {lon, lat};
+    f.azimuth_degrees = fold_axis_azimuth(azimuth);
+    if (f.azimuth_degrees != azimuth)
+        throw std::invalid_argument("frame_from_crs_wkt: the azimuth is not folded into (-90, 90]");
+    f.cell_size = cell_size;
+    f.x_min = x_min;
+    f.x_max = x_max;
+    f.y_min = y_min;
+    f.y_max = y_max;
+    f.axis_length_metres = x_max - x_min;
+    f.width_metres = y_max - y_min;
+    f.end_buffer_metres = 0.0;
+    f.buffer_all_sides = false;
+    {
+        lsdtt_oblique_frame_projector projector(f);
+        f.end1 = projector.to_geographic(x_min, 0.0);
+        f.end2 = projector.to_geographic(x_max, 0.0);
+    }
+    if (lonlat_less(f.end2, f.end1)) std::swap(f.end1, f.end2);
+    check_oblique_frame_axis(f);
+    f.warnings.push_back(
+        "frame rebuilt from the raster's CRS: the axis end points are the raster's x extent, "
+        "and the original feature, width and buffer are not known");
+    return f;
 }
 
 lsdtt_oblique_frame frame_from_points(const lsdtt_lonlat& a, const lsdtt_lonlat& b,
@@ -743,6 +817,8 @@ lsdtt_frame_from_feature_result frame_from_feature_file(
             result.frame = frame_from_polygon_vertices(feature.points, end_buffer_metres,
                                                        cell_size, base_geographic_wkt);
             break;
+        case oblique_frame_definition::crs:   // never produced by the reader
+            throw std::logic_error("frame_from_feature_file: unexpected feature kind");
         }
     }
     catch (const std::exception& e)
