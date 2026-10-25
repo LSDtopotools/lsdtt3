@@ -170,4 +170,9 @@ std::string read_secret_from_file(const std::string& path, std::string& warning)
 // false would hang a CI run instead of failing cleanly.
 bool stdin_is_terminal();
 
+// True if standard output is an interactive terminal. A progress line that
+// rewrites itself with '\r' is only readable there; in a log or a coding
+// agent's captured output it becomes one very long line.
+bool stdout_is_terminal();
+
 } // namespace lsdtt

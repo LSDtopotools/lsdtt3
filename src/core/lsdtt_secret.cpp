@@ -138,6 +138,15 @@ bool stdin_is_terminal()
 #endif
 }
 
+bool stdout_is_terminal()
+{
+#ifdef _WIN32
+    return _isatty(_fileno(stdout)) != 0;
+#else
+    return isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
 
 std::string read_secret_from_file(const std::string& path, std::string& warning)
 {

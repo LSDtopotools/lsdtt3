@@ -67,6 +67,7 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
+#include "../src/core/lsdtt_secret.hpp"
 #include "../src/cpu/lsdtt_synthetic_domain_cpu.hpp"
 
 static const std::string k_status   = "experimental";
@@ -209,7 +210,8 @@ static void write_intermediate_diagnostics(
 
 int main(int argc, char* argv[])
 {
-    print_banner();
+    if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))
+        print_banner();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_status, k_citation);
@@ -2934,11 +2936,16 @@ int main(int argc, char* argv[])
         else
         {
             std::cout << "  Path           : legacy_steady_state\n";
+            // Rewrite one line in a terminal; one line per cycle in a log.
+            const bool rewrite_line = lsdtt::stdout_is_terminal();
             for (int cycle = 1; cycle <= n_cycles; ++cycle)
             {
-                if (n_cycles > 1)
+                if (n_cycles > 1 && rewrite_line)
                     std::cout << "\rSnapping cycle " << cycle << " / " << n_cycles
                               << "  " << std::flush;
+                else if (n_cycles > 1)
+                    std::cout << "Snapping cycle " << cycle << " / " << n_cycles
+                              << "\n" << std::flush;
                 else
                     std::cout << "  ";
 
@@ -2966,7 +2973,7 @@ int main(int argc, char* argv[])
                     cycle_dem = ss_result.elevation;   // feed result into next cycle
             }
 
-            if (n_cycles > 1) std::cout << "\n";
+            if (n_cycles > 1 && rewrite_line) std::cout << "\n";
         }
 
         const std::string mode_str = ss_opts.relief_mode ? "relief" : "K";

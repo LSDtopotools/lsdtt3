@@ -1553,6 +1553,22 @@ std::string csv_quote(const std::string& s)
 
 } // anonymous namespace
 
+bool lsdtt_param_parser::help_json_requested(int argc, char* argv[])
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string a = argv[i];
+        if (a == "--help-json" || a == "-help-json") return true;
+        if (a == "-h" || a == "--help" || a == "help" || a == "-H" || a == "--H")
+            return i + 1 < argc && std::string(argv[i + 1]) == "json";
+        if (a == "-v" || a == "--version" || a == "version" || a == "-V" ||
+            a == "-c" || a == "--cite" || a == "citation" || a == "-citation" ||
+            a == "--citation")
+            return false;
+    }
+    return false;
+}
+
 lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
     int argc, char* argv[],
     const std::string& tool_name,

@@ -245,7 +245,8 @@ int main(int argc, char* argv[])
     // =========================================================================
     // Phase 1 - Parse command-line arguments
     // =========================================================================
-    lsdtt::print_banner();
+    if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))
+        lsdtt::print_banner();
     lsdtt::lsdtt_cli_args args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, lsdtt::k_tool_name, lsdtt::k_status, lsdtt::k_citation);
 

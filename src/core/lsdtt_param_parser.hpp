@@ -413,6 +413,13 @@ public:
     // their own.
     // When no help is requested, path/fname resolution requires a parameter
     // file (exit(1) when none is given).
+    // True if these arguments ask for --help-json / -h json, read in the same
+    // order as parse_args_deferred (so "-v -h json" is a version request).
+    // CLIs print their welcome banner only when this is false: -h json
+    // writes nothing to stdout but the JSON document, so a program or a
+    // coding agent can parse it as it comes.
+    static bool help_json_requested(int argc, char* argv[]);
+
     static lsdtt_cli_args parse_args_deferred(
         int argc, char* argv[],
         const std::string& tool_name,
