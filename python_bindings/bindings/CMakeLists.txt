@@ -27,6 +27,7 @@ nanobind_add_module(_core
     divide_migration.cpp
     raster_geospatial.cpp
     raster_fetch.cpp
+    rotation_frames.cpp
     cosmo_column.cpp
     cosmo_raster.cpp
     cosmo_basin.cpp

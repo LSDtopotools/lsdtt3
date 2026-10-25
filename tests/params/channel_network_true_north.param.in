@@ -1,0 +1,17 @@
+# bearings_relative_to_true_north. Link, junction-arm and
+# centre-of-mass bearings and the bearing statistics on the lakeland frame DEM.
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tncn
+n_threads: 1
+threshold_contributing_pixels: 15
+calculate_spatial_index: false
+write_vector_format: csv
+qa_write_vector_format: csv
+write_channel_link_bearings: true
+write_junction_angles: true
+write_junction_angle_bearing_vectors: true
+write_junction_centre_of_mass_bearings: true
+write_channel_bearing_statistics: true
+bearings_relative_to_true_north: true

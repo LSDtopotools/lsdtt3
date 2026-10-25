@@ -13,6 +13,8 @@
 #include <cpu/lsdtt_raster_flow_preprocessing_cpu.hpp>
 #include <cpu/lsdtt_graphflood_optimised_cpu.hpp>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -31,7 +33,7 @@ void require_same_grid(const Raster& reference, const Raster& candidate,
     const auto& b = candidate.native().get_meta();
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols ||
         a.x_min != b.x_min || a.y_min != b.y_min ||
-        a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
+        a.cell_size != b.cell_size || !lsdtt::crs_equal_semantically(a.crs_wkt, b.crs_wkt))
     {
         throw std::invalid_argument(std::string(name) + " must share the bed grid");
     }

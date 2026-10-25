@@ -432,7 +432,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_hillshade_raster` | `bool` | `false` | `switch` | - | Write a hillshade raster. | Uses Zevenbergen and Thorne (1987). Computed directly from the input DEM - no fill is applied. |
-| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from north. | 315 (northwest) is the cartographic convention. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from grid north (grid up). | 315 (northwest) is the cartographic convention. It is relative to the raster grid, so in an oblique frame it lights from the frame's north-west; bearings_relative_to_true_north never changes it. |
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_raster` | Sun altitude above the horizon in degrees. | 45 degrees is a typical default. |
 | `hillshade_z_factor` | `float` | `1.0` | `param` | `write_hillshade_raster` | Vertical exaggeration factor applied before computing hillshade. | Values greater than 1 emphasise relief in flat terrain. |
 
@@ -550,5 +550,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `cloth_class_threshold` | `float` | `0.5` | `param` | - | Contact tolerance in metres: cloth is pinned when within this distance of the DEM. | Increase (1-5 m) for coarse-resolution DEMs, noisy data, or DEMs with residual artefact pits. Decrease (0.1 m) for smooth high-resolution lidar where precise ridge contact is desired. |
 | `cloth_max_iterations` | `int` | `500` | `param` | - | Maximum number of Verlet integration steps. | The simulation stops early when max_displacement &lt; cloth_convergence_tolerance_metres. Increase for large or complex DEMs where convergence is slow. |
 | `cloth_convergence_tolerance_metres` | `float` | `0.005` | `param` | - | Convergence tolerance: maximum cloth displacement (m) per step to declare settled. | Tighten to 0.001 m for precise incision mapping on smooth terrain. Loosen to 0.01 m for faster runs on coarse DEMs where sub-centimetre precision is not needed. |
+
+### Orientations
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
 
 <!-- END GENERATED CLI PARAMETERS -->

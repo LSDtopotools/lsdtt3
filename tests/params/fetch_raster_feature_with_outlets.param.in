@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffoutlets
+
+# A feature with outlet mode is refused.
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson
+linear_feature_fetch_width: 2000
+bounds_mode: outlets
+outlet_points_fname: bounds/outlets_ortler_pair.csv

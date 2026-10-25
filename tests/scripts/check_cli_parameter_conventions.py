@@ -104,6 +104,9 @@ REVIEWED_FORMAT_OVERRIDES = {
     # Hillshade and drainage-area frames for visualising a run (cog, png or
     # both); elevation outputs keep write_output_format.
     "lsdtt-advection-diffusion": {"diagnostics_write_output_format"},
+    # The per-basin statistics table: a point layer (flatgeobuf default, gpkg)
+    # or CSV; write_vector_format keeps the basin polygons, which cannot be CSV.
+    "lsdtt-basin-stats": {"basin_stats_write_vector_format"},
     "lsdtt-basin-extraction": {
         "basin_outlines_write_vector_format",
         "side_tributary_write_vector_format",

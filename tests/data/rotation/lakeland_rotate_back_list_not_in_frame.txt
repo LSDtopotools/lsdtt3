@@ -1,0 +1,2 @@
+# A raster not in the frame CRS (refused)
+flat_resolution_lakeland_crop_dem.tif

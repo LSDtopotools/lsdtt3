@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffgreen
+
+# Green River reach, fetched straight into its oblique frame (feature along +x).
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson
+linear_feature_fetch_width: 2000
+
+dem_source: cop30_aws
+grid_spacing: 30.0
+
+http_connect_timeout_seconds: 10
+http_timeout_seconds: 30

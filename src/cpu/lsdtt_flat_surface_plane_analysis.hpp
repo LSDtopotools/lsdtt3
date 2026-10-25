@@ -96,6 +96,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_true_north.hpp"
 
 namespace lsdtt {
 
@@ -120,6 +121,11 @@ struct plane_analysis_request
     // Valley/peak ratio below this threshold -> bimodal.
     // split_confidence = 1 - valley_min / lower_peak_count
     double split_bimodal_threshold       = 0.4;
+
+    // bearings_relative_to_true_north: when set, aspect_degrees is from true
+    // north, converted at the label's centroid (lsdtt_true_north.hpp). Not
+    // owned.
+    const lsdtt_grid_convergence* true_north = nullptr;
 };
 
 // =============================================================================
@@ -142,7 +148,7 @@ struct label_plane_fit
 
     // Overall slope magnitude sqrt(a^2 + b^2) and aspect atan2(b,a) in degrees.
     double slope_magnitude = 0.0;
-    double aspect_degrees  = 0.0;   // 0 deg = east, 90 deg = north
+    double aspect_degrees  = 0.0;   // compass down-slope azimuth, [0, 360)
 
     bool   valid            = false;  // false if n < min_pixels or degenerate
     bool   split_candidate  = false;  // bimodal residuals

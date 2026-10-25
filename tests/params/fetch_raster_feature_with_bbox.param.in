@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffbbox
+
+# A feature defines the area itself; explicit edges as well are refused.
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson
+linear_feature_fetch_width: 2000
+west: -110.1
+south: 38.3
+east: -109.9
+north: 38.5

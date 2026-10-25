@@ -1,0 +1,13 @@
+# bearings_relative_to_true_north. Polyfit aspect from
+# lsdtt-ridgeline-analysis on the true-200 plane in the frame.
+read_path: __READ_PATH__/true_north
+read_fname: plane_frame_true200.tif
+write_path: __WRITE_PATH__
+write_fname: tnrl
+n_threads: 1
+threshold_contributing_pixels: 5
+select_all_basins: true
+polyfit_metrics: aspect_degrees
+write_polyfit_rasters: true
+polyfit_lambda_metres: 90
+bearings_relative_to_true_north: true

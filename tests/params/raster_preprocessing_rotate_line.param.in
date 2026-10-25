@@ -1,0 +1,10 @@
+read_path: __READ_PATH__
+read_fname: flat_resolution_lakeland_crop_dem.tif
+write_path: __WRITE_PATH__
+write_output_format: gtiff
+write_fname: rotline
+
+rotate_to_linear_feature: true
+rotation_feature_fname: rotation/lakeland_line.geojson
+linear_feature_rotation_width: 1200
+write_fill_raster: true

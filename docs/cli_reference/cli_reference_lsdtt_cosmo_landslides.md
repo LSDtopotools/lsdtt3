@@ -574,4 +574,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `scar_density_kg_m3` | `float` | `-1` | `param` | - | Density of the material a landslide EXCAVATES (kg/m3). Negative takes it from area_volume_preset. | This is a different quantity from rock_density_kg_m3 and conflating them is a real error. Larsen's V = alpha A^gamma is fitted to MEASURED scar volumes, so the excavation depth is a true geometric thickness of whatever failed -- soil, at roughly 1500 kg/m3, for a shallow landslide. Carrying that at 2650 overstates the mass depth by about a factor of 1.77, and since production falls exponentially with mass depth it changes the concentration of the delivered material by more than a factor of two. The material-specific presets carry a density: larsen_soil_scar 1500, larsen_bedrock_scar 2650. larsen_global and the hovius presets are fitted across materials and carry none, so leaving this negative with one of those selected raises a warning. |
 | `crn_report_time_yr` | `float` | `0` | `param` | - | Time at which concentrations are reported, on the same clock as the event times. | - |
 
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
 <!-- END GENERATED CLI PARAMETERS -->

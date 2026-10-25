@@ -145,6 +145,12 @@ fetch_dem(west,south,east,north,source='cop30_aws',target_epsg=0,grid_spacing=30
 b=bounds_from_vector(path,layer='')->VectorBounds (path is a vector FILE with polygons or exactly two corner points); b.ok; b.bbox is the tuple (west,south,east,north), so use fetch_dem(*b.bbox)
 fetch_dem_for_outlets(outlets:V,source='cop30_aws',grid_spacing=30.0,...)->OutletFetchResult (.rasters list of R, .groups, .snapped_outlets, .basin_labels)
 utm_epsg_for_point(longitude,latitude)->int; cop30_tiles_for_bbox(west,south,east,north)->list[str]; opentopography_datasets()->list; http_available()->bool
+Oblique frames (a grid aligned with a fault/river/range, feature along +x, so the strip is not padded to its bounding box):
+  frame=RotationFrame.from_feature(path,width=0.0,end_buffer=-1.0,grid_spacing=0.0,layer='',source=None) (path: line, two points or polygon FILE; width in m for lines)
+  fetch_dem(frame=frame,grid_spacing=frame.cell_size)->R in the frame; frame.write(path); RotationFrame.read(path)
+  existing DEM: frame=RotationFrame.from_feature(path,width=1200.0,source=dem); rot=rotate_to_frame(raster=dem,frame=frame)->R; or RotationFrame.from_valid_data(source=dem)
+  back to the source grid: rotate_back(raster=basins,frame=frame,resampling='near')->R (rotate back products, never the DEM)
+  bearings (aspect, link bearings, ...) are from GRID north (90 = along the feature) unless bearings_relative_to_true_north=True
 ! Copernicus stores the sea as 0 m: dem=mask_to_nodata(R,0.0). Save explicitly: R.write(path).
 """,
     "flow": """@flow D8 routing (FlowInfo) and multiple-direction routing (FlowGraph)

@@ -1,0 +1,13 @@
+# bearings_relative_to_true_north. A plane dipping to
+# TRUE azimuth 200 deg at its centre in UTM 15N, 0.73 deg east of the zone's
+# central meridian (true north 0.73 deg anticlockwise of grid up): grid aspect
+# 199.27, converted 200.
+read_path: __READ_PATH__/true_north
+read_fname: plane_utm15n_true200.tif
+write_path: __WRITE_PATH__
+write_fname: tnutm
+write_output_format: gtiff
+
+polyfit_metrics: aspect_degrees
+polyfit_lambda_metres: 90
+bearings_relative_to_true_north: true

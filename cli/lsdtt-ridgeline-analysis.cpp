@@ -70,10 +70,12 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_zero_order_basin_manager_cpu.hpp"
@@ -1081,6 +1083,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -1387,6 +1393,33 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Aspect outputs: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), ifs.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
+    }
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     if (!bf["raster_is_filled"]) {
@@ -3256,6 +3289,7 @@ int main(int argc, char* argv[])
                 req.n_threads = ifs["n_threads"];
 
                 lsdtt::polyfit_metric_result metric_result = lsdtt::compute_polyfit_metrics(fitted, req);
+                lsdtt::convert_polyfit_aspects_to_true_north(metric_result, true_north.get());
 
                 if (bf["write_polyfit_rasters"]) {
                     for (const auto& metric : requested_polyfit_metrics) {

@@ -14,6 +14,7 @@
 #include "lsdtt_secret.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -205,6 +206,17 @@ std::string cache_key_for(const lsdtt_fetch_options& o)
     else if (o.source == lsdtt_dem_source::planetary_computer)
     {
         key << '_' << o.pc_collection << '_' << o.pc_asset;
+    }
+
+    // Frame mode: the frame defines the grid. Added only in frame mode so
+    // plain fetch keys are unaffected.
+    if (o.use_frame)
+    {
+        key << "_frame_" << format_double(o.frame.centre.longitude, 9)
+            << '_' << format_double(o.frame.centre.latitude, 9)
+            << '_' << format_double(o.frame.azimuth_degrees, 9)
+            << '_' << format_double(o.frame.x_min, 3) << '_' << format_double(o.frame.x_max, 3)
+            << '_' << format_double(o.frame.y_min, 3) << '_' << format_double(o.frame.y_max, 3);
     }
 
     // Keep it filesystem-safe.
@@ -530,10 +542,29 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
     const std::string spacing = format_double(options.grid_spacing, 6);
 
     gdal_string_list_guard warp_args;
-    warp_args.add("-t_srs");     warp_args.add("EPSG:" + std::to_string(result.epsg));
-    warp_args.add("-tr");        warp_args.add(spacing); warp_args.add(spacing);
-    warp_args.add("-r");         warp_args.add(options.resampling);
-    warp_args.add("-tap");
+    std::string target_label = "EPSG:" + std::to_string(result.epsg);
+    if (options.use_frame)
+    {
+        // Straight into the frame: its own extent and cell count, so the grid
+        // is exactly the frame's (no -tap, which would snap to the frame
+        // origin's multiples but not to the frame extent).
+        const lsdtt_oblique_frame& f = options.frame;
+        target_label = "the oblique frame";
+        warp_args.add("-t_srs");  warp_args.add(f.to_wkt());
+        warp_args.add("-te");
+        warp_args.add(format_double(f.x_min, 6)); warp_args.add(format_double(f.y_min, 6));
+        warp_args.add(format_double(f.x_max, 6)); warp_args.add(format_double(f.y_max, 6));
+        warp_args.add("-ts");
+        warp_args.add(std::to_string(f.n_cols())); warp_args.add(std::to_string(f.n_rows()));
+        warp_args.add("-r");      warp_args.add(options.resampling);
+    }
+    else
+    {
+        warp_args.add("-t_srs");     warp_args.add(target_label);
+        warp_args.add("-tr");        warp_args.add(spacing); warp_args.add(spacing);
+        warp_args.add("-r");         warp_args.add(options.resampling);
+        warp_args.add("-tap");
+    }
     warp_args.add("-dstnodata"); warp_args.add(format_double(options.no_data_value, 6));
     warp_args.add("-of");        warp_args.add("GTiff");
     warp_args.add("-co");        warp_args.add("COMPRESS=DEFLATE");
@@ -560,8 +591,7 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
         GDALWarpAppOptionsFree(warp_opts);
         if (!warped || usage_error != CE_None)
         {
-            return make_error("lsdtt::fetch_dem: warp to EPSG:" +
-                              std::to_string(result.epsg) + " failed");
+            return make_error("lsdtt::fetch_dem: warp to " + target_label + " failed");
         }
     }
 
@@ -634,8 +664,7 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
     result.ok      = true;
     result.path    = out_path;
     result.message = "fetched " + std::to_string(result.n_cols) + "x" +
-                     std::to_string(result.n_rows) + " raster to EPSG:" +
-                     std::to_string(result.epsg);
+                     std::to_string(result.n_rows) + " raster to " + target_label;
     return result;
 }
 
@@ -694,6 +723,21 @@ bool validate_options(const lsdtt_fetch_options& o, std::string& error)
     {
         error = "resampling must not be empty";
         return false;
+    }
+    if (o.use_frame)
+    {
+        if (o.size_px != 0)
+        {
+            error = "size_px cannot be used with a frame (the frame sets the extent)";
+            return false;
+        }
+        if (!(o.frame.cell_size > 0.0) ||
+            std::abs(o.frame.cell_size - o.grid_spacing) > 1e-9 * o.grid_spacing)
+        {
+            error = "the frame's cell size (" + format_double(o.frame.cell_size, 6) +
+                    ") must equal grid_spacing (" + format_double(o.grid_spacing, 6) + ")";
+            return false;
+        }
     }
     return true;
 }
@@ -1299,11 +1343,13 @@ bool http_available()
 
 
 // =============================================================================
-// fetch_dem
+// fetch_dem_impl: the fetch itself; fetch_dem adds frame mode around it
 // =============================================================================
 
-lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
-                             const std::string&         out_path)
+namespace {
+
+lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
+                                  const std::string&         out_path)
 {
     std::string error;
     if (!validate_options(options, error))
@@ -1368,10 +1414,28 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
                                                            : options.ot_dem_type);
     }
     // Planetary Computer tiles are discovered by the STAC search below.
-    result.epsg  = (options.target_epsg > 0)
-                 ? options.target_epsg
-                 : utm_epsg_for_point(0.5 * (options.west + options.east),
-                                      0.5 * (options.south + options.north));
+    if (options.use_frame)
+    {
+        result.epsg = 0;
+        result.in_frame = true;
+        try
+        {
+            result.rotate_back_epsg = (options.target_epsg > 0)
+                                    ? options.target_epsg
+                                    : analysis_epsg_for_frame_centre(options.frame);
+        }
+        catch (const std::exception& e)
+        {
+            return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+        }
+    }
+    else
+    {
+        result.epsg  = (options.target_epsg > 0)
+                     ? options.target_epsg
+                     : utm_epsg_for_point(0.5 * (options.west + options.east),
+                                          0.5 * (options.south + options.north));
+    }
     result.grid_spacing = options.grid_spacing;
 
     // ---------------------------------------------------------------------
@@ -1612,6 +1676,99 @@ lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
     }
 
     return final_result;
+}
+
+} // namespace
+
+// -----------------------------------------------------------------------------
+// fetch_bbox_for_frame
+// -----------------------------------------------------------------------------
+void fetch_bbox_for_frame(const lsdtt_oblique_frame& frame, double pad_metres,
+                          double& west, double& south, double& east, double& north)
+{
+    lsdtt_oblique_frame_projector projector(frame);
+    const int per_side = 50;
+    west = 1e300; east = -1e300; south = 1e300; north = -1e300;
+    for (int side = 0; side < 4; ++side)
+    {
+        for (int i = 0; i < per_side; ++i)
+        {
+            const double t = static_cast<double>(i) / per_side;
+            double x = 0.0, y = 0.0;
+            switch (side)
+            {
+            case 0: x = frame.x_min + t * (frame.x_max - frame.x_min); y = frame.y_min; break;
+            case 1: x = frame.x_max; y = frame.y_min + t * (frame.y_max - frame.y_min); break;
+            case 2: x = frame.x_max - t * (frame.x_max - frame.x_min); y = frame.y_max; break;
+            default: x = frame.x_min; y = frame.y_max - t * (frame.y_max - frame.y_min); break;
+            }
+            const lsdtt_lonlat p = projector.to_geographic(x, y);
+            west = std::min(west, p.longitude); east = std::max(east, p.longitude);
+            south = std::min(south, p.latitude); north = std::max(north, p.latitude);
+        }
+    }
+    if (east - west > 180.0)
+        throw std::runtime_error(
+            "fetch_bbox_for_frame: the frame crosses the antimeridian, which fetching does not "
+            "support");
+    const double metres_per_degree = 111320.0;
+    const double max_abs_lat = std::min(89.0, std::max(std::abs(south), std::abs(north)));
+    const double dlat = pad_metres / metres_per_degree;
+    const double dlon =
+        pad_metres / (metres_per_degree * std::cos(max_abs_lat * 3.14159265358979323846 / 180.0));
+    west = std::max(-180.0, west - dlon);
+    east = std::min(180.0, east + dlon);
+    south = std::max(-90.0, south - dlat);
+    north = std::min(90.0, north + dlat);
+}
+
+// =============================================================================
+// fetch_dem
+// =============================================================================
+lsdtt_fetch_result fetch_dem(const lsdtt_fetch_options& options,
+                             const std::string&         out_path)
+{
+    if (!options.use_frame) return fetch_dem_impl(options, out_path);
+
+    // Frame mode: the tile request is the frame's envelope plus five cells
+    // (room for the resampling kernel and any datum offset of the base CRS).
+    lsdtt_fetch_options o = options;
+    try
+    {
+        fetch_bbox_for_frame(o.frame, 5.0 * o.grid_spacing, o.west, o.south, o.east, o.north);
+    }
+    catch (const std::exception& e)
+    {
+        return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+    }
+
+    lsdtt_fetch_result result = fetch_dem_impl(o, out_path);
+    if (!result.ok || o.frame_file_path.empty()) return result;
+
+    lsdtt_rotation_target target;
+    target.epsg = result.rotate_back_epsg;
+    target.cell_size = o.grid_spacing;
+    target.origin_x = 0.0;   // the -tap lattice of a plain fetch
+    target.origin_y = 0.0;
+    lsdtt_rotation_provenance provenance = o.frame_provenance;
+    // The file name only: the frame file sits next to the DEM, so the pair
+    // can be moved together.
+    if (provenance.rotated_dem_fname.empty())
+        provenance.rotated_dem_fname = std::filesystem::path(out_path).filename().string();
+    try
+    {
+        write_rotation_frame(o.frame_file_path, o.frame, target, provenance);
+    }
+    catch (const std::exception& e)
+    {
+        lsdtt_fetch_result failed = make_error(
+            std::string("lsdtt::fetch_dem: the DEM was written but the frame file was not: ") +
+            e.what());
+        failed.path = out_path;
+        return failed;
+    }
+    result.message += "; frame file " + o.frame_file_path;
+    return result;
 }
 
 } // namespace lsdtt

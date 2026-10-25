@@ -2135,7 +2135,8 @@ void write_junction_angle_bearing_vectors(
     const std::string&                              out_path,
     vector_output_format                            format,
     const std::string&                              layer_name,
-    bool                                            spatial_index
+    bool                                            spatial_index,
+    const lsdtt_grid_convergence*                   true_north
 )
 {
     if (flow.empty())
@@ -2312,14 +2313,25 @@ void write_junction_angle_bearing_vectors(
             }
 
 
+            // Drawn along the grid bearing; the attributes are converted.
+            double attr_rad = arm.bearing_rad;
+            double attr_deg = arm.bearing_deg;
+            if (true_north)
+            {
+                attr_rad = true_north->to_true_north(
+                    arm.bearing_rad, lsdtt_angle_kind::bearing_radians, centre.x, centre.y);
+                attr_deg = true_north->to_true_north(
+                    arm.bearing_deg, lsdtt_angle_kind::bearing_degrees, centre.x, centre.y);
+            }
+
             loader.write_line(
                 points,
                 {
                     static_cast<std::int64_t>(record.junction),
                     std::string(arm.arm_type),
                     arm.arm_code,
-                    arm.bearing_rad,
-                    arm.bearing_deg,
+                    attr_rad,
+                    attr_deg,
                     display_length,
                     static_cast<std::int64_t>(record.junction_order),
                     static_cast<std::int64_t>(record.donor_1_order),
@@ -2333,6 +2345,74 @@ void write_junction_angle_bearing_vectors(
     loader.finish_vector_write();
 }
 
+
+// =============================================================================
+// bearings_relative_to_true_north
+// =============================================================================
+std::vector<lsdtt_channel_link_bearing> channel_link_bearings_to_true_north(
+    const std::vector<lsdtt_channel_link_bearing>& records,
+    const lsdtt_grid_convergence&                  true_north)
+{
+    std::vector<lsdtt_channel_link_bearing> out = records;
+    for (lsdtt_channel_link_bearing& r : out)
+    {
+        if (!std::isfinite(r.representative_x) || !std::isfinite(r.representative_y))
+        {
+            r.bearing_rad = std::numeric_limits<double>::quiet_NaN();
+            r.bearing_deg = std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
+        r.bearing_rad = true_north.to_true_north(
+            r.bearing_rad, lsdtt_angle_kind::bearing_radians, r.representative_x, r.representative_y);
+        r.bearing_deg = true_north.to_true_north(
+            r.bearing_deg, lsdtt_angle_kind::bearing_degrees, r.representative_x, r.representative_y);
+    }
+    return out;
+}
+
+std::vector<lsdtt_junction_angle_record> junction_angle_bearings_to_true_north(
+    const std::vector<lsdtt_junction_angle_record>& records,
+    const lsdtt_flow_base&                          flow,
+    const lsdtt_junction_network_base&              network,
+    const lsdtt_grid_convergence&                   true_north)
+{
+    std::vector<lsdtt_junction_angle_record> out = records;
+    for (lsdtt_junction_angle_record& r : out)
+    {
+        double* rad[] = {&r.donor_1_bearing_rad, &r.donor_2_bearing_rad,
+                         &r.receiver_bearing_out_rad, &r.receiver_bearing_in_rad};
+        double* dgs[] = {&r.donor_1_bearing_deg, &r.donor_2_bearing_deg,
+                         &r.receiver_bearing_out_deg, &r.receiver_bearing_in_deg};
+        if (!network.is_valid_junction(r.junction))
+        {
+            for (double* v : rad) *v = std::numeric_limits<double>::quiet_NaN();
+            for (double* v : dgs) *v = std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
+        const lsdtt_xy c = flat_to_xy(flow, network.flat_of_junction(r.junction));
+        const double conv = true_north.degrees_at(c.x, c.y);
+        for (double* v : rad)
+            *v = grid_angle_to_true_north(*v, lsdtt_angle_kind::bearing_radians, conv);
+        for (double* v : dgs)
+            *v = grid_angle_to_true_north(*v, lsdtt_angle_kind::bearing_degrees, conv);
+    }
+    return out;
+}
+
+std::vector<lsdtt_junction_com_bearing> junction_com_bearings_to_true_north(
+    const std::vector<lsdtt_junction_com_bearing>& records,
+    const lsdtt_grid_convergence&                  true_north)
+{
+    std::vector<lsdtt_junction_com_bearing> out = records;
+    for (lsdtt_junction_com_bearing& r : out)
+    {
+        if (!std::isfinite(r.bearing_deg)) continue;
+        r.bearing_deg = true_north.to_true_north(
+            r.bearing_deg, lsdtt_angle_kind::bearing_degrees,
+            0.5 * (r.outlet_x + r.com_x), 0.5 * (r.outlet_y + r.com_y));
+    }
+    return out;
+}
 
 // =============================================================================
 // bearing_from_north_degrees

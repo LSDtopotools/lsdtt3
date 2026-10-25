@@ -30,6 +30,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -65,6 +66,31 @@ lsdtt_raster_cpu fill_interior_nodata(
     int                max_iter  = 10000,
     float              tolerance = 1e-6f,
     int                n_threads = 0
+);
+
+// -----------------------------------------------------------------------------
+// parse_nodata_fill_method
+// "laplacian" or "iterative_weighted_average"; throws std::invalid_argument
+// otherwise.
+// -----------------------------------------------------------------------------
+nodata_fill_method parse_nodata_fill_method(const std::string& choice);
+
+// -----------------------------------------------------------------------------
+// apply_interior_nodata_method
+//
+// Applies the interior_nodata_method parameter group (declared by
+// declare_interior_nodata_parameters) to a DEM in place:
+//   "sink" - leaves the DEM unchanged; interior nodata stay outlets.
+//   "fill" - fills interior nodata with fill_choice (see fill_interior_nodata).
+// Returns a one-line summary for the log. Throws std::invalid_argument for an
+// unknown method or fill choice.
+// -----------------------------------------------------------------------------
+std::string apply_interior_nodata_method(
+    lsdtt_raster_cpu&  dem,
+    const std::string& method,
+    const std::string& fill_choice,
+    int                max_iter,
+    int                n_threads
 );
 
 // -----------------------------------------------------------------------------

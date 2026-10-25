@@ -36,12 +36,13 @@ outline_ridgelines(dem: Raster, split_method: str = 'longest_channel') -> object
     Split every selected basin outline into two ridgelines.
 pixels(basin_id: int) -> object
     Return the pixels of one basin.
-statistics(dem: Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0) -> object
+statistics(dem: Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0, bearings_relative_to_true_north: bool = False) -> object
     Return per-basin elevation, slope, flow-distance, and optional shape statistics.
 
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ### Members
 
@@ -152,7 +153,7 @@ Number of basins.
 
 #### `statistics`
 
-statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0) -> object
+statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0, bearings_relative_to_true_north: bool = False) -> object
 
 Return per-basin elevation, slope, flow-distance, and optional shape statistics.
 
@@ -170,11 +171,16 @@ include_shape_metrics : bool, default=False
     Add planform shape metrics: ``centroid_x``, ``centroid_y``,
     ``basin_length_metres``, ``elongation_ratio``, ``form_factor``,
     ``circularity_ratio``, ``gravelius_compactness``, ``solidity``,
-    ``eccentricity``, ``orientation_degrees`` (compass, 0-180),
+    ``eccentricity``, ``orientation_degrees`` (principal axis, compass,
+    0-180, from grid north unless ``bearings_relative_to_true_north``),
     ``hypsometric_integral``.
 perimeter_simplify_cells : float, default=1.0
     Simplification tolerance of the outline, in cells, used for the
     perimeter in the shape metrics.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``orientation_degrees`` to true north with the grid convergence
+    at the basin centroid, as the CLI's ``bearings_relative_to_true_north``;
+    needs a flow grid with a CRS. False keeps it relative to grid north.
 
 Returns
 -------
@@ -185,7 +191,7 @@ pandas.DataFrame
     columns above.
 
 ```python
-def statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0) -> object
+def statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0, bearings_relative_to_true_north: bool = False) -> object
 ```
 
 #### `table`
@@ -381,7 +387,7 @@ n_junctions : int
 
 Methods
 -------
-basin_com_bearings() -> object
+basin_com_bearings(bearings_relative_to_true_north: bool = False) -> object
     Return outlet-to-basin-centre-of-mass bearings for each junction basin.
 chi(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> ChiCollection
     Extract outlet-seeded chi coordinates on this channel network.
@@ -397,7 +403,7 @@ junctions_geodataframe() -> object
     Return channel junctions as a GeoPandas point layer.
 lines_geodataframe() -> object
     Return compact non-outlet channel links as a GeoPandas line layer.
-link_bearings(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2) -> object
+link_bearings(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2, bearings_relative_to_true_north: bool = False) -> object
     Fit compass bearings to compact channel links.
 link_profiles(values: Raster, junctions: object | None = None) -> object
     Sample a raster along compact downstream channel links.
@@ -409,25 +415,34 @@ points_geodataframe() -> object
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ### Members
 
 #### `basin_com_bearings`
 
-basin_com_bearings(self) -> object
+basin_com_bearings(self, bearings_relative_to_true_north: bool = False) -> object
 
 Return outlet-to-basin-centre-of-mass bearings for each junction basin.
+
+Parameters
+----------
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up). True: converted to true north
+    with the grid convergence at the midpoint of the outlet and the centre of mass, as the CLI's
+    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.
 
 Returns
 -------
 pandas.DataFrame
     Columns ``junction_id``, ``stream_order``, ``outlet_x``, ``outlet_y``,
     ``centre_of_mass_x``, ``centre_of_mass_y``, ``bearing_deg`` (compass
-    degrees from the outlet to the centre of mass), ``distance_metres``,
+    degrees from the outlet to the centre of mass, from grid north or true
+    north as above), ``distance_metres``,
     ``n_pixels``.
 
 ```python
-def basin_com_bearings(self) -> object
+def basin_com_bearings(self, bearings_relative_to_true_north: bool = False) -> object
 ```
 
 #### `channel_mask`
@@ -606,7 +621,7 @@ def lines_geodataframe(self) -> object
 
 #### `link_bearings`
 
-link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2) -> object
+link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2, bearings_relative_to_true_north: bool = False) -> object
 
 Fit compass bearings to compact channel links.
 
@@ -625,6 +640,12 @@ anchor : {"upstream", "downstream"}, default="upstream"
     End of the link the sub-chain starts from.
 min_nodes : int, default=2
     Minimum number of pixels a fit needs (at least 2).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up). True: converted to true north
+    with the grid convergence at each link's representative point (``representative_x``,
+    ``representative_y``); ``direction_x`` and ``direction_y`` stay grid
+    components, as the CLI's
+    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.
 
 Returns
 -------
@@ -633,12 +654,12 @@ pandas.DataFrame
     ``stream_order``, ``upstream_flat``, ``downstream_flat``,
     ``drainage_area_m2``, ``n_nodes_total``, ``n_nodes_used``,
     ``total_length_metres``, ``sampled_length_metres``, ``direction_x``,
-    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = north,
-    clockwise), ``fit_linearity``, ``representative_flat``,
+    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = grid north,
+    or true north as above, clockwise), ``fit_linearity``, ``representative_flat``,
     ``representative_x``, ``representative_y``.
 
 ```python
-def link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2) -> object
+def link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2, bearings_relative_to_true_north: bool = False) -> object
 ```
 
 #### `link_profiles`
@@ -2282,6 +2303,10 @@ include_outline : bool, default=True
     Also sample each metric along the basin outline.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``aspect_degrees`` to true north at each pixel before it is
+    summarised, as the CLI's ``bearings_relative_to_true_north``; needs a
+    DEM with a CRS. False keeps it relative to grid north.
 
 Returns
 -------
@@ -2295,9 +2320,10 @@ dict of str to pandas.DataFrame
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def basin_surface_metrics(basins: lsdtt3.BasinCollection, dem: lsdtt3.Raster, scales: collections.abc.Sequence[float], metrics: collections.abc.Sequence[str], include_outline: bool = True, n_threads: int = 0) -> dict
+def basin_surface_metrics(basins: lsdtt3.BasinCollection, dem: lsdtt3.Raster, scales: collections.abc.Sequence[float], metrics: collections.abc.Sequence[str], include_outline: bool = True, n_threads: int = 0, bearings_relative_to_true_north: bool = False) -> dict
 ```
 
 ---

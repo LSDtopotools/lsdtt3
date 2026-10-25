@@ -12,6 +12,8 @@
 #include <cpu/lsdtt_crn_diagnostics.hpp>
 #include <cpu/lsdtt_cosmo_raster_cpu.hpp>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -93,7 +95,7 @@ void require_same_grid(const Raster& a, const Raster& b, const char* name)
     const auto& bm = b.native().get_meta();
     if (am.n_rows != bm.n_rows || am.n_cols != bm.n_cols ||
         am.x_min != bm.x_min || am.y_min != bm.y_min ||
-        am.cell_size != bm.cell_size || am.crs_wkt != bm.crs_wkt)
+        am.cell_size != bm.cell_size || !lsdtt::crs_equal_semantically(am.crs_wkt, bm.crs_wkt))
         throw std::invalid_argument(std::string(name) + " must share the production-scaling grid");
 }
 

@@ -55,10 +55,12 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
 
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_network_analysis_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_bearing_statistics_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_network_grouping_cpu.hpp"
@@ -262,7 +264,10 @@ int main(int argc, char* argv[])
     bool_default_map["write_channel_link_bearings"] = false;
     help_map["write_channel_link_bearings"] = {"bool","false",
         "Write channel-link bearing output.",
-        "Writes one record per analysed compact downstream link.",
+        "Writes one record per analysed compact downstream link. bearing_rad and "
+        "bearing_deg are clockwise from grid north, or from true north (at the "
+        "link's representative point) with bearings_relative_to_true_north; "
+        "direction_x and direction_y stay grid components.",
         "Bearing outputs", "switch", ""};
 
     lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
@@ -438,7 +443,8 @@ int main(int argc, char* argv[])
         "Write the basin centre-of-mass bearing for every junction.",
         "For each junction the basin is defined by the pixel just before the next "
         "downstream junction (base level for the outlet junction); this writes the "
-        "geographic bearing (degrees from North, clockwise) from that outlet to "
+        "bearing (degrees clockwise from grid north, or from true north with "
+        "bearings_relative_to_true_north) from that outlet to "
         "the basin centre of mass, plus the outlet and centre-of-mass coordinates "
         "and the basin pixel count. Output: <write_fname>_junction_com_bearings.csv.",
         "Junction centre-of-mass bearing", "switch", ""};
@@ -684,6 +690,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -1328,6 +1338,34 @@ int main(int argc, char* argv[])
     // Load into CPU raster
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Link, junction-arm and centre-of-mass bearings: grid-relative unless
+    // bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), ifs.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
+    }
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
@@ -1939,6 +1977,13 @@ int main(int argc, char* argv[])
         }
     }
 
+    // What is written and summarised: from true north when that is on. The
+    // grid records stay for the D8 diagnostic.
+    const std::vector<lsdtt::lsdtt_channel_link_bearing> bearing_records_out =
+        true_north
+            ? lsdtt::channel_link_bearings_to_true_north(bearing_records, *true_north)
+            : bearing_records;
+
     // Lithologic unit of each link, over the nodes its bearing was fitted on.
     std::vector<lsdtt::lsdtt_lithology_tag> link_lith_tags;
     lsdtt::lsdtt_channel_record_extra_columns link_lith_columns;
@@ -1962,7 +2007,7 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::write_channel_link_bearings(
-                bearing_records,
+                bearing_records_out,
                 *flow,
                 *channel_network,
                 output_file,
@@ -1993,7 +2038,7 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::write_channel_link_bearing_vectors(
-                bearing_records,
+                bearing_records_out,
                 *flow,
                 output_file,
                 channel_link_bearing_vectors_format,
@@ -2060,7 +2105,10 @@ int main(int argc, char* argv[])
         try
         {
             lsdtt::write_junction_angle_data(
-                angle_records,
+                true_north
+                    ? lsdtt::junction_angle_bearings_to_true_north(
+                          angle_records, *flow, *channel_network, *true_north)
+                    : angle_records,
                 *flow,
                 *channel_network,
                 output_file,
@@ -2097,7 +2145,8 @@ int main(int argc, char* argv[])
                 output_file,
                 junction_angle_bearing_vectors_format,
                 "junction_angle_bearing_vectors",
-                bf["calculate_spatial_index"]
+                bf["calculate_spatial_index"],
+                true_north.get()
             );
         }
         catch (const std::exception& e)
@@ -2241,11 +2290,12 @@ int main(int argc, char* argv[])
         if (do_bearing_statistics)
         {
             const std::size_t n = bearing_records.size();
-            std::vector<double> bearings(n), lengths(n);
+            std::vector<double> bearings(n), grid_bearings(n), lengths(n);
             std::vector<std::int32_t> junctions(n), orders(n);
             for (std::size_t i = 0; i < n; ++i)
             {
-                bearings[i]  = bearing_records[i].bearing_deg;
+                bearings[i]  = bearing_records_out[i].bearing_deg;
+                grid_bearings[i] = bearing_records[i].bearing_deg;
                 lengths[i]   = bearing_records[i].total_length_metres;
                 junctions[i] = bearing_records[i].upstream_junction;
                 orders[i]    = bearing_records[i].stream_order;
@@ -2307,7 +2357,8 @@ int main(int argc, char* argv[])
             try
             {
                 const auto summaries = lsdtt::summarise_channel_link_bearings_by_category(
-                    bearings, lengths, blocks, groups, strata_ptr, bearing_stats_options);
+                    bearings, lengths, blocks, groups, strata_ptr, bearing_stats_options,
+                    true_north ? &grid_bearings : nullptr);
                 const auto rose = lsdtt::channel_link_bearing_rose_by_category(
                     bearings, lengths, groups, strata_ptr, bearing_stats_options);
                 const auto comparisons = lsdtt::compare_channel_link_bearings_by_category(
@@ -2696,6 +2747,8 @@ int main(int argc, char* argv[])
             }
 
             std::cout << "Junctions analysed          : " << com.size() << "\n";
+            if (true_north)
+                com = lsdtt::junction_com_bearings_to_true_north(com, *true_north);
 
             const std::string f =
                 pp.make_output_path( "_junction_com_bearings", ".csv");

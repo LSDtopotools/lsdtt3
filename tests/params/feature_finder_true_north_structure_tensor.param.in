@@ -1,0 +1,13 @@
+# bearings_relative_to_true_north. Structure-tensor
+# orientation of the true-200 plane in the frame: its contours run at true 110
+# (grid 149.87); the cells near the edges are a few degrees off either way.
+read_path: __READ_PATH__/true_north
+read_fname: plane_frame_true200.tif
+write_path: __WRITE_PATH__
+write_fname: tnst
+write_output_format: gtiff
+
+feature_type: structure_tensor
+coherence_derivative_radius_metres: 60
+coherence_integration_radius_metres: 90
+bearings_relative_to_true_north: true

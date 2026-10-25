@@ -12,10 +12,15 @@
 #include "lsdtt_raster_warp.hpp"
 #include "lsdtt_pixel_type_gdal.hpp"
 #include "lsdtt_gdal_init.hpp"
+#include "lsdtt_crs_suggest.hpp"
+#include "lsdtt_raster_reproject.hpp"
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 #include <array>
+#include <iomanip>
+#include <iterator>
+#include <memory>
 #include <cstdint>
 #include <cmath>
 #include <iostream>
@@ -23,10 +28,12 @@
 #include <stdexcept>
 #include <string>
 #include <algorithm>
+#include <filesystem>
 #include <gdal.h>
 #include <gdal_priv.h>
 #include <gdal_utils.h>
 #include <ogr_spatialref.h>
+#include <cpl_conv.h>
 #include <cpl_string.h>
 
 namespace lsdtt {
@@ -493,7 +500,7 @@ bool crs_equal_semantically(
     const std::string& a_wkt,
     const std::string& b_wkt)
 {
-    if (a_wkt.empty() && b_wkt.empty())
+    if (a_wkt == b_wkt)
     {
         return true;
     }
@@ -685,6 +692,343 @@ lsdtt_raster_tile warp_raster_to_grid_in_memory(
     }
     VSIUnlink(mem_path.c_str());
     return tile;
+}
+
+// -----------------------------------------------------------------------------
+// warp_raster_to_frame
+// -----------------------------------------------------------------------------
+lsdtt_warp_result warp_raster_to_frame(
+    const std::string&         in_path,
+    const lsdtt_oblique_frame& frame,
+    const std::string&         out_path,
+    const lsdtt_warp_options&  opts)
+{
+    const lsdtt_raster_meta source_meta = load_meta(in_path);
+    if (!source_meta.is_valid())
+        throw std::runtime_error("lsdtt_raster_warp: source raster metadata are invalid");
+    if (source_meta.crs_wkt.empty())
+        throw std::runtime_error(
+            "lsdtt_raster_warp: " + in_path + " has no CRS, so it cannot be warped into a frame");
+
+    lsdtt_raster_meta frame_grid;
+    frame_grid.crs_wkt   = frame.to_wkt();
+    frame_grid.cell_size = frame.cell_size;
+    frame_grid.x_min     = frame.x_min;
+    frame_grid.y_min     = frame.y_min;
+    frame_grid.n_cols    = frame.n_cols();
+    frame_grid.n_rows    = frame.n_rows();
+
+    const warp_request req = grid_warp_request(source_meta, frame_grid, opts, "frame");
+    run_gdalwarp(in_path, out_path, req);
+    return summarise_result(out_path, source_meta, frame_grid, true);
+}
+
+// -----------------------------------------------------------------------------
+// Rotating an existing DEM into a frame
+// -----------------------------------------------------------------------------
+namespace {
+
+bool suitable_projected(const lsdtt_raster_meta& meta)
+{
+    return !meta.crs_wkt.empty() && meta.is_in_metres() &&
+           lsdtt_suggest_crs(meta, false).already_projected;
+}
+
+// The EPSG code a WKT carries as its own authority, or 0.
+int epsg_authority_of(const std::string& wkt)
+{
+    OGRSpatialReference srs;
+    if (srs.importFromWkt(wkt.c_str()) != OGRERR_NONE) return 0;
+    const char* name = srs.GetAuthorityName(nullptr);
+    const char* code = srs.GetAuthorityCode(nullptr);
+    if (name == nullptr || code == nullptr || std::string(name) != "EPSG") return 0;
+    try { return std::stoi(code); } catch (...) { return 0; }
+}
+
+} // namespace
+
+double frame_cell_size_for_raster(const lsdtt_raster_meta& meta, double grid_spacing)
+{
+    if (grid_spacing > 0.0) return grid_spacing;
+    if (suitable_projected(meta)) return meta.cell_size;
+    return snap_grid_spacing(estimate_analysis_pixel_size(meta));
+}
+
+lsdtt_rotation_target rotation_target_for_raster(const lsdtt_raster_meta&   meta,
+                                                 const std::string&         raster_path,
+                                                 const lsdtt_oblique_frame& frame)
+{
+    lsdtt_rotation_target t;
+    t.source_dem_fname = std::filesystem::path(raster_path).filename().string();
+    if (suitable_projected(meta))
+    {
+        t.epsg = meta.epsg_code != 0 ? meta.epsg_code : epsg_authority_of(meta.crs_wkt);
+        if (t.epsg == 0) t.crs_wkt = meta.crs_wkt;
+        t.cell_size = meta.cell_size;
+        t.origin_x = meta.x_min;
+        t.origin_y = meta.y_min;
+    }
+    else
+    {
+        t.epsg = analysis_epsg_for_frame_centre(frame);
+        t.cell_size = frame.cell_size;
+    }
+    return t;
+}
+
+lsdtt_frame_from_feature_result frame_from_valid_data(const std::string& raster_path,
+                                                      double end_buffer_metres,
+                                                      double cell_size)
+{
+    lsdtt_frame_from_feature_result r;
+    const std::string where = "data footprint of " + raster_path + ": ";
+    try
+    {
+        lsdtt_data_loader loader;
+        loader.open_raster(raster_path);
+        const lsdtt_raster_tile tile = loader.read_full();
+        const lsdtt_raster_meta& meta = loader.get_meta();
+        if (meta.crs_wkt.empty())
+        {
+            r.message = where + "the raster has no CRS";
+            return r;
+        }
+        const std::string base_wkt = base_geographic_wkt_of(meta.crs_wkt);
+
+        // The outer corners of the first and last valid cell of each row
+        // hold the convex hull of all valid cells.
+        std::vector<double> xs;
+        std::vector<double> ys;
+        const double dx = meta.cell_size;
+        const double dy = meta.pixel_height();
+        const int nc = meta.n_cols;
+        for (int row = 0; row < meta.n_rows; ++row)
+        {
+            const std::size_t base = static_cast<std::size_t>(row) * nc;
+            int first = -1;
+            int last = -1;
+            for (int col = 0; col < nc; ++col)
+            {
+                if (tile.mask[base + col])
+                {
+                    if (first < 0) first = col;
+                    last = col;
+                }
+            }
+            if (first < 0) continue;
+            const double y_top = meta.y_max() - row * dy;
+            const double y_bottom = y_top - dy;
+            const double x_left = meta.x_min + first * dx;
+            const double x_right = meta.x_min + (last + 1) * dx;
+            for (double y : {y_top, y_bottom})
+            {
+                xs.push_back(x_left);
+                ys.push_back(y);
+                xs.push_back(x_right);
+                ys.push_back(y);
+            }
+        }
+        if (xs.empty())
+        {
+            r.message = where + "the raster has no valid cells";
+            return r;
+        }
+
+        OGRSpatialReference src;
+        OGRSpatialReference geo;
+        if (src.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE ||
+            geo.importFromWkt(base_wkt.c_str()) != OGRERR_NONE)
+            throw std::runtime_error("cannot parse the raster CRS");
+        src.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        geo.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        std::unique_ptr<OGRCoordinateTransformation> ct(
+            OGRCreateCoordinateTransformation(&src, &geo));
+        if (!ct) throw std::runtime_error("cannot create the CRS transform");
+        if (!ct->Transform(xs.size(), xs.data(), ys.data()))
+            throw std::runtime_error("footprint transform failed");
+
+        std::vector<lsdtt_lonlat> vertices(xs.size());
+        for (std::size_t i = 0; i < xs.size(); ++i) vertices[i] = {xs[i], ys[i]};
+        r.frame = frame_from_polygon_vertices(vertices, end_buffer_metres, cell_size, base_wkt);
+        r.frame.definition = oblique_frame_definition::data_footprint;
+    }
+    catch (const std::exception& e)
+    {
+        r.message = where + e.what();
+        return r;
+    }
+    r.warnings = r.frame.warnings;
+    r.message = "frame from the valid cells of " + raster_path;
+    r.ok = true;
+    return r;
+}
+
+lsdtt_rotate_to_frame_result rotate_raster_to_frame(
+    const std::string&         in_path,
+    const lsdtt_oblique_frame& frame,
+    const std::string&         out_path,
+    const std::string&         frame_file_path,
+    lsdtt_rotation_provenance  provenance,
+    const lsdtt_warp_options&  opts)
+{
+    const lsdtt_raster_meta source_meta = load_meta(in_path);
+    lsdtt_rotate_to_frame_result r;
+    r.target = rotation_target_for_raster(source_meta, in_path, frame);
+    r.warp = warp_raster_to_frame(in_path, frame, out_path, opts);
+    provenance.rotated_dem_fname = std::filesystem::path(out_path).filename().string();
+    write_rotation_frame(frame_file_path, frame, r.target, provenance);
+    r.frame_file_path = frame_file_path;
+    return r;
+}
+
+// -----------------------------------------------------------------------------
+// rotate_back_raster
+// -----------------------------------------------------------------------------
+lsdtt_rotate_back_result rotate_back_raster(
+    const std::string&               in_path,
+    const lsdtt_rotation_frame_file& frame_file,
+    const std::string&               method,
+    int                              epsg_override,
+    const std::string&               out_path,
+    const lsdtt_warp_options&        opts)
+{
+    static const char* methods[] = {"near", "nearest", "bilinear", "cubic", "cubicspline",
+                                    "lanczos", "average", "mode", "max", "min", "med", "q1",
+                                    "q3", "sum"};
+    if (std::find(std::begin(methods), std::end(methods), method) == std::end(methods))
+        throw std::invalid_argument("rotate_back_raster: unknown resampling method '" + method +
+                                    "' (near, bilinear, cubic, cubicspline, lanczos, average, "
+                                    "mode, max, min, med, q1, q3, sum)");
+    if (!frame_file.ok)
+        throw std::invalid_argument("rotate_back_raster: the frame file was not read: " +
+                                    frame_file.message);
+
+    const lsdtt_oblique_frame&   frame  = frame_file.frame;
+    const lsdtt_rotation_target& target = frame_file.target;
+
+    const lsdtt_raster_meta meta = load_meta(in_path);
+    if (!meta.is_valid())
+        throw std::runtime_error("rotate_back_raster: raster metadata are invalid: " + in_path);
+
+    const std::string frame_wkt = frame.to_wkt();
+    if (!crs_equal_semantically(meta.crs_wkt, frame_wkt))
+    {
+        auto crs_name = [](const std::string& wkt) {
+            if (wkt.empty()) return std::string("no CRS");
+            OGRSpatialReference srs;
+            if (srs.importFromWkt(wkt.c_str()) != OGRERR_NONE) return std::string("unparsable CRS");
+            const char* name = srs.GetName();
+            return std::string(name ? name : "unnamed CRS");
+        };
+        std::ostringstream msg;
+        msg << std::setprecision(10) << "rotate_back_raster: " << in_path << " is in "
+            << crs_name(meta.crs_wkt) << ", not the frame CRS (oblique Mercator centred at "
+            << frame.centre.longitude << ", " << frame.centre.latitude << ", azimuth "
+            << frame.azimuth_degrees << ")";
+        throw std::invalid_argument(msg.str());
+    }
+
+    lsdtt_rotate_back_result result;
+    result.out_path = out_path;
+
+    // Target CRS and lattice origin.
+    double origin_x = target.origin_x;
+    double origin_y = target.origin_y;
+    int epsg = target.epsg;
+    if (epsg_override > 0 && epsg_override != target.epsg)
+    {
+        epsg = epsg_override;
+        origin_x = 0.0;
+        origin_y = 0.0;
+        result.warnings.push_back(
+            "rotate_back_epsg " + std::to_string(epsg_override) +
+            " overrides the frame file's target; the lattice is anchored at (0, 0)");
+    }
+    if (epsg > 0)
+    {
+        OGRSpatialReference srs;
+        if (srs.importFromEPSG(epsg) != OGRERR_NONE)
+            throw std::invalid_argument("rotate_back_raster: EPSG:" + std::to_string(epsg) +
+                                        " is not a known CRS");
+        char* raw = nullptr;
+        srs.exportToWkt(&raw);
+        result.target_wkt = raw ? raw : "";
+        CPLFree(raw);
+    }
+    else
+    {
+        result.target_wkt = target.crs_wkt;
+    }
+
+    // Each raster keeps its own cell size; one at the frame's cell size goes
+    // to the target cell size.
+    const bool at_frame_cell =
+        std::abs(meta.cell_size - frame.cell_size) <= 1e-9 * frame.cell_size;
+    const double c = at_frame_cell ? target.cell_size : meta.cell_size;
+    result.cell_size = c;
+
+    // Footprint in the target CRS, edges densified.
+    OGRSpatialReference src_srs;
+    OGRSpatialReference tgt_srs;
+    if (src_srs.importFromWkt(meta.crs_wkt.c_str()) != OGRERR_NONE ||
+        tgt_srs.importFromWkt(result.target_wkt.c_str()) != OGRERR_NONE)
+        throw std::runtime_error("rotate_back_raster: cannot parse the raster or target CRS");
+    src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    tgt_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    std::unique_ptr<OGRCoordinateTransformation> ct(
+        OGRCreateCoordinateTransformation(&src_srs, &tgt_srs));
+    if (!ct) throw std::runtime_error("rotate_back_raster: cannot create the CRS transform");
+
+    const int per_side = 20;
+    const double x0 = meta.x_min, x1 = meta.x_max(), y0 = meta.y_min, y1 = meta.y_max();
+    double lo_x = 1e300, hi_x = -1e300, lo_y = 1e300, hi_y = -1e300;
+    for (int side = 0; side < 4; ++side)
+    {
+        for (int i = 0; i < per_side; ++i)
+        {
+            const double t = static_cast<double>(i) / per_side;
+            double x = 0.0, y = 0.0;
+            switch (side)
+            {
+            case 0: x = x0 + t * (x1 - x0); y = y0; break;
+            case 1: x = x1; y = y0 + t * (y1 - y0); break;
+            case 2: x = x1 - t * (x1 - x0); y = y1; break;
+            default: x = x0; y = y1 - t * (y1 - y0); break;
+            }
+            if (!ct->Transform(1, &x, &y))
+                throw std::runtime_error("rotate_back_raster: footprint transform failed");
+            lo_x = std::min(lo_x, x); hi_x = std::max(hi_x, x);
+            lo_y = std::min(lo_y, y); hi_y = std::max(hi_y, y);
+        }
+    }
+    const double kx0 = std::floor((lo_x - origin_x) / c + 1e-9);
+    const double kx1 = std::ceil((hi_x - origin_x) / c - 1e-9);
+    const double ky0 = std::floor((lo_y - origin_y) / c + 1e-9);
+    const double ky1 = std::ceil((hi_y - origin_y) / c - 1e-9);
+    result.x_min = origin_x + kx0 * c;
+    result.y_min = origin_y + ky0 * c;
+    result.n_cols = static_cast<int>(kx1 - kx0);
+    result.n_rows = static_cast<int>(ky1 - ky0);
+
+    warp_request req;
+    req.set_target_srs    = true;
+    req.target_wkt        = result.target_wkt;
+    req.set_extent        = true;
+    req.target_extent.x_min = result.x_min;
+    req.target_extent.y_min = result.y_min;
+    req.target_extent.x_max = origin_x + kx1 * c;
+    req.target_extent.y_max = origin_y + ky1 * c;
+    req.set_dimensions    = true;
+    req.target_cols       = result.n_cols;
+    req.target_rows       = result.n_rows;
+    req.resampling_method = method;
+    req.output_format     = opts.output_format;
+    req.src_nodata        = meta.no_data_value;
+    req.dst_nodata        = meta.no_data_value;
+    req.n_threads         = opts.n_threads;
+    req.warp_mem_mb       = opts.warp_mem_mb;
+    run_gdalwarp(in_path, out_path, req);
+    return result;
 }
 
 } // namespace lsdtt

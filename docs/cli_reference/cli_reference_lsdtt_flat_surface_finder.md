@@ -392,4 +392,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_metric_flat_mask_rasters` | `bool` | `false` | `switch` | - | Write binary flat masks for each individual enabled metric. | - |
 | `write_combined_flat_mask_raster` | `bool` | `true` | `switch` | - | Write the combined binary flat mask. | 1 = flat, 0 = not flat. |
 
+### Orientations
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
+
 <!-- END GENERATED CLI PARAMETERS -->

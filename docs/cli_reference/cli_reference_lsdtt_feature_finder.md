@@ -216,7 +216,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `road_bench_min_flank_slope` | `float` | `0.15` | `param` | - | Bench test: minimum absolute flank slope (tan of slope angle). | Both flanks must be at least this steep (0.15 ~ 8.5 degrees). Guards against near-flat terrain passing the ratio test when the tread slope is ~0. |
 | `write_road_score_raster` | `bool` | `true` | `switch` | - | Write the continuous road score raster. | score = elongation * contour_alignment, gated by slope/curvature. |
 | `write_road_mask_raster` | `bool` | `true` | `switch` | - | Write the thresholded binary road mask. | 1 indicates a plausible along-contour bench/road pixel. |
-| `write_road_diagnostic_rasters` | `bool` | `false` | `switch` | - | Write road-finder diagnostic rasters. | Includes contour alignment, Hessian elongation, cross-feature curvature, along-feature orientation (azimuth from north), and slope. |
+| `write_road_diagnostic_rasters` | `bool` | `false` | `switch` | - | Write road-finder diagnostic rasters. | Includes contour alignment, Hessian elongation, cross-feature curvature, along-feature orientation (azimuth from grid north, or true north with bearings_relative_to_true_north), and slope. |
 
 ### Flow-pathway road/channel discrimination
 
@@ -269,7 +269,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `coherence_derivative_radius_metres` | `float` | `0.0` | `param` | - | Pre-smoothing radius for the gradient in the structure tensor, in metres. | 0 = no pre-smoothing (central difference on the raw field). Use a small value (~1 pixel) to suppress gradient noise on speckly inputs. |
 | `coherence_integration_radius_metres` | `float` | `2.5` | `param` | - | Tensor-averaging (integration) radius for the structure tensor, in metres. | THE key scale: the neighbourhood over which the gradient outer product is pooled. Set near the feature half-width plus a few pixels. Larger values give smoother, more confident coherence but blur close features. |
 | `write_coherence_raster` | `bool` | `true` | `switch` | - | Write the structure-tensor coherence raster (line-likeness, [0,1]). | Output: &lt;write_fname&gt;_coherence.&lt;ext&gt;. |
-| `write_orientation_raster` | `bool` | `true` | `switch` | - | Write the structure-tensor orientation raster (feature azimuth, [0,180) deg). | Azimuth clockwise from north along which the feature runs. Meaningful only where coherence is high. Output: &lt;write_fname&gt;_orientation_deg.&lt;ext&gt;. |
+| `write_orientation_raster` | `bool` | `true` | `switch` | - | Write the structure-tensor orientation raster (feature azimuth, [0,180) deg). | Azimuth clockwise from grid north (true north with bearings_relative_to_true_north) along which the feature runs. Meaningful only where coherence is high. Output: &lt;write_fname&gt;_orientation_deg.&lt;ext&gt;. |
 | `write_energy_raster` | `bool` | `false` | `switch` | - | Write the structure-tensor energy raster (gradient energy, lam1+lam2). | Distinguishes strong from faint oriented structure. Output: &lt;write_fname&gt;_energy.&lt;ext&gt;. |
 
 ### Track spacing (local directional periodicity)
@@ -361,5 +361,19 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `ced_contrast` | `float` | `0.2` | `param` | `write_diffused_raster` | Coherence contrast (C) controlling along-feature smoothing selectivity. | Uses normalised coherence in [0,1], so C is scale-invariant. Higher = smooth only the most coherent threads; lower = smooth more of the field. |
 | `ced_min_diffusivity` | `float` | `0.001` | `param` | `write_diffused_raster` | Floor (across-feature) diffusivity for the diffusion tensor. | Small value in (0,1); controls the tiny amount of smoothing allowed across the feature. |
 | `write_diffused_raster` | `bool` | `true` | `switch` | - | Write the coherence-enhanced (diffused) raster. | Output: &lt;write_fname&gt;_diffused.&lt;ext&gt;. |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
+### Orientations
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
 
 <!-- END GENERATED CLI PARAMETERS -->

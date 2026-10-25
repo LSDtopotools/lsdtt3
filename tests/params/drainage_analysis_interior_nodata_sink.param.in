@@ -1,0 +1,17 @@
+# interior_nodata_method in an analysis CLI: sink.
+read_path: __READ_PATH__
+read_fname: tiny_dem_nodata.asc
+write_path: __WRITE_PATH__
+write_fname: da_interior_sink
+
+raster_is_filled: false
+write_output_format: gtiff
+threshold_contributing_pixels: 3
+interior_nodata_method: sink
+
+write_d8_drainage_area_raster: true
+write_dinf_drainage_area_raster: false
+write_mfd_drainage_area_raster: false
+write_twi_raster: false
+write_connectivity_raster: false
+write_height_above_channel_raster: false

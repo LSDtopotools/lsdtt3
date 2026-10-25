@@ -5,6 +5,8 @@
 
 #include <nanobind/nanobind.h>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 #include "flow_products.hpp"
 
@@ -20,7 +22,8 @@ void require_compatible(const FlowInfo& flow, const Raster& raster, const char* 
     const auto& a = flow.native().meta();
     const auto& b = raster.native().get_meta();
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
-        a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
+        a.y_min != b.y_min || a.cell_size != b.cell_size ||
+        !lsdtt::crs_equal_semantically(a.crs_wkt, b.crs_wkt))
         throw std::invalid_argument(std::string(name) + " must share the flow grid");
     const auto& fm = flow.native().mask_array();
     const auto& rm = raster.native().get_mask();

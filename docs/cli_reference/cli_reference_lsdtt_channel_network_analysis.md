@@ -683,7 +683,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_channel_link_bearings` | `bool` | `false` | `switch` | - | Write channel-link bearing output. | Writes one record per analysed compact downstream link. |
+| `write_channel_link_bearings` | `bool` | `false` | `switch` | - | Write channel-link bearing output. | Writes one record per analysed compact downstream link. bearing_rad and bearing_deg are clockwise from grid north, or from true north (at the link's representative point) with bearings_relative_to_true_north; direction_x and direction_y stay grid components. |
 
 ### Output
 
@@ -738,7 +738,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_junction_centre_of_mass_bearings` | `bool` | `false` | `switch` | - | Write the basin centre-of-mass bearing for every junction. | For each junction the basin is defined by the pixel just before the next downstream junction (base level for the outlet junction); this writes the geographic bearing (degrees from North, clockwise) from that outlet to the basin centre of mass, plus the outlet and centre-of-mass coordinates and the basin pixel count. Output: &lt;write_fname&gt;_junction_com_bearings.csv. |
+| `write_junction_centre_of_mass_bearings` | `bool` | `false` | `switch` | - | Write the basin centre-of-mass bearing for every junction. | For each junction the basin is defined by the pixel just before the next downstream junction (base level for the outlet junction); this writes the bearing (degrees clockwise from grid north, or from true north with bearings_relative_to_true_north) from that outlet to the basin centre of mass, plus the outlet and centre-of-mass coordinates and the basin pixel count. Output: &lt;write_fname&gt;_junction_com_bearings.csv. |
 
 ### Complete-basin filtering
 
@@ -805,5 +805,19 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `lithology_min_majority_fraction` | `float` | `0.8` | `param` | `lithology_fname` | Minimum fraction of a channel link or junction arm in its majority lithologic unit for it to count as that unit. | The fraction is length-weighted over the sampled nodes. No record is dropped: links below it form the group 'mixed (&lt;x% one unit)' and junctions whose arms fall short the group 'arms disagree'; both are summarised but left out of every comparison (never compared, never part of 'rest'). Every record keeps its majority unit and fraction in the per-record columns. |
 | `lithology_bootstrap_replicates` | `int` | `1000` | `param` | `lithology_fname` | Number of bootstrap replicates for the per-unit confidence intervals. | 0 = no bootstrap; the interval columns are written as NaN. |
 | `lithology_bootstrap_random_seed` | `int` | `5489` | `param` | `lithology_fname` | Random seed for the per-unit bootstrap. | lsdtt-chi-analysis: each m/n gets its own std::mt19937_64 from seed_seq{seed, round(m/n * 10000)}, so an interval does not depend on the other m/n values in the list. lsdtt-channel-network-analysis: one std::mt19937_64 per run. A fixed seed reproduces the intervals. Same default as bootstrap_random_seed. |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
+### Orientations
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
 
 <!-- END GENERATED CLI PARAMETERS -->

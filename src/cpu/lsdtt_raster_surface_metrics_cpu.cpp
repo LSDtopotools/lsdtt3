@@ -2504,6 +2504,22 @@ polyfit_metric_result compute_polyfit_metrics(
     return result;
 }
 
+void convert_polyfit_aspects_to_true_north(
+    polyfit_metric_result&        result,
+    const lsdtt_grid_convergence* convergence)
+{
+    if (convergence == nullptr) return;
+    const std::pair<polyfit_metric, lsdtt_angle_kind> aspects[] = {
+        {polyfit_metric::aspect_degrees, lsdtt_angle_kind::bearing_degrees},
+        {polyfit_metric::aspect_radians, lsdtt_angle_kind::bearing_radians}};
+    for (const auto& [metric, kind] : aspects)
+    {
+        if (!result.has(metric)) continue;
+        lsdtt_raster_cpu& r = result.at(metric);
+        convert_angle_raster_to_true_north(r.get_data(), r.get_meta(), kind, *convergence);
+    }
+}
+
 // =============================================================================
 // moving_window_total_curvature
 // =============================================================================

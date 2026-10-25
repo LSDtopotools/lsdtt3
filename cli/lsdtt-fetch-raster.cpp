@@ -63,6 +63,7 @@
 #include "../src/core/lsdtt_dem_grouping.hpp"
 #include "../src/core/lsdtt_outlet_bounds_discovery.hpp"
 #include "../src/core/lsdtt_coastal_mask.hpp"
+#include "../src/core/lsdtt_oblique_frame.hpp"
 #include "../src/core/lsdtt_raster_fetch.hpp"
 #include "../src/core/lsdtt_secret.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
@@ -173,6 +174,10 @@ int main(int argc, char* argv[])
         "Bounding box", "param", ""};
 
     lsdtt::declare_fetch_bounds_file_parameters(string_default_map, help_map);
+
+    // --- Linear feature frame ---
+    lsdtt::declare_linear_feature_fetch_parameters(
+        bool_default_map, float_default_map, string_default_map, help_map);
 
     string_default_map["outlet_points_fname"] = "";
     help_map["outlet_points_fname"] = {"string","",
@@ -811,6 +816,90 @@ int main(int argc, char* argv[])
         bf["allow_auth_fallback_to_keyless"];
     const lsdtt::lsdtt_dem_source auth_fallback_source = parsed_fallback_source;
 
+    // -------------------------------------------------------------------------
+    // Linear feature frame: the area comes from the feature, so every other
+    // way of giving an area is refused rather than silently ignored.
+    // -------------------------------------------------------------------------
+    const bool from_feature = bf["fetch_from_linear_feature"];
+    const bool rotate_after_fetch = from_feature && bf["rotate_after_fetch"];
+    lsdtt::lsdtt_oblique_frame feature_frame;
+    std::string feature_file;
+    std::string feature_layer;
+    if (!from_feature && !sf["fetch_feature_fname"].empty())
+    {
+        std::cerr << "WARNING: fetch_feature_fname is set but fetch_from_linear_feature "
+                     "is false, so it is ignored.\n";
+    }
+    if (from_feature)
+    {
+        const char* conflict = nullptr;
+        if (any_edge_given) conflict = "west/south/east/north";
+        else if (bounds_file_given) conflict = "bounds_fname";
+        else if (bounds_mode != "manual") conflict = "bounds_mode vector or outlets";
+        else if (ifs["size_pixels"] != 0) conflict = "size_pixels";
+        if (conflict)
+        {
+            std::cerr << "FATAL: fetch_from_linear_feature defines the area itself, so it "
+                         "cannot be combined with " << conflict << ".\n";
+            return 1;
+        }
+        if (sf["fetch_feature_fname"].empty())
+        {
+            std::cerr << "FATAL: fetch_from_linear_feature needs fetch_feature_fname (a "
+                         "line, two points or polygon file).\n";
+            return 1;
+        }
+        feature_file = sf["fetch_feature_fname"];
+        if (!std::filesystem::path(feature_file).is_absolute())
+        {
+            const std::string dir = sf["fetch_feature_path"].empty() ? pp.get_read_path()
+                                                                     : sf["fetch_feature_path"];
+            if (!dir.empty())
+                feature_file = (std::filesystem::path(dir) / feature_file).string();
+        }
+
+        const lsdtt::lsdtt_frame_from_feature_result fr = lsdtt::frame_from_feature_file(
+            feature_file, sf["fetch_feature_layer"],
+            static_cast<double>(ff["linear_feature_fetch_width"]),
+            static_cast<double>(ff["linear_feature_fetch_end_buffer"]),
+            static_cast<double>(ff["grid_spacing"]));
+        for (const auto& w : fr.warnings) std::cerr << "WARNING: " << w << "\n";
+        if (!fr.ok)
+        {
+            std::cerr << "FATAL: " << fr.message << "\n";
+            return 1;
+        }
+        feature_frame = fr.frame;
+        feature_layer = fr.layer_name;
+        std::cout << "--- Frame from linear feature ---\n"
+                  << "File    : " << feature_file << "  (layer " << feature_layer << ")\n"
+                  << std::setprecision(10)
+                  << "Centre  : " << feature_frame.centre.longitude << ", "
+                  << feature_frame.centre.latitude << "\n"
+                  << "Azimuth : " << feature_frame.azimuth_degrees << " deg\n"
+                  << "Size    : " << feature_frame.x_max - feature_frame.x_min << " m x "
+                  << feature_frame.y_max - feature_frame.y_min << " m ("
+                  << feature_frame.n_cols() << " x " << feature_frame.n_rows() << " cells)\n"
+                  << "Rotate  : " << (rotate_after_fetch ? "yes (oblique frame)" : "no")
+                  << "\n\n" << std::setprecision(6);
+
+        // The tile request: the frame's WGS84 envelope (fetch_dem pads it by
+        // five cells itself in frame mode; it is set here too so it is shown).
+        {
+            const double pad = rotate_after_fetch ? 5.0 * ff["grid_spacing"] : 0.0;
+            try
+            {
+                lsdtt::fetch_bbox_for_frame(feature_frame, pad, options.west, options.south,
+                                            options.east, options.north);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+        }
+    }
+
     // Accepting both would mean silently picking a winner. Refuse instead, so
     // the user is never left wondering which area was actually fetched.
     if (bounds_file_given && any_edge_given)
@@ -819,7 +908,7 @@ int main(int argc, char* argv[])
                      "not both.\n";
         return 1;
     }
-    if (bounds_mode != "outlets" && !bounds_file_given && !any_edge_given)
+    if (bounds_mode != "outlets" && !bounds_file_given && !any_edge_given && !from_feature)
     {
         std::cerr << "FATAL: no area given. Set west, south, east and north "
                      "(WGS84 decimal degrees), or set bounds_fname to a "
@@ -867,7 +956,7 @@ int main(int argc, char* argv[])
                   << bounds_result.n_features << " feature(s))\n"
                   << "Input CRS: " << bounds_result.source_crs << "\n\n";
     }
-    else if (bounds_mode != "outlets")
+    else if (bounds_mode != "outlets" && !from_feature)
     {
         // All four edges are required: a missing one must be an error rather
         // than a silent zero, which would quietly fetch the Gulf of Guinea.
@@ -914,6 +1003,17 @@ int main(int argc, char* argv[])
     options.ot_dem_type                  = sf["ot_dem_type"];
     options.pc_collection                = sf["pc_collection"];
     options.pc_asset                     = sf["pc_asset"];
+
+    if (rotate_after_fetch)
+    {
+        options.use_frame = true;
+        options.frame = feature_frame;
+        options.frame_file_path = pp.make_output_path("_oblique_DEM_rotation_frame.txt");
+        options.frame_provenance.created_by = k_tool_name;
+        options.frame_provenance.feature_fname =
+            std::filesystem::path(feature_file).filename().string();
+        options.frame_provenance.feature_layer = feature_layer;
+    }
 
     lsdtt::lsdtt_outlet_bounds_discovery_result outlet_discovery_result;
     bool have_outlet_discovery = false;
@@ -1253,8 +1353,12 @@ int main(int argc, char* argv[])
                                    const lsdtt::lsdtt_fetch_result& result)
     {
         std::cout << "Fetched " << result.n_cols << " x " << result.n_rows
-                  << " pixels at " << result.grid_spacing << " m, EPSG:"
-                  << result.epsg << "\n";
+                  << " pixels at " << result.grid_spacing << " m, ";
+        if (result.in_frame)
+            std::cout << "oblique frame (rotate back to EPSG:" << result.rotate_back_epsg
+                      << ")\n";
+        else
+            std::cout << "EPSG:" << result.epsg << "\n";
         std::cout << "Source tiles: ";
         for (std::size_t i = 0; i < result.tiles.size(); ++i)
         {
@@ -2414,12 +2518,15 @@ int main(int argc, char* argv[])
     }
     else
     {
-        const std::string out_path = pp.make_output_path("_DEM.tif");
+        const std::string out_path =
+            pp.make_output_path(rotate_after_fetch ? "_oblique_DEM.tif" : "_DEM.tif");
 
         std::cout << "--- Fetching ---\n";
         std::cout << "Source      : " << lsdtt::dem_source_name(options.source) << "\n";
         std::cout << "Bounding box: " << options.west  << ", " << options.south
                   << " to "           << options.east  << ", " << options.north << "\n";
+        if (rotate_after_fetch)
+            std::cout << "Frame file  : " << options.frame_file_path << "\n";
         std::cout << "Writing     : " << out_path << "\n\n";
 
         lsdtt::lsdtt_fetch_options used_options;

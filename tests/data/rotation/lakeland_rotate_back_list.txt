@@ -1,0 +1,2 @@
+# Rasters in the lakeland_line frame to rotate back: path[,method]
+rotation/lakeland_line_oblique.tif, near

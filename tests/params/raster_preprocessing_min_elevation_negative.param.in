@@ -1,0 +1,15 @@
+# A negative min_elevation applies as a threshold (it used to disable masking):
+# a basin below sea level keeps its floor above the threshold.
+read_path: __READ_PATH__
+read_fname: tiny_dem_below_sea.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_below_sea
+
+enforce_projection: false
+write_output_format: gtiff
+min_elevation: -80
+
+write_fill_raster: true
+write_fill_diff_raster: false
+write_breached_raster: false
+write_hillshade_raster: false

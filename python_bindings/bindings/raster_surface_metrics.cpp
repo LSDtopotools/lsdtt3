@@ -31,6 +31,8 @@
 #include <cpu/lsdtt_vector_rasterise_cpu.hpp>
 
 
+#include <core/lsdtt_true_north.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -97,18 +99,21 @@ Raster aspect(
     const Raster& raster,
     double lambda_metres,
     int n_threads,
-    double flat_slope_tolerance)
+    double flat_slope_tolerance,
+    bool bearings_relative_to_true_north)
 {
-    return Raster(compute_polyfit_metric_rasters(
+    const auto true_north = lsdtt::true_north_converter(
+        raster.native().get_meta(), bearings_relative_to_true_north);
+    lsdtt::polyfit_metric_result result = compute_polyfit_metric_rasters(
         raster,
         {lsdtt::polyfit_metric::aspect_degrees},
         lambda_metres,
         1.0,
         n_threads,
         flat_slope_tolerance
-    ).at(
-        lsdtt::polyfit_metric::aspect_degrees
-    ));
+    );
+    lsdtt::convert_polyfit_aspects_to_true_north(result, true_north.get());
+    return Raster(result.at(lsdtt::polyfit_metric::aspect_degrees));
 }
 
 lsdtt::polyfit_metric polyfit_metric_from_name(const std::string& name)
@@ -155,7 +160,8 @@ nb::dict polyfit_metrics(
     double lambda_metres,
     double z_factor,
     int n_threads,
-    double flat_slope_tolerance)
+    double flat_slope_tolerance,
+    bool bearings_relative_to_true_north)
 {
     if (metric_names.empty()) {
         throw std::invalid_argument("polyfit_metrics: metrics must not be empty");
@@ -165,9 +171,12 @@ nb::dict polyfit_metrics(
     for (const auto& name : metric_names) {
         requested_metrics.push_back(polyfit_metric_from_name(name));
     }
-    const auto result = compute_polyfit_metric_rasters(
+    const auto true_north = lsdtt::true_north_converter(
+        raster.native().get_meta(), bearings_relative_to_true_north);
+    auto result = compute_polyfit_metric_rasters(
         raster, requested_metrics, lambda_metres, z_factor, n_threads, flat_slope_tolerance
     );
+    lsdtt::convert_polyfit_aspects_to_true_north(result, true_north.get());
     nb::dict output;
     for (const auto& name : metric_names) {
         output[nb::str(name.c_str())] = Raster(result.at(polyfit_metric_from_name(name)));
@@ -304,11 +313,13 @@ Raster
     slope). Edge pixels and pixels next to nodata are nodata.
 )doc");
     m.def("aspect", &aspect, nb::arg("raster"), nb::arg("lambda_metres") = 0.0,
-        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12, R"doc(
+        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12,
+        nb::arg("bearings_relative_to_true_north") = false, R"doc(
 Compute polyfit aspect in degrees; lambda_metres defaults to three cells.
 
 Aspect is the downslope direction the surface faces, in compass degrees
-(0 = north, 90 = east, clockwise), from the polyfit surface.
+(0 = north, 90 = east, clockwise), from the polyfit surface; north is grid
+north unless ``bearings_relative_to_true_north``.
 
 Parameters
 ----------
@@ -321,6 +332,11 @@ n_threads : int, default=0
 flat_slope_tolerance : float, default=1e-12
     Pixels whose fitted gradient (m/m) is below this are treated as flat
     (no defined aspect).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up), so in an oblique frame
+    (``RotationFrame``) 90 means along the feature. True: converted to
+    true north with the grid convergence at each pixel, as the CLIs'
+    ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------
@@ -366,7 +382,8 @@ Raster
 )doc");
     m.def("polyfit_metrics", &polyfit_metrics, nb::arg("raster"), nb::arg("metrics"),
         nb::arg("lambda_metres") = 0.0, nb::arg("z_factor") = 1.0,
-        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12, R"doc(
+        nb::arg("n_threads") = 0, nb::arg("flat_slope_tolerance") = 1e-12,
+        nb::arg("bearings_relative_to_true_north") = false, R"doc(
 Compute several quadratic-fit surface metrics in one shared fit.
 
 A quadratic surface ``z = a x^2 + b y^2 + c x y + d x + e y + f`` is fitted
@@ -382,7 +399,8 @@ Valid metric names and units:
 - ``"slope"``: gradient magnitude ``sqrt(dzdx**2 + dzdy**2)`` (m/m)
 - ``"slope_degrees"``: the same slope as an angle (degrees)
 - ``"aspect_degrees"``, ``"aspect_radians"``: downslope direction,
-  clockwise from north
+  clockwise from grid north (true north with
+  ``bearings_relative_to_true_north``)
 - ``"laplacian"``: ``d2zdx2 + d2zdy2`` (1/m)
 - ``"hessian_determinant"`` (1/m^2)
 - ``"mean_curvature"`` (1/m), ``"gaussian_curvature"`` (1/m^2)
@@ -418,6 +436,12 @@ flat_slope_tolerance : float, default=1e-12
     Where the fitted gradient (m/m) is below this, the pixel is treated as
     too flat for direction-dependent metrics (aspect, plan, tangential and
     profile curvature, rotor).
+bearings_relative_to_true_north : bool, default=False
+    False: clockwise from grid north (grid up), so in an oblique frame
+    (``RotationFrame``) 90 means along the feature. True: converted to
+    true north with the grid convergence at each pixel (aspect metrics only; ``dzdx`` and ``dzdy`` stay grid
+    components), as the CLIs'
+    ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------

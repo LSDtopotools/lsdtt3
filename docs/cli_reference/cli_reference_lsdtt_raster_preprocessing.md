@@ -39,7 +39,7 @@ Steps run in this order when enabled:
 | 2. Threshold masking | `min_elevation`, `maximum_elevation` |
 | 2b. Binary mask | `run_binary_mask: true` |
 | 2c. Clip to polygon | `clip_raster_to_polygon: true` |
-| 3. Interior nodata fill | `write_filled_nodata_raster: true` |
+| 3. Interior nodata | `interior_nodata_method: fill` (later steps use the filled DEM) or `write_filled_nodata_raster: true` (writes the filled DEM only) |
 | 4. Clip to max-valid rectangle | `write_clipped_rectangle_raster: true` |
 | 5. Depression breaching | `write_breached_raster: true` or `breach_before_fill: true` |
 | 6. Pit filling | `write_fill_raster: true` or `write_fill_diff_raster: true` |
@@ -107,7 +107,7 @@ Pixels outside the elevation range are set to nodata. The masked raster is writt
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `min_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number (e.g. `-9999`) to disable. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (metres) are set to nodata. The default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given (for a basin below sea level, set it just below the lowest land); `-9999` disables. |
 | `maximum_elevation` | float | `30000` | Pixels above this elevation (metres) are set to nodata. Reduce to remove artefacts in low-relief study areas. |
 
 ---
@@ -189,7 +189,8 @@ Output: `<write_fname>_nodata_filled.tif`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `write_filled_nodata_raster` | bool | `false` | Enable interior nodata filling and write the result. |
+| `interior_nodata_method` | string | `sink` | `sink`: interior nodata stay nodata and flow ends there. `fill`: they are filled with `nodata_fill_method_choice` and breaching and pit filling run on the filled DEM. Nodata touching the raster edge is never filled. |
+| `write_filled_nodata_raster` | bool | `false` | Fill interior nodata and write the result. On its own, the later steps still use the unfilled DEM. |
 | `nodata_fill_method_choice` | string | `laplacian` | Filling algorithm. `laplacian`: smooth Dirichlet interpolation (recommended). `iterative_weighted_average`: faster; well-suited to thin voids. |
 | `nodata_fill_max_iter` | int | `10000` | Maximum iterations for iterative methods. |
 
@@ -451,6 +452,28 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `force_resampling` | `bool` | `false` | `switch` | - | Force a user-specified grid spacing during reprojection. | If true, forced_grid_spacing is used as the target grid spacing instead of the automatically estimated or user-supplied grid_spacing. |
 | `forced_grid_spacing` | `float` | `-1` | `param` | `force_resampling` | Target grid spacing in metres when force_resampling is true. | Must be positive when force_resampling is true. Ignored otherwise. |
 
+### Oblique frame rotation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `rotate_to_linear_feature` | `bool` | `false` | `switch` | - | Rotate the DEM into the oblique frame of a feature (a line, two points or a polygon). | Replaces the reprojection step: the DEM is warped once, straight from its own CRS, into an oblique Mercator frame with the feature along +x (on the DEM's own datum), and every later step runs on the rotated DEM. The frame is a rectangle aligned with the feature: for a line or two points, the geodesic between the end points lengthened by the end buffer and linear_feature_rotation_width wide; for polygons, their minimum-area enclosing rectangle. Writes &lt;write_fname&gt;_oblique.tif and &lt;write_fname&gt;_oblique_rotation_frame.txt, which records the frame and the lattice to rotate products back onto (the DEM's own grid when it is projected in metres, otherwise the analysis CRS of the frame centre). Cannot be combined with rotate_to_data_footprint, force_reproject or run_rotate_back. |
+| `rotation_feature_fname` | `string` | - | `io` | `rotate_to_linear_feature` | Vector file holding the line, two points or polygon(s). | Any OGR-readable format with a CRS; it is reprojected to the DEM's own geographic CRS. Refused before any warp: no CRS, a mix of geometry kinds, one point or more than two, a closed line (use a polygon), or end points less than three cells apart. |
+| `rotation_feature_path` | `string` | - | `io` | `rotate_to_linear_feature` | Optional directory for rotation_feature_fname. | If empty, read_path is used. Ignored when rotation_feature_fname is an absolute path. |
+| `rotation_feature_layer` | `string` | - | `io` | `rotate_to_linear_feature` | Layer name within rotation_feature_fname. | If empty, the first layer is used (with a warning when the file has more than one). |
+| `linear_feature_rotation_width` | `float` | `0.0` | `param` | `rotate_to_linear_feature` | Full width (m) of the frame across a line or two points, centred on it. | Required (&gt; 0) for a line or two points. Ignored, with a warning, for polygons, whose own short side is the width. |
+| `linear_feature_rotation_end_buffer` | `float` | `-1.0` | `param` | - | Buffer (m) added beyond each end of the frame axis. | -1 means 10 grid cells. For polygons and rotate_to_data_footprint it is added on all four sides. |
+| `rotate_to_data_footprint` | `bool` | `false` | `switch` | - | Rotate the DEM into the frame of its own valid cells. | The frame is the minimum-area rectangle enclosing the DEM's valid cells (the polygon rule of rotate_to_linear_feature applied to their convex hull), so an elongated DEM is turned to lie along +x with as little nodata as possible. Outputs and frame file as rotate_to_linear_feature. Cannot be combined with rotate_to_linear_feature, force_reproject or run_rotate_back. |
+
+### Rotate back
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_rotate_back` | `bool` | `false` | `switch` | - | Warp rasters from an oblique frame back onto the frame file's target lattice. | A separate mode: no other preprocessing step runs, and switching one on in the parameter file is refused. Each raster in rotate_back_file_list is written to write_path as &lt;its name&gt;_rotated_back.tif. A raster at the frame's cell size goes to the target cell size, any other keeps its own; the output lattice is anchored at the target origin, so after rotate_to_linear_feature or rotate_to_data_footprint on a projected DEM the products land on the source DEM's own pixels. A raster not in the frame CRS is refused. Vector outputs need no rotating back: they carry their CRS. |
+| `rotation_frame_fname` | `string` | - | `io` | `run_rotate_back` | The rotation frame file (&lt;stem&gt;_rotation_frame.txt). | Relative paths are taken from read_path. If empty, the frame is rebuilt from each raster's own CRS and the target is the analysis CRS of the frame centre on the lattice anchored at (0, 0), with a warning: a source DEM origin off that lattice cannot be recovered without the frame file. |
+| `rotate_back_file_list` | `string` | - | `io` | `run_rotate_back` | Text file listing the rasters to rotate back, one per line. | Each line is a raster path, optionally followed by a comma and a resampling method (path,near); use near for categorical rasters (basins, junctions, masks, lithology). Blank lines and lines starting with # are skipped. The list and relative raster paths are taken from read_path. |
+| `rotate_back_resampling_method` | `string` | `bilinear` | `param` | `run_rotate_back` | Resampling method for list lines that do not give one. | near, bilinear (default), cubic, cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum. |
+| `rotate_back_epsg` | `int` | `0` | `param` | `run_rotate_back` | EPSG code overriding the frame file's target CRS (0: the frame file's). | A CRS other than the frame file's target is gridded on the lattice anchored at (0, 0), with a warning. |
+
 ### Vertical units
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
@@ -462,7 +485,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Set to a large negative number to disable. |
+| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. -9999 disables. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. Sea removed this way is connected to the DEM edge and acts as an open boundary. |
 | `maximum_elevation` | `float` | `30000` | `param` | - | Pixels above this elevation (metres) are set to nodata. | Default covers the full range of terrestrial elevations. Reduce to remove artefacts in low-relief study areas. |
 
 ### Binary mask
@@ -476,9 +499,15 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_filled_nodata_raster` | `bool` | `false` | `switch` | - | Write a DEM with interior nodata pixels filled. | Only fills nodata pixels completely surrounded by valid data. Does not fill nodata that touches the raster edge. |
-| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `write_filled_nodata_raster` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. |
-| `nodata_fill_max_iter` | `int` | `10000` | `param` | `write_filled_nodata_raster` | Maximum iterations for iterative nodata fill methods. | Only used when nodata_fill_method_choice is laplacian or iterative_weighted_average. |
+| `write_filled_nodata_raster` | `bool` | `false` | `switch` | - | Write a DEM with interior nodata pixels filled. | Only fills nodata pixels completely surrounded by valid data. Does not fill nodata that touches the raster edge. Uses nodata_fill_method_choice. On its own this only writes the file; set interior_nodata_method: fill to also use the filled DEM in the later steps (breaching, pit filling). |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
 
 ### Clip to rectangle
 
@@ -571,12 +600,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_hillshade_raster` | `bool` | `false` | `switch` | - | Write a hillshade raster. | Uses the Zevenbergen and Thorne (1987) algorithm. Computed from the filled DEM when write_fill_raster is also true. |
-| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from north. | 315 (northwest) is the cartographic convention. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from grid north (grid up). | 315 (northwest) is the cartographic convention. It is relative to the raster grid, so in an oblique frame it lights from the frame's north-west. |
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_raster` | Sun altitude above the horizon in degrees. | 45 degrees is a typical default. |
 | `hillshade_z_factor` | `float` | `1.0` | `param` | `write_hillshade_raster` | Vertical exaggeration factor applied before computing hillshade. | Values greater than 1 emphasise relief in flat terrain. |
 | `write_multidirectional_hillshade_raster` | `bool` | `false` | `switch` | - | Write a multidirectional hillshade raster. | Computes hillshade from multiple azimuths and writes the mean illumination raster to reduce directional bias. |
 | `multidirectional_hillshade_n_directions` | `int` | `8` | `param` | `write_multidirectional_hillshade_raster` | Number of evenly spaced azimuth directions used for multidirectional hillshade. | Must be &gt;= 2. Typical values are 8 to 16. |
-| `multidirectional_hillshade_start_azimuth` | `float` | `0.0` | `param` | `write_multidirectional_hillshade_raster` | Starting azimuth in degrees clockwise from north for multidirectional hillshade. | Subsequent azimuths are sampled uniformly around 360 degrees. |
+| `multidirectional_hillshade_start_azimuth` | `float` | `0.0` | `param` | `write_multidirectional_hillshade_raster` | Starting azimuth in degrees clockwise from grid north for multidirectional hillshade. | Subsequent azimuths are sampled uniformly around 360 degrees. |
 
 ### Mosaic
 

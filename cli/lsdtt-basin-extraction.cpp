@@ -48,9 +48,11 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_zero_order_basin_manager_cpu.hpp"
@@ -634,6 +636,10 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -976,6 +982,34 @@ int main(int argc, char* argv[])
     // Load into CPU raster (could be relaxed for GPU later)
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // Line-crossing basin bearings: grid-relative unless
+    // bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), ifs.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
+    }
     lsdtt::lsdtt_raster_cpu routed_dem = dem;
 
     // -------------------------------------------------------------------------
@@ -2167,11 +2201,26 @@ int main(int argc, char* argv[])
                      <= std::fabs(wrap180(n2 - to_com))) ? n1 : n2;
                 const double defl = wrap180(bearing - normal);
 
+                // The deflection is a difference of two grid bearings and is
+                // unchanged; the two bearings are converted where they apply:
+                // outlet->COM at its midpoint, the fault azimuth at the
+                // nearest fault point.
+                double bearing_out = bearing;
+                double fault_az_out = hit.tan_az;
+                if (true_north)
+                {
+                    bearing_out = true_north->to_true_north(
+                        bearing, lsdtt::lsdtt_angle_kind::bearing_degrees,
+                        0.5 * (ox + com_x), 0.5 * (oy + com_y));
+                    fault_az_out = true_north->to_true_north(
+                        hit.tan_az, lsdtt::lsdtt_angle_kind::bearing_degrees, hit.nx, hit.ny);
+                }
+
                 rows.push_back({
                     std::to_string(i), lsdtt::csv_number(area_px * cell_area, 10),
                     lsdtt::csv_number(ox, 10), lsdtt::csv_number(oy, 10),
                     lsdtt::csv_number(com_x, 10), lsdtt::csv_number(com_y, 10),
-                    lsdtt::csv_number(bearing, 10), lsdtt::csv_number(hit.tan_az, 10),
+                    lsdtt::csv_number(bearing_out, 10), lsdtt::csv_number(fault_az_out, 10),
                     side, lsdtt::csv_number(defl, 10)});
             }
 

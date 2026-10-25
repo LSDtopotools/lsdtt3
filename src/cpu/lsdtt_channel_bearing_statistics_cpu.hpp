@@ -389,13 +389,18 @@ struct channel_bearing_comparison_row
 // Summaries: one row per (stratum, group, angular type). bearing_deg are the
 // directional (downstream) link bearings; weights are link lengths in metres;
 // block_id is the independence block per record (-1 = none).
+// grid_bearing_deg: when bearing_deg are from true north
+// (bearings_relative_to_true_north), the same links' grid bearings, so that
+// fraction_on_d8_multiples still measures the D8 grid artefact. nullptr:
+// bearing_deg are grid bearings.
 std::vector<channel_bearing_group_summary_row> summarise_channel_link_bearings_by_category(
     const std::vector<double>&           bearing_deg,
     const std::vector<double>&           weights,
     const std::vector<std::int64_t>&     block_id,
     const channel_record_categories&     groups,
     const channel_record_categories*     strata,
-    const channel_bearing_statistics_options& options);
+    const channel_bearing_statistics_options& options,
+    const std::vector<double>*           grid_bearing_deg = nullptr);
 
 // Rose histograms: one block of bins per (stratum, group, angular type).
 std::vector<channel_bearing_rose_row> channel_link_bearing_rose_by_category(

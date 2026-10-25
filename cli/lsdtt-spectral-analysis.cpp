@@ -30,11 +30,14 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
@@ -224,8 +227,10 @@ int main(int argc, char* argv[])
         "Write a CSV of individual 2D spectrum cells with significant power, with bearings.",
         "Writes _significant_frequencies_2d.csv with columns bearing_rad, "
         "bearing_deg, frequency_cycles_per_m, wavelength_m, normalised_psd. "
-        "The bearing is the direction of the wave vector, clockwise from north; "
-        "the crests run perpendicular to it. The spectrum of a real surface is "
+        "The bearing is the direction of the wave vector, clockwise from grid "
+        "north (from true north with bearings_relative_to_true_north, converted "
+        "with the convergence at the grid centre, since the spectrum belongs to "
+        "the whole raster); the crests run perpendicular to it. The spectrum of a real surface is "
         "point-symmetric, so each significant frequency appears twice, at "
         "bearings theta and theta + 180, except cells on the Nyquist edges of "
         "the padded grid (wavelengths near two cells), whose twin is at "
@@ -248,6 +253,8 @@ int main(int argc, char* argv[])
         "2.9957. Must lie strictly between 0 and 1. The spectrum has thousands of "
         "cells, so at 0.95 hundreds pass by chance alone.",
         "Spectral options", "param", ""};
+
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
 
     // -------------------------------------------------------------------------
     // Parse
@@ -365,6 +372,19 @@ int main(int argc, char* argv[])
     // Load into CPU raster
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu dem(loader);
+
+    // 2D spectrum bearings: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
+    }
 
     // -------------------------------------------------------------------------
     // Run spectral analysis
@@ -709,14 +729,34 @@ int main(int argc, char* argv[])
             ofs << "# n_background_iterations," << ifs["n_background_iterations"] << "\n";
             ofs << "# n_significant_frequencies," << sig.frequency.size() << "\n";
 
-            // bearing: wave-vector direction clockwise from north
+            // The spectrum has no location: one convergence, at the grid centre.
+            double convergence = 0.0;
+            if (true_north)
+            {
+                const lsdtt::lsdtt_raster_meta& m = dem.get_meta();
+                convergence = true_north->degrees_at(0.5 * (m.x_min + m.x_max()),
+                                                     0.5 * (m.y_min + m.y_max()));
+                ofs << "# bearings_relative_to_true_north,true\n";
+                ofs << "# grid_convergence_deg_at_grid_centre," << convergence << "\n";
+            }
+
+            // bearing: wave-vector direction clockwise from grid north (true
+            // north when converted)
             // frequency: cycles/m   wavelength: m
             ofs << "bearing_rad,bearing_deg,frequency_cycles_per_m,wavelength_m,"
                    "normalised_psd\n";
             for (std::size_t i = 0; i < sig.frequency.size(); ++i)
             {
-                ofs << sig.bearing_rad[i]    << ","
-                    << sig.bearing_deg[i]    << ","
+                const double b_rad = true_north
+                    ? lsdtt::grid_angle_to_true_north(
+                          sig.bearing_rad[i], lsdtt::lsdtt_angle_kind::bearing_radians, convergence)
+                    : sig.bearing_rad[i];
+                const double b_deg = true_north
+                    ? lsdtt::grid_angle_to_true_north(
+                          sig.bearing_deg[i], lsdtt::lsdtt_angle_kind::bearing_degrees, convergence)
+                    : sig.bearing_deg[i];
+                ofs << b_rad    << ","
+                    << b_deg    << ","
                     << sig.frequency[i]      << ","
                     << sig.wavelength[i]     << ","
                     << sig.normalised_psd[i] << "\n";

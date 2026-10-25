@@ -2,12 +2,12 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 217,
+  "export_count": 220,
   "exports": [
     {
       "name": "BasinCollection",
       "kind": "class",
-      "doc": "Selected D8 drainage basins (possibly nested) on a ``FlowInfo`` topology.\n\nMade by ``FlowInfo.basins(outlets)``. Basin ``basin_id`` (0-based) is the\nwhole upslope area of its outlet pixel; basins may nest (a basin whose\noutlet lies inside another basin). Each basin is stored as a view of the\nflow topology, so collections are cheap. ``table`` describes each basin,\n``polygons`` gives outlines, ``labels`` and ``mask()`` give rasters, and\n``statistics(dem)`` summarises elevation, slope and shape.\n\nReturned by ``line_crossing_basins()``, ``FlowInfo.basins()``, ``SideTributaryBasins.basins``; not constructible directly.\n\nAttributes\n----------\nlabels : Raster\n    Raster of basin membership: ``basin_id + 1``, 0 outside all basins.\npolygons : geopandas.GeoDataFrame\n    Basin outline polygons as a GeoDataFrame.\nsize : int\n    Number of basins.\ntable : pandas.DataFrame\n    One row per basin (pandas.DataFrame).\n\nMethods\n-------\nmask(basin_id: int) -> Raster\n    Return a 0/1 Raster of one basin.\nmembership(row: int, col: int) -> object\n    Return all selected basin IDs containing this pixel.\noutline_ridgelines(dem: Raster, split_method: str = 'longest_channel') -> object\n    Split every selected basin outline into two ridgelines.\npixels(basin_id: int) -> object\n    Return the pixels of one basin.\nstatistics(dem: Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0) -> object\n    Return per-basin elevation, slope, flow-distance, and optional shape statistics.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Selected D8 drainage basins (possibly nested) on a ``FlowInfo`` topology.\n\nMade by ``FlowInfo.basins(outlets)``. Basin ``basin_id`` (0-based) is the\nwhole upslope area of its outlet pixel; basins may nest (a basin whose\noutlet lies inside another basin). Each basin is stored as a view of the\nflow topology, so collections are cheap. ``table`` describes each basin,\n``polygons`` gives outlines, ``labels`` and ``mask()`` give rasters, and\n``statistics(dem)`` summarises elevation, slope and shape.\n\nReturned by ``line_crossing_basins()``, ``FlowInfo.basins()``, ``SideTributaryBasins.basins``; not constructible directly.\n\nAttributes\n----------\nlabels : Raster\n    Raster of basin membership: ``basin_id + 1``, 0 outside all basins.\npolygons : geopandas.GeoDataFrame\n    Basin outline polygons as a GeoDataFrame.\nsize : int\n    Number of basins.\ntable : pandas.DataFrame\n    One row per basin (pandas.DataFrame).\n\nMethods\n-------\nmask(basin_id: int) -> Raster\n    Return a 0/1 Raster of one basin.\nmembership(row: int, col: int) -> object\n    Return all selected basin IDs containing this pixel.\noutline_ridgelines(dem: Raster, split_method: str = 'longest_channel') -> object\n    Split every selected basin outline into two ridgelines.\npixels(basin_id: int) -> object\n    Return the pixels of one basin.\nstatistics(dem: Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0, bearings_relative_to_true_north: bool = False) -> object\n    Return per-basin elevation, slope, flow-distance, and optional shape statistics.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [
         {
           "name": "labels",
@@ -76,15 +76,16 @@
         {
           "name": "statistics",
           "kind": "method",
-          "doc": "statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0) -> object\n\nReturn per-basin elevation, slope, flow-distance, and optional shape statistics.\n\nParameters\n----------\ndem : Raster\n    Elevation (m) on the flow grid.\ninclude_slope : bool, default=True\n    Add ``slope_25th``, ``slope_50th``, ``slope_75th``: percentiles of the\n    3 x 3 gradient (m/m, as ``slope()``).\ninclude_flow_distance : bool, default=True\n    Add ``flow_distance_25th/50th/75th``: percentiles of D8 flow distance\n    to the outlet (m).\ninclude_shape_metrics : bool, default=False\n    Add planform shape metrics: ``centroid_x``, ``centroid_y``,\n    ``basin_length_metres``, ``elongation_ratio``, ``form_factor``,\n    ``circularity_ratio``, ``gravelius_compactness``, ``solidity``,\n    ``eccentricity``, ``orientation_degrees`` (compass, 0-180),\n    ``hypsometric_integral``.\nperimeter_simplify_cells : float, default=1.0\n    Simplification tolerance of the outline, in cells, used for the\n    perimeter in the shape metrics.\n\nReturns\n-------\npandas.DataFrame\n    One row per basin: ``basin_id``, ``n_pixels``, ``area_metres2``,\n    ``elevation_min``, ``elevation_max``, ``elevation_mean``,\n    ``elevation_median``, ``elevation_stddev`` (m), plus the optional\n    columns above.",
+          "doc": "statistics(self, dem: lsdtt3.Raster, include_slope: bool = True, include_flow_distance: bool = True, include_shape_metrics: bool = False, perimeter_simplify_cells: float = 1.0, bearings_relative_to_true_north: bool = False) -> object\n\nReturn per-basin elevation, slope, flow-distance, and optional shape statistics.\n\nParameters\n----------\ndem : Raster\n    Elevation (m) on the flow grid.\ninclude_slope : bool, default=True\n    Add ``slope_25th``, ``slope_50th``, ``slope_75th``: percentiles of the\n    3 x 3 gradient (m/m, as ``slope()``).\ninclude_flow_distance : bool, default=True\n    Add ``flow_distance_25th/50th/75th``: percentiles of D8 flow distance\n    to the outlet (m).\ninclude_shape_metrics : bool, default=False\n    Add planform shape metrics: ``centroid_x``, ``centroid_y``,\n    ``basin_length_metres``, ``elongation_ratio``, ``form_factor``,\n    ``circularity_ratio``, ``gravelius_compactness``, ``solidity``,\n    ``eccentricity``, ``orientation_degrees`` (principal axis, compass,\n    0-180, from grid north unless ``bearings_relative_to_true_north``),\n    ``hypsometric_integral``.\nperimeter_simplify_cells : float, default=1.0\n    Simplification tolerance of the outline, in cells, used for the\n    perimeter in the shape metrics.\nbearings_relative_to_true_north : bool, default=False\n    Convert ``orientation_degrees`` to true north with the grid convergence\n    at the basin centroid, as the CLI's ``bearings_relative_to_true_north``;\n    needs a flow grid with a CRS. False keeps it relative to grid north.\n\nReturns\n-------\npandas.DataFrame\n    One row per basin: ``basin_id``, ``n_pixels``, ``area_metres2``,\n    ``elevation_min``, ``elevation_max``, ``elevation_mean``,\n    ``elevation_median``, ``elevation_stddev`` (m), plus the optional\n    columns above.",
           "signatures": [
             {
-              "definition": "def statistics(self, dem: lsdtt3.Raster, include_slope: bool = \\0, include_flow_distance: bool = \\1, include_shape_metrics: bool = \\2, perimeter_simplify_cells: float = \\3) -> object",
+              "definition": "def statistics(self, dem: lsdtt3.Raster, include_slope: bool = \\0, include_flow_distance: bool = \\1, include_shape_metrics: bool = \\2, perimeter_simplify_cells: float = \\3, bearings_relative_to_true_north: bool = \\4) -> object",
               "defaults": [
                 true,
                 true,
                 false,
-                1.0
+                1.0,
+                false
               ]
             }
           ]
@@ -515,16 +516,18 @@
     {
       "name": "ChannelNetwork",
       "kind": "class",
-      "doc": "A D8 channel network as a graph of junctions and links.\n\nMade by ``FlowInfo.channel_network(scope)``: every resolved source of the\n``ChannelScope`` is traced downstream to its D8 outlet (outlet truncation in\nthe scope does not cut the network). A junction is a source, a confluence or\nan outlet pixel; a link is the channel between a junction and the next\njunction downstream. Stream orders are Strahler orders. Use\n``lines_geodataframe()`` / ``points_geodataframe()`` for GIS layers,\n``channel_mask`` as the ``channels`` raster of HAND, and ``chi()`` for chi\nanalysis.\n\nReturned by ``FlowInfo.channel_network()``, ``DivideMigrationResult.network``; not constructible directly.\n\nAttributes\n----------\nchannel_mask : Raster\n    0/1 Raster: 1 on network channel pixels, 0 on other valid pixels.\njunction_id : numpy.ndarray\n    Int32 array (n_rows, n_cols) of the junction ID at junction pixels, -1 elsewhere.\nn_channel_cells : int\n    Number of channel pixels in the network.\nn_junctions : int\n    Number of junctions (sources, confluences and outlets).\n\nMethods\n-------\nbasin_com_bearings() -> object\n    Return outlet-to-basin-centre-of-mass bearings for each junction basin.\nchi(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> ChiCollection\n    Extract outlet-seeded chi coordinates on this channel network.\nchi_sweep(dem: Raster, m_over_n_values: object, outlets: object | None = None, reference_area: float = 1.0, critical_divergence_metres: float = 5.0, denominator: object | None = None) -> object\n    Fit each tested m/n and return per-basin disorder.\ndonors(junction_id: int) -> list[int]\n    Return the IDs of the junctions that drain directly into a junction.\njunction_angles(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, min_nodes: int = 2) -> object\n    Measure two-donor confluence angles in compass degrees.\njunctions() -> object\n    Return junction topology as a pandas DataFrame.\njunctions_geodataframe() -> object\n    Return channel junctions as a GeoPandas point layer.\nlines_geodataframe() -> object\n    Return compact non-outlet channel links as a GeoPandas line layer.\nlink_bearings(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2) -> object\n    Fit compass bearings to compact channel links.\nlink_profiles(values: Raster, junctions: object | None = None) -> object\n    Sample a raster along compact downstream channel links.\nlinks() -> object\n    Return junction-to-junction links as a pandas DataFrame.\npoints_geodataframe() -> object\n    Return channel pixels as a GeoPandas point layer.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "A D8 channel network as a graph of junctions and links.\n\nMade by ``FlowInfo.channel_network(scope)``: every resolved source of the\n``ChannelScope`` is traced downstream to its D8 outlet (outlet truncation in\nthe scope does not cut the network). A junction is a source, a confluence or\nan outlet pixel; a link is the channel between a junction and the next\njunction downstream. Stream orders are Strahler orders. Use\n``lines_geodataframe()`` / ``points_geodataframe()`` for GIS layers,\n``channel_mask`` as the ``channels`` raster of HAND, and ``chi()`` for chi\nanalysis.\n\nReturned by ``FlowInfo.channel_network()``, ``DivideMigrationResult.network``; not constructible directly.\n\nAttributes\n----------\nchannel_mask : Raster\n    0/1 Raster: 1 on network channel pixels, 0 on other valid pixels.\njunction_id : numpy.ndarray\n    Int32 array (n_rows, n_cols) of the junction ID at junction pixels, -1 elsewhere.\nn_channel_cells : int\n    Number of channel pixels in the network.\nn_junctions : int\n    Number of junctions (sources, confluences and outlets).\n\nMethods\n-------\nbasin_com_bearings(bearings_relative_to_true_north: bool = False) -> object\n    Return outlet-to-basin-centre-of-mass bearings for each junction basin.\nchi(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> ChiCollection\n    Extract outlet-seeded chi coordinates on this channel network.\nchi_sweep(dem: Raster, m_over_n_values: object, outlets: object | None = None, reference_area: float = 1.0, critical_divergence_metres: float = 5.0, denominator: object | None = None) -> object\n    Fit each tested m/n and return per-basin disorder.\ndonors(junction_id: int) -> list[int]\n    Return the IDs of the junctions that drain directly into a junction.\njunction_angles(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, min_nodes: int = 2) -> object\n    Measure two-donor confluence angles in compass degrees.\njunctions() -> object\n    Return junction topology as a pandas DataFrame.\njunctions_geodataframe() -> object\n    Return channel junctions as a GeoPandas point layer.\nlines_geodataframe() -> object\n    Return compact non-outlet channel links as a GeoPandas line layer.\nlink_bearings(junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2, bearings_relative_to_true_north: bool = False) -> object\n    Fit compass bearings to compact channel links.\nlink_profiles(values: Raster, junctions: object | None = None) -> object\n    Sample a raster along compact downstream channel links.\nlinks() -> object\n    Return junction-to-junction links as a pandas DataFrame.\npoints_geodataframe() -> object\n    Return channel pixels as a GeoPandas point layer.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [
         {
           "name": "basin_com_bearings",
           "kind": "method",
-          "doc": "basin_com_bearings(self) -> object\n\nReturn outlet-to-basin-centre-of-mass bearings for each junction basin.\n\nReturns\n-------\npandas.DataFrame\n    Columns ``junction_id``, ``stream_order``, ``outlet_x``, ``outlet_y``,\n    ``centre_of_mass_x``, ``centre_of_mass_y``, ``bearing_deg`` (compass\n    degrees from the outlet to the centre of mass), ``distance_metres``,\n    ``n_pixels``.",
+          "doc": "basin_com_bearings(self, bearings_relative_to_true_north: bool = False) -> object\n\nReturn outlet-to-basin-centre-of-mass bearings for each junction basin.\n\nParameters\n----------\nbearings_relative_to_true_north : bool, default=False\n    False: clockwise from grid north (grid up). True: converted to true north\n    with the grid convergence at the midpoint of the outlet and the centre of mass, as the CLI's\n    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.\n\nReturns\n-------\npandas.DataFrame\n    Columns ``junction_id``, ``stream_order``, ``outlet_x``, ``outlet_y``,\n    ``centre_of_mass_x``, ``centre_of_mass_y``, ``bearing_deg`` (compass\n    degrees from the outlet to the centre of mass, from grid north or true\n    north as above), ``distance_metres``,\n    ``n_pixels``.",
           "signatures": [
             {
-              "definition": "def basin_com_bearings(self) -> object",
-              "defaults": []
+              "definition": "def basin_com_bearings(self, bearings_relative_to_true_north: bool = \\0) -> object",
+              "defaults": [
+                false
+              ]
             }
           ]
         },
@@ -636,17 +639,18 @@
         {
           "name": "link_bearings",
           "kind": "method",
-          "doc": "link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2) -> object\n\nFit compass bearings to compact channel links.\n\nParameters\n----------\njunctions : array-like of int or None, default=None\n    Upstream junction IDs of the links to fit; None fits every link.\nmode : {\"full_link\", \"fixed_length\", \"fixed_n_pixels\"}, default=\"full_link\"\n    Fit the whole link, or only a sub-chain of the link.\nfixed_length_metres : float, default=0\n    Sub-chain path length (m) for ``mode=\"fixed_length\"``; must be positive\n    in that mode.\nfixed_n_pixels : int, default=0\n    Sub-chain length in pixels for ``mode=\"fixed_n_pixels\"`` (at least 2).\nanchor : {\"upstream\", \"downstream\"}, default=\"upstream\"\n    End of the link the sub-chain starts from.\nmin_nodes : int, default=2\n    Minimum number of pixels a fit needs (at least 2).\n\nReturns\n-------\npandas.DataFrame\n    Columns ``upstream_junction``, ``downstream_junction``,\n    ``stream_order``, ``upstream_flat``, ``downstream_flat``,\n    ``drainage_area_m2``, ``n_nodes_total``, ``n_nodes_used``,\n    ``total_length_metres``, ``sampled_length_metres``, ``direction_x``,\n    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = north,\n    clockwise), ``fit_linearity``, ``representative_flat``,\n    ``representative_x``, ``representative_y``.",
+          "doc": "link_bearings(self, junctions: object | None = None, mode: str = 'full_link', fixed_length_metres: float = 0.0, fixed_n_pixels: int = 0, anchor: str = 'upstream', min_nodes: int = 2, bearings_relative_to_true_north: bool = False) -> object\n\nFit compass bearings to compact channel links.\n\nParameters\n----------\njunctions : array-like of int or None, default=None\n    Upstream junction IDs of the links to fit; None fits every link.\nmode : {\"full_link\", \"fixed_length\", \"fixed_n_pixels\"}, default=\"full_link\"\n    Fit the whole link, or only a sub-chain of the link.\nfixed_length_metres : float, default=0\n    Sub-chain path length (m) for ``mode=\"fixed_length\"``; must be positive\n    in that mode.\nfixed_n_pixels : int, default=0\n    Sub-chain length in pixels for ``mode=\"fixed_n_pixels\"`` (at least 2).\nanchor : {\"upstream\", \"downstream\"}, default=\"upstream\"\n    End of the link the sub-chain starts from.\nmin_nodes : int, default=2\n    Minimum number of pixels a fit needs (at least 2).\nbearings_relative_to_true_north : bool, default=False\n    False: clockwise from grid north (grid up). True: converted to true north\n    with the grid convergence at each link's representative point (``representative_x``,\n    ``representative_y``); ``direction_x`` and ``direction_y`` stay grid\n    components, as the CLI's\n    ``bearings_relative_to_true_north``; needs a flow grid with a CRS.\n\nReturns\n-------\npandas.DataFrame\n    Columns ``upstream_junction``, ``downstream_junction``,\n    ``stream_order``, ``upstream_flat``, ``downstream_flat``,\n    ``drainage_area_m2``, ``n_nodes_total``, ``n_nodes_used``,\n    ``total_length_metres``, ``sampled_length_metres``, ``direction_x``,\n    ``direction_y``, ``bearing_deg`` (compass degrees, 0 = grid north,\n    or true north as above, clockwise), ``fit_linearity``, ``representative_flat``,\n    ``representative_x``, ``representative_y``.",
           "signatures": [
             {
-              "definition": "def link_bearings(self, junctions: object | None = \\0, mode: str = \\1, fixed_length_metres: float = \\2, fixed_n_pixels: int = \\3, anchor: str = \\4, min_nodes: int = \\5) -> object",
+              "definition": "def link_bearings(self, junctions: object | None = \\0, mode: str = \\1, fixed_length_metres: float = \\2, fixed_n_pixels: int = \\3, anchor: str = \\4, min_nodes: int = \\5, bearings_relative_to_true_north: bool = \\6) -> object",
               "defaults": [
                 null,
                 "full_link",
                 0.0,
                 0,
                 "upstream",
-                2
+                2,
+                false
               ]
             }
           ]
@@ -3202,7 +3206,7 @@
     {
       "name": "Raster",
       "kind": "class",
-      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 243 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 245 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "from_numpy",
@@ -3770,7 +3774,7 @@
     {
       "name": "RoadFlowResult",
       "kind": "class",
-      "doc": "Flow-direction diagnostics from :func:`find_road_flow_discrimination`.\n\nCompares the local D8 flow-path bearing with the regional slope bearing:\nroads divert flow along the contour, so ``flow_vs_slope_angle`` is large on\nroads and small on natural slopes and channels. Bearings are compass\ndegrees; slopes are m/m.\n\nReturned by ``find_road_flow_discrimination()``; not constructible directly.\n\nAttributes\n----------\nchannel_mask : Raster\ncontributing_pixels : Raster\nflow_path_bearing : Raster\nflow_path_divergence : Raster\nflow_vs_slope_angle : Raster\nregional_slope : Raster\nregional_slope_bearing : Raster\nroughness : Raster\nvalley_axis_buffer_mask : Raster\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Flow-direction diagnostics from :func:`find_road_flow_discrimination`.\n\nCompares the local D8 flow-path bearing with the regional slope bearing:\nroads divert flow along the contour, so ``flow_vs_slope_angle`` is large on\nroads and small on natural slopes and channels. Bearings are compass\ndegrees from grid north (true north with\n``bearings_relative_to_true_north=True``; the angle between them is the\nsame either way); slopes are m/m.\n\nReturned by ``find_road_flow_discrimination()``; not constructible directly.\n\nAttributes\n----------\nchannel_mask : Raster\ncontributing_pixels : Raster\nflow_path_bearing : Raster\nflow_path_divergence : Raster\nflow_vs_slope_angle : Raster\nregional_slope : Raster\nregional_slope_bearing : Raster\nroughness : Raster\nvalley_axis_buffer_mask : Raster\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "channel_mask",
@@ -3832,7 +3836,7 @@
     {
       "name": "RoadResult",
       "kind": "class",
-      "doc": "Hillside road / bench detection output from :func:`find_roads`.\n\n``score`` is elongation x contour alignment x edge strength, ``mask`` its\ngated threshold; ``contour_alignment`` and ``hessian_elongation`` are in\n[0, 1], ``cross_curvature`` in 1/m, ``feature_orientation_degrees`` the\nalong-feature azimuth (0-180, from north) and ``slope`` the gradient (m/m).\n\nReturned by ``find_roads()``; not constructible directly.\n\nAttributes\n----------\ncontour_alignment : Raster\ncross_curvature : Raster\nfeature_orientation_degrees : Raster\nhessian_elongation : Raster\nmask : Raster\nscore : Raster\nslope : Raster\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Hillside road / bench detection output from :func:`find_roads`.\n\n``score`` is elongation x contour alignment x edge strength, ``mask`` its\ngated threshold; ``contour_alignment`` and ``hessian_elongation`` are in\n[0, 1], ``cross_curvature`` in 1/m, ``feature_orientation_degrees`` the\nalong-feature azimuth (0-180, from grid north, or true north when\n``find_roads`` was called with ``bearings_relative_to_true_north=True``) and\n``slope`` the gradient (m/m).\n\nReturned by ``find_roads()``; not constructible directly.\n\nAttributes\n----------\ncontour_alignment : Raster\ncross_curvature : Raster\nfeature_orientation_degrees : Raster\nhessian_elongation : Raster\nmask : Raster\nscore : Raster\nslope : Raster\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "contour_alignment",
@@ -3907,6 +3911,234 @@
           "kind": "property",
           "doc": "(self) -> lsdtt3.Raster",
           "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "RotationFrame",
+      "kind": "class",
+      "doc": "An oblique analysis frame aligned with a feature, and its rotate-back target.\n\nA frame is a Hotine Oblique Mercator (variant B) CRS whose central line runs\nalong a fault, river, coastline or elongated range, with the feature along\n+x and the frame centre at (0, 0). A raster in the frame is an ordinary\nnorth-up raster in that CRS, so every lsdtt3 analysis runs on it unchanged,\non a grid that holds the strip rather than its bounding box. Bearings from\nanalyses are then clockwise from grid up (90 = along the feature) unless\n``bearings_relative_to_true_north=True`` is passed.\n\nThe frame also carries the lattice that ``rotate_back`` writes products onto:\nthe source DEM's own grid for a frame built with ``source=``, else the UTM\n(or polar stereographic) CRS of the frame centre on the lattice a fetch uses.\nBring back products (basins, channels, IDs), never the DEM.\n\nGet one with ``RotationFrame.from_feature`` (a line, two points or polygon\nfile), ``RotationFrame.from_valid_data`` (the footprint of a raster's valid\ncells), ``RotationFrame.read`` (a ``*_rotation_frame.txt`` written by a CLI\nor by ``write``), or ``RotationFrame.from_raster`` (rebuilt from a frame\nraster's own CRS when the frame file is lost). Typical use::\n\n    frame = lsdtt3.RotationFrame.from_feature(\"fault.gpkg\", width=10000.0,\n                                              grid_spacing=30.0)\n    dem = lsdtt3.fetch_dem(frame=frame, grid_spacing=30.0)\n    frame.write(\"fault_rotation_frame.txt\")\n    # ... analysis on dem ...\n    basins_utm = lsdtt3.rotate_back(basins, frame, resampling=\"near\")\n\nProperty names spell out the units of the frame-file keys: ``centre_lon`` is\n``centre_longitude``, ``azimuth_deg`` is ``azimuth_degrees``, ``width_m`` is\n``width_metres``, ``target_crs_epsg`` is ``target_epsg``, and so on.\n\nNot constructible directly; create one with ``RotationFrame.from_feature()`` or ``RotationFrame.from_raster()`` or ``RotationFrame.from_valid_data()`` or ``RotationFrame.read()``.\n\nAttributes\n----------\naxis_length_metres : float\n    Geodesic length of the axis between its end points (without the end buffer), m.\nazimuth_degrees : float\n    Azimuth of the axis at the centre, clockwise from true north, in (-90, 90].\nbase_crs_wkt : str\n    WKT of the geographic CRS (datum) the frame is built on.\nbuffer_all_sides : bool\n    True when the end buffer is also on both long sides (polygon frames).\ncell_size : float\n    Frame cell size, m.\ncentre_latitude : float\n    Latitude of the frame centre, degrees in the base geographic CRS.\ncentre_longitude : float\n    Longitude of the frame centre, degrees in the base geographic CRS.\ncrs_wkt : str\n    The frame CRS as WKT.\nend_buffer_metres : float\n    Length added beyond each axis end (and each long side for a polygon), m.\nend_points : tuple\n    The axis end points ((lon, lat), (lon, lat)), west one first.\nextent : tuple\n    Frame extent (x_min, x_max, y_min, y_max) in frame metres.\nfeature_fname : str\n    File name of the feature the frame was built from, or empty.\nfeature_layer : str\n    Layer of the feature file the frame was built from, or empty.\nframe_source : str\n    How the frame was defined: line, two_points, polygon, data_footprint or crs.\nn_cols : int\n    Number of columns of a raster filling the frame.\nn_rows : int\n    Number of rows of a raster filling the frame.\nproj_string : str\n    The frame CRS as a PROJ string.\nsource_dem_fname : str\n    File name of the source DEM, when the frame file records one.\ntarget_cell_size : float\n    Cell size of the rotate-back target grid, in its CRS units.\ntarget_crs_wkt : str\n    WKT of the rotate-back target CRS when it has no EPSG code, else empty.\ntarget_epsg : int\n    EPSG code of the rotate-back target CRS (0 when it is given as WKT).\ntarget_origin : tuple\n    A node (x, y) of the rotate-back lattice: the source DEM's lower-left corner, or (0, 0).\nwarnings : list[str]\n    Notes from building or reading the frame (also issued as warnings).\nwidth_metres : float\n    Full width of the strip across the axis, m.\n\nMethods\n-------\nRotationFrame.from_feature(path: str, width: float = 0.0, end_buffer: float = -1.0, grid_spacing: float = 0.0, layer: str = '', source: object | None = None, target_epsg: int = 0) -> RotationFrame\n    Build the frame of a line, two-point or polygon feature file.\nRotationFrame.from_raster(raster: Raster) -> RotationFrame\n    Rebuild the frame of a raster that is already in an lsdtt3 oblique frame.\nRotationFrame.from_valid_data(source: Raster, end_buffer: float = -1.0, grid_spacing: float = 0.0) -> RotationFrame\n    Build the frame of a raster's valid cells (its minimum-area rectangle).\ngrid_convergence_degrees(x: float, y: float) -> float\n    Angle of true north, clockwise from grid up, at a point of the frame.\nRotationFrame.read(path: str) -> RotationFrame\n    Read a rotation frame file (``*_rotation_frame.txt``).\nwrite(path: str) -> None\n    Write the frame and its rotate-back target as a rotation frame file.\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
+      "members": [
+        {
+          "name": "axis_length_metres",
+          "kind": "property",
+          "doc": "Geodesic length of the axis between its end points (without the end buffer), m.",
+          "signatures": []
+        },
+        {
+          "name": "azimuth_degrees",
+          "kind": "property",
+          "doc": "Azimuth of the axis at the centre, clockwise from true north, in (-90, 90].",
+          "signatures": []
+        },
+        {
+          "name": "base_crs_wkt",
+          "kind": "property",
+          "doc": "WKT of the geographic CRS (datum) the frame is built on.",
+          "signatures": []
+        },
+        {
+          "name": "buffer_all_sides",
+          "kind": "property",
+          "doc": "True when the end buffer is also on both long sides (polygon frames).",
+          "signatures": []
+        },
+        {
+          "name": "cell_size",
+          "kind": "property",
+          "doc": "Frame cell size, m.",
+          "signatures": []
+        },
+        {
+          "name": "centre_latitude",
+          "kind": "property",
+          "doc": "Latitude of the frame centre, degrees in the base geographic CRS.",
+          "signatures": []
+        },
+        {
+          "name": "centre_longitude",
+          "kind": "property",
+          "doc": "Longitude of the frame centre, degrees in the base geographic CRS.",
+          "signatures": []
+        },
+        {
+          "name": "crs_wkt",
+          "kind": "property",
+          "doc": "The frame CRS as WKT.",
+          "signatures": []
+        },
+        {
+          "name": "end_buffer_metres",
+          "kind": "property",
+          "doc": "Length added beyond each axis end (and each long side for a polygon), m.",
+          "signatures": []
+        },
+        {
+          "name": "end_points",
+          "kind": "property",
+          "doc": "The axis end points ((lon, lat), (lon, lat)), west one first.",
+          "signatures": []
+        },
+        {
+          "name": "extent",
+          "kind": "property",
+          "doc": "Frame extent (x_min, x_max, y_min, y_max) in frame metres.",
+          "signatures": []
+        },
+        {
+          "name": "feature_fname",
+          "kind": "property",
+          "doc": "File name of the feature the frame was built from, or empty.",
+          "signatures": []
+        },
+        {
+          "name": "feature_layer",
+          "kind": "property",
+          "doc": "Layer of the feature file the frame was built from, or empty.",
+          "signatures": []
+        },
+        {
+          "name": "frame_source",
+          "kind": "property",
+          "doc": "How the frame was defined: line, two_points, polygon, data_footprint or crs.",
+          "signatures": []
+        },
+        {
+          "name": "from_feature",
+          "kind": "static_method",
+          "doc": "from_feature(path: str, width: float = 0.0, end_buffer: float = -1.0, grid_spacing: float = 0.0, layer: str = '', source: object | None = None, target_epsg: int = 0) -> lsdtt3.RotationFrame\n\nBuild the frame of a line, two-point or polygon feature file.\n\nA line (or a multi-part line) uses its two furthest end points as the axis;\ntwo points are the axis ends; a polygon uses its minimum-area enclosing\nrectangle, longest side as the axis, and takes its width from the polygon.\nThe same routine as ``fetch_from_linear_feature`` in lsdtt-fetch-raster\nand ``rotate_to_linear_feature`` in lsdtt-raster-preprocessing.\n\nParameters\n----------\npath : str\n    Feature file (any OGR vector: GeoPackage, GeoJSON, shapefile, ...), in\n    any CRS.\nwidth : float, default=0.0\n    Full width of the strip across the axis, in metres. Required (> 0) for\n    a line or two points; ignored, with a warning, for a polygon.\nend_buffer : float, default=-1.0\n    Length added beyond each axis end, in metres (on all four sides for a\n    polygon). Negative means 10 cells.\ngrid_spacing : float, default=0.0\n    Frame cell size in metres. Without ``source``, 0 means 30 m (the\n    ``fetch_dem`` default). With ``source``, 0 means the source's own cell\n    size when it is projected in metres, else the size reprojection would\n    choose, as lsdtt-raster-preprocessing does.\nlayer : str, default=\"\"\n    Layer to read; empty reads the first layer (warned if there are several).\nsource : Raster or None, default=None\n    The DEM this frame will rotate (``rotate_to_frame``). The frame is built\n    on its geographic datum, and the rotate-back target is its own grid\n    (CRS, cell size and lower-left corner) when it is projected in metres.\n    None builds a frame for ``fetch_dem`` on WGS84.\ntarget_epsg : int, default=0\n    Without ``source`` only: EPSG code of the rotate-back target. 0 picks the\n    UTM (or polar stereographic beyond 75 degrees) CRS of the frame centre.\n\nReturns\n-------\nRotationFrame\n    The frame. Reader and builder notes (several layers, an ill-defined\n    polygon axis) are issued as ``UserWarning``; a file that cannot be read\n    or used raises ``ValueError``.",
+          "signatures": [
+            {
+              "definition": "def from_feature(path: str, width: float = \\0, end_buffer: float = \\1, grid_spacing: float = \\2, layer: str = \\3, source: object | None = \\4, target_epsg: int = \\5) -> lsdtt3.RotationFrame",
+              "defaults": [
+                0.0,
+                -1.0,
+                0.0,
+                "",
+                null,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "from_raster",
+          "kind": "static_method",
+          "doc": "from_raster(raster: lsdtt3.Raster) -> lsdtt3.RotationFrame\n\nRebuild the frame of a raster that is already in an lsdtt3 oblique frame.\n\nThe fallback when the frame file is lost: the frame comes from the raster's\nown CRS and extent, and the rotate-back target is the UTM (or polar\nstereographic) CRS of the frame centre on the lattice anchored at (0, 0). A\n``UserWarning`` says that a source DEM origin off that lattice cannot be\nrecovered without the frame file.\n\nParameters\n----------\nraster : Raster\n    A raster in an lsdtt3 oblique Mercator frame.\n\nReturns\n-------\nRotationFrame\n    The rebuilt frame; ``ValueError`` for a raster in any other CRS.",
+          "signatures": [
+            {
+              "definition": "def from_raster(raster: lsdtt3.Raster) -> lsdtt3.RotationFrame",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "from_valid_data",
+          "kind": "static_method",
+          "doc": "from_valid_data(source: lsdtt3.Raster, end_buffer: float = -1.0, grid_spacing: float = 0.0) -> lsdtt3.RotationFrame\n\nBuild the frame of a raster's valid cells (its minimum-area rectangle).\n\nThe polygon of the outer corners of the first and last valid cell of every\nrow, framed as a polygon feature would be; the frame of\n``rotate_to_data_footprint`` in lsdtt-raster-preprocessing. A footprint with\nno clear long axis (a square DEM) is warned.\n\nParameters\n----------\nsource : Raster\n    The DEM; it must have a CRS. The rotate-back target is its own grid\n    when it is projected in metres.\nend_buffer : float, default=-1.0\n    Length added on all four sides, in metres; negative means 10 cells.\ngrid_spacing : float, default=0.0\n    Frame cell size in metres; 0 chooses it from ``source`` as\n    ``from_feature`` does.\n\nReturns\n-------\nRotationFrame\n    The frame; ``ValueError`` for a raster with no CRS or no valid cells.",
+          "signatures": [
+            {
+              "definition": "def from_valid_data(source: lsdtt3.Raster, end_buffer: float = \\0, grid_spacing: float = \\1) -> lsdtt3.RotationFrame",
+              "defaults": [
+                -1.0,
+                0.0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "grid_convergence_degrees",
+          "kind": "method",
+          "doc": "grid_convergence_degrees(self, x: float, y: float) -> float\n\nAngle of true north, clockwise from grid up, at a point of the frame.\n\nA grid bearing ``g`` at ``(x, y)`` is the true bearing ``g - c``. At the\nframe centre ``c`` is ``90 - azimuth_degrees``.\n\nParameters\n----------\nx, y : float\n    Frame coordinates in metres.\n\nReturns\n-------\nfloat\n    The convergence in degrees.",
+          "signatures": [
+            {
+              "definition": "def grid_convergence_degrees(self, x: float, y: float) -> float",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "n_cols",
+          "kind": "property",
+          "doc": "Number of columns of a raster filling the frame.",
+          "signatures": []
+        },
+        {
+          "name": "n_rows",
+          "kind": "property",
+          "doc": "Number of rows of a raster filling the frame.",
+          "signatures": []
+        },
+        {
+          "name": "proj_string",
+          "kind": "property",
+          "doc": "The frame CRS as a PROJ string.",
+          "signatures": []
+        },
+        {
+          "name": "read",
+          "kind": "static_method",
+          "doc": "read(path: str) -> lsdtt3.RotationFrame\n\nRead a rotation frame file (``*_rotation_frame.txt``).\n\nThe files written by lsdtt-fetch-raster, lsdtt-raster-preprocessing and\n``RotationFrame.write`` are flat YAML mappings; this reader checks the\nstored CRS against the stored centre and azimuth and runs the frame's axis\nself-check.\n\nParameters\n----------\npath : str\n    The frame file.\n\nReturns\n-------\nRotationFrame\n    The frame and its rotate-back target; ``ValueError`` if the file is\n    missing, newer than this lsdtt3, or inconsistent.",
+          "signatures": [
+            {
+              "definition": "def read(path: str) -> lsdtt3.RotationFrame",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "source_dem_fname",
+          "kind": "property",
+          "doc": "File name of the source DEM, when the frame file records one.",
+          "signatures": []
+        },
+        {
+          "name": "target_cell_size",
+          "kind": "property",
+          "doc": "Cell size of the rotate-back target grid, in its CRS units.",
+          "signatures": []
+        },
+        {
+          "name": "target_crs_wkt",
+          "kind": "property",
+          "doc": "WKT of the rotate-back target CRS when it has no EPSG code, else empty.",
+          "signatures": []
+        },
+        {
+          "name": "target_epsg",
+          "kind": "property",
+          "doc": "EPSG code of the rotate-back target CRS (0 when it is given as WKT).",
+          "signatures": []
+        },
+        {
+          "name": "target_origin",
+          "kind": "property",
+          "doc": "A node (x, y) of the rotate-back lattice: the source DEM's lower-left corner, or (0, 0).",
+          "signatures": []
+        },
+        {
+          "name": "warnings",
+          "kind": "property",
+          "doc": "Notes from building or reading the frame (also issued as warnings).",
+          "signatures": []
+        },
+        {
+          "name": "width_metres",
+          "kind": "property",
+          "doc": "Full width of the strip across the axis, m.",
+          "signatures": []
+        },
+        {
+          "name": "write",
+          "kind": "method",
+          "doc": "write(self, path: str) -> None\n\nWrite the frame and its rotate-back target as a rotation frame file.\n\nThe format is the one the CLIs write and read (``rotation_frame_fname`` in\nlsdtt-raster-preprocessing), so a frame made in Python can rotate products\nback from the command line and the other way round.\n\nParameters\n----------\npath : str\n    Output file, conventionally ``<stem>_rotation_frame.txt``.\n\nReturns\n-------\nNone\n    Nothing; ``RuntimeError`` if the file cannot be written.",
+          "signatures": [
+            {
+              "definition": "def write(self, path: str) -> None",
+              "defaults": []
+            }
+          ]
         }
       ],
       "signatures": []
@@ -4773,15 +5005,16 @@
     {
       "name": "aspect",
       "kind": "function",
-      "doc": "Compute polyfit aspect in degrees; lambda_metres defaults to three cells.\n\nAspect is the downslope direction the surface faces, in compass degrees\n(0 = north, 90 = east, clockwise), from the polyfit surface.\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m) in a projected metre CRS.\nlambda_metres : float, default=0.0\n    Polyfit length scale (m), as in ``polyfit_metrics``; 0 uses three cells.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nflat_slope_tolerance : float, default=1e-12\n    Pixels whose fitted gradient (m/m) is below this are treated as flat\n    (no defined aspect).\n\nReturns\n-------\nRaster\n    Aspect in degrees, 0 to 360.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Compute polyfit aspect in degrees; lambda_metres defaults to three cells.\n\nAspect is the downslope direction the surface faces, in compass degrees\n(0 = north, 90 = east, clockwise), from the polyfit surface; north is grid\nnorth unless ``bearings_relative_to_true_north``.\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m) in a projected metre CRS.\nlambda_metres : float, default=0.0\n    Polyfit length scale (m), as in ``polyfit_metrics``; 0 uses three cells.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nflat_slope_tolerance : float, default=1e-12\n    Pixels whose fitted gradient (m/m) is below this are treated as flat\n    (no defined aspect).\nbearings_relative_to_true_north : bool, default=False\n    False: clockwise from grid north (grid up), so in an oblique frame\n    (``RotationFrame``) 90 means along the feature. True: converted to\n    true north with the grid convergence at each pixel, as the CLIs'\n    ``bearings_relative_to_true_north``; needs a raster with a CRS.\n\nReturns\n-------\nRaster\n    Aspect in degrees, 0 to 360.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def aspect(raster: lsdtt3.Raster, lambda_metres: float = \\0, n_threads: int = \\1, flat_slope_tolerance: float = \\2) -> lsdtt3.Raster",
+          "definition": "def aspect(raster: lsdtt3.Raster, lambda_metres: float = \\0, n_threads: int = \\1, flat_slope_tolerance: float = \\2, bearings_relative_to_true_north: bool = \\3) -> lsdtt3.Raster",
           "defaults": [
             0.0,
             0,
-            1e-12
+            1e-12,
+            false
           ]
         }
       ]
@@ -4835,14 +5068,15 @@
     {
       "name": "basin_surface_metrics",
       "kind": "function",
-      "doc": "Summarise polyfit surface metrics inside each basin at several fitting scales.\n\nParameters\n----------\nbasins : BasinCollection\n    Basins to summarise.\ndem : Raster\n    Elevation (m) on the basins' flow grid.\nscales : list of float\n    Polyfit length scales ``lambda_metres`` (m, positive), as in\n    ``polyfit_metrics``.\nmetrics : list of str\n    Any of ``\"slope\"`` (m/m), ``\"slope_degrees\"``, ``\"aspect_degrees\"``,\n    ``\"maximum_curvature\"``, ``\"minimum_curvature\"``, ``\"mean_curvature\"``,\n    ``\"gaussian_curvature\"``, ``\"profile_curvature\"``, ``\"plan_curvature\"``,\n    ``\"tangential_curvature\"``.\ninclude_outline : bool, default=True\n    Also sample each metric along the basin outline.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\ndict of str to pandas.DataFrame\n    ``\"interior\"`` (basin_id, scale_metres, metric, n_values, min, mean,\n    median, max), ``\"outline\"`` (basin_id, scale_metres, metric,\n    distance_metres, value), ``\"curvature_flips\"`` (sign changes of\n    maximum_curvature along the outline), ``\"slope_area\"`` (median slope in\n    0.1 log10 drainage-area bins) and ``\"slope_area_summary\"``.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Summarise polyfit surface metrics inside each basin at several fitting scales.\n\nParameters\n----------\nbasins : BasinCollection\n    Basins to summarise.\ndem : Raster\n    Elevation (m) on the basins' flow grid.\nscales : list of float\n    Polyfit length scales ``lambda_metres`` (m, positive), as in\n    ``polyfit_metrics``.\nmetrics : list of str\n    Any of ``\"slope\"`` (m/m), ``\"slope_degrees\"``, ``\"aspect_degrees\"``,\n    ``\"maximum_curvature\"``, ``\"minimum_curvature\"``, ``\"mean_curvature\"``,\n    ``\"gaussian_curvature\"``, ``\"profile_curvature\"``, ``\"plan_curvature\"``,\n    ``\"tangential_curvature\"``.\ninclude_outline : bool, default=True\n    Also sample each metric along the basin outline.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nbearings_relative_to_true_north : bool, default=False\n    Convert ``aspect_degrees`` to true north at each pixel before it is\n    summarised, as the CLI's ``bearings_relative_to_true_north``; needs a\n    DEM with a CRS. False keeps it relative to grid north.\n\nReturns\n-------\ndict of str to pandas.DataFrame\n    ``\"interior\"`` (basin_id, scale_metres, metric, n_values, min, mean,\n    median, max), ``\"outline\"`` (basin_id, scale_metres, metric,\n    distance_metres, value), ``\"curvature_flips\"`` (sign changes of\n    maximum_curvature along the outline), ``\"slope_area\"`` (median slope in\n    0.1 log10 drainage-area bins) and ``\"slope_area_summary\"``.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def basin_surface_metrics(basins: lsdtt3.BasinCollection, dem: lsdtt3.Raster, scales: collections.abc.Sequence[float], metrics: collections.abc.Sequence[str], include_outline: bool = \\0, n_threads: int = \\1) -> dict",
+          "definition": "def basin_surface_metrics(basins: lsdtt3.BasinCollection, dem: lsdtt3.Raster, scales: collections.abc.Sequence[float], metrics: collections.abc.Sequence[str], include_outline: bool = \\0, n_threads: int = \\1, bearings_relative_to_true_north: bool = \\2) -> dict",
           "defaults": [
             true,
-            0
+            0,
+            false
           ]
         }
       ]
@@ -5328,14 +5562,15 @@
     {
       "name": "detect_directional_periodicity",
       "kind": "function",
-      "doc": "Detect local regularly spaced parallel features with sliding-window FFTs.\n\nFamilies of evenly spaced parallel lines (ditches, tracks, cultivation\nridges) give a sharp peak in the 2D power spectrum at 1 / spacing. A\nwindow slides over the raster and the strongest peak in the spacing band\nis recorded; each pixel keeps its best window.\n\nParameters\n----------\nraster : Raster\n    Input raster, for example a DEM or a curvature response.\nwindow_size_pixels : int\n    Window side (pixels, >= 8); should span several of the largest spacings.\nstep_pixels : int\n    Window stride (pixels, >= 1), typically half the window.\nmin_spacing_metres, max_spacing_metres : float\n    Range of spacings (m) searched; the minimum must exceed 2 cell sizes and\n    the maximum be below the window extent.\nmin_valid_fraction : float, default=0.6\n    Windows with a smaller fraction of valid pixels are skipped.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\ndict\n    ``\"strength\"`` (peak prominence), ``\"spacing_metres\"`` and\n    ``\"orientation_degrees\"`` (line orientation) Rasters.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Detect local regularly spaced parallel features with sliding-window FFTs.\n\nFamilies of evenly spaced parallel lines (ditches, tracks, cultivation\nridges) give a sharp peak in the 2D power spectrum at 1 / spacing. A\nwindow slides over the raster and the strongest peak in the spacing band\nis recorded; each pixel keeps its best window.\n\nParameters\n----------\nraster : Raster\n    Input raster, for example a DEM or a curvature response.\nwindow_size_pixels : int\n    Window side (pixels, >= 8); should span several of the largest spacings.\nstep_pixels : int\n    Window stride (pixels, >= 1), typically half the window.\nmin_spacing_metres, max_spacing_metres : float\n    Range of spacings (m) searched; the minimum must exceed 2 cell sizes and\n    the maximum be below the window extent.\nmin_valid_fraction : float, default=0.6\n    Windows with a smaller fraction of valid pixels are skipped.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nbearings_relative_to_true_north : bool, default=False\n    Convert ``orientation_degrees`` to true north at each pixel, as the\n    CLI's ``bearings_relative_to_true_north``; needs a raster with a CRS.\n\nReturns\n-------\ndict\n    ``\"strength\"`` (peak prominence), ``\"spacing_metres\"`` and\n    ``\"orientation_degrees\"`` (line orientation, 0-180, clockwise from grid\n    north or true north) Rasters.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = \\0, n_threads: int = \\1) -> dict",
+          "definition": "def detect_directional_periodicity(raster: lsdtt3.Raster, window_size_pixels: int, step_pixels: int, min_spacing_metres: float, max_spacing_metres: float, min_valid_fraction: float = \\0, n_threads: int = \\1, bearings_relative_to_true_north: bool = \\2) -> dict",
           "defaults": [
             0.6,
-            0
+            0,
+            false
           ]
         }
       ]
@@ -5515,12 +5750,16 @@
     {
       "name": "fetch_dem",
       "kind": "function",
-      "doc": "Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.\n\nThe source tiles are downloaded, mosaicked and warped to a projected grid\n(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)\nstores the sea as exactly 0 m, not as nodata, so mask it before flow\nrouting: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source\nfootprint are nodata.\n\nParameters\n----------\nwest, south, east, north : float\n    WGS84 bounds in decimal degrees (longitude west/east, latitude\n    south/north). Antimeridian-crossing requests are not supported:\n    ``west`` must be less than ``east``. ``VectorBounds.bbox`` from\n    ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.\nsource : {\"cop30_aws\", \"opentopography\", \"planetary_computer\"}, optional\n    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.\n    OpenTopography reads its key only from the ``OT_API_KEY`` or\n    ``OT_API_KEY_FILE`` environment variables (never pass a key as an\n    argument). ``planetary_computer`` is keyless.\ntarget_epsg : int, optional\n    Output EPSG code. Zero selects the UTM zone of the bounding-box centre.\ngrid_spacing : float, optional\n    Output cell size in target CRS units (m for UTM); default 30.\nresampling : str, optional\n    GDAL warp resampling method (``\"cubic\"`` default, ``\"bilinear\"``,\n    ``\"near\"``, ...).\nnodata_value : float, optional\n    Nodata value of the output (default -9999).\nsize_pixels : int, optional\n    If > 0, crop an exact ``size_pixels`` x ``size_pixels`` square from the\n    centre of the warped grid; 0 keeps the full extent.\ncache_dir : str, optional\n    Persistent cache directory. This is the only optional disk output; the\n    returned raster itself is kept in memory. Empty means no caching.\not_dem_type : str, optional\n    OpenTopography dataset, for example ``\"COP30\"``, ``\"SRTMGL1\"``,\n    ``\"NASADEM\"`` (see ``opentopography_datasets()``); other sources ignore it.\npc_collection, pc_asset : str, optional\n    Planetary Computer STAC collection and asset key (defaults\n    ``\"cop-dem-glo-30\"`` and ``\"data\"``); other sources ignore them.\nhttp_timeout_seconds : int, optional\n    Total time limit per HTTP request in seconds.\nhttp_connect_timeout_seconds : int, optional\n    Connection time limit per HTTP request in seconds.\nhttp_max_retry : int, optional\n    Number of retries of a failed HTTP request.\n\nReturns\n-------\nRaster\n    A projected raster of elevation (m). Network, GDAL, and invalid-request\n    failures raise ``RuntimeError``.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.\n\nThe source tiles are downloaded, mosaicked and warped to a projected grid\n(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)\nstores the sea as exactly 0 m, not as nodata, so mask it before flow\nrouting: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source\nfootprint are nodata.\n\nOr, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,\nfetch a strip along a fault, river or range warped straight from the source\ntiles into an oblique frame (one resampling pass), with the feature along\n+x. The return type is always ``Raster``; keep the ``RotationFrame`` to\nrotate products back with ``rotate_back``.\n\nParameters\n----------\nwest, south, east, north : float, optional\n    WGS84 bounds in decimal degrees (longitude west/east, latitude\n    south/north). Antimeridian-crossing requests are not supported:\n    ``west`` must be less than ``east``. ``VectorBounds.bbox`` from\n    ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.\n    Required unless ``frame`` or ``fetch_from_linear_feature`` gives the\n    area; refused with them.\nsource : {\"cop30_aws\", \"opentopography\", \"planetary_computer\"}, optional\n    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.\n    OpenTopography reads its key only from the ``OT_API_KEY`` or\n    ``OT_API_KEY_FILE`` environment variables (never pass a key as an\n    argument). ``planetary_computer`` is keyless.\ntarget_epsg : int, optional\n    Output EPSG code. Zero selects the UTM zone of the bounding-box centre.\ngrid_spacing : float, optional\n    Output cell size in target CRS units (m for UTM); default 30.\nresampling : str, optional\n    GDAL warp resampling method (``\"cubic\"`` default, ``\"bilinear\"``,\n    ``\"near\"``, ...).\nnodata_value : float, optional\n    Nodata value of the output (default -9999).\nsize_pixels : int, optional\n    If > 0, crop an exact ``size_pixels`` x ``size_pixels`` square from the\n    centre of the warped grid; 0 keeps the full extent.\ncache_dir : str, optional\n    Persistent cache directory. This is the only optional disk output; the\n    returned raster itself is kept in memory. Empty means no caching.\not_dem_type : str, optional\n    OpenTopography dataset, for example ``\"COP30\"``, ``\"SRTMGL1\"``,\n    ``\"NASADEM\"`` (see ``opentopography_datasets()``); other sources ignore it.\npc_collection, pc_asset : str, optional\n    Planetary Computer STAC collection and asset key (defaults\n    ``\"cop-dem-glo-30\"`` and ``\"data\"``); other sources ignore them.\nhttp_timeout_seconds : int, optional\n    Total time limit per HTTP request in seconds.\nhttp_connect_timeout_seconds : int, optional\n    Connection time limit per HTTP request in seconds.\nhttp_max_retry : int, optional\n    Number of retries of a failed HTTP request.\nframe : RotationFrame or None, optional\n    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``\n    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``\n    are refused (the frame carries its rotate-back target).\nfetch_from_linear_feature : bool, optional\n    Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster\n    does; the same as ``frame=RotationFrame.from_feature(fetch_feature_fname,\n    linear_feature_fetch_width, linear_feature_fetch_end_buffer,\n    grid_spacing, fetch_feature_layer)``, which is the frame to keep for\n    ``rotate_back``.\nfetch_feature_fname : str, optional\n    Line, two-point or polygon file (any OGR format and CRS).\nfetch_feature_layer : str, optional\n    Layer of the feature file; empty reads the first.\nlinear_feature_fetch_width : float, optional\n    Full strip width in metres; required for a line or two points.\nlinear_feature_fetch_end_buffer : float, optional\n    Length beyond each axis end in metres (all sides for a polygon);\n    negative means 10 cells.\nrotate_after_fetch : bool, optional\n    With ``fetch_from_linear_feature``: True (default) returns the strip in\n    the oblique frame; False returns the frame's WGS84 envelope in UTM, as a\n    plain fetch.\n\nReturns\n-------\nRaster\n    A projected raster of elevation (m): UTM (or ``target_epsg``), or the\n    oblique frame. Network, GDAL, and invalid-request failures raise\n    ``RuntimeError``; an inconsistent combination of arguments raises\n    ``ValueError``.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def fetch_dem(west: float, south: float, east: float, north: float, source: str = \\0, target_epsg: int = \\1, grid_spacing: float = \\2, resampling: str = \\3, nodata_value: float = \\4, size_pixels: int = \\5, cache_dir: str = \\6, ot_dem_type: str = \\7, pc_collection: str = \\8, pc_asset: str = \\9, http_timeout_seconds: int = \\10, http_connect_timeout_seconds: int = \\11, http_max_retry: int = \\12) -> lsdtt3.Raster",
+          "definition": "def fetch_dem(west: float = \\0, south: float = \\1, east: float = \\2, north: float = \\3, source: str = \\4, target_epsg: int = \\5, grid_spacing: float = \\6, resampling: str = \\7, nodata_value: float = \\8, size_pixels: int = \\9, cache_dir: str = \\10, ot_dem_type: str = \\11, pc_collection: str = \\12, pc_asset: str = \\13, http_timeout_seconds: int = \\14, http_connect_timeout_seconds: int = \\15, http_max_retry: int = \\16, frame: object | None = \\17, fetch_from_linear_feature: bool = \\18, fetch_feature_fname: str = \\19, fetch_feature_layer: str = \\20, linear_feature_fetch_width: float = \\21, linear_feature_fetch_end_buffer: float = \\22, rotate_after_fetch: bool = \\23) -> lsdtt3.Raster",
           "defaults": [
+            "nan",
+            "nan",
+            "nan",
+            "nan",
             "cop30_aws",
             0,
             30.0,
@@ -5533,7 +5772,14 @@
             "data",
             60,
             15,
-            3
+            3,
+            null,
+            false,
+            "",
+            "",
+            0.0,
+            -1.0,
+            true
           ]
         }
       ]
@@ -5849,11 +6095,11 @@
     {
       "name": "find_road_flow_discrimination",
       "kind": "function",
-      "doc": "Build flow-direction and terrain diagnostics for road/channel discrimination.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nregional_smoothing_metres : float, default=100.0\n    Polyfit length scale (m) of the regional slope field.\nthreshold_contributing_pixels : int, default=1000\n    Channel threshold in contributing pixels.\nflow_path_half_window : int, default=5\n    Pixels up and down each flow path used to measure its bearing.\nintermediate_window_metres : float, default=15.0\n    Polyfit length scale (m) of the intermediate-scale surface.\nroughness_radius_metres : float, default=2.5\n    Radius (m) of the local roughness window.\nraster_is_filled : bool, default=False\n    Skip the internal pit filling if the DEM is already conditioned.\nboundary_conditions : str, default='oooo'\n    NESW boundary codes for the internal flow routing.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRoadFlowResult\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Build flow-direction and terrain diagnostics for road/channel discrimination.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nregional_smoothing_metres : float, default=100.0\n    Polyfit length scale (m) of the regional slope field.\nthreshold_contributing_pixels : int, default=1000\n    Channel threshold in contributing pixels.\nflow_path_half_window : int, default=5\n    Pixels up and down each flow path used to measure its bearing.\nintermediate_window_metres : float, default=15.0\n    Polyfit length scale (m) of the intermediate-scale surface.\nroughness_radius_metres : float, default=2.5\n    Radius (m) of the local roughness window.\nraster_is_filled : bool, default=False\n    Skip the internal pit filling if the DEM is already conditioned.\nboundary_conditions : str, default='oooo'\n    NESW boundary codes for the internal flow routing.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nbearings_relative_to_true_north : bool, default=False\n    Convert ``regional_slope_bearing`` and ``flow_path_bearing`` to true\n    north at each pixel, as the CLI's ``bearings_relative_to_true_north``;\n    needs a DEM with a CRS.\n\nReturns\n-------\nRoadFlowResult\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = \\0, threshold_contributing_pixels: int = \\1, flow_path_half_window: int = \\2, intermediate_window_metres: float = \\3, roughness_radius_metres: float = \\4, raster_is_filled: bool = \\5, boundary_conditions: str = \\6, n_threads: int = \\7) -> lsdtt3.RoadFlowResult",
+          "definition": "def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = \\0, threshold_contributing_pixels: int = \\1, flow_path_half_window: int = \\2, intermediate_window_metres: float = \\3, roughness_radius_metres: float = \\4, raster_is_filled: bool = \\5, boundary_conditions: str = \\6, n_threads: int = \\7, bearings_relative_to_true_north: bool = \\8) -> lsdtt3.RoadFlowResult",
           "defaults": [
             100.0,
             1000,
@@ -5862,7 +6108,8 @@
             2.5,
             false,
             "oooo",
-            0
+            0,
+            false
           ]
         }
       ]
@@ -5870,17 +6117,18 @@
     {
       "name": "find_roads",
       "kind": "function",
-      "doc": "Detect narrow, along-contour road benches from a DEM.\n\nRoads cut into hillslopes are elongated, low-curvature benches whose long axis\nfollows the contour, unlike channels which run downslope. The score\ncombines Hessian elongation, alignment with the contour and cut/fill edge\nstrength from a polyfit at ``smoothing_window_metres``.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m), usually a high-resolution lidar DEM.\nsmoothing_window_metres : float, default=8.0\n    Polyfit length scale (m).\nscore_threshold : float, default=0.5\n    Score at or above which a pixel enters ``mask``.\nuse_bench_test : bool, default=True\n    Require both flanks (sampled across the feature) to be steeper than the\n    tread, rejecting one-sided edges such as valley-floor margins.\nbench_half_width_metres : float, default=6.0\n    Distance (m) to each side at which the flank slopes are sampled.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRoadResult\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Detect narrow, along-contour road benches from a DEM.\n\nRoads cut into hillslopes are elongated, low-curvature benches whose long axis\nfollows the contour, unlike channels which run downslope. The score\ncombines Hessian elongation, alignment with the contour and cut/fill edge\nstrength from a polyfit at ``smoothing_window_metres``.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m), usually a high-resolution lidar DEM.\nsmoothing_window_metres : float, default=8.0\n    Polyfit length scale (m).\nscore_threshold : float, default=0.5\n    Score at or above which a pixel enters ``mask``.\nuse_bench_test : bool, default=True\n    Require both flanks (sampled across the feature) to be steeper than the\n    tread, rejecting one-sided edges such as valley-floor margins.\nbench_half_width_metres : float, default=6.0\n    Distance (m) to each side at which the flank slopes are sampled.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nbearings_relative_to_true_north : bool, default=False\n    Convert ``feature_orientation_degrees`` to true north at each pixel, as\n    the CLI's ``bearings_relative_to_true_north``; needs a DEM with a CRS.\n\nReturns\n-------\nRoadResult\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = \\0, score_threshold: float = \\1, use_bench_test: bool = \\2, bench_half_width_metres: float = \\3, n_threads: int = \\4) -> lsdtt3.RoadResult",
+          "definition": "def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = \\0, score_threshold: float = \\1, use_bench_test: bool = \\2, bench_half_width_metres: float = \\3, n_threads: int = \\4, bearings_relative_to_true_north: bool = \\5) -> lsdtt3.RoadResult",
           "defaults": [
             8.0,
             0.5,
             true,
             6.0,
-            0
+            0,
+            false
           ]
         }
       ]
@@ -6597,16 +6845,17 @@
     {
       "name": "polyfit_metrics",
       "kind": "function",
-      "doc": "Compute several quadratic-fit surface metrics in one shared fit.\n\nA quadratic surface ``z = a x^2 + b y^2 + c x y + d x + e y + f`` is fitted\nin a square window around every pixel and the metrics are derived from its\ncoefficients (Florinsky 2017 names). x is east and y is north. Pixels whose\nwindow is incomplete (near edges or nodata) are nodata.\n\nValid metric names and units:\n\n- ``\"fitted_surface\"``: fitted elevation (m)\n- ``\"dzdx\"``, ``\"dzdy\"``: gradient components east and north (m/m)\n- ``\"d2zdx2\"``, ``\"d2zdxdy\"``, ``\"d2zdy2\"``: second derivatives (1/m)\n- ``\"slope\"``: gradient magnitude ``sqrt(dzdx**2 + dzdy**2)`` (m/m)\n- ``\"slope_degrees\"``: the same slope as an angle (degrees)\n- ``\"aspect_degrees\"``, ``\"aspect_radians\"``: downslope direction,\n  clockwise from north\n- ``\"laplacian\"``: ``d2zdx2 + d2zdy2`` (1/m)\n- ``\"hessian_determinant\"`` (1/m^2)\n- ``\"mean_curvature\"`` (1/m), ``\"gaussian_curvature\"`` (1/m^2)\n- ``\"maximum_curvature\"``, ``\"minimum_curvature\"``: principal curvatures\n  k_max and k_min (1/m)\n- ``\"curvedness\"`` (1/m), ``\"shape_index\"`` (dimensionless)\n- ``\"profile_curvature\"`` (vertical, k_v), ``\"plan_curvature\"``,\n  ``\"tangential_curvature\"`` (horizontal, k_h) (1/m)\n- ``\"difference_curvature\"`` (0.5 (k_v - k_h)),\n  ``\"horizontal_excess_curvature\"`` (k_h - k_min),\n  ``\"vertical_excess_curvature\"`` (k_v - k_min) (1/m)\n- ``\"accumulation_curvature\"`` (k_h k_v), ``\"ring_curvature\"`` (1/m^2)\n- ``\"rotor\"`` (1/m)\n\nParameters\n----------\nraster : Raster\n    Input elevation raster (m) in a projected metre CRS.\nmetrics : list[str]\n    Requested metric names from the list above; an unknown name raises\n    ``ValueError``.\nlambda_metres : float, default=0\n    Fitting length scale in metres, roughly the window width: the window\n    is ``2W + 1`` pixels square with ``W = max(1, round(lambda_metres /\n    (2 * cell_size)))``. Zero uses ``3 * cell_size``. Larger values smooth\n    more. Must not be less than the cell size.\nz_factor : float, default=1\n    Elevation scale factor applied before metric calculation (for example\n    0.3048 for elevations in feet).\nn_threads : int, default=0\n    OpenMP thread count; zero selects the runtime default.\nflat_slope_tolerance : float, default=1e-12\n    Where the fitted gradient (m/m) is below this, the pixel is treated as\n    too flat for direction-dependent metrics (aspect, plan, tangential and\n    profile curvature, rotor).\n\nReturns\n-------\ndict[str, Raster]\n    One newly allocated raster for every requested metric, keyed by name.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Compute several quadratic-fit surface metrics in one shared fit.\n\nA quadratic surface ``z = a x^2 + b y^2 + c x y + d x + e y + f`` is fitted\nin a square window around every pixel and the metrics are derived from its\ncoefficients (Florinsky 2017 names). x is east and y is north. Pixels whose\nwindow is incomplete (near edges or nodata) are nodata.\n\nValid metric names and units:\n\n- ``\"fitted_surface\"``: fitted elevation (m)\n- ``\"dzdx\"``, ``\"dzdy\"``: gradient components east and north (m/m)\n- ``\"d2zdx2\"``, ``\"d2zdxdy\"``, ``\"d2zdy2\"``: second derivatives (1/m)\n- ``\"slope\"``: gradient magnitude ``sqrt(dzdx**2 + dzdy**2)`` (m/m)\n- ``\"slope_degrees\"``: the same slope as an angle (degrees)\n- ``\"aspect_degrees\"``, ``\"aspect_radians\"``: downslope direction,\n  clockwise from grid north (true north with\n  ``bearings_relative_to_true_north``)\n- ``\"laplacian\"``: ``d2zdx2 + d2zdy2`` (1/m)\n- ``\"hessian_determinant\"`` (1/m^2)\n- ``\"mean_curvature\"`` (1/m), ``\"gaussian_curvature\"`` (1/m^2)\n- ``\"maximum_curvature\"``, ``\"minimum_curvature\"``: principal curvatures\n  k_max and k_min (1/m)\n- ``\"curvedness\"`` (1/m), ``\"shape_index\"`` (dimensionless)\n- ``\"profile_curvature\"`` (vertical, k_v), ``\"plan_curvature\"``,\n  ``\"tangential_curvature\"`` (horizontal, k_h) (1/m)\n- ``\"difference_curvature\"`` (0.5 (k_v - k_h)),\n  ``\"horizontal_excess_curvature\"`` (k_h - k_min),\n  ``\"vertical_excess_curvature\"`` (k_v - k_min) (1/m)\n- ``\"accumulation_curvature\"`` (k_h k_v), ``\"ring_curvature\"`` (1/m^2)\n- ``\"rotor\"`` (1/m)\n\nParameters\n----------\nraster : Raster\n    Input elevation raster (m) in a projected metre CRS.\nmetrics : list[str]\n    Requested metric names from the list above; an unknown name raises\n    ``ValueError``.\nlambda_metres : float, default=0\n    Fitting length scale in metres, roughly the window width: the window\n    is ``2W + 1`` pixels square with ``W = max(1, round(lambda_metres /\n    (2 * cell_size)))``. Zero uses ``3 * cell_size``. Larger values smooth\n    more. Must not be less than the cell size.\nz_factor : float, default=1\n    Elevation scale factor applied before metric calculation (for example\n    0.3048 for elevations in feet).\nn_threads : int, default=0\n    OpenMP thread count; zero selects the runtime default.\nflat_slope_tolerance : float, default=1e-12\n    Where the fitted gradient (m/m) is below this, the pixel is treated as\n    too flat for direction-dependent metrics (aspect, plan, tangential and\n    profile curvature, rotor).\nbearings_relative_to_true_north : bool, default=False\n    False: clockwise from grid north (grid up), so in an oblique frame\n    (``RotationFrame``) 90 means along the feature. True: converted to\n    true north with the grid convergence at each pixel (aspect metrics only; ``dzdx`` and ``dzdy`` stay grid\n    components), as the CLIs'\n    ``bearings_relative_to_true_north``; needs a raster with a CRS.\n\nReturns\n-------\ndict[str, Raster]\n    One newly allocated raster for every requested metric, keyed by name.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = \\0, z_factor: float = \\1, n_threads: int = \\2, flat_slope_tolerance: float = \\3) -> dict",
+          "definition": "def polyfit_metrics(raster: lsdtt3.Raster, metrics: collections.abc.Sequence[str], lambda_metres: float = \\0, z_factor: float = \\1, n_threads: int = \\2, flat_slope_tolerance: float = \\3, bearings_relative_to_true_north: bool = \\4) -> dict",
           "defaults": [
             0.0,
             1.0,
             0,
-            1e-12
+            1e-12,
+            false
           ]
         }
       ]
@@ -6735,6 +6984,35 @@
           "definition": "def resample_raster(source: lsdtt3.Raster, target_metadata: lsdtt3.RasterMeta, method: str = \\0) -> lsdtt3.Raster",
           "defaults": [
             "linear"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "rotate_back",
+      "kind": "function",
+      "doc": "Warp a product in an oblique frame back onto the frame's rotate-back grid.\n\nThe routine of ``run_rotate_back`` in lsdtt-raster-preprocessing. A raster at\nthe frame's cell size goes to the target cell size, any other keeps its own;\nthe output lattice is anchored at the target origin, so after\n``rotate_to_frame`` with a frame built from a projected DEM the product lands\non that DEM's own pixels. Rotate back products (basins, channel masks, IDs,\nmetrics), never the DEM itself: a round trip resamples twice.\n\nParameters\n----------\nraster : Raster\n    A product in ``frame.crs_wkt``; any other CRS raises ``ValueError``.\nframe : RotationFrame\n    The frame the product was made in.\nresampling : str, default=\"bilinear\"\n    GDAL warp method (as ``rotate_to_frame``); use ``\"near\"`` for\n    categorical rasters (basin IDs, masks, junctions, lithology).\ntarget_epsg : int, default=0\n    EPSG code overriding the frame's target CRS (``rotate_back_epsg``); a\n    CRS other than the frame's target is gridded on the lattice anchored at\n    (0, 0), with a warning. 0 uses the frame's target.\n\nReturns\n-------\nRaster\n    The product on the target grid.\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def rotate_back(raster: lsdtt3.Raster, frame: lsdtt3.RotationFrame, resampling: str = \\0, target_epsg: int = \\1) -> lsdtt3.Raster",
+          "defaults": [
+            "bilinear",
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "rotate_to_frame",
+      "kind": "function",
+      "doc": "Warp a raster into an oblique frame, in one resampling pass from its own CRS.\n\nThe output is a north-up raster in ``frame.crs_wkt`` covering the frame\n(``frame.n_cols`` x ``frame.n_rows`` cells of ``frame.cell_size``), with the\nfeature along +x; cells outside the source are nodata. The routine of\n``rotate_to_linear_feature`` / ``rotate_to_data_footprint`` in\nlsdtt-raster-preprocessing, so the same frame and resampling give the same\nraster.\n\nParameters\n----------\nraster : Raster\n    The DEM (or any raster) to rotate; it must have a CRS.\nframe : RotationFrame\n    The frame, normally built with ``source=raster`` so that rotate-back\n    lands on the raster's own pixels.\nresampling : str, default=\"cubic\"\n    GDAL warp method: near, bilinear, cubic, cubicspline, lanczos, average,\n    mode, max, min, med, q1, q3, sum (``resampling_method`` in\n    lsdtt-raster-preprocessing).\n\nReturns\n-------\nRaster\n    The raster in the frame.\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def rotate_to_frame(raster: lsdtt3.Raster, frame: lsdtt3.RotationFrame, resampling: str = \\0) -> lsdtt3.Raster",
+          "defaults": [
+            "cubic"
           ]
         }
       ]

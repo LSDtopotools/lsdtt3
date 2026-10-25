@@ -56,6 +56,7 @@
 #include <string>
 
 #include "lsdtt_data_loader.hpp"
+#include "lsdtt_rotation_frame_file.hpp"
 
 namespace lsdtt {
 
@@ -64,8 +65,9 @@ namespace lsdtt {
 //
 // True if two WKT strings describe the same CRS (OGR IsSame, traditional GIS
 // axis order), so that e.g. an EPSG-tagged WKT and an equivalent untagged one
-// compare equal. Two empty strings are equal; one empty string is not equal to
-// a non-empty one; a WKT that does not parse is not equal to anything.
+// compare equal. Identical strings (including two empty strings) are equal
+// without parsing; one empty string is not equal to a non-empty one; otherwise
+// a WKT that does not parse is not equal to anything.
 // -----------------------------------------------------------------------------
 bool crs_equal_semantically(const std::string& a_wkt, const std::string& b_wkt);
 
@@ -207,6 +209,116 @@ lsdtt_raster_tile warp_raster_to_grid_in_memory(
     const std::string&        in_path,
     const lsdtt_raster_meta&  target_grid,
     const lsdtt_warp_options& opts = lsdtt_warp_options{}
+);
+
+// -----------------------------------------------------------------------------
+// warp_raster_to_frame
+//
+// Warp a raster into an oblique frame (lsdtt_oblique_frame.hpp): target CRS
+// frame.to_wkt(), extent [x_min, x_max] x [y_min, y_max] in frame metres,
+// frame.n_cols() x frame.n_rows() cells of frame.cell_size, so the output is
+// a north-up raster in the frame CRS with the feature along +x. The source's
+// nodata value is kept; cells outside the source are nodata. The source needs
+// a CRS. Throws std::runtime_error on GDAL failure or, with
+// opts.error_if_no_overlap, if the source does not overlap the frame.
+// -----------------------------------------------------------------------------
+lsdtt_warp_result warp_raster_to_frame(
+    const std::string&          in_path,
+    const lsdtt_oblique_frame&  frame,
+    const std::string&          out_path,
+    const lsdtt_warp_options&   opts = lsdtt_warp_options{}
+);
+
+// -----------------------------------------------------------------------------
+// Rotating an existing DEM into a frame (lsdtt-raster-preprocessing)
+//
+// frame_cell_size_for_raster: grid_spacing if > 0; else the raster's own cell
+//   size when it is already in a suitable projected CRS (metres, and as
+//   lsdtt_suggest_crs judges it: not geographic, not Web Mercator); else the
+//   analysis pixel size snapped as reprojection does (snap_grid_spacing).
+//
+// rotation_target_for_raster: the lattice to rotate products back onto. A
+//   raster in a suitable projected CRS: its own CRS (the EPSG code if the WKT
+//   carries one as its authority, else WKT), cell size and lower-left
+//   corner, so rotate-back lands on its own pixels. Otherwise (geographic,
+//   Web Mercator, feet): the analysis CRS of the frame centre at the frame
+//   cell size on the lattice anchored at (0, 0), as after a fetch.
+//   source_dem_fname is the raster's file name.
+//
+// frame_from_valid_data: the polygon frame (frame_from_polygon_vertices) of
+//   the raster's valid cells: the outer corners of the first and last valid
+//   cell of every row, in the raster's own geographic CRS. definition is
+//   data_footprint. Never throws; ok is false (with the reason) for a raster
+//   with no CRS or no valid cells.
+//
+// rotate_raster_to_frame: warp_raster_to_frame, then write the frame file
+//   (write_rotation_frame) with the target from rotation_target_for_raster
+//   and provenance.rotated_dem_fname set to out_path's file name.
+// -----------------------------------------------------------------------------
+double frame_cell_size_for_raster(const lsdtt_raster_meta& meta, double grid_spacing);
+
+lsdtt_rotation_target rotation_target_for_raster(const lsdtt_raster_meta& meta,
+                                                 const std::string&       raster_path,
+                                                 const lsdtt_oblique_frame& frame);
+
+lsdtt_frame_from_feature_result frame_from_valid_data(const std::string& raster_path,
+                                                      double end_buffer_metres,
+                                                      double cell_size);
+
+struct lsdtt_rotate_to_frame_result
+{
+    lsdtt_warp_result warp;
+    lsdtt_rotation_target target;
+    std::string frame_file_path;
+};
+
+lsdtt_rotate_to_frame_result rotate_raster_to_frame(
+    const std::string&               in_path,
+    const lsdtt_oblique_frame&       frame,
+    const std::string&               out_path,
+    const std::string&               frame_file_path,
+    lsdtt_rotation_provenance        provenance,
+    const lsdtt_warp_options&        opts = lsdtt_warp_options{}
+);
+
+// -----------------------------------------------------------------------------
+// rotate_back_raster
+//
+// Warp a raster in a frame CRS back onto the rotate-back target lattice of a
+// rotation frame file (lsdtt_rotation_frame_file.hpp).
+//
+//   * The raster must be in the frame CRS (crs_equal_semantically with
+//     frame.to_wkt()); otherwise std::invalid_argument naming both CRSs.
+//   * Target CRS: epsg_override if > 0, else target.epsg, else target.crs_wkt.
+//   * Cell size: target.cell_size for a raster at the frame's cell size,
+//     otherwise the raster's own cell size (each raster keeps its own).
+//   * Lattice: cells anchored at (target.origin_x, target.origin_y), so after
+//     preprocessing the output lands on the source DEM's own pixels; with an
+//     epsg_override naming a different CRS, anchored at (0, 0).
+//   * Extent: the raster's footprint (edges densified, 20 points per side)
+//     in the target CRS, snapped outward to the lattice.
+//   * method: any GDAL warp method ("near" for categorical rasters: IDs,
+//     masks, basins, lithology); an unknown name is std::invalid_argument.
+// -----------------------------------------------------------------------------
+struct lsdtt_rotate_back_result
+{
+    std::string out_path;
+    std::string target_wkt;
+    double cell_size = 0.0;
+    double x_min = 0.0;      // lower-left corner of the output grid
+    double y_min = 0.0;
+    int n_cols = 0;
+    int n_rows = 0;
+    std::vector<std::string> warnings;
+};
+
+lsdtt_rotate_back_result rotate_back_raster(
+    const std::string&                in_path,
+    const lsdtt_rotation_frame_file&  frame_file,
+    const std::string&                method,
+    int                               epsg_override,
+    const std::string&                out_path,
+    const lsdtt_warp_options&         opts = lsdtt_warp_options{}
 );
 
 } // namespace lsdtt

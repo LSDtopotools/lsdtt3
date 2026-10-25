@@ -197,6 +197,21 @@ void declare_fill_flat_resolution_parameter(
     const std::string&                  prefix = "",
     const std::string&                  min_slope_key = "fill_min_slope");
 
+// Interior nodata: nodata pixels not connected to the raster edge through
+// nodata (isolated voids, moulins, lakes masked out). Edge-connected nodata,
+// such as sea removed by min_elevation, is always an open boundary.
+//
+//   interior_nodata_method      string  "sink"       sink | fill
+//   nodata_fill_method_choice   string  "laplacian"  laplacian | iterative_weighted_average
+//   nodata_fill_max_iter        int     10000
+//
+// Apply with lsdtt::apply_interior_nodata_method (lsdtt_raster_nodata_filling_cpu).
+void declare_interior_nodata_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix = "");
+
 // Channel-initiation threshold.
 void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,
@@ -355,6 +370,7 @@ void declare_synthetic_noise_parameters(
 // declare_fetch_bounds_file_parameters: bounds_fname, bounds_path, bounds_layer.
 // declare_http_request_parameters: http_timeout_seconds,
 //   http_connect_timeout_seconds, http_max_retry.
+// declare_linear_feature_fetch_parameters: see its declaration below.
 // -----------------------------------------------------------------------------
 void declare_fetch_bbox_parameters(std::map<std::string, std::string>& string_default_map,
                                    lsdtt_help_registry&                help_map);
@@ -362,6 +378,52 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
                                           lsdtt_help_registry&                help_map);
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map);
+
+// declare_linear_feature_fetch_parameters: fetch_from_linear_feature (the
+//   switch), fetch_feature_fname, fetch_feature_path, fetch_feature_layer,
+//   linear_feature_fetch_width, linear_feature_fetch_end_buffer,
+//   rotate_after_fetch. Fetch along a line, two points or a polygon into an
+//   oblique frame (lsdtt_oblique_frame.hpp).
+void declare_linear_feature_fetch_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+
+// -----------------------------------------------------------------------------
+// Oblique frames in lsdtt-raster-preprocessing
+//
+// declare_linear_feature_rotation_parameters: rotate_to_linear_feature,
+//   rotation_feature_fname, rotation_feature_path, rotation_feature_layer,
+//   linear_feature_rotation_width, linear_feature_rotation_end_buffer,
+//   rotate_to_data_footprint. Rotate an existing DEM into the oblique frame
+//   of a feature file or of its own valid cells (lsdtt_oblique_frame.hpp).
+// declare_rotate_back_parameters: run_rotate_back, rotation_frame_fname,
+//   rotate_back_file_list, rotate_back_resampling_method, rotate_back_epsg.
+//   Warp rasters in a frame back onto the frame file's target lattice.
+// -----------------------------------------------------------------------------
+void declare_linear_feature_rotation_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+void declare_rotate_back_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+
+// -----------------------------------------------------------------------------
+// Orientations (every CLI that writes a bearing, aspect or orientation)
+//
+// declare_true_north_bearing_parameters: bearings_relative_to_true_north.
+//   Off: bearings are clockwise from grid north (grid up). On: each output is
+//   converted at its own location with the grid convergence
+//   (lsdtt_true_north.hpp). Hillshade illumination is never converted.
+// -----------------------------------------------------------------------------
+void declare_true_north_bearing_parameters(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map);
 
 // -----------------------------------------------------------------------------
 // Lithology input (lsdtt-lithology-erodibility and analyses by lithologic unit)

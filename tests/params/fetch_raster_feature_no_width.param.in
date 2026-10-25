@@ -1,0 +1,7 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: ffnowidth
+
+# A line needs a width; refused before any download.
+fetch_from_linear_feature: true
+fetch_feature_fname: bounds/green_river_line.geojson

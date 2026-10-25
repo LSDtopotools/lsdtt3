@@ -143,6 +143,7 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../core/lsdtt_true_north.hpp"
 #include "lsdtt_raster_spectral_cpu.hpp"    // poly_fit_coeffs
 
 namespace lsdtt {
@@ -816,6 +817,15 @@ poly_fit_coeffs direct_polyfit_with_boundary_conditions(
 polyfit_metric_result compute_polyfit_metrics(
     const poly_fit_coeffs&        polycoeff,
     const polyfit_metric_request& request
+);
+
+// bearings_relative_to_true_north: convert the aspect rasters of a result
+// (aspect_degrees, aspect_radians) to true north in place, at each cell
+// (lsdtt_true_north.hpp). Other metrics are not directions and are left
+// alone. No-op when convergence is null.
+void convert_polyfit_aspects_to_true_north(
+    polyfit_metric_result&        result,
+    const lsdtt_grid_convergence* convergence
 );
 
 // -----------------------------------------------------------------------------

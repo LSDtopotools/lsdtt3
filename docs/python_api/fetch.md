@@ -52,6 +52,393 @@ Snapped outlets: group_id, outlet_id, row, col, x, y (pixel centre in the group 
 
 ---
 
+## `RotationFrame`
+
+An oblique analysis frame aligned with a feature, and its rotate-back target.
+
+A frame is a Hotine Oblique Mercator (variant B) CRS whose central line runs
+along a fault, river, coastline or elongated range, with the feature along
++x and the frame centre at (0, 0). A raster in the frame is an ordinary
+north-up raster in that CRS, so every lsdtt3 analysis runs on it unchanged,
+on a grid that holds the strip rather than its bounding box. Bearings from
+analyses are then clockwise from grid up (90 = along the feature) unless
+``bearings_relative_to_true_north=True`` is passed.
+
+The frame also carries the lattice that ``rotate_back`` writes products onto:
+the source DEM's own grid for a frame built with ``source=``, else the UTM
+(or polar stereographic) CRS of the frame centre on the lattice a fetch uses.
+Bring back products (basins, channels, IDs), never the DEM.
+
+Get one with ``RotationFrame.from_feature`` (a line, two points or polygon
+file), ``RotationFrame.from_valid_data`` (the footprint of a raster's valid
+cells), ``RotationFrame.read`` (a ``*_rotation_frame.txt`` written by a CLI
+or by ``write``), or ``RotationFrame.from_raster`` (rebuilt from a frame
+raster's own CRS when the frame file is lost). Typical use::
+
+    frame = lsdtt3.RotationFrame.from_feature("fault.gpkg", width=10000.0,
+                                              grid_spacing=30.0)
+    dem = lsdtt3.fetch_dem(frame=frame, grid_spacing=30.0)
+    frame.write("fault_rotation_frame.txt")
+    # ... analysis on dem ...
+    basins_utm = lsdtt3.rotate_back(basins, frame, resampling="near")
+
+Property names spell out the units of the frame-file keys: ``centre_lon`` is
+``centre_longitude``, ``azimuth_deg`` is ``azimuth_degrees``, ``width_m`` is
+``width_metres``, ``target_crs_epsg`` is ``target_epsg``, and so on.
+
+Not constructible directly; create one with ``RotationFrame.from_feature()`` or ``RotationFrame.from_raster()`` or ``RotationFrame.from_valid_data()`` or ``RotationFrame.read()``.
+
+Attributes
+----------
+axis_length_metres : float
+    Geodesic length of the axis between its end points (without the end buffer), m.
+azimuth_degrees : float
+    Azimuth of the axis at the centre, clockwise from true north, in (-90, 90].
+base_crs_wkt : str
+    WKT of the geographic CRS (datum) the frame is built on.
+buffer_all_sides : bool
+    True when the end buffer is also on both long sides (polygon frames).
+cell_size : float
+    Frame cell size, m.
+centre_latitude : float
+    Latitude of the frame centre, degrees in the base geographic CRS.
+centre_longitude : float
+    Longitude of the frame centre, degrees in the base geographic CRS.
+crs_wkt : str
+    The frame CRS as WKT.
+end_buffer_metres : float
+    Length added beyond each axis end (and each long side for a polygon), m.
+end_points : tuple
+    The axis end points ((lon, lat), (lon, lat)), west one first.
+extent : tuple
+    Frame extent (x_min, x_max, y_min, y_max) in frame metres.
+feature_fname : str
+    File name of the feature the frame was built from, or empty.
+feature_layer : str
+    Layer of the feature file the frame was built from, or empty.
+frame_source : str
+    How the frame was defined: line, two_points, polygon, data_footprint or crs.
+n_cols : int
+    Number of columns of a raster filling the frame.
+n_rows : int
+    Number of rows of a raster filling the frame.
+proj_string : str
+    The frame CRS as a PROJ string.
+source_dem_fname : str
+    File name of the source DEM, when the frame file records one.
+target_cell_size : float
+    Cell size of the rotate-back target grid, in its CRS units.
+target_crs_wkt : str
+    WKT of the rotate-back target CRS when it has no EPSG code, else empty.
+target_epsg : int
+    EPSG code of the rotate-back target CRS (0 when it is given as WKT).
+target_origin : tuple
+    A node (x, y) of the rotate-back lattice: the source DEM's lower-left corner, or (0, 0).
+warnings : list[str]
+    Notes from building or reading the frame (also issued as warnings).
+width_metres : float
+    Full width of the strip across the axis, m.
+
+Methods
+-------
+RotationFrame.from_feature(path: str, width: float = 0.0, end_buffer: float = -1.0, grid_spacing: float = 0.0, layer: str = '', source: object | None = None, target_epsg: int = 0) -> RotationFrame
+    Build the frame of a line, two-point or polygon feature file.
+RotationFrame.from_raster(raster: Raster) -> RotationFrame
+    Rebuild the frame of a raster that is already in an lsdtt3 oblique frame.
+RotationFrame.from_valid_data(source: Raster, end_buffer: float = -1.0, grid_spacing: float = 0.0) -> RotationFrame
+    Build the frame of a raster's valid cells (its minimum-area rectangle).
+grid_convergence_degrees(x: float, y: float) -> float
+    Angle of true north, clockwise from grid up, at a point of the frame.
+RotationFrame.read(path: str) -> RotationFrame
+    Read a rotation frame file (``*_rotation_frame.txt``).
+write(path: str) -> None
+    Write the frame and its rotate-back target as a rotation frame file.
+
+Authors
+-------
+S. M. Mudd
+B. Gailleton
+
+### Members
+
+#### `axis_length_metres`
+
+Geodesic length of the axis between its end points (without the end buffer), m.
+
+#### `azimuth_degrees`
+
+Azimuth of the axis at the centre, clockwise from true north, in (-90, 90].
+
+#### `base_crs_wkt`
+
+WKT of the geographic CRS (datum) the frame is built on.
+
+#### `buffer_all_sides`
+
+True when the end buffer is also on both long sides (polygon frames).
+
+#### `cell_size`
+
+Frame cell size, m.
+
+#### `centre_latitude`
+
+Latitude of the frame centre, degrees in the base geographic CRS.
+
+#### `centre_longitude`
+
+Longitude of the frame centre, degrees in the base geographic CRS.
+
+#### `crs_wkt`
+
+The frame CRS as WKT.
+
+#### `end_buffer_metres`
+
+Length added beyond each axis end (and each long side for a polygon), m.
+
+#### `end_points`
+
+The axis end points ((lon, lat), (lon, lat)), west one first.
+
+#### `extent`
+
+Frame extent (x_min, x_max, y_min, y_max) in frame metres.
+
+#### `feature_fname`
+
+File name of the feature the frame was built from, or empty.
+
+#### `feature_layer`
+
+Layer of the feature file the frame was built from, or empty.
+
+#### `frame_source`
+
+How the frame was defined: line, two_points, polygon, data_footprint or crs.
+
+#### `from_feature`
+
+from_feature(path: str, width: float = 0.0, end_buffer: float = -1.0, grid_spacing: float = 0.0, layer: str = '', source: object | None = None, target_epsg: int = 0) -> lsdtt3.RotationFrame
+
+Build the frame of a line, two-point or polygon feature file.
+
+A line (or a multi-part line) uses its two furthest end points as the axis;
+two points are the axis ends; a polygon uses its minimum-area enclosing
+rectangle, longest side as the axis, and takes its width from the polygon.
+The same routine as ``fetch_from_linear_feature`` in lsdtt-fetch-raster
+and ``rotate_to_linear_feature`` in lsdtt-raster-preprocessing.
+
+Parameters
+----------
+path : str
+    Feature file (any OGR vector: GeoPackage, GeoJSON, shapefile, ...), in
+    any CRS.
+width : float, default=0.0
+    Full width of the strip across the axis, in metres. Required (> 0) for
+    a line or two points; ignored, with a warning, for a polygon.
+end_buffer : float, default=-1.0
+    Length added beyond each axis end, in metres (on all four sides for a
+    polygon). Negative means 10 cells.
+grid_spacing : float, default=0.0
+    Frame cell size in metres. Without ``source``, 0 means 30 m (the
+    ``fetch_dem`` default). With ``source``, 0 means the source's own cell
+    size when it is projected in metres, else the size reprojection would
+    choose, as lsdtt-raster-preprocessing does.
+layer : str, default=""
+    Layer to read; empty reads the first layer (warned if there are several).
+source : Raster or None, default=None
+    The DEM this frame will rotate (``rotate_to_frame``). The frame is built
+    on its geographic datum, and the rotate-back target is its own grid
+    (CRS, cell size and lower-left corner) when it is projected in metres.
+    None builds a frame for ``fetch_dem`` on WGS84.
+target_epsg : int, default=0
+    Without ``source`` only: EPSG code of the rotate-back target. 0 picks the
+    UTM (or polar stereographic beyond 75 degrees) CRS of the frame centre.
+
+Returns
+-------
+RotationFrame
+    The frame. Reader and builder notes (several layers, an ill-defined
+    polygon axis) are issued as ``UserWarning``; a file that cannot be read
+    or used raises ``ValueError``.
+
+```python
+def from_feature(path: str, width: float = 0.0, end_buffer: float = -1.0, grid_spacing: float = 0.0, layer: str = '', source: object | None = None, target_epsg: int = 0) -> lsdtt3.RotationFrame
+```
+
+#### `from_raster`
+
+from_raster(raster: lsdtt3.Raster) -> lsdtt3.RotationFrame
+
+Rebuild the frame of a raster that is already in an lsdtt3 oblique frame.
+
+The fallback when the frame file is lost: the frame comes from the raster's
+own CRS and extent, and the rotate-back target is the UTM (or polar
+stereographic) CRS of the frame centre on the lattice anchored at (0, 0). A
+``UserWarning`` says that a source DEM origin off that lattice cannot be
+recovered without the frame file.
+
+Parameters
+----------
+raster : Raster
+    A raster in an lsdtt3 oblique Mercator frame.
+
+Returns
+-------
+RotationFrame
+    The rebuilt frame; ``ValueError`` for a raster in any other CRS.
+
+```python
+def from_raster(raster: lsdtt3.Raster) -> lsdtt3.RotationFrame
+```
+
+#### `from_valid_data`
+
+from_valid_data(source: lsdtt3.Raster, end_buffer: float = -1.0, grid_spacing: float = 0.0) -> lsdtt3.RotationFrame
+
+Build the frame of a raster's valid cells (its minimum-area rectangle).
+
+The polygon of the outer corners of the first and last valid cell of every
+row, framed as a polygon feature would be; the frame of
+``rotate_to_data_footprint`` in lsdtt-raster-preprocessing. A footprint with
+no clear long axis (a square DEM) is warned.
+
+Parameters
+----------
+source : Raster
+    The DEM; it must have a CRS. The rotate-back target is its own grid
+    when it is projected in metres.
+end_buffer : float, default=-1.0
+    Length added on all four sides, in metres; negative means 10 cells.
+grid_spacing : float, default=0.0
+    Frame cell size in metres; 0 chooses it from ``source`` as
+    ``from_feature`` does.
+
+Returns
+-------
+RotationFrame
+    The frame; ``ValueError`` for a raster with no CRS or no valid cells.
+
+```python
+def from_valid_data(source: lsdtt3.Raster, end_buffer: float = -1.0, grid_spacing: float = 0.0) -> lsdtt3.RotationFrame
+```
+
+#### `grid_convergence_degrees`
+
+grid_convergence_degrees(self, x: float, y: float) -> float
+
+Angle of true north, clockwise from grid up, at a point of the frame.
+
+A grid bearing ``g`` at ``(x, y)`` is the true bearing ``g - c``. At the
+frame centre ``c`` is ``90 - azimuth_degrees``.
+
+Parameters
+----------
+x, y : float
+    Frame coordinates in metres.
+
+Returns
+-------
+float
+    The convergence in degrees.
+
+```python
+def grid_convergence_degrees(self, x: float, y: float) -> float
+```
+
+#### `n_cols`
+
+Number of columns of a raster filling the frame.
+
+#### `n_rows`
+
+Number of rows of a raster filling the frame.
+
+#### `proj_string`
+
+The frame CRS as a PROJ string.
+
+#### `read`
+
+read(path: str) -> lsdtt3.RotationFrame
+
+Read a rotation frame file (``*_rotation_frame.txt``).
+
+The files written by lsdtt-fetch-raster, lsdtt-raster-preprocessing and
+``RotationFrame.write`` are flat YAML mappings; this reader checks the
+stored CRS against the stored centre and azimuth and runs the frame's axis
+self-check.
+
+Parameters
+----------
+path : str
+    The frame file.
+
+Returns
+-------
+RotationFrame
+    The frame and its rotate-back target; ``ValueError`` if the file is
+    missing, newer than this lsdtt3, or inconsistent.
+
+```python
+def read(path: str) -> lsdtt3.RotationFrame
+```
+
+#### `source_dem_fname`
+
+File name of the source DEM, when the frame file records one.
+
+#### `target_cell_size`
+
+Cell size of the rotate-back target grid, in its CRS units.
+
+#### `target_crs_wkt`
+
+WKT of the rotate-back target CRS when it has no EPSG code, else empty.
+
+#### `target_epsg`
+
+EPSG code of the rotate-back target CRS (0 when it is given as WKT).
+
+#### `target_origin`
+
+A node (x, y) of the rotate-back lattice: the source DEM's lower-left corner, or (0, 0).
+
+#### `warnings`
+
+Notes from building or reading the frame (also issued as warnings).
+
+#### `width_metres`
+
+Full width of the strip across the axis, m.
+
+#### `write`
+
+write(self, path: str) -> None
+
+Write the frame and its rotate-back target as a rotation frame file.
+
+The format is the one the CLIs write and read (``rotation_frame_fname`` in
+lsdtt-raster-preprocessing), so a frame made in Python can rotate products
+back from the command line and the other way round.
+
+Parameters
+----------
+path : str
+    Output file, conventionally ``<stem>_rotation_frame.txt``.
+
+Returns
+-------
+None
+    Nothing; ``RuntimeError`` if the file cannot be written.
+
+```python
+def write(self, path: str) -> None
+```
+
+---
+
 ## `VectorBounds`
 
 WGS84 bounds derived from a vector layer.
@@ -197,13 +584,21 @@ stores the sea as exactly 0 m, not as nodata, so mask it before flow
 routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
 footprint are nodata.
 
+Or, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,
+fetch a strip along a fault, river or range warped straight from the source
+tiles into an oblique frame (one resampling pass), with the feature along
++x. The return type is always ``Raster``; keep the ``RotationFrame`` to
+rotate products back with ``rotate_back``.
+
 Parameters
 ----------
-west, south, east, north : float
+west, south, east, north : float, optional
     WGS84 bounds in decimal degrees (longitude west/east, latitude
     south/north). Antimeridian-crossing requests are not supported:
     ``west`` must be less than ``east``. ``VectorBounds.bbox`` from
     ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.
+    Required unless ``frame`` or ``fetch_from_linear_feature`` gives the
+    area; refused with them.
 source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
     ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.
     OpenTopography reads its key only from the ``OT_API_KEY`` or
@@ -236,12 +631,37 @@ http_connect_timeout_seconds : int, optional
     Connection time limit per HTTP request in seconds.
 http_max_retry : int, optional
     Number of retries of a failed HTTP request.
+frame : RotationFrame or None, optional
+    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``
+    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
+    are refused (the frame carries its rotate-back target).
+fetch_from_linear_feature : bool, optional
+    Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster
+    does; the same as ``frame=RotationFrame.from_feature(fetch_feature_fname,
+    linear_feature_fetch_width, linear_feature_fetch_end_buffer,
+    grid_spacing, fetch_feature_layer)``, which is the frame to keep for
+    ``rotate_back``.
+fetch_feature_fname : str, optional
+    Line, two-point or polygon file (any OGR format and CRS).
+fetch_feature_layer : str, optional
+    Layer of the feature file; empty reads the first.
+linear_feature_fetch_width : float, optional
+    Full strip width in metres; required for a line or two points.
+linear_feature_fetch_end_buffer : float, optional
+    Length beyond each axis end in metres (all sides for a polygon);
+    negative means 10 cells.
+rotate_after_fetch : bool, optional
+    With ``fetch_from_linear_feature``: True (default) returns the strip in
+    the oblique frame; False returns the frame's WGS84 envelope in UTM, as a
+    plain fetch.
 
 Returns
 -------
 Raster
-    A projected raster of elevation (m). Network, GDAL, and invalid-request
-    failures raise ``RuntimeError``.
+    A projected raster of elevation (m): UTM (or ``target_epsg``), or the
+    oblique frame. Network, GDAL, and invalid-request failures raise
+    ``RuntimeError``; an inconsistent combination of arguments raises
+    ``ValueError``.
 
 Authors
 -------
@@ -252,7 +672,7 @@ S. M. Mudd
 - `size_px` -> `size_pixels`; earliest removal: following minor.
 
 ```python
-def fetch_dem(west: float, south: float, east: float, north: float, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.Raster
+def fetch_dem(west: float = 'nan', south: float = 'nan', east: float = 'nan', north: float = 'nan', source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3, frame: object | None = None, fetch_from_linear_feature: bool = False, fetch_feature_fname: str = '', fetch_feature_layer: str = '', linear_feature_fetch_width: float = 0.0, linear_feature_fetch_end_buffer: float = -1.0, rotate_after_fetch: bool = True) -> lsdtt3.Raster
 ```
 
 ---
@@ -456,6 +876,86 @@ B. Gailleton
 
 ```python
 def proj_version() -> str
+```
+
+---
+
+## `rotate_back`
+
+Warp a product in an oblique frame back onto the frame's rotate-back grid.
+
+The routine of ``run_rotate_back`` in lsdtt-raster-preprocessing. A raster at
+the frame's cell size goes to the target cell size, any other keeps its own;
+the output lattice is anchored at the target origin, so after
+``rotate_to_frame`` with a frame built from a projected DEM the product lands
+on that DEM's own pixels. Rotate back products (basins, channel masks, IDs,
+metrics), never the DEM itself: a round trip resamples twice.
+
+Parameters
+----------
+raster : Raster
+    A product in ``frame.crs_wkt``; any other CRS raises ``ValueError``.
+frame : RotationFrame
+    The frame the product was made in.
+resampling : str, default="bilinear"
+    GDAL warp method (as ``rotate_to_frame``); use ``"near"`` for
+    categorical rasters (basin IDs, masks, junctions, lithology).
+target_epsg : int, default=0
+    EPSG code overriding the frame's target CRS (``rotate_back_epsg``); a
+    CRS other than the frame's target is gridded on the lattice anchored at
+    (0, 0), with a warning. 0 uses the frame's target.
+
+Returns
+-------
+Raster
+    The product on the target grid.
+
+Authors
+-------
+S. M. Mudd
+B. Gailleton
+
+```python
+def rotate_back(raster: lsdtt3.Raster, frame: lsdtt3.RotationFrame, resampling: str = 'bilinear', target_epsg: int = 0) -> lsdtt3.Raster
+```
+
+---
+
+## `rotate_to_frame`
+
+Warp a raster into an oblique frame, in one resampling pass from its own CRS.
+
+The output is a north-up raster in ``frame.crs_wkt`` covering the frame
+(``frame.n_cols`` x ``frame.n_rows`` cells of ``frame.cell_size``), with the
+feature along +x; cells outside the source are nodata. The routine of
+``rotate_to_linear_feature`` / ``rotate_to_data_footprint`` in
+lsdtt-raster-preprocessing, so the same frame and resampling give the same
+raster.
+
+Parameters
+----------
+raster : Raster
+    The DEM (or any raster) to rotate; it must have a CRS.
+frame : RotationFrame
+    The frame, normally built with ``source=raster`` so that rotate-back
+    lands on the raster's own pixels.
+resampling : str, default="cubic"
+    GDAL warp method: near, bilinear, cubic, cubicspline, lanczos, average,
+    mode, max, min, med, q1, q3, sum (``resampling_method`` in
+    lsdtt-raster-preprocessing).
+
+Returns
+-------
+Raster
+    The raster in the frame.
+
+Authors
+-------
+S. M. Mudd
+B. Gailleton
+
+```python
+def rotate_to_frame(raster: lsdtt3.Raster, frame: lsdtt3.RotationFrame, resampling: str = 'cubic') -> lsdtt3.Raster
 ```
 
 ---

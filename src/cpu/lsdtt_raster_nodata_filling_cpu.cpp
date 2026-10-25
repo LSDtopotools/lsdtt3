@@ -16,6 +16,7 @@
 #include <iostream>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #ifdef _OPENMP
@@ -716,6 +717,60 @@ static hist_rect largest_rect_in_histogram(
     update(ncols);
 
     return best;
+}
+
+// -----------------------------------------------------------------------------
+// parse_nodata_fill_method
+// -----------------------------------------------------------------------------
+nodata_fill_method parse_nodata_fill_method(const std::string& choice)
+{
+    if (choice == "laplacian") return nodata_fill_method::laplacian;
+    if (choice == "iterative_weighted_average")
+        return nodata_fill_method::iterative_weighted_average;
+    throw std::invalid_argument(
+        "nodata_fill_method_choice must be laplacian or iterative_weighted_average, not '" +
+        choice + "'");
+}
+
+// -----------------------------------------------------------------------------
+// apply_interior_nodata_method
+// -----------------------------------------------------------------------------
+std::string apply_interior_nodata_method(
+    lsdtt_raster_cpu&  dem,
+    const std::string& method,
+    const std::string& fill_choice,
+    int                max_iter,
+    int                n_threads)
+{
+    if (method != "sink" && method != "fill")
+        throw std::invalid_argument(
+            "interior_nodata_method must be sink or fill, not '" + method + "'");
+    const nodata_fill_method fill_method = parse_nodata_fill_method(fill_choice);
+
+    const auto count_interior = [](const lsdtt_raster_cpu& r) {
+        const lsdtt_array2d<uint8_t> interior = identify_interior_nodata(r);
+        std::size_t n = 0;
+        for (int row = 0; row < r.n_rows(); ++row)
+            for (int col = 0; col < r.n_cols(); ++col)
+                if (interior(row, col) != 0) ++n;
+        return n;
+    };
+
+    const std::size_t n_interior = count_interior(dem);
+    if (n_interior == 0)
+        return "Interior nodata: none (interior_nodata_method: " + method + ")";
+    if (method == "sink")
+        return "Interior nodata: " + std::to_string(n_interior) +
+               " pixel(s), kept as sinks (interior_nodata_method: " + method + ")";
+
+    dem = fill_interior_nodata(dem, fill_method, max_iter, 1e-6f, n_threads);
+    const std::size_t n_left = count_interior(dem);
+    std::string summary = "Interior nodata: " + std::to_string(n_interior - n_left) +
+                          " pixel(s) filled by " + fill_choice +
+                          " (interior_nodata_method: fill)";
+    if (n_left > 0)
+        summary += "; " + std::to_string(n_left) + " pixel(s) could not be filled and stay sinks";
+    return summary;
 }
 
 lsdtt_raster_cpu clip_to_maximum_rectangle(

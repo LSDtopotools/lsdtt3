@@ -1,0 +1,16 @@
+# interior_nodata_method: fill makes the pit fill run on the nodata-filled DEM.
+read_path: __READ_PATH__
+read_fname: tiny_dem_nodata.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_interior_fill
+
+enforce_projection: false
+write_output_format: gtiff
+
+interior_nodata_method: fill
+nodata_fill_method_choice: laplacian
+
+write_fill_raster: true
+write_fill_diff_raster: false
+write_breached_raster: false
+write_hillshade_raster: false

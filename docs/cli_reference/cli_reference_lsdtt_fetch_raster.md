@@ -835,6 +835,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `split_overlap_km` | `float` | `2.0` | `param` | - | Overlap margin between adjacent split groups (km). | Must be &gt;= 0. |
 | `max_basins_per_dem` | `int` | `0` | `param` | - | Operational cap on number of basins per final DEM group. | 0 means unlimited. Must be &gt;= 0. |
 
+### Linear feature frame
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `fetch_from_linear_feature` | `bool` | `false` | `switch` | - | Fetch along a feature (a line, two points or a polygon) in fetch_feature_fname. | The area is a rectangle aligned with the feature: for a line or two points, the geodesic between the end points (only the end points of a curved or multipart line are used) lengthened by the end buffer and linear_feature_fetch_width wide; for polygons, their minimum-area enclosing rectangle, whose longest side is the axis. With rotate_after_fetch the DEM is written in an oblique Mercator frame with the feature along +x. Cannot be combined with west/south/east/north, bounds_fname, bounds_mode vector or outlets, or size_pixels. |
+| `fetch_feature_fname` | `string` | - | `io` | `fetch_from_linear_feature` | Vector file holding the line, two points or polygon(s). | Any OGR-readable format (GeoPackage, FlatGeobuf, shapefile, ...) with a CRS; it is reprojected to WGS84. Refused before any download: no CRS, a mix of geometry kinds, one point or more than two, a closed line (use a polygon), or end points less than three cells apart. |
+| `fetch_feature_path` | `string` | - | `io` | `fetch_from_linear_feature` | Optional directory for fetch_feature_fname. | If empty, read_path is used. Ignored when fetch_feature_fname is an absolute path. |
+| `fetch_feature_layer` | `string` | - | `io` | `fetch_from_linear_feature` | Layer name within fetch_feature_fname. | If empty, the first layer is used (with a warning when the file has more than one). |
+| `linear_feature_fetch_width` | `float` | `0.0` | `param` | `fetch_from_linear_feature` | Full width (m) of the area across a line or two points, centred on it. | Required (&gt; 0) for a line or two points. Ignored, with a warning, for polygons, whose own short side is the width. |
+| `linear_feature_fetch_end_buffer` | `float` | `-1.0` | `param` | `fetch_from_linear_feature` | Buffer (m) added beyond each end of the axis. | -1 means 10 grid cells. For polygons it is added on all four sides. |
+| `rotate_after_fetch` | `bool` | `true` | `param` | `fetch_from_linear_feature` | Write the DEM in the feature's oblique frame (feature along +x). | true: the DEM is warped straight from the source tiles into the frame (one resampling) and written as &lt;write_fname&gt;_oblique_DEM.tif with &lt;write_fname&gt;_oblique_DEM_rotation_frame.txt, which records the frame and the lattice to rotate products back onto; target_epsg (or the analysis CRS of the frame centre) is that rotate-back target. false: an ordinary fetch in target_epsg (or UTM) covering the frame's footprint, with no frame file. Read only when fetch_from_linear_feature is true. |
+
 ### Source
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

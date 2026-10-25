@@ -1,0 +1,37 @@
+# Failure test for lsdtt-graphflood: the smoke-test node states on a DEM with
+# nodata cells that those node states mark active. The CLI must stop with a
+# FATAL message naming the count and the first cell (it used to abort with an
+# uncaught exception and a core dump).
+read_path: __READ_PATH__
+read_fname: tiny_dem_edge_nodata.asc
+write_path: __WRITE_PATH__
+write_fname: tiny_hydraulic_nodata
+
+write_output_format: gtiff
+n_threads: 1
+
+# 0 = outside, 1 = active, 3 = outlet. The DEM falls to the south-east, so the
+# single outlet is the bottom-right cell.
+hydraulic_node_state_fname: tiny_hydraulic_node_state.asc
+
+fill_min_slope: 0.0001
+boundary_conditions: oooo
+flow_routing_method: mfd
+mfd_exponent: 1.0
+
+# The CLI requires both of these alongside the node-state raster.
+# Rainfall in m/s; friction is Manning's n, replacing the old scalar mannings_n.
+rainfall_rate_fname: tiny_hydraulic_rainfall.asc
+friction_coefficient_fname: tiny_hydraulic_friction.asc
+
+run_until_converged: false
+n_steps: 5
+hydraulic_dt: 1e-3
+hydraulic_min_slope: 1e-8
+
+write_water_depth_raster: true
+write_water_surface_raster: true
+write_qin_raster: false
+write_qout_raster: false
+write_dhw_raster: false
+write_bed_raster: false

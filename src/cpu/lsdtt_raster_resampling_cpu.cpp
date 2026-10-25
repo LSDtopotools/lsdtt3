@@ -10,6 +10,8 @@
 #include <cctype>
 #include "lsdtt_raster_resampling_cpu.hpp"
 
+#include "../core/lsdtt_raster_warp.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -62,7 +64,7 @@ void validate_pair(const lsdtt_raster_cpu& source, const lsdtt_raster_cpu& desti
     const bool known_epsg_match = a.epsg_code > 0 && b.epsg_code > 0 &&
                                   a.epsg_code == b.epsg_code;
     if (one_crs_missing ||
-        (!a.crs_wkt.empty() && !known_epsg_match && a.crs_wkt != b.crs_wkt))
+        (!known_epsg_match && !crs_equal_semantically(a.crs_wkt, b.crs_wkt)))
     {
         throw std::invalid_argument("source and destination CRS must match");
     }

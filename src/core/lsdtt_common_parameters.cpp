@@ -131,6 +131,46 @@ void declare_fill_before_routing_parameter(
 }
 
 // -----------------------------------------------------------------------------
+void declare_interior_nodata_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  prefix)
+{
+    const std::string group = prefixed_group_label(prefix, "Interior nodata");
+    const std::string method_key = prefixed_parameter_key(prefix, "interior_nodata_method");
+    string_default_map[method_key] = "sink";
+    help_map[method_key] = {"string", "sink",
+        "How nodata pixels inside the DEM are treated: sink or fill.",
+        "Interior nodata are nodata pixels not connected to the raster edge "
+        "through other nodata (isolated voids, moulins, masked lakes). sink (the "
+        "default, unchanged behaviour): they are outlets, so flow that reaches "
+        "them ends there, as at the DEM edge; use this for real internal "
+        "drainage (e.g. moulins on an ice sheet). fill: they are interpolated "
+        "with nodata_fill_method_choice before any filling or routing, so flow "
+        "passes across them; use this for data voids. Nodata connected to the "
+        "edge (e.g. sea removed by min_elevation) is never filled and always "
+        "acts as an open boundary.",
+        group, "param", ""};
+
+    const std::string choice_key = prefixed_parameter_key(prefix, "nodata_fill_method_choice");
+    string_default_map[choice_key] = "laplacian";
+    help_map[choice_key] = {"string", "laplacian",
+        "Method for filling interior nodata pixels.",
+        "laplacian: smooth Dirichlet interpolation (recommended). "
+        "iterative_weighted_average: fast, well-suited to thin voids. Used when "
+        + method_key + " is fill.",
+        group, "param", method_key + "=fill"};
+
+    const std::string iter_key = prefixed_parameter_key(prefix, "nodata_fill_max_iter");
+    int_default_map[iter_key] = 10000;
+    help_map[iter_key] = {"int", "10000",
+        "Maximum iterations for iterative nodata fill methods.",
+        "Used when " + method_key + " is fill.",
+        group, "param", method_key + "=fill"};
+}
+
+// -----------------------------------------------------------------------------
 void declare_fill_min_slope_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,
@@ -670,6 +710,229 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
         "If empty, the first layer is used (with a warning when the file has "
         "more than one).",
         "Bounding box", "param", ""};
+}
+
+void declare_linear_feature_fetch_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    const std::string group = "Linear feature frame";
+    const std::string parent = "fetch_from_linear_feature";
+
+    bool_default_map["fetch_from_linear_feature"] = false;
+    help_map["fetch_from_linear_feature"] = {"bool","false",
+        "Fetch along a feature (a line, two points or a polygon) in fetch_feature_fname.",
+        "The area is a rectangle aligned with the feature: for a line or two "
+        "points, the geodesic between the end points (only the end points of a "
+        "curved or multipart line are used) lengthened by the end buffer and "
+        "linear_feature_fetch_width wide; for polygons, their minimum-area "
+        "enclosing rectangle, whose longest side is the axis. With "
+        "rotate_after_fetch the DEM is written in an oblique Mercator frame "
+        "with the feature along +x. Cannot be combined with west/south/east/"
+        "north, bounds_fname, bounds_mode vector or outlets, or size_pixels.",
+        group, "switch", ""};
+
+    string_default_map["fetch_feature_fname"] = "";
+    help_map["fetch_feature_fname"] = {"string","",
+        "Vector file holding the line, two points or polygon(s).",
+        "Any OGR-readable format (GeoPackage, FlatGeobuf, shapefile, ...) with a "
+        "CRS; it is reprojected to WGS84. Refused before any download: no CRS, "
+        "a mix of geometry kinds, one point or more than two, a closed line "
+        "(use a polygon), or end points less than three cells apart.",
+        group, "io", parent};
+
+    string_default_map["fetch_feature_path"] = "";
+    help_map["fetch_feature_path"] = {"string","",
+        "Optional directory for fetch_feature_fname.",
+        "If empty, read_path is used. Ignored when fetch_feature_fname is an "
+        "absolute path.",
+        group, "io", parent};
+
+    string_default_map["fetch_feature_layer"] = "";
+    help_map["fetch_feature_layer"] = {"string","",
+        "Layer name within fetch_feature_fname.",
+        "If empty, the first layer is used (with a warning when the file has "
+        "more than one).",
+        group, "io", parent};
+
+    float_default_map["linear_feature_fetch_width"] = 0.0f;
+    help_map["linear_feature_fetch_width"] = {"float","0.0",
+        "Full width (m) of the area across a line or two points, centred on it.",
+        "Required (> 0) for a line or two points. Ignored, with a warning, for "
+        "polygons, whose own short side is the width.",
+        group, "param", parent};
+
+    float_default_map["linear_feature_fetch_end_buffer"] = -1.0f;
+    help_map["linear_feature_fetch_end_buffer"] = {"float","-1.0",
+        "Buffer (m) added beyond each end of the axis.",
+        "-1 means 10 grid cells. For polygons it is added on all four sides.",
+        group, "param", parent};
+
+    bool_default_map["rotate_after_fetch"] = true;
+    help_map["rotate_after_fetch"] = {"bool","true",
+        "Write the DEM in the feature's oblique frame (feature along +x).",
+        "true: the DEM is warped straight from the source tiles into the frame "
+        "(one resampling) and written as <write_fname>_oblique_DEM.tif with "
+        "<write_fname>_oblique_DEM_rotation_frame.txt, which records the frame "
+        "and the lattice to rotate products back onto; target_epsg (or the "
+        "analysis CRS of the frame centre) is that rotate-back target. false: "
+        "an ordinary fetch in target_epsg (or UTM) covering the frame's "
+        "footprint, with no frame file. Read only when "
+        "fetch_from_linear_feature is true.",
+        group, "param", parent};
+}
+
+void declare_linear_feature_rotation_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    const std::string group = "Oblique frame rotation";
+    const std::string parent = "rotate_to_linear_feature";
+
+    bool_default_map["rotate_to_linear_feature"] = false;
+    help_map["rotate_to_linear_feature"] = {"bool","false",
+        "Rotate the DEM into the oblique frame of a feature (a line, two points or a polygon).",
+        "Replaces the reprojection step: the DEM is warped once, straight from "
+        "its own CRS, into an oblique Mercator frame with the feature along +x "
+        "(on the DEM's own datum), and every later step runs on the rotated DEM. "
+        "The frame is a rectangle aligned with the feature: for a line or two "
+        "points, the geodesic between the end points lengthened by the end "
+        "buffer and linear_feature_rotation_width wide; for polygons, their "
+        "minimum-area enclosing rectangle. Writes <write_fname>_oblique.tif and "
+        "<write_fname>_oblique_rotation_frame.txt, which records the frame and "
+        "the lattice to rotate products back onto (the DEM's own grid when it "
+        "is projected in metres, otherwise the analysis CRS of the frame "
+        "centre). Cannot be combined with rotate_to_data_footprint, "
+        "force_reproject or run_rotate_back.",
+        group, "switch", ""};
+
+    string_default_map["rotation_feature_fname"] = "";
+    help_map["rotation_feature_fname"] = {"string","",
+        "Vector file holding the line, two points or polygon(s).",
+        "Any OGR-readable format with a CRS; it is reprojected to the DEM's own "
+        "geographic CRS. Refused before any warp: no CRS, a mix of geometry "
+        "kinds, one point or more than two, a closed line (use a polygon), or "
+        "end points less than three cells apart.",
+        group, "io", parent};
+
+    string_default_map["rotation_feature_path"] = "";
+    help_map["rotation_feature_path"] = {"string","",
+        "Optional directory for rotation_feature_fname.",
+        "If empty, read_path is used. Ignored when rotation_feature_fname is an "
+        "absolute path.",
+        group, "io", parent};
+
+    string_default_map["rotation_feature_layer"] = "";
+    help_map["rotation_feature_layer"] = {"string","",
+        "Layer name within rotation_feature_fname.",
+        "If empty, the first layer is used (with a warning when the file has "
+        "more than one).",
+        group, "io", parent};
+
+    float_default_map["linear_feature_rotation_width"] = 0.0f;
+    help_map["linear_feature_rotation_width"] = {"float","0.0",
+        "Full width (m) of the frame across a line or two points, centred on it.",
+        "Required (> 0) for a line or two points. Ignored, with a warning, for "
+        "polygons, whose own short side is the width.",
+        group, "param", parent};
+
+    float_default_map["linear_feature_rotation_end_buffer"] = -1.0f;
+    help_map["linear_feature_rotation_end_buffer"] = {"float","-1.0",
+        "Buffer (m) added beyond each end of the frame axis.",
+        "-1 means 10 grid cells. For polygons and rotate_to_data_footprint it "
+        "is added on all four sides.",
+        group, "param", ""};
+
+    bool_default_map["rotate_to_data_footprint"] = false;
+    help_map["rotate_to_data_footprint"] = {"bool","false",
+        "Rotate the DEM into the frame of its own valid cells.",
+        "The frame is the minimum-area rectangle enclosing the DEM's valid "
+        "cells (the polygon rule of rotate_to_linear_feature applied to their "
+        "convex hull), so an elongated DEM is turned to lie along +x with as "
+        "little nodata as possible. Outputs and frame file as "
+        "rotate_to_linear_feature. Cannot be combined with "
+        "rotate_to_linear_feature, force_reproject or run_rotate_back.",
+        group, "switch", ""};
+}
+
+void declare_rotate_back_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    const std::string group = "Rotate back";
+    const std::string parent = "run_rotate_back";
+
+    bool_default_map["run_rotate_back"] = false;
+    help_map["run_rotate_back"] = {"bool","false",
+        "Warp rasters from an oblique frame back onto the frame file's target lattice.",
+        "A separate mode: no other preprocessing step runs, and switching one on "
+        "in the parameter file is refused. Each raster in rotate_back_file_list "
+        "is written to write_path as <its name>_rotated_back.tif. A raster at "
+        "the frame's cell size goes to the target cell size, any other keeps its "
+        "own; the output lattice is anchored at the target origin, so after "
+        "rotate_to_linear_feature or rotate_to_data_footprint on a projected DEM "
+        "the products land on the source DEM's own pixels. A raster not in the "
+        "frame CRS is refused. Vector outputs need no rotating back: they carry "
+        "their CRS.",
+        group, "switch", ""};
+
+    string_default_map["rotation_frame_fname"] = "";
+    help_map["rotation_frame_fname"] = {"string","",
+        "The rotation frame file (<stem>_rotation_frame.txt).",
+        "Relative paths are taken from read_path. If empty, the frame is rebuilt "
+        "from each raster's own CRS and the target is the analysis CRS of the "
+        "frame centre on the lattice anchored at (0, 0), with a warning: a "
+        "source DEM origin off that lattice cannot be recovered without the "
+        "frame file.",
+        group, "io", parent};
+
+    string_default_map["rotate_back_file_list"] = "";
+    help_map["rotate_back_file_list"] = {"string","",
+        "Text file listing the rasters to rotate back, one per line.",
+        "Each line is a raster path, optionally followed by a comma and a "
+        "resampling method (path,near); use near for categorical rasters "
+        "(basins, junctions, masks, lithology). Blank lines and lines starting "
+        "with # are skipped. The list and relative raster paths are taken from "
+        "read_path.",
+        group, "io", parent};
+
+    string_default_map["rotate_back_resampling_method"] = "bilinear";
+    help_map["rotate_back_resampling_method"] = {"string","bilinear",
+        "Resampling method for list lines that do not give one.",
+        "near, bilinear (default), cubic, cubicspline, lanczos, average, mode, "
+        "max, min, med, q1, q3, sum.",
+        group, "param", parent};
+
+    int_default_map["rotate_back_epsg"] = 0;
+    help_map["rotate_back_epsg"] = {"int","0",
+        "EPSG code overriding the frame file's target CRS (0: the frame file's).",
+        "A CRS other than the frame file's target is gridded on the lattice "
+        "anchored at (0, 0), with a warning.",
+        group, "param", parent};
+}
+
+void declare_true_north_bearing_parameters(
+    std::map<std::string, bool>& bool_default_map,
+    lsdtt_help_registry&         help_map)
+{
+    bool_default_map["bearings_relative_to_true_north"] = false;
+    help_map["bearings_relative_to_true_north"] = {"bool","false",
+        "Write bearings, aspects and orientations clockwise from true north.",
+        "Off (default): they are clockwise from grid north (grid up), so in an "
+        "oblique frame with the feature along +x, 90 degrees means along the "
+        "feature. On: each value is converted with the grid convergence at its "
+        "own location (each cell of a raster, each row of a table), which also "
+        "removes the up to about 3 degree difference between UTM grid north and "
+        "true north. Angles between two directions (junction angles, "
+        "deflections, contrasts) are unchanged, and hillshade illumination "
+        "always stays relative to grid up. Needs a raster with a CRS.",
+        "Orientations", "param", ""};
 }
 
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,

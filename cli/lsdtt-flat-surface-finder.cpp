@@ -67,6 +67,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -76,6 +77,8 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -596,6 +599,8 @@ int main(int argc, char* argv[])
         "Write the combined binary flat mask.","1 = flat, 0 = not flat.",
         "Output toggles", "switch", ""};
 
+    lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+
     // -------------------------------------------------------------------------
     // Parse
     // -------------------------------------------------------------------------
@@ -761,6 +766,19 @@ int main(int argc, char* argv[])
         std::cout << "  rows=" << dem.get_meta().n_rows
                   << "  cols=" << dem.get_meta().n_cols
                   << "  cell=" << dem.get_meta().cell_size << " m\n\n";
+    }
+
+    // Plane-fit aspect: grid-relative unless bearings_relative_to_true_north.
+    std::unique_ptr<lsdtt::lsdtt_grid_convergence> true_north;
+    try
+    {
+        true_north = lsdtt::start_true_north_bearings(
+            dem.get_meta(), bf["bearings_relative_to_true_north"], std::cout);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: bearings_relative_to_true_north: " << e.what() << "\n";
+        return 1;
     }
 
     // -------------------------------------------------------------------------
@@ -1292,6 +1310,7 @@ int main(int argc, char* argv[])
 
         lsdtt::plane_analysis_request preq;
         preq.min_pixels_for_analysis     = ip["plane_min_pixels"];
+        preq.true_north                  = true_north.get();
         preq.merge_tolerance_rmse_factor = static_cast<double>(ff["plane_merge_tolerance_rmse"]);
         preq.split_histogram_n_bins      = ip["plane_split_histogram_bins"];
         preq.split_bimodal_threshold     = static_cast<double>(ff["plane_split_bimodal_threshold"]);

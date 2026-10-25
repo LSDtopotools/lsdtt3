@@ -61,6 +61,7 @@
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_cosmo_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_units.hpp"
@@ -778,6 +779,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -992,6 +996,20 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_data_loader loader;
     loader.open_raster(dem_path);
     lsdtt::lsdtt_raster_cpu dem(loader);
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), 0)
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
+    }
     dem.get_meta().check_projected_metres();
     std::cout << "DEM loaded: " << dem.get_meta().n_rows << " rows x "
               << dem.get_meta().n_cols << " cols.\n";

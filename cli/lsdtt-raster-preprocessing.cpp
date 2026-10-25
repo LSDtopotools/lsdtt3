@@ -11,7 +11,8 @@
 // lsdtt-raster-preprocessing
 //
 // Raster preprocessing pipeline:
-//   1. Projection check and reprojection (if needed)
+//   1. Projection check and reprojection (if needed), or rotation into an
+//      oblique frame (rotate_to_linear_feature / rotate_to_data_footprint)
 //   2. Threshold masking
 //   2b. Binary mask application (optional)
 //   2c. Clip raster to polygon (optional)
@@ -30,6 +31,11 @@
 //   _utm     - UTM zone of raster centre
 //   _polar   - NSIDC polar stereographic (|lat| > 75 deg)
 //   _lambert - custom Lambert Azimuthal Equal Area (wide-extent rasters)
+//   _oblique - oblique Mercator frame, with <stem>_oblique_rotation_frame.txt
+//
+// run_rotate_back is a separate mode: rasters listed in rotate_back_file_list
+// are warped from the frame back onto the frame file's target lattice and no
+// other step runs.
 //
 // Usage:
 //   lsdtt-raster-preprocessing <path> <parameter_file>
@@ -74,6 +80,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_raster_reproject.hpp"
+#include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_usgs_elevation.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
@@ -353,6 +360,12 @@ int main(int argc, char* argv[])
         "Must be positive when force_resampling is true. Ignored otherwise.",
         "Projection", "param", "force_resampling"};
 
+    // --- Oblique frames ---
+    lsdtt::declare_linear_feature_rotation_parameters(bool_default_map, float_default_map,
+                                                      string_default_map, help_map);
+    lsdtt::declare_rotate_back_parameters(bool_default_map, int_default_map,
+                                          string_default_map, help_map);
+
     // --- Vertical units ---
     string_default_map["vertical_units"] = "metres";
     help_map["vertical_units"] = {"string","metres",
@@ -384,9 +397,12 @@ int main(int argc, char* argv[])
     // --- Threshold masking ---
     float_default_map["min_elevation"] = 0.0f;
     help_map["min_elevation"] = {"float","0.0",
-        "Pixels at or below this elevation (metres) are set to nodata.",
+        "Pixels at or below this elevation (metres) are set to nodata. -9999 disables.",
         "Default of 0.0 removes ocean and below-sea-level artefacts common "
-        "in global DEMs. Set to a large negative number to disable.",
+        "in global DEMs. Negative values apply as given: for a basin below sea "
+        "level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest "
+        "land. -9999 (or lower) disables masking. Sea removed this way is "
+        "connected to the DEM edge and acts as an open boundary.",
         "Threshold masking", "param", ""};
 
     float_default_map["maximum_elevation"] = 30000.0f;
@@ -423,22 +439,15 @@ int main(int argc, char* argv[])
     help_map["write_filled_nodata_raster"] = {"bool","false",
         "Write a DEM with interior nodata pixels filled.",
         "Only fills nodata pixels completely surrounded by valid data. "
-        "Does not fill nodata that touches the raster edge.",
+        "Does not fill nodata that touches the raster edge. Uses "
+        "nodata_fill_method_choice. On its own this only writes the file; set "
+        "interior_nodata_method: fill to also use the filled DEM in the later "
+        "steps (breaching, pit filling).",
         "Interior nodata filling", "switch", ""};
 
-    string_default_map["nodata_fill_method_choice"] = "laplacian";
-    help_map["nodata_fill_method_choice"] = {"string","laplacian",
-        "Method for filling interior nodata pixels.",
-        "laplacian: smooth Dirichlet interpolation (recommended). "
-        "iterative_weighted_average: fast, well-suited to thin voids.",
-        "Interior nodata filling", "param", "write_filled_nodata_raster"};
-
-    int_default_map["nodata_fill_max_iter"] = 10000;
-    help_map["nodata_fill_max_iter"] = {"int","10000",
-        "Maximum iterations for iterative nodata fill methods.",
-        "Only used when nodata_fill_method_choice is laplacian or "
-        "iterative_weighted_average.",
-        "Interior nodata filling", "param", "write_filled_nodata_raster"};
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter.
+    // The fill controls also drive write_filled_nodata_raster.
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
     // --- Clip to rectangle ---
     bool_default_map["write_clipped_rectangle_raster"] = false;
@@ -825,8 +834,10 @@ int main(int argc, char* argv[])
 
     float_default_map["hillshade_azimuth"] = 315.0f;
     help_map["hillshade_azimuth"] = {"float","315",
-        "Sun azimuth in degrees clockwise from north.",
-        "315 (northwest) is the cartographic convention.",
+        "Sun azimuth in degrees clockwise from grid north (grid up).",
+        "315 (northwest) is the cartographic convention. It is relative to the "
+        "raster grid, so in an oblique frame it lights from the frame's "
+        "north-west.",
         "Hillshade", "param", "write_hillshade_raster"};
 
     float_default_map["hillshade_altitude"] = 45.0f;
@@ -870,7 +881,7 @@ int main(int argc, char* argv[])
 
     float_default_map["multidirectional_hillshade_start_azimuth"] = 0.0f;
     help_map["multidirectional_hillshade_start_azimuth"] = {"float","0.0",
-        "Starting azimuth in degrees clockwise from north for multidirectional hillshade.",
+        "Starting azimuth in degrees clockwise from grid north for multidirectional hillshade.",
         "Subsequent azimuths are sampled uniformly around 360 degrees.",
         "Hillshade", "param", "write_multidirectional_hillshade_raster"};
 
@@ -1180,6 +1191,178 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Oblique frames: checks, and the rotate-back mode
+    //
+    // Relative feature, frame file and list paths are taken from read_path.
+    // -------------------------------------------------------------------------
+    const auto from_read_path = [&pp](const std::string& name) {
+        if (name.empty() || std::filesystem::path(name).is_absolute()) return name;
+        return (std::filesystem::path(pp.get_read_path()) / name).string();
+    };
+
+    const bool rotate_to_feature   = bf["rotate_to_linear_feature"];
+    const bool rotate_to_footprint = bf["rotate_to_data_footprint"];
+    if (rotate_to_feature && rotate_to_footprint)
+    {
+        std::cerr << "FATAL: rotate_to_linear_feature and rotate_to_data_footprint cannot "
+                     "be combined; choose one frame.\n";
+        return 1;
+    }
+    if ((rotate_to_feature || rotate_to_footprint) && bf["force_reproject"])
+    {
+        std::cerr << "FATAL: " << (rotate_to_feature ? "rotate_to_linear_feature"
+                                                     : "rotate_to_data_footprint")
+                  << " replaces the reprojection step, so it cannot be combined with "
+                     "force_reproject.\n";
+        return 1;
+    }
+    if (rotate_to_feature && sf["rotation_feature_fname"].empty())
+    {
+        std::cerr << "FATAL: rotate_to_linear_feature needs rotation_feature_fname (a "
+                     "line, two points or polygon file).\n";
+        return 1;
+    }
+    if (!rotate_to_feature && !sf["rotation_feature_fname"].empty())
+    {
+        std::cerr << "WARNING: rotation_feature_fname is set but rotate_to_linear_feature "
+                     "is false, so it is ignored.\n";
+    }
+
+    if (bf["run_rotate_back"])
+    {
+        // Every other step is refused rather than silently skipped.
+        std::vector<std::string> conflicts;
+        for (const auto& kv : bf)
+        {
+            if (kv.second && kv.first.rfind("write_", 0) == 0) conflicts.push_back(kv.first);
+        }
+        for (const char* key : {"run_binary_mask", "breach_before_fill",
+                                "clip_raster_to_polygon", "force_rectangular_raster",
+                                "clip_vector_data_to_raster", "sample_rasters_to_points",
+                                "force_reproject", "rotate_to_linear_feature",
+                                "rotate_to_data_footprint"})
+        {
+            if (bf[key]) conflicts.push_back(key);
+        }
+        for (const char* key : {"mosaic_file_list", "replace_pixels_fname"})
+        {
+            if (!sf[key].empty()) conflicts.push_back(key);
+        }
+        if (!conflicts.empty())
+        {
+            std::cerr << "FATAL: run_rotate_back is a separate mode and runs no other step, "
+                         "so it cannot be combined with:";
+            for (const auto& c : conflicts) std::cerr << " " << c;
+            std::cerr << "\n";
+            return 1;
+        }
+        if (sf["rotate_back_file_list"].empty())
+        {
+            std::cerr << "FATAL: run_rotate_back needs rotate_back_file_list (one raster "
+                         "per line, optionally path,method).\n";
+            return 1;
+        }
+
+        std::cout << "\n--- Rotate back ---\n";
+        const std::string list_path = from_read_path(sf["rotate_back_file_list"]);
+        std::vector<std::pair<std::string, std::string>> entries;
+        {
+            std::ifstream list_file(list_path);
+            if (!list_file.is_open())
+            {
+                std::cerr << "FATAL: cannot open rotate_back_file_list '" << list_path
+                          << "'.\n";
+                return 1;
+            }
+            const auto trim = [](const std::string& t) {
+                const auto a = t.find_first_not_of(" \t\r\n");
+                if (a == std::string::npos) return std::string();
+                const auto b = t.find_last_not_of(" \t\r\n");
+                return t.substr(a, b - a + 1);
+            };
+            std::string line;
+            while (std::getline(list_file, line))
+            {
+                line = trim(line);
+                if (line.empty() || line[0] == '#') continue;
+                std::string method = sf["rotate_back_resampling_method"];
+                const auto comma = line.find(',');
+                if (comma != std::string::npos)
+                {
+                    method = trim(line.substr(comma + 1));
+                    line = trim(line.substr(0, comma));
+                }
+                entries.emplace_back(from_read_path(line), method);
+            }
+        }
+        if (entries.empty())
+        {
+            std::cerr << "FATAL: rotate_back_file_list contains no rasters.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_rotation_frame_file frame_file;
+        const bool have_frame_file = !sf["rotation_frame_fname"].empty();
+        if (have_frame_file)
+        {
+            const std::string frame_path = from_read_path(sf["rotation_frame_fname"]);
+            frame_file = lsdtt::read_rotation_frame(frame_path);
+            for (const auto& w : frame_file.warnings) std::cerr << "WARNING: " << w << "\n";
+            if (!frame_file.ok)
+            {
+                std::cerr << "FATAL: " << frame_file.message << "\n";
+                return 1;
+            }
+            std::cout << frame_file.message << "\n";
+        }
+
+        lsdtt::lsdtt_warp_options back_opts;
+        back_opts.output_format = out_fmt;
+        back_opts.n_threads     = n_threads;
+        back_opts.warp_mem_mb   = ifs["warp_mem_mb"];
+
+        for (const auto& entry : entries)
+        {
+            const std::string& in_path = entry.first;
+            lsdtt::lsdtt_rotation_frame_file raster_frame = frame_file;
+            if (!have_frame_file)
+            {
+                raster_frame = lsdtt::rotation_frame_from_raster(in_path);
+                for (const auto& w : raster_frame.warnings)
+                    std::cerr << "WARNING: " << w << "\n";
+                if (!raster_frame.ok)
+                {
+                    std::cerr << "FATAL: " << raster_frame.message << "\n";
+                    return 1;
+                }
+            }
+            const std::string out_path =
+                pp.get_write_path() + std::filesystem::path(in_path).stem().string() +
+                "_rotated_back.tif";
+            try
+            {
+                const lsdtt::lsdtt_rotate_back_result rb = lsdtt::rotate_back_raster(
+                    in_path, raster_frame, entry.second,
+                    ifs["rotate_back_epsg"], out_path, back_opts);
+                for (const auto& w : rb.warnings) std::cerr << "WARNING: " << w << "\n";
+                std::cout << "Rotated back (" << entry.second << "): " << in_path << "\n"
+                          << "  -> " << rb.out_path << "  (" << rb.n_cols << " x "
+                          << rb.n_rows << " cells of " << rb.cell_size << ")\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        pp.print_help(help_map, pp.get_write_fname() + "_README", k_status, k_citation);
+        pp.print_parameters();
+        std::cout << "\nlsdtt-raster-preprocessing: done.\n";
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
     // Step 0 - Mosaic (optional)
     //
     // If mosaic_file_list is set, read the listed rasters, mosaic them into
@@ -1311,7 +1494,131 @@ int main(int argc, char* argv[])
     // appropriate projected CRS.  All subsequent steps use the reprojected
     // raster.  The reprojected file is written to the output directory with
     // a projection suffix (_utm, _polar, _lambert).
+    //
+    // Rotation into an oblique frame replaces it: the DEM is warped once,
+    // from its own CRS, into the frame (on its own datum), written with the
+    // suffix _oblique next to its frame file, and used from then on.
     // -------------------------------------------------------------------------
+    if (rotate_to_feature || rotate_to_footprint)
+    {
+        std::cout << "\n--- Oblique frame rotation ---\n";
+        const lsdtt::lsdtt_raster_meta source_meta = loader.get_meta();
+        if (source_meta.crs_wkt.empty())
+        {
+            std::cerr << "FATAL: the DEM has no CRS, so it cannot be rotated into a frame.\n";
+            return 1;
+        }
+
+        lsdtt::lsdtt_frame_from_feature_result fr;
+        std::string feature_file;
+        try
+        {
+            const double spacing = bf["force_resampling"]
+                                       ? static_cast<double>(ff["forced_grid_spacing"])
+                                       : static_cast<double>(ff["grid_spacing"]);
+            const double cell = lsdtt::frame_cell_size_for_raster(source_meta, spacing);
+            const double end_buffer = static_cast<double>(ff["linear_feature_rotation_end_buffer"]);
+            if (rotate_to_feature)
+            {
+                feature_file = sf["rotation_feature_fname"];
+                if (!std::filesystem::path(feature_file).is_absolute() &&
+                    !sf["rotation_feature_path"].empty())
+                    feature_file = (std::filesystem::path(sf["rotation_feature_path"]) /
+                                    feature_file).string();
+                else
+                    feature_file = from_read_path(feature_file);
+                fr = lsdtt::frame_from_feature_file(
+                    feature_file, sf["rotation_feature_layer"],
+                    static_cast<double>(ff["linear_feature_rotation_width"]), end_buffer, cell,
+                    lsdtt::base_geographic_wkt_of(source_meta.crs_wkt));
+            }
+            else
+            {
+                fr = lsdtt::frame_from_valid_data(active_path, end_buffer, cell);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        for (const auto& w : fr.warnings) std::cerr << "WARNING: " << w << "\n";
+        if (!fr.ok)
+        {
+            std::cerr << "FATAL: " << fr.message << "\n";
+            return 1;
+        }
+        const lsdtt::lsdtt_oblique_frame& frame = fr.frame;
+        std::cout << (rotate_to_feature ? "File    : " + feature_file + "  (layer " +
+                                              fr.layer_name + ")\n"
+                                        : std::string("Frame   : valid-data footprint\n"))
+                  << std::setprecision(10)
+                  << "Centre  : " << frame.centre.longitude << ", " << frame.centre.latitude
+                  << "\n"
+                  << "Azimuth : " << frame.azimuth_degrees << " deg\n"
+                  << "Size    : " << frame.x_max - frame.x_min << " m x "
+                  << frame.y_max - frame.y_min << " m (" << frame.n_cols() << " x "
+                  << frame.n_rows() << " cells of " << frame.cell_size << " m)\n"
+                  << std::setprecision(6);
+
+        lsdtt::lsdtt_warp_options rot_opts;
+        rot_opts.resampling_method = sf["resampling_method"];
+        rot_opts.output_format     = out_fmt;
+        rot_opts.n_threads         = n_threads;
+        rot_opts.warp_mem_mb       = ifs["warp_mem_mb"];
+
+        lsdtt::lsdtt_rotation_provenance prov;
+        prov.created_by = k_tool_name;
+        prov.feature_fname = feature_file.empty()
+                                 ? std::string()
+                                 : std::filesystem::path(feature_file).filename().string();
+        prov.feature_layer = fr.layer_name;
+
+        const std::string rotated_path = pp.make_output_path("_oblique.tif");
+        try
+        {
+            const lsdtt::lsdtt_rotate_to_frame_result rr = lsdtt::rotate_raster_to_frame(
+                active_path, frame, rotated_path,
+                pp.make_output_path("_oblique_rotation_frame.txt"), prov, rot_opts);
+            std::cout << "Rotated DEM : " << rotated_path << "\n"
+                      << "Frame file  : " << rr.frame_file_path << "\n"
+                      << "Rotate back : "
+                      << (rr.target.epsg != 0 ? "EPSG:" + std::to_string(rr.target.epsg)
+                                              : std::string("the source CRS (WKT)"))
+                      << " at " << rr.target.cell_size << ", lattice origin ("
+                      << std::setprecision(12) << rr.target.origin_x << ", "
+                      << rr.target.origin_y << ")\n" << std::setprecision(6);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: rotation failed: " << e.what() << "\n";
+            return 1;
+        }
+
+        active_path = rotated_path;
+        loader.close_raster();
+        try
+        {
+            loader.open_raster(active_path);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error reopening rotated DEM: " << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "Downstream pipeline will use: " << active_path << "\n";
+        loader.print_raster_info();
+        try
+        {
+            loader.get_meta().check_projected_metres();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "\nFATAL: " << e.what() << "\n";
+            return 1;
+        }
+    }
+    else
     {
         std::cout << "\n--- Projection ---\n";
 
@@ -1440,7 +1747,8 @@ int main(int argc, char* argv[])
     };
     const std::size_t valid_before_masking = count_valid(dem);
 
-    if (min_elev >= 0.0f)
+    // -9999 (or lower) disables; any other value, negative included, applies.
+    if (min_elev > -9998.0f)
     {
         std::cout << "\nMasking pixels at or below " << min_elev << " m\n";
         dem = lsdtt::mask_to_nodata_using_threshold(dem, min_elev, true);
@@ -1678,32 +1986,39 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
     bool did_nodata_fill = false;
 
-    if (bf["write_filled_nodata_raster"])
+    std::cout << "\n--- Interior nodata ---\n";
+    try
     {
-        std::cout << "\n--- Interior nodata filling ---\n";
-
-        lsdtt::nodata_fill_method nfm = lsdtt::nodata_fill_method::laplacian;
-        if (sf["nodata_fill_method_choice"] == "iterative_weighted_average")
+        const bool fill_interior = sf["interior_nodata_method"] == "fill";
+        if (fill_interior || bf["write_filled_nodata_raster"])
         {
-            nfm = lsdtt::nodata_fill_method::iterative_weighted_average;
-        }
-
-        try
-        {
-            nodata_filled_dem = lsdtt::fill_interior_nodata(
-                dem, nfm, ifs["nodata_fill_max_iter"], 1e-6f, n_threads
-            );
-
-            std::string o = pp.make_output_path( "_nodata_filled.tif");
-            std::cout << "Writing: " << o << "\n";
-            loader.write_full(nodata_filled_dem.get_data(),
-                              nodata_filled_dem.get_meta(), o, out_fmt);
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             nodata_filled_dem, "fill", sf["nodata_fill_method_choice"],
+                             ifs["nodata_fill_max_iter"], n_threads)
+                      << "\n";
             did_nodata_fill = true;
+            if (bf["write_filled_nodata_raster"])
+            {
+                std::string o = pp.make_output_path( "_nodata_filled.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(nodata_filled_dem.get_data(),
+                                  nodata_filled_dem.get_meta(), o, out_fmt);
+            }
         }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: nodata filling failed: " << e.what() << "\n";
-        }
+        // The later steps use the filled DEM only when asked to; "sink" (or an
+        // invalid value) goes through the helper to be reported or refused.
+        if (fill_interior)
+            dem = nodata_filled_dem;
+        else
+            std::cout << lsdtt::apply_interior_nodata_method(
+                             dem, sf["interior_nodata_method"], sf["nodata_fill_method_choice"],
+                             ifs["nodata_fill_max_iter"], n_threads)
+                      << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
     }
 
     // -------------------------------------------------------------------------

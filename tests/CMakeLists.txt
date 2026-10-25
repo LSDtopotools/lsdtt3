@@ -808,12 +808,266 @@ add_lsdtt_cli_smoke_test(
     --expect-valid-percent-100 tiny_nodata_nodata_filled.tif
 )
 
+# interior_nodata_method (shared by lsdtt-raster-preprocessing and the analysis
+# CLIs). tiny_dem_nodata has one interior nodata pixel; tiny_dem_edge_nodata has
+# one on the edge, which is never filled. sink is the default and unchanged
+# behaviour: the pixel stays nodata and flow ends there.
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_fill_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_fill.param.in
+    da_interior_fill_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: 1 pixel(s) filled by laplacian"
+    --expect-valid-percent-100 da_interior_fill_d8_drainage_area.tif
+)
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_sink_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_sink.param.in
+    da_interior_sink_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: 1 pixel(s), kept as sinks"
+    --expect-valid-percent da_interior_sink_d8_drainage_area.tif:96
+)
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_edge_not_filled_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_edge_nodata_fill.param.in
+    da_edge_fill_d8_drainage_area.tif
+    --stdout-contains "Interior nodata: none (interior_nodata_method: fill)"
+)
+add_lsdtt_cli_smoke_test(
+    failure_interior_nodata_invalid_drainage_analysis
+    lsdtt-drainage-analysis
+    drainage_analysis_interior_nodata_invalid.param.in
+    da_interior_bad_d8_drainage_area.tif
+    --expect-failure
+    --stderr-contains "interior_nodata_method must be sink or fill, not 'filled'"
+)
+# In preprocessing, fill also feeds the later steps: the pit-filled DEM has no
+# interior void (write_filled_nodata_raster alone only writes a file).
+add_lsdtt_cli_smoke_test(
+    smoke_interior_nodata_fill_preprocessing
+    lsdtt-raster-preprocessing
+    raster_preprocessing_interior_nodata_fill.param.in
+    tiny_interior_fill_fill.tif
+    --stdout-contains "Interior nodata: 1 pixel(s) filled by laplacian"
+    --expect-valid-percent-100 tiny_interior_fill_fill.tif
+)
+# A negative min_elevation is a threshold, not "disabled" (only -9999 or lower
+# disables): on tiny_dem lowered by 160 m (-88 to -60), -80 masks 7 cells.
+add_lsdtt_cli_smoke_test(
+    smoke_nodata_min_elevation_negative_preprocessing
+    lsdtt-raster-preprocessing
+    raster_preprocessing_min_elevation_negative.param.in
+    tiny_below_sea_fill.tif
+    --stdout-contains "Threshold masking changed 7 pixel(s)"
+    --expect-raster-stat tiny_below_sea_fill.tif:min:-79:-79
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_nodata_edge_unfilled
     lsdtt-raster-preprocessing
     raster_preprocessing_nodata_edge_smoke.param.in
     tiny_edge_nodata_filled.tif
     --expect-valid-percent tiny_edge_nodata_filled.tif:96
+)
+
+# Oblique frames in lsdtt-raster-preprocessing: rotation by a line, a polygon
+# and the valid-data footprint, the rotate-back mode, and the refusals. The
+# frame geometry and the round trip onto the source pixels are asserted in
+# unit_oblique_frame_preprocess; these pin the plumbing, file names and frame
+# file keys. Fixtures in tests/data/rotation: WGS84 GeoJSON line and polygon
+# over flat_resolution_lakeland_crop_dem.tif (UTM 15N, 128 x 128 at 30 m), and
+# that DEM rotated by the line (lakeland_line_oblique.tif with its frame file),
+# written by this CLI.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_line
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_line.param.in
+    rotline_oblique.tif
+    --expect rotline_oblique_rotation_frame.txt
+    --expect-raster-size rotline_oblique.tif:144x40
+    --expect-raster-size rotline_fill.tif:144x40
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:frame_source: line"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:feature_fname: 'lakeland_line.geojson'"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_crs_epsg: 32615"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_origin_x: 564930.0"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:target_origin_y: 5600760.0"
+    --expect-file-contains "rotline_oblique_rotation_frame.txt:source_dem_fname: 'flat_resolution_lakeland_crop_dem.tif'"
+    --stdout-contains "Size    : 4320 m x 1200 m (144 x 40 cells of 30 m)"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_polygon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_polygon.param.in
+    rotpoly_oblique.tif
+    --expect-raster-size rotpoly_oblique.tif:122x52
+    --expect-file-contains "rotpoly_oblique_rotation_frame.txt:frame_source: polygon"
+    --expect-file-contains "rotpoly_oblique_rotation_frame.txt:buffer_all_sides: true"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_footprint
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_footprint.param.in
+    rotfoot_oblique.tif
+    --expect-raster-size rotfoot_oblique.tif:150x150
+    --expect-file-contains "rotfoot_oblique_rotation_frame.txt:frame_source: data_footprint"
+    --stderr-contains "axis is ill-defined"
+)
+
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_rotate_back
+    lsdtt-raster-preprocessing
+    raster_preprocessing_rotate_back.param.in
+    lakeland_line_oblique_rotated_back.tif
+    --expect-raster-size lakeland_line_oblique_rotated_back.tif:136x125
+    --stdout-contains "Rotated back (near)"
+)
+
+foreach(_rp_case IN ITEMS
+        "rotate_both_switches|rotate_to_linear_feature and rotate_to_data_footprint cannot be combined"
+        "rotate_force_reproject|cannot be combined with force_reproject"
+        "rotate_missing_fname|needs rotation_feature_fname"
+        "rotate_back_with_fill|cannot be combined with: write_fill_raster"
+        "rotate_back_no_list|needs rotate_back_file_list"
+        "rotate_back_not_in_frame|not the frame CRS")
+    string(REPLACE "|" ";" _rp_parts "${_rp_case}")
+    list(GET _rp_parts 0 _rp_name)
+    list(GET _rp_parts 1 _rp_message)
+    add_lsdtt_cli_smoke_test(
+        failure_raster_preprocessing_${_rp_name}
+        lsdtt-raster-preprocessing
+        raster_preprocessing_${_rp_name}.param.in
+        unused_expected_output
+        --expect-failure
+        --stderr-contains "${_rp_message}"
+    )
+endforeach()
+
+add_test(NAME smoke_raster_preprocessing_help_rotation
+         COMMAND lsdtt-raster-preprocessing -h rotate_to_linear_feature)
+lsdtt_set_tests_properties(smoke_raster_preprocessing_help_rotation PROPERTIES
+    LABELS "smoke;cli"
+    PASS_REGULAR_EXPRESSION "minimum-area")
+
+# bearings_relative_to_true_north. Fixtures in tests/data/true_north: two
+# planar DEMs dipping to TRUE azimuth 200 deg at their centre, one in the
+# oblique frame of rotation/lakeland_line_oblique.tif (true north 39.87 deg
+# clockwise of grid up) and one in UTM 15N (0.73 deg anticlockwise), with the
+# grid bearing set from pyproj's meridian convergence; six outlets and the
+# lakeland line in the frame CRS for the basin tools. Raster outputs are
+# asserted against 200 (aspect) or 110 (contour orientation); table outputs
+# pin the plumbing (start-up line, columns), and the per-row conversion is
+# asserted in unit_true_north.
+set(_tn_on "bearings are converted to true north at each output's location")
+set(_tn_frame "Grid north is 39.9 deg anticlockwise of true north at the grid centre")
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_true_north_frame
+    lsdtt-surface-metrics
+    surface_metrics_true_north_frame.param.in
+    tnframe_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnframe_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnframe_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "${_tn_frame}"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_grid_north_frame
+    lsdtt-surface-metrics
+    surface_metrics_grid_north_frame.param.in
+    gnframe_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat gnframe_direct_polyfit_aspect_degrees.tif:min:239.86:239.88
+    --expect-raster-stat gnframe_direct_polyfit_aspect_degrees.tif:max:239.86:239.88
+    --stdout-contains "bearings are relative to grid north (bearings_relative_to_true_north is false)"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_surface_metrics_true_north_utm
+    lsdtt-surface-metrics
+    surface_metrics_true_north_utm.param.in
+    tnutm_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnutm_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnutm_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "Grid north is 0.7 deg clockwise of true north at the grid centre"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_feature_finder_true_north_structure_tensor
+    lsdtt-feature-finder
+    feature_finder_true_north_structure_tensor.param.in
+    tnst_orientation_deg.tif
+    --expect-raster-stat tnst_orientation_deg.tif:min:105.0:110.0
+    --expect-raster-stat tnst_orientation_deg.tif:max:110.0:115.0
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_ridgeline_true_north
+    lsdtt-ridgeline-analysis
+    ridgeline_true_north.param.in
+    tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif
+    --expect-raster-stat tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif:min:199.98:200.0
+    --expect-raster-stat tnrl_lambda_90m_direct_polyfit_aspect_degrees.tif:max:200.0:200.02
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_surface_metrics_true_north
+    lsdtt-basin-surface-metrics
+    basin_surface_metrics_true_north.param.in
+    tnbsm_aspect_degrees_lambda90.tif
+    --stdout-contains "${_tn_frame}"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_stats_true_north
+    lsdtt-basin-stats
+    basin_stats_true_north.param.in
+    tnbs_basin_stats.csv
+    --expect-file-contains "tnbs_basin_stats.csv:com_bearing_deg"
+    --expect-file-contains "tnbs_basin_stats.csv:orientation_deg"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_basin_extraction_true_north
+    lsdtt-basin-extraction
+    basin_extraction_true_north.param.in
+    tnbe_line_crossing_basins.csv
+    --expect-file-contains "tnbe_line_crossing_basins.csv:outlet_to_com_bearing_deg"
+    --stdout-contains "(6 basins)"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_network_true_north
+    lsdtt-channel-network-analysis
+    channel_network_true_north.param.in
+    tncn_channel_link_bearings.csv
+    --expect tncn_junction_angles.csv
+    --expect tncn_junction_angle_bearing_vectors.fgb
+    --expect tncn_junction_com_bearings.csv
+    --expect tncn_channel_bearing_group_summary.csv
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_true_north
+    lsdtt-flat-surface-finder
+    flat_surface_finder_true_north.param.in
+    tnfsf_plane_fits.csv
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_true_north
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_true_north.param.in
+    tnfs_surface_patches.csv
+    --expect-file-contains "tnfs_surface_patches.csv:terrain_aspect_degrees"
+    --stdout-contains "${_tn_on}"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_spectral_true_north
+    lsdtt-spectral-analysis
+    spectral_true_north.param.in
+    tnsp_significant_frequencies_2d.csv
+    --expect-file-contains "tnsp_significant_frequencies_2d.csv:# grid_convergence_deg_at_grid_centre,39.8727"
+    --stdout-contains "${_tn_on}"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -2189,7 +2443,12 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # the record, the per-basin accumulation and the two writers out of
             # main(). It says "the output did not change", nothing about whether
             # the output is right. Re-freeze deliberately if a change is intended.
-            --expect-sha256 bs_basin_stats.csv:6b8129739e73739716eb565ba822a85c4952efd55eb8ff0e3f41a1e10efa75a5
+            # Re-frozen 2026-10-25: the table is written at 17 significant
+            # digits (was the stream default of 6, ~5 m in latitude/longitude),
+            # and as CSV only because the template asks for it. Check made then:
+            # the new file reprinted at 6 significant digits hashes to the old
+            # oracle (6b812973...), so only the precision changed.
+            --expect-sha256 bs_basin_stats.csv:3917286425c4931152f04b9dbc97f52740a6d929e7d88e5eb5701f9170fbb3ea
             # Canonical-default regression: the parameter is deliberately absent
             # from the fixture, so this pins the shared default and its behaviour.
             --stdout-contains "threshold = 1000 px"
@@ -2465,6 +2724,17 @@ add_lsdtt_cli_smoke_test(
     hydraulic_routing_smoke.param.in
     tiny_hydraulic_water_depth.tif
     --expect tiny_hydraulic_water_surface.tif
+)
+
+# Active node states on nodata DEM cells: a FATAL message with the count and
+# the first cell, not an uncaught exception from the solver's constructor.
+add_lsdtt_cli_smoke_test(
+    failure_hydraulic_routing_active_on_nodata
+    lsdtt-graphflood
+    hydraulic_routing_active_on_nodata.param.in
+    tiny_hydraulic_nodata_water_depth.tif
+    --expect-failure
+    --stderr-contains "are active in hydraulic_node_state_fname (1 or 3) but nodata in the DEM"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -3612,16 +3882,20 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Model run complete"
 )
 
-# D8 on a diverging hillslope manufactures channel heads, so the drainage
-# density would be an artefact of the router.
+# D8 on a diverging hillslope can manufacture channel heads, so the drainage
+# density may be an artefact of the router. Since 2026-10-16 (3d9f37f) an
+# explicit enable_d8_fluvial_erosion: true with coupled is honoured with a
+# warning rather than refused; this pins that the run completes AND the
+# warning is printed.
 add_lsdtt_cli_smoke_test(
-    failure_lem_coupling_d8_conflict
+    smoke_lem_coupling_d8_warning
     lsdtt-lem
     lem_coupling_d8_conflict.param.in
-    unused_expected_output
-    --expect-failure
-    --stderr-contains "enable_d8_fluvial_erosion"
-    --stderr-contains "manufactures channel"
+    tiny_coup_d8_modelled_topography.tif
+    --stdout-contains "Model run complete"
+    --stderr-contains "enable_d8_fluvial_erosion: true"
+    --stderr-contains "D8 can manufacture channel heads"
+    --stderr-contains "Continuing because D8/coupled was explicitly"
 )
 
 # The analytical steady-state path snaps channels then solves hillslopes against
@@ -4839,6 +5113,74 @@ target_link_libraries(lsdtt-test-raster-resampling PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_resampling
          COMMAND lsdtt-test-raster-resampling)
 lsdtt_set_tests_properties(unit_raster_resampling PROPERTIES LABELS "unit;raster")
+
+# Oblique analysis frames: geometry, axis convention, datum, line and polygon
+# builders, checked against an independent Vincenty geodesic.
+add_executable(lsdtt-test-oblique-frame cpp/test_oblique_frame.cpp)
+target_link_libraries(lsdtt-test-oblique-frame PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame
+         COMMAND lsdtt-test-oblique-frame)
+lsdtt_set_tests_properties(unit_oblique_frame PROPERTIES LABELS "unit;raster")
+
+# Feature files that define an oblique frame (line, two points, polygon) and
+# every refusal; fixtures are GeoPackages written by the test itself.
+add_executable(lsdtt-test-oblique-frame-feature cpp/test_oblique_frame_feature.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-feature PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_feature
+         COMMAND lsdtt-test-oblique-frame-feature
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_feature_work")
+lsdtt_set_tests_properties(unit_oblique_frame_feature PROPERTIES LABELS "unit;raster")
+
+# The rotation frame file: exact write/read round trip, YAML-safe writing
+# rules, consistency checks and refusals, and the frame_from_crs_wkt fallback.
+add_executable(lsdtt-test-oblique-frame-file cpp/test_oblique_frame_file.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-file PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_file
+         COMMAND lsdtt-test-oblique-frame-file
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_file_work")
+lsdtt_set_tests_properties(unit_oblique_frame_file PROPERTIES LABELS "unit;raster")
+
+# Warping a DEM into an oblique frame and rotating products back onto the
+# source or -tap lattice; fixtures are GeoTIFFs written by the test itself.
+add_executable(lsdtt-test-oblique-frame-warp cpp/test_oblique_frame_warp.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-warp PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_warp
+         COMMAND lsdtt-test-oblique-frame-warp
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_warp_work")
+lsdtt_set_tests_properties(unit_oblique_frame_warp PROPERTIES LABELS "unit;raster")
+
+# Rotating an existing DEM into an oblique frame as lsdtt-raster-preprocessing
+# does (line, polygon, valid-data footprint; NAD83 source) and rotating its
+# products back onto the source pixels; fixtures are written by the test.
+add_executable(lsdtt-test-oblique-frame-preprocess cpp/test_oblique_frame_preprocess.cpp)
+target_link_libraries(lsdtt-test-oblique-frame-preprocess PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_oblique_frame_preprocess
+         COMMAND lsdtt-test-oblique-frame-preprocess
+                 "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_preprocess_work")
+lsdtt_set_tests_properties(unit_oblique_frame_preprocess PROPERTIES LABELS "unit;raster")
+
+# Grid convergence and bearings_relative_to_true_north: convergence against
+# pyproj, wrapping, a plane dipping to a known true azimuth in UTM and in
+# frames at several azimuths, raster lattice interpolation, start-up message.
+add_executable(lsdtt-test-true-north cpp/test_true_north.cpp)
+target_link_libraries(lsdtt-test-true-north PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_true_north COMMAND lsdtt-test-true-north)
+lsdtt_set_tests_properties(unit_true_north PROPERTIES LABELS "unit;raster")
+
+# CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
+# mask in one oblique Mercator frame must be accepted together.
+add_executable(lsdtt-test-crs-semantic-matching cpp/test_crs_semantic_matching.cpp)
+target_link_libraries(lsdtt-test-crs-semantic-matching PRIVATE lsdtt3_cpu)
+
+add_test(NAME unit_crs_semantic_matching
+         COMMAND lsdtt-test-crs-semantic-matching)
+lsdtt_set_tests_properties(unit_crs_semantic_matching PROPERTIES LABELS "unit;raster")
 
 add_executable(lsdtt-test-raster-hierarchy cpp/test_raster_hierarchy.cpp)
 target_link_libraries(lsdtt-test-raster-hierarchy PRIVATE lsdtt3_cpu)
@@ -6213,6 +6555,36 @@ add_lsdtt_cli_smoke_test(
 )
 
 # -h must work without a parameter file, and without touching the network.
+# Fetching along a linear feature into an oblique frame
+# (fetch_from_linear_feature): every other way of giving an area is refused,
+# and so are a missing feature file and a line without a width, all before
+# any network access. green_river_line.geojson is a three-vertex WGS84 line.
+foreach(_ff_case IN ITEMS
+        "with_bbox|cannot be combined with west/south/east/north"
+        "with_bounds_file|cannot be combined with bounds_fname"
+        "with_outlets|cannot be combined with bounds_mode vector or outlets"
+        "with_size_pixels|cannot be combined with size_pixels"
+        "missing_fname|needs fetch_feature_fname"
+        "no_width|a line or two points needs a width > 0")
+    string(REPLACE "|" ";" _ff_parts "${_ff_case}")
+    list(GET _ff_parts 0 _ff_name)
+    list(GET _ff_parts 1 _ff_message)
+    add_lsdtt_cli_smoke_test(
+        failure_fetch_raster_feature_${_ff_name}
+        lsdtt-fetch-raster
+        fetch_raster_feature_${_ff_name}.param.in
+        unused_expected_output
+        --expect-failure
+        --stderr-contains "${_ff_message}"
+    )
+endforeach()
+
+add_test(NAME smoke_fetch_raster_help_linear_feature
+         COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_linear_feature PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "minimum-area")
+
 add_test(NAME smoke_fetch_raster_help
          COMMAND lsdtt-fetch-raster -h)
 lsdtt_set_tests_properties(smoke_fetch_raster_help PROPERTIES
@@ -6555,10 +6927,21 @@ add_lsdtt_cli_smoke_test(
     smoke_basin_stats_flat_resolution_float_step
     lsdtt-basin-stats
     basin_stats_flat_resolution_float_step.param.in
-    bsvf_basin_stats.csv
+    bsvf_basin_stats.fgb
+    # The default table format: a FlatGeobuf point layer, one point per basin.
+    --expect-vector-feature-min bsvf_basin_stats.fgb:1
     --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
     --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
     --stdout-contains "Basin pixels  : 207"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_basin_stats_bad_output_format
+    lsdtt-basin-stats
+    basin_stats_bad_output_format.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "basin_stats_write_vector_format must be flatgeobuf, gpkg or csv"
 )
 
 # fill_before_routing: false (the two CLIs that have it). The NOTE is the
@@ -6973,6 +7356,26 @@ if(LSDTT_ENABLE_NETWORK_TESTS)
         --expect-raster-size ortler_test_DEM.tif:128x128
     )
     lsdtt_set_tests_properties(network_fetch_raster_cli PROPERTIES LABELS "network;cli;fetch")
+
+    # A Green River reach fetched straight into its oblique frame: 17 880 m x
+    # 2 040 m at 30 m (596 x 68), all valid, with the frame file recording the
+    # line and the UTM 12N rotate-back target on the (0, 0) lattice.
+    add_lsdtt_cli_smoke_test(
+        network_fetch_raster_linear_feature_cli
+        lsdtt-fetch-raster
+        fetch_raster_feature_network.param.in
+        ffgreen_oblique_DEM.tif
+        --expect ffgreen_oblique_DEM_rotation_frame.txt
+        --expect-raster-size ffgreen_oblique_DEM.tif:596x68
+        --expect-valid-percent-100 ffgreen_oblique_DEM.tif
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:frame_source: line"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:frame_x_min: -8940.0"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:target_crs_epsg: 32612"
+        --expect-file-contains "ffgreen_oblique_DEM_rotation_frame.txt:rotated_dem_fname: 'ffgreen_oblique_DEM.tif'"
+        --stdout-contains "oblique frame (rotate back to EPSG:32612)"
+    )
+    lsdtt_set_tests_properties(network_fetch_raster_linear_feature_cli
+        PROPERTIES LABELS "network;cli;fetch")
 
     add_lsdtt_cli_smoke_test(
         network_fetch_raster_outlets_cli
@@ -9154,7 +9557,7 @@ set(LSDTT_DOMAIN_RULES
     "junction_graph"         "network"
     "grid_neighbours"        "raster"
     "vector_layer_transform" "gdal"
-    "connected_components|grid_geodesic" "raster"
+    "connected_components|grid_geodesic|oblique_frame|true_north" "raster"
     "boundary_conditions|output_file|splitmix|thread_count" "core"
     "stream_burning"         "network"
     "sediment_routing"       "network"

@@ -60,11 +60,13 @@
 #include <vector>
 #include <memory>
 
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_mountain_front_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
@@ -250,6 +252,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Help - rendered from the declarations above; no parameter file needed
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -314,6 +319,21 @@ int main(int argc, char* argv[])
         std::cout << "  rows=" << dem.get_meta().n_rows
                   << "  cols=" << dem.get_meta().n_cols
                   << "  cell=" << dem.get_meta().cell_size << " m\n\n";
+    }
+
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ip.at("nodata_fill_max_iter"), ip.at("n_threads"))
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
     }
 
     const std::string stem = pp.get_full_write_path();

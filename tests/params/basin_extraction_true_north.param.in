@@ -1,0 +1,11 @@
+# bearings_relative_to_true_north. Line-crossing basins
+# on the lakeland frame DEM, crossing line in the frame CRS (FlatGeobuf).
+read_path: __READ_PATH__/rotation
+read_fname: lakeland_line_oblique.tif
+write_path: __WRITE_PATH__
+write_fname: tnbe
+threshold_contributing_pixels: 15
+select_basins_from_line_crossings: true
+crossing_line_fname: __READ_PATH__/true_north/lakeland_line_frame.fgb
+crossing_minimum_contributing_pixels: 30
+bearings_relative_to_true_north: true

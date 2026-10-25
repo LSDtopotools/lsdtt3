@@ -48,6 +48,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
+#include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
 #include "../src/cpu/lsdtt_crn_parameters.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
@@ -551,6 +552,9 @@ int main(int argc, char* argv[])
         "Cosmogenics","param",""};
 
     // -------------------------------------------------------------------------
+    // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
+    lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -625,6 +629,20 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_data_loader loader;
     loader.open_raster(dem_path);
     lsdtt::lsdtt_raster_cpu dem(loader);
+    // Interior nodata: kept as sinks or filled (interior_nodata_method).
+    try
+    {
+        std::cout << lsdtt::apply_interior_nodata_method(
+                         dem, sf.at("interior_nodata_method"),
+                         sf.at("nodata_fill_method_choice"),
+                         ifs.at("nodata_fill_max_iter"), 0)
+                  << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
+        return 1;
+    }
 
     // Projected CRS, checked HERE with a clean message. The check exists deeper
     // in the stack too, but it throws, and an uncaught throw from a CLI is an

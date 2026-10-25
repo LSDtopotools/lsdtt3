@@ -7,6 +7,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <core/lsdtt_raster_warp.hpp>
+
 #include "binding_common.hpp"
 
 namespace lsdtt3_python {
@@ -38,7 +40,8 @@ void require_compatible(const FlowGraph& graph, const Raster& raster, const char
 {
     const auto& a = graph.native().meta(); const auto& b = raster.native().get_meta();
     if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || a.x_min != b.x_min ||
-        a.y_min != b.y_min || a.cell_size != b.cell_size || a.crs_wkt != b.crs_wkt)
+        a.y_min != b.y_min || a.cell_size != b.cell_size ||
+        !lsdtt::crs_equal_semantically(a.crs_wkt, b.crs_wkt))
         throw std::invalid_argument(std::string(name) + " must share the flow graph grid");
     const auto& valid = graph.native().valid_cells(); const auto& mask = raster.native().get_mask();
     for (std::size_t i = 0; i < valid.size(); ++i)

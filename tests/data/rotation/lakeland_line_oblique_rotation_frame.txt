@@ -1,0 +1,44 @@
+# lsdtt3 rotation frame file. key: value lines; a flat YAML mapping.
+# Keep each value on one line. See the lsdtt3 docs on rotated frames.
+# frame_proj: +proj=omerc +lat_0=50.5723937739588 +lonc=-92.0566567969999 +alpha=50.1272891712029 +gamma=90 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs
+
+# Provenance
+frame_file_version: 1
+lsdtt3_version: '0.7.1-dev, git v0.7.1-24-g5ad85db-dirty'
+created_utc: '2026-10-24T11:26:18Z'
+created_by: 'lsdtt-raster-preprocessing'
+rotated_dem_fname: 'lakeland_line_oblique.tif'
+
+# Frame
+centre_lon: -92.056656796999889
+centre_lat: 50.572393773958822
+azimuth_deg: 50.127289171202868
+feature_axis: x
+cell_size: 30.0
+frame_x_min: -2160.0
+frame_x_max: 2160.0
+frame_y_min: -600.0
+frame_y_max: 600.0
+base_crs_wkt: 'GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",4326]]'
+frame_crs_wkt: 'PROJCRS["unnamed",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",4326]],CONVERSION["Hotine Oblique Mercator (variant B)",METHOD["Hotine Oblique Mercator (variant B)",ID["EPSG",9815]],PARAMETER["Latitude of projection centre",50.5723937739588,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8811]],PARAMETER["Longitude of projection centre",-92.0566567969999,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8812]],PARAMETER["Azimuth of initial line",50.1272891712029,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8813]],PARAMETER["Angle from Rectified to Skew Grid",90,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8814]],PARAMETER["Scale factor on initial line",1,SCALEUNIT["unity",1],ID["EPSG",8815]],PARAMETER["Easting at projection centre",0,LENGTHUNIT["metre",1],ID["EPSG",8816]],PARAMETER["Northing at projection centre",0,LENGTHUNIT["metre",1],ID["EPSG",8817]]],CS[Cartesian,2],AXIS["(E)",east,ORDER[1],LENGTHUNIT["metre",1,ID["EPSG",9001]]],AXIS["(N)",north,ORDER[2],LENGTHUNIT["metre",1,ID["EPSG",9001]]]]'
+
+# Definition
+frame_source: line
+feature_fname: 'lakeland_line.geojson'
+feature_layer: 'lakeland_line'
+end1_lon: -92.076635600000003
+end1_lat: 50.561761799999999
+end2_lon: -92.036669000000003
+end2_lat: 50.583022300000003
+axis_length_m: 3689.0939909686749
+width_m: 1200.0
+end_buffer_m: 300.0
+buffer_all_sides: false
+
+# Rotate-back target
+target_crs_epsg: 32615
+target_crs_wkt: ''
+target_cell_size: 30.0
+target_origin_x: 564930.0
+target_origin_y: 5600760.0
+source_dem_fname: 'flat_resolution_lakeland_crop_dem.tif'

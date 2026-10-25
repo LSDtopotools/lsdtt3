@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: rotback
+write_output_format: gtiff
+
+run_rotate_back: true
+rotation_frame_fname: rotation/lakeland_line_oblique_rotation_frame.txt
+rotate_back_file_list: rotation/lakeland_rotate_back_list_not_in_frame.txt

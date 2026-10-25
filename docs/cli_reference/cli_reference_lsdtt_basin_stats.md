@@ -62,7 +62,7 @@ key: value
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `min_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. |
+| `min_elevation` | float | `0.0` | Pixels at or below this elevation (m) are masked to nodata. The default removes sea and ocean pixels. Negative values apply as given; `-9999` disables. |
 | `fill_before_routing` | bool | `true` | Fill DEM pits before building flow routing. Recommended. |
 | `fill_min_slope` | float | `0.0001` | Minimum slope (m/m) imposed during pit filling. |
 
@@ -301,7 +301,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation are set to nodata. | Default of 0.0 removes sea and ocean pixels from many DEM products. |
+| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation are set to nodata. -9999 disables. | Default of 0.0 removes sea and ocean pixels from many DEM products. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. |
 
 ### Pit filling
 
@@ -327,7 +327,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_hillshade_raster` | `bool` | `false` | `switch` | - | Write a hillshade raster after sea masking. | Useful for quick visual QC of the masked DEM. |
-| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from north. | 315 is the standard cartographic northwest illumination. |
+| `hillshade_azimuth` | `float` | `315` | `param` | `write_hillshade_raster` | Sun azimuth in degrees clockwise from grid north (grid up). | 315 is the standard cartographic northwest illumination. It is relative to the raster grid, so in an oblique frame it lights from the frame's north-west; bearings_relative_to_true_north never changes it. |
 | `hillshade_altitude` | `float` | `45` | `param` | `write_hillshade_raster` | Sun altitude above horizon in degrees. | 45 degrees is a common default. |
 | `hillshade_z_factor` | `float` | `1.0` | `param` | `write_hillshade_raster` | Vertical exaggeration factor for hillshade. | Values greater than 1 emphasise relief. |
 
@@ -339,8 +339,9 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `calculate_junction_area_ratios` | `bool` | `false` | `switch` | - | Compute per-junction drainage-area ratios (complement to Tokunaga). | Opt-in. Builds a channel network (using threshold_contributing_pixels) if one is not already built, then writes the ratio r = A_trib/A_main at every interior confluence plus a distribution summary. Outputs: &lt;write_fname&gt;_junction_area_ratios.csv, &lt;write_fname&gt;_junction_area_ratio_summary.csv (with branch-bootstrap confidence intervals), and a _junction_area_ratio_decades.csv collapse table. |
 | `junction_area_ratio_bootstrap` | `int` | `1000` | `param` | - | Branch-bootstrap replicates for junction area-ratio confidence intervals. | Resampling is over non-mainstem tributary branches. 0 disables it. |
 | `write_basin_polygons` | `bool` | `false` | `switch` | - | Write basin outline polygons with the per-basin metrics as attributes. | Attaches the hydromorphic stats (and shape metrics / centre-of-mass bearing when those are enabled) to each basin's outline polygon as a vector layer. Output: &lt;write_fname&gt;_basin_polygons.&lt;ext&gt;. Format set by write_vector_format. |
+| `basin_stats_write_vector_format` | `string` | `flatgeobuf` | `param` | - | Format of the basin statistics table: flatgeobuf, gpkg or csv. | flatgeobuf (default) writes &lt;write_fname&gt;_basin_stats.fgb, one point per basin at its outlet in the DEM's CRS with every statistic as an attribute; gpkg the same as GeoPackage; csv writes &lt;write_fname&gt;_basin_stats.csv, where latitude/longitude and outlet_x/outlet_y locate each basin. Numbers are written at full double precision. |
 | `write_vector_format` | `string` | `flatgeobuf` | `param` | - | Vector format for the basin-polygon output. | flatgeobuf (default) or gpkg. |
-| `calculate_centre_of_mass_bearing` | `bool` | `false` | `switch` | - | Compute the bearing from each basin outlet to its centre of mass. | Opt-in. The basin centre of mass is the planimetric centroid of all upslope pixels (already reported as centroid_x/centroid_y). This adds com_bearing_deg (geographic bearing from North, clockwise, outlet -&gt; centre of mass) and com_distance_m columns. The outlet is the user-supplied (optionally snapped) outlet pixel; the channel is not followed. |
+| `calculate_centre_of_mass_bearing` | `bool` | `false` | `switch` | - | Compute the bearing from each basin outlet to its centre of mass. | Opt-in. The basin centre of mass is the planimetric centroid of all upslope pixels (already reported as centroid_x/centroid_y). This adds com_bearing_deg (bearing clockwise from grid north, or from true north with bearings_relative_to_true_north, outlet -&gt; centre of mass) and com_distance_m columns. The outlet is the user-supplied (optionally snapped) outlet pixel; the channel is not followed. |
 
 ### Channel network
 
@@ -352,7 +353,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `calculate_shape_metrics` | `bool` | `false` | `switch` | - | Trace each basin outline polygon and compute planform shape metrics. | Opt-in; off by default so the original curated hydromorphic stat set is reproduced unless explicitly requested. When true, adds basin_length_m, elongation_ratio, form_factor, circularity_ratio, gravelius_compactness, solidity, eccentricity, orientation_deg, and hypsometric_integral columns to the output CSV. When false, the outline is not traced and those columns are omitted, reproducing the original basin-stats output. See docs/tex_technical/basin_shape_metrics.tex. |
+| `calculate_shape_metrics` | `bool` | `false` | `switch` | - | Trace each basin outline polygon and compute planform shape metrics. | Opt-in; off by default so the original curated hydromorphic stat set is reproduced unless explicitly requested. When true, adds basin_length_m, elongation_ratio, form_factor, circularity_ratio, gravelius_compactness, solidity, eccentricity, orientation_deg (principal axis, [0, 180) clockwise from grid north, or from true north with bearings_relative_to_true_north), and hypsometric_integral columns to the basin statistics table. When false, the outline is not traced and those columns are omitted, reproducing the original basin-stats output. See docs/tex_technical/basin_shape_metrics.tex. |
 | `basin_length_definition` | `string` | `flow_path` | `param` | `calculate_shape_metrics` | Definition of basin length L_b used in elongation ratio and form factor. | flow_path: the longest flow-path distance from the outlet (hydrologic basin length; the default and the usual geomorphic convention). geometric: the maximum Feret diameter of the basin outline polygon (longest straight-line caliper). The two are not interchangeable and Re, Rf both scale with L_b. See docs/tex_technical/basin_shape_metrics.tex. |
 | `shape_perimeter_simplify_cells` | `float` | `1.0` | `param` | `calculate_shape_metrics` | Douglas-Peucker simplification tolerance for the perimeter, in cells. | The basin outline is traced on the pixel-corner grid and is staircased, which inflates the perimeter and biases circularity_ratio and gravelius_compactness (the coastline paradox). The perimeter for those two metrics is measured on a ring simplified with tolerance (this value * cell_size) in metres. Set to 0 to disable simplification and use the raw staircased perimeter. Area-based metrics (elongation, form factor, solidity) are unaffected. |
 
@@ -362,5 +363,19 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `write_basin_pdf_cdf_csv` | `bool` | `false` | `switch` | - | Write PDF/CDF CSV output for each basin. | If true, writes one CSV per basin containing histogram counts, probabilities, PDF, and CDF of basin elevations. |
 | `n_histogram_bins` | `int` | `100` | `param` | `write_basin_pdf_cdf_csv` | Number of bins used for basin elevation histogram/PDF/CDF output. | Used when write_basin_pdf_cdf_csv is true. Default is 100 bins. |
+
+### Interior nodata
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `interior_nodata_method` | `string` | `sink` | `param` | - | How nodata pixels inside the DEM are treated: sink or fill. | Interior nodata are nodata pixels not connected to the raster edge through other nodata (isolated voids, moulins, masked lakes). sink (the default, unchanged behaviour): they are outlets, so flow that reaches them ends there, as at the DEM edge; use this for real internal drainage (e.g. moulins on an ice sheet). fill: they are interpolated with nodata_fill_method_choice before any filling or routing, so flow passes across them; use this for data voids. Nodata connected to the edge (e.g. sea removed by min_elevation) is never filled and always acts as an open boundary. |
+| `nodata_fill_method_choice` | `string` | `laplacian` | `param` | `interior_nodata_method=fill` | Method for filling interior nodata pixels. | laplacian: smooth Dirichlet interpolation (recommended). iterative_weighted_average: fast, well-suited to thin voids. Used when interior_nodata_method is fill. |
+| `nodata_fill_max_iter` | `int` | `10000` | `param` | `interior_nodata_method=fill` | Maximum iterations for iterative nodata fill methods. | Used when interior_nodata_method is fill. |
+
+### Orientations
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
 
 <!-- END GENERATED CLI PARAMETERS -->

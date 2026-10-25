@@ -379,7 +379,9 @@ Flow-direction diagnostics from :func:`find_road_flow_discrimination`.
 Compares the local D8 flow-path bearing with the regional slope bearing:
 roads divert flow along the contour, so ``flow_vs_slope_angle`` is large on
 roads and small on natural slopes and channels. Bearings are compass
-degrees; slopes are m/m.
+degrees from grid north (true north with
+``bearings_relative_to_true_north=True``; the angle between them is the
+same either way); slopes are m/m.
 
 Returned by ``find_road_flow_discrimination()``; not constructible directly.
 
@@ -446,7 +448,9 @@ Hillside road / bench detection output from :func:`find_roads`.
 ``score`` is elongation x contour alignment x edge strength, ``mask`` its
 gated threshold; ``contour_alignment`` and ``hessian_elongation`` are in
 [0, 1], ``cross_curvature`` in 1/m, ``feature_orientation_degrees`` the
-along-feature azimuth (0-180, from north) and ``slope`` the gradient (m/m).
+along-feature azimuth (0-180, from grid north, or true north when
+``find_roads`` was called with ``bearings_relative_to_true_north=True``) and
+``slope`` the gradient (m/m).
 
 Returned by ``find_roads()``; not constructible directly.
 
@@ -749,6 +753,10 @@ boundary_conditions : str, default='oooo'
     NESW boundary codes for the internal flow routing.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``regional_slope_bearing`` and ``flow_path_bearing`` to true
+    north at each pixel, as the CLI's ``bearings_relative_to_true_north``;
+    needs a DEM with a CRS.
 
 Returns
 -------
@@ -760,7 +768,7 @@ B. Gailleton
 S. M. Mudd
 
 ```python
-def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0) -> lsdtt3.RoadFlowResult
+def find_road_flow_discrimination(dem: lsdtt3.Raster, regional_smoothing_metres: float = 100.0, threshold_contributing_pixels: int = 1000, flow_path_half_window: int = 5, intermediate_window_metres: float = 15.0, roughness_radius_metres: float = 2.5, raster_is_filled: bool = False, boundary_conditions: str = 'oooo', n_threads: int = 0, bearings_relative_to_true_north: bool = False) -> lsdtt3.RoadFlowResult
 ```
 
 ---
@@ -789,6 +797,9 @@ bench_half_width_metres : float, default=6.0
     Distance (m) to each side at which the flank slopes are sampled.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``feature_orientation_degrees`` to true north at each pixel, as
+    the CLI's ``bearings_relative_to_true_north``; needs a DEM with a CRS.
 
 Returns
 -------
@@ -797,9 +808,10 @@ RoadResult
 Authors
 -------
 B. Gailleton
+S. M. Mudd
 
 ```python
-def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0) -> lsdtt3.RoadResult
+def find_roads(dem: lsdtt3.Raster, smoothing_window_metres: float = 8.0, score_threshold: float = 0.5, use_bench_test: bool = True, bench_half_width_metres: float = 6.0, n_threads: int = 0, bearings_relative_to_true_north: bool = False) -> lsdtt3.RoadResult
 ```
 
 ---

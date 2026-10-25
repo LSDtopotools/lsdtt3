@@ -24,3 +24,7 @@ calculate_junction_area_ratios: true
 calculate_centre_of_mass_bearing: true
 calculate_shape_metrics: true
 write_basin_polygons: true
+
+# The table as CSV (the default is a FlatGeobuf point layer); the sha256
+# oracle in tests/CMakeLists.txt pins this file.
+basin_stats_write_vector_format: csv

@@ -9,6 +9,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <core/lsdtt_true_north.hpp>
 #include <cpu/lsdtt_raster_spectral_cpu.hpp>
 
 #include "binding_common.hpp"
@@ -127,15 +128,20 @@ Raster masked_surface_recovery(const Raster& raster, const Raster& mask,
 nb::dict detect_directional_periodicity(const Raster& raster, int window_size_pixels,
                                         int step_pixels, double min_spacing_metres,
                                         double max_spacing_metres, double min_valid_fraction,
-                                        int n_threads)
+                                        int n_threads, bool bearings_relative_to_true_north)
 {
-    const auto result = lsdtt::detect_directional_periodicity(
+    const auto true_north = lsdtt::true_north_converter(raster.native().get_meta(), bearings_relative_to_true_north);
+    auto result = lsdtt::detect_directional_periodicity(
         raster.native(), window_size_pixels, step_pixels, min_spacing_metres,
         max_spacing_metres, min_valid_fraction, n_threads
     );
     nb::dict output;
     output["strength"] = Raster(result.strength);
     output["spacing_metres"] = Raster(result.spacing_metres);
+    if (true_north)
+        lsdtt::convert_angle_raster_to_true_north(
+            result.orientation_deg.get_data(), result.orientation_deg.get_meta(),
+            lsdtt::lsdtt_angle_kind::axial_degrees, *true_north);
     output["orientation_degrees"] = Raster(result.orientation_deg);
     return output;
 }
@@ -375,6 +381,7 @@ Raster
         nb::arg("raster"), nb::arg("window_size_pixels"), nb::arg("step_pixels"),
         nb::arg("min_spacing_metres"), nb::arg("max_spacing_metres"),
         nb::arg("min_valid_fraction") = 0.6, nb::arg("n_threads") = 0,
+        nb::arg("bearings_relative_to_true_north") = false,
         R"doc(Detect local regularly spaced parallel features with sliding-window FFTs.
 
 Families of evenly spaced parallel lines (ditches, tracks, cultivation
@@ -397,12 +404,16 @@ min_valid_fraction : float, default=0.6
     Windows with a smaller fraction of valid pixels are skipped.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+bearings_relative_to_true_north : bool, default=False
+    Convert ``orientation_degrees`` to true north at each pixel, as the
+    CLI's ``bearings_relative_to_true_north``; needs a raster with a CRS.
 
 Returns
 -------
 dict
     ``"strength"`` (peak prominence), ``"spacing_metres"`` and
-    ``"orientation_degrees"`` (line orientation) Rasters.
+    ``"orientation_degrees"`` (line orientation, 0-180, clockwise from grid
+    north or true north) Rasters.
 )doc");
 }
 
