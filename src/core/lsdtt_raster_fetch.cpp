@@ -28,6 +28,7 @@
 #include <cpl_vsi.h>         // VSIStatL, VSIUnlink
 #include <gdal.h>
 #include <gdal_utils.h>      // GDALTranslate / GDALWarp
+#include <ogr_spatialref.h>
 #include "lsdtt_http_fetch.hpp"
 #include <cpl_json.h>        // CPLJSONDocument (STAC + SAS responses)
 #include <ogr_api.h>         // OGR_L_* / OGR_G_* vector access
@@ -525,6 +526,33 @@ bool pc_search_assets(const lsdtt_fetch_options& o,
 }
 
 // -----------------------------------------------------------------------------
+// frame_source_kernel_scale
+//
+// The resampling-kernel scale of a warp into a frame: 1 when the frame cell is
+// no coarser than the source's ground pixel (the geometric mean of its two
+// sides, in metres at the frame centre's latitude for a geographic source),
+// otherwise source / frame cell.
+// -----------------------------------------------------------------------------
+double frame_source_kernel_scale(GDALDatasetH ds, const lsdtt_oblique_frame& f)
+{
+    double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+    if (!ds || GDALGetGeoTransform(ds, gt) != CE_None || !(f.cell_size > 0.0)) return 1.0;
+    double sx = std::abs(gt[1]);
+    double sy = std::abs(gt[5]);
+    OGRSpatialReference srs;
+    const char* wkt = GDALGetProjectionRef(ds);
+    if (wkt && *wkt && srs.importFromWkt(wkt) == OGRERR_NONE && srs.IsGeographic())
+    {
+        constexpr double metres_per_degree = 111320.0;
+        sx *= metres_per_degree * std::cos(f.centre.latitude * 3.14159265358979323846 / 180.0);
+        sy *= metres_per_degree;
+    }
+    const double pixel = std::sqrt(sx * sy);
+    if (!(pixel > 0.0)) return 1.0;
+    return std::min(1.0, pixel / f.cell_size);
+}
+
+// -----------------------------------------------------------------------------
 // warp_and_write
 //
 // Steps 3 and 4 of the pipeline, shared by every source: reproject to the
@@ -557,6 +585,15 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
         warp_args.add("-ts");
         warp_args.add(std::to_string(f.n_cols())); warp_args.add(std::to_string(f.n_rows()));
         warp_args.add("-r");      warp_args.add(options.resampling);
+        // A rotated grid: fix the resampling kernel scale and use the exact
+        // transform, or GDAL widens the kernel per warp chunk and smooths the
+        // DEM by a chunk-dependent amount (see warp_request in
+        // lsdtt_raster_warp.cpp). Scale 1 unless the frame cell is coarser
+        // than the source's ground pixel.
+        warp_args.add("-et");     warp_args.add("0");
+        const double scale = frame_source_kernel_scale(source_ds.get(), f);
+        warp_args.add("-wo");     warp_args.add("XSCALE=" + format_double(scale, 17));
+        warp_args.add("-wo");     warp_args.add("YSCALE=" + format_double(scale, 17));
     }
     else
     {

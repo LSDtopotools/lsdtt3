@@ -65,6 +65,7 @@ nav:
       - Raster data: what_is_lsdtt3/raster_data.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows: what_is_lsdtt3/workflows.md
+    - Analysing along a feature (oblique frames): what_is_lsdtt3/oblique_frames.md
   - Design and algorithms:
     - Flow routing: design_and_algorithms/flow_routing.md
     - Choosing a synthetic landscape tool: design_and_algorithms/synthetic_cli_cluster.md
@@ -76,6 +77,7 @@ nav:
     - Lithology and channel steepness statistics: design_and_algorithms/lithology_channel_statistics.md
     - Channel-link bearing statistics: design_and_algorithms/channel_bearing_statistics.md
     - Spectral analysis: design_and_algorithms/spectral_analysis.md
+    - Oblique analysis frames: design_and_algorithms/oblique_frames.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
@@ -134,6 +136,7 @@ nav:
     - Guides:
       - Load, inspect, and save a DEM: python/getting_started.md
       - Fetch a DEM: python/fetching.md
+      - Oblique frames: python/oblique_frames.md
       - Flow, channels, and basins: python/flow_networks.md
       - Chi and ksn: python/chi_ksn.md
       - Channel-head extraction: python/channel_extraction.md

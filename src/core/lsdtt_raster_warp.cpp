@@ -68,7 +68,33 @@ struct warp_request
 
     int n_threads   = 0;
     int warp_mem_mb = 512;
+
+    // Oblique-frame warps (warp_raster_to_frame, rotate_back_raster). GDAL
+    // sizes its resampling kernel from each warp chunk's source bounding box;
+    // a rotated grid's box is larger than the chunk, so GDAL treats an
+    // equal-cell rotation as downsampling and widens (smooths) the kernel by
+    // an amount that depends on the chunk size and the output driver. Measured
+    // on a 30 m COP30 DEM rotated by 36 deg: up to 55 m on cliffs against the
+    // fixed-scale exact warp. frame_kernel_scale > 0 sets XSCALE and YSCALE
+    // to it (1 for an equal-cell rotation, source / target cell when the
+    // target is coarser), and exact_transform adds -et 0, which together make
+    // the result independent of chunking and driver.
+    double frame_kernel_scale = 0.0;
+    bool   exact_transform    = false;
 };
+
+// -----------------------------------------------------------------------------
+// frame_kernel_scale
+//
+// The resampling-kernel scale of a frame warp (warp_request): 1 when the
+// target cell is no coarser than the source's ground pixel, otherwise
+// source / target, so a genuine downsample is still antialiased.
+// -----------------------------------------------------------------------------
+double frame_kernel_scale(double source_pixel_metres, double target_cell_metres)
+{
+    if (!(source_pixel_metres > 0.0) || !(target_cell_metres > 0.0)) return 1.0;
+    return std::min(1.0, source_pixel_metres / target_cell_metres);
+}
 
 // -----------------------------------------------------------------------------
 // normalise_resampling_method
@@ -307,6 +333,24 @@ char** build_gdalwarp_options(
         opts = CSLAddString(opts, "COMPRESS=DEFLATE");
         opts = CSLAddString(opts, "-co");
         opts = CSLAddString(opts, predictor_co.c_str());
+    }
+
+    if (req.exact_transform)
+    {
+        opts = CSLAddString(opts, "-et");
+        opts = CSLAddString(opts, "0");
+    }
+    if (req.frame_kernel_scale > 0.0)
+    {
+        std::ostringstream sc;
+        sc.precision(17);
+        sc << req.frame_kernel_scale;
+        const std::string xs = "XSCALE=" + sc.str();
+        const std::string ys = "YSCALE=" + sc.str();
+        opts = CSLAddString(opts, "-wo");
+        opts = CSLAddString(opts, xs.c_str());
+        opts = CSLAddString(opts, "-wo");
+        opts = CSLAddString(opts, ys.c_str());
     }
 
     // Multi-threading and memory
@@ -718,7 +762,10 @@ lsdtt_warp_result warp_raster_to_frame(
     frame_grid.n_cols    = frame.n_cols();
     frame_grid.n_rows    = frame.n_rows();
 
-    const warp_request req = grid_warp_request(source_meta, frame_grid, opts, "frame");
+    warp_request req = grid_warp_request(source_meta, frame_grid, opts, "frame");
+    req.exact_transform = true;
+    req.frame_kernel_scale = frame_kernel_scale(
+        frame_cell_size_for_raster(source_meta, 0.0), frame.cell_size);
     run_gdalwarp(in_path, out_path, req);
     return summarise_result(out_path, source_meta, frame_grid, true);
 }
@@ -1027,6 +1074,8 @@ lsdtt_rotate_back_result rotate_back_raster(
     req.dst_nodata        = meta.no_data_value;
     req.n_threads         = opts.n_threads;
     req.warp_mem_mb       = opts.warp_mem_mb;
+    req.exact_transform   = true;
+    req.frame_kernel_scale = frame_kernel_scale(meta.cell_size, c);
     run_gdalwarp(in_path, out_path, req);
     return result;
 }
