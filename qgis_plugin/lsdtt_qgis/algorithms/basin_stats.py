@@ -398,6 +398,9 @@ class BasinStatsAlgorithm(OutputOverwriteMixin, QgsProcessingAlgorithm):
             ),
             "write_basin_polygons": write_polygons,
             "write_vector_format": polygon_format,
+            # The table output is a file, read as <prefix>_basin_stats.csv
+            # below; the CLI's default is a FlatGeobuf point layer.
+            "basin_stats_write_vector_format": "csv",
             "write_basin_pdf_cdf_csv": self.parameterAsBool(
                 parameters, self.WRITE_BASIN_PDF_CDF, context
             ),

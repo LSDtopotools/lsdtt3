@@ -1,0 +1,17 @@
+# An unknown basin_stats_write_vector_format is refused before any work is done.
+read_path: __READ_PATH__
+read_fname: flat_valley_dem.asc
+write_path: __WRITE_PATH__
+write_fname: bsbad
+
+
+write_output_format: gtiff
+fill_before_routing: true
+fill_flat_resolution_choice: barnes2014b_float_step
+threshold_contributing_pixels: 1
+
+basin_outlet_fname: __READ_PATH__/flat_valley_outlets.csv
+basin_outlet_snapping_method: none
+reject_nodata_edge_basins: false
+calculate_channel_stats: true
+basin_stats_write_vector_format: shapefile

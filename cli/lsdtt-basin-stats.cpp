@@ -208,159 +208,157 @@ static std::string join_boundary_conditions(
     return out;
 }
 // -----------------------------------------------------------------------------
-// write_basin_stats_csv
+// basin_stats_schema / basin_stats_values
+//
+// The per-basin statistics as typed fields, in table column order. Both the
+// point layer and the CSV are written from these, so their columns cannot
+// drift apart. Doubles reach the CSV through csv_number at 17 significant
+// digits (exact round trip); the table used to be streamed at the default 6,
+// which put latitude/longitude ~5 m from outlet_x/outlet_y.
 // -----------------------------------------------------------------------------
-static void write_basin_stats_csv(
-    const std::string& csv_path,
-    const std::vector<basin_stats_record>& rows,
+static lsdtt::lsdtt_vector_schema basin_stats_schema(
     bool has_channel_stats,
     bool has_shape_metrics,
     bool has_com_bearing)
 {
-    std::ofstream out(csv_path);
-    if (!out)
+    using FT = lsdtt::lsdtt_vector_field_type;
+    lsdtt::lsdtt_vector_schema sch;
+    auto add = [&](const std::string& name, FT t)
     {
-        throw std::runtime_error(
-            "Could not open output CSV for writing: " + csv_path
-        );
-    }
-
-    out
-        << "basin_id"
-        << ",gauge_id"
-        << ",gauge_name"
-        << ",latitude"
-        << ",longitude"
-        << ",outlet_x"
-        << ",outlet_y"
-        << ",outlet_row"
-        << ",outlet_col"
-        << ",outlet_flat"
-        << ",n_pixels"
-        << ",drainage_area_km2"
-        << ",nodata_on_edge"
-        << ",centroid_x"
-        << ",centroid_y"
-        << ",centroid_latitude"
-        << ",centroid_longitude";
-
+        sch.field_names.push_back(name);
+        sch.field_types.push_back(t);
+    };
+    add("basin_id", FT::int64_type);
+    add("gauge_id", FT::string_type);
+    add("gauge_name", FT::string_type);
+    for (const char* f : {"latitude", "longitude", "outlet_x", "outlet_y"})
+        add(f, FT::double_type);
+    for (const char* f : {"outlet_row", "outlet_col", "outlet_flat", "n_pixels"})
+        add(f, FT::int64_type);
+    add("drainage_area_km2", FT::double_type);
+    add("nodata_on_edge", FT::int64_type);
+    for (const char* f : {"centroid_x", "centroid_y", "centroid_latitude", "centroid_longitude"})
+        add(f, FT::double_type);
     if (has_com_bearing)
     {
-        out << ",com_bearing_deg" << ",com_distance_m";
+        add("com_bearing_deg", FT::double_type);
+        add("com_distance_m", FT::double_type);
     }
-
-    out
-        << ",elevation_min"
-        << ",elevation_max"
-        << ",elevation_range"
-        << ",elevation_mean"
-        << ",elevation_25th"
-        << ",elevation_50th"
-        << ",elevation_75th"
-        << ",elevation_iqr"
-        << ",elevation_stddev"
-        << ",elevation_mad"
-        << ",slope_25th"
-        << ",slope_50th"
-        << ",slope_75th"
-        << ",flow_distance_25th"
-        << ",flow_distance_50th"
-        << ",flow_distance_75th";
-
+    for (const char* f : {"elevation_min", "elevation_max", "elevation_range", "elevation_mean",
+                          "elevation_25th", "elevation_50th", "elevation_75th", "elevation_iqr",
+                          "elevation_stddev", "elevation_mad", "slope_25th", "slope_50th",
+                          "slope_75th", "flow_distance_25th", "flow_distance_50th",
+                          "flow_distance_75th"})
+        add(f, FT::double_type);
     if (has_shape_metrics)
     {
-        out
-            << ",basin_length_m"
-            << ",elongation_ratio"
-            << ",form_factor"
-            << ",circularity_ratio"
-            << ",gravelius_compactness"
-            << ",solidity"
-            << ",eccentricity"
-            << ",orientation_deg"
-            << ",hypsometric_integral";
+        for (const char* f : {"basin_length_m", "elongation_ratio", "form_factor",
+                              "circularity_ratio", "gravelius_compactness", "solidity",
+                              "eccentricity", "orientation_deg", "hypsometric_integral"})
+            add(f, FT::double_type);
     }
+    if (has_channel_stats)
+    {
+        for (int o = 1; o <= 6; ++o)
+            add("channel_length_O" + std::to_string(o), FT::double_type);
+    }
+    return sch;
+}
 
+static std::vector<lsdtt::lsdtt_vector_field_value> basin_stats_values(
+    const basin_stats_record& row,
+    bool has_channel_stats,
+    bool has_shape_metrics,
+    bool has_com_bearing)
+{
+    std::vector<lsdtt::lsdtt_vector_field_value> v;
+    v.emplace_back(static_cast<std::int64_t>(row.basin_id));
+    v.emplace_back(row.gauge_id);
+    v.emplace_back(row.gauge_name);
+    for (double d : {row.latitude, row.longitude, row.outlet_x, row.outlet_y})
+        v.emplace_back(d);
+    for (std::int64_t i : {static_cast<std::int64_t>(row.outlet_row),
+                           static_cast<std::int64_t>(row.outlet_col),
+                           static_cast<std::int64_t>(row.outlet_flat),
+                           static_cast<std::int64_t>(row.n_pixels)})
+        v.emplace_back(i);
+    v.emplace_back(row.drainage_area_km2);
+    v.emplace_back(static_cast<std::int64_t>(row.nodata_on_edge ? 1 : 0));
+    for (double d : {row.centroid_x, row.centroid_y, row.centroid_latitude,
+                     row.centroid_longitude})
+        v.emplace_back(d);
+    if (has_com_bearing)
+    {
+        v.emplace_back(row.com_bearing_deg);
+        v.emplace_back(row.com_distance_m);
+    }
+    for (double d : {row.stats.min, row.stats.max, row.stats.range, row.stats.mean,
+                     row.stats.q25, row.stats.median, row.stats.q75, row.stats.iqr,
+                     row.stats.stddev_sample, row.stats.median_absolute_deviation,
+                     row.slope_25th, row.slope_50th, row.slope_75th,
+                     row.flow_distance_25th, row.flow_distance_50th,
+                     row.flow_distance_75th})
+        v.emplace_back(d);
+    if (has_shape_metrics)
+    {
+        for (double d : {row.basin_length_m, row.elongation_ratio, row.form_factor,
+                         row.circularity_ratio, row.gravelius_compactness, row.solidity,
+                         row.eccentricity, row.orientation_deg, row.hypsometric_integral})
+            v.emplace_back(d);
+    }
     if (has_channel_stats)
     {
         for (int o = 1; o <= 6; ++o)
         {
-            out << ",channel_length_O" << o;
+            auto it = row.channel_length_by_order.find(o);
+            v.emplace_back(it != row.channel_length_by_order.end() ? it->second : 0.0);
         }
     }
+    return v;
+}
 
-    out << "\n";
-
-    for (const auto& row : rows)
+// -----------------------------------------------------------------------------
+// write_basin_stats_table
+//
+// One record per basin: a point at the basin outlet (outlet_x, outlet_y, in
+// the DEM's CRS) for FlatGeobuf / GeoPackage, or a CSV row.
+// -----------------------------------------------------------------------------
+static void write_basin_stats_table(
+    const std::string&                     out_path,
+    const std::vector<basin_stats_record>& rows,
+    lsdtt::point_output_format             fmt,
+    const std::string&                     crs_wkt,
+    bool                                   has_channel_stats,
+    bool                                   has_shape_metrics,
+    bool                                   has_com_bearing)
+{
+    const lsdtt::lsdtt_vector_schema sch =
+        basin_stats_schema(has_channel_stats, has_shape_metrics, has_com_bearing);
+    lsdtt::lsdtt_data_loader writer;
+    if (fmt == lsdtt::point_output_format::csv)
     {
-        out
-            << row.basin_id << ","
-            << row.gauge_id << ","
-            << row.gauge_name << ","
-            << row.latitude << ","
-            << row.longitude << ","
-            << row.outlet_x << ","
-            << row.outlet_y << ","
-            << row.outlet_row << ","
-            << row.outlet_col << ","
-            << row.outlet_flat << ","
-            << row.n_pixels << ","
-            << row.drainage_area_km2 << ","
-            << (row.nodata_on_edge ? 1 : 0) << ","
-            << row.centroid_x << ","
-            << row.centroid_y << ","
-            << row.centroid_latitude << ","
-            << row.centroid_longitude;
-
-        if (has_com_bearing)
+        std::vector<std::vector<std::string>> cells;
+        cells.reserve(rows.size());
+        for (const auto& row : rows)
         {
-            out << "," << row.com_bearing_deg << "," << row.com_distance_m;
+            std::vector<std::string> line;
+            for (const auto& value :
+                 basin_stats_values(row, has_channel_stats, has_shape_metrics, has_com_bearing))
+                line.push_back(lsdtt::vector_field_value_to_string(value));
+            cells.push_back(std::move(line));
         }
-
-        out
-            << "," << row.stats.min << ","
-            << row.stats.max << ","
-            << row.stats.range << ","
-            << row.stats.mean << ","
-            << row.stats.q25 << ","
-            << row.stats.median << ","
-            << row.stats.q75 << ","
-            << row.stats.iqr << ","
-            << row.stats.stddev_sample << ","
-            << row.stats.median_absolute_deviation << ","
-            << row.slope_25th << ","
-            << row.slope_50th << ","
-            << row.slope_75th << ","
-            << row.flow_distance_25th << ","
-            << row.flow_distance_50th << ","
-            << row.flow_distance_75th;
-
-        if (has_shape_metrics)
-        {
-            out
-                << "," << row.basin_length_m
-                << "," << row.elongation_ratio
-                << "," << row.form_factor
-                << "," << row.circularity_ratio
-                << "," << row.gravelius_compactness
-                << "," << row.solidity
-                << "," << row.eccentricity
-                << "," << row.orientation_deg
-                << "," << row.hypsometric_integral;
-        }
-
-        if (has_channel_stats)
-        {
-            for (int o = 1; o <= 6; ++o)
-            {
-                auto it = row.channel_length_by_order.find(o);
-                out << "," << (it != row.channel_length_by_order.end()
-                                   ? it->second : 0.0);
-            }
-        }
-
-        out << "\n";
+        writer.write_csv(out_path, sch.field_names, cells);
+        return;
     }
+    // No spatial index: FlatGeobuf would reorder the features along a Hilbert
+    // curve, and the table is kept in basin_id order, as the CSV is.
+    writer.begin_vector_write(out_path, "basin_stats", sch, crs_wkt,
+                              lsdtt::convert_point_to_vector_output_format(fmt), false);
+    for (const auto& row : rows)
+        writer.write_point(row.outlet_x, row.outlet_y,
+                           basin_stats_values(row, has_channel_stats, has_shape_metrics,
+                                              has_com_bearing));
+    writer.finish_vector_write();
 }
 
 // -----------------------------------------------------------------------------
@@ -692,6 +690,17 @@ int main(int argc, char* argv[])
         "Format set by write_vector_format.",
         "Channel statistics", "switch", ""};
 
+    string_default_map["basin_stats_write_vector_format"] = "flatgeobuf";
+    help_map["basin_stats_write_vector_format"] = {"string","flatgeobuf",
+        "Format of the basin statistics table: flatgeobuf, gpkg or csv.",
+        "flatgeobuf (default) writes <write_fname>_basin_stats.fgb, one point per "
+        "basin at its outlet in the DEM's CRS with every statistic as an "
+        "attribute; gpkg the same as GeoPackage; csv writes "
+        "<write_fname>_basin_stats.csv, where latitude/longitude and "
+        "outlet_x/outlet_y locate each basin. Numbers are written at full "
+        "double precision.",
+        "Channel statistics", "param", ""};
+
     string_default_map["write_vector_format"] = "flatgeobuf";
     help_map["write_vector_format"] = {"string","flatgeobuf",
         "Vector format for the basin-polygon output.",
@@ -719,7 +728,7 @@ int main(int argc, char* argv[])
         "gravelius_compactness, solidity, eccentricity, orientation_deg (principal "
         "axis, [0, 180) clockwise from grid north, or from true north with "
         "bearings_relative_to_true_north), and "
-        "hypsometric_integral columns to the output CSV. When false, the outline "
+        "hypsometric_integral columns to the basin statistics table. When false, the outline "
         "is not traced and those columns are omitted, reproducing the original "
         "basin-stats output. See docs/tex_technical/basin_shape_metrics.tex.",
         "Basin shape metrics", "switch", ""};
@@ -909,6 +918,18 @@ int main(int argc, char* argv[])
 
         std::cout << "Output format: " << fmt_str << "\n";
     }
+
+    // The basin statistics table: a point layer (default) or CSV.
+    const std::string& stats_fmt_str = sf["basin_stats_write_vector_format"];
+    if (stats_fmt_str != "flatgeobuf" && stats_fmt_str != "fgb" &&
+        stats_fmt_str != "gpkg" && stats_fmt_str != "csv")
+    {
+        std::cerr << "FATAL: basin_stats_write_vector_format must be flatgeobuf, gpkg or csv "
+                     "(got '" << stats_fmt_str << "').\n";
+        return 1;
+    }
+    const lsdtt::point_output_format stats_fmt =
+        lsdtt::resolve_point_output_format(stats_fmt_str);
 
     // How flats are made drainable (Barnes et al. 2014b options). Checked
     // here, before any raster work. Only a fill uses it: with
@@ -1576,18 +1597,19 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // Write basin statistics CSV
+    // Write the basin statistics table (point layer or CSV)
     // -------------------------------------------------------------------------
     try
     {
-        const std::string csv_out = pp.make_output_path( "_basin_stats.csv");
-        std::cout << "\nWriting basin statistics CSV: " << csv_out << "\n";
-        write_basin_stats_csv(csv_out, basin_rows, has_channel_network,
-                              do_shape_metrics, do_com_bearing);
+        const std::string stats_out =
+            pp.make_output_path("_basin_stats" + lsdtt::output_extension(stats_fmt));
+        std::cout << "\nWriting basin statistics: " << stats_out << "\n";
+        write_basin_stats_table(stats_out, basin_rows, stats_fmt, meta.crs_wkt,
+                                has_channel_network, do_shape_metrics, do_com_bearing);
     }
     catch (const std::exception& e)
     {
-        std::cerr << "FATAL: failed to write basin statistics CSV: "
+        std::cerr << "FATAL: failed to write basin statistics: "
                   << e.what() << "\n";
         return 1;
     }

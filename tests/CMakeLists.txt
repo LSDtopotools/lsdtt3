@@ -2443,7 +2443,12 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # the record, the per-basin accumulation and the two writers out of
             # main(). It says "the output did not change", nothing about whether
             # the output is right. Re-freeze deliberately if a change is intended.
-            --expect-sha256 bs_basin_stats.csv:6b8129739e73739716eb565ba822a85c4952efd55eb8ff0e3f41a1e10efa75a5
+            # Re-frozen 2026-10-25: the table is written at 17 significant
+            # digits (was the stream default of 6, ~5 m in latitude/longitude),
+            # and as CSV only because the template asks for it. Check made then:
+            # the new file reprinted at 6 significant digits hashes to the old
+            # oracle (6b812973...), so only the precision changed.
+            --expect-sha256 bs_basin_stats.csv:3917286425c4931152f04b9dbc97f52740a6d929e7d88e5eb5701f9170fbb3ea
             # Canonical-default regression: the parameter is deliberately absent
             # from the fixture, so this pins the shared default and its behaviour.
             --stdout-contains "threshold = 1000 px"
@@ -6922,10 +6927,21 @@ add_lsdtt_cli_smoke_test(
     smoke_basin_stats_flat_resolution_float_step
     lsdtt-basin-stats
     basin_stats_flat_resolution_float_step.param.in
-    bsvf_basin_stats.csv
+    bsvf_basin_stats.fgb
+    # The default table format: a FlatGeobuf point layer, one point per basin.
+    --expect-vector-feature-min bsvf_basin_stats.fgb:1
     --stdout-contains "Flat resolution: Barnes et al. (2014b), https://doi.org/10.1016/j.cageo.2013.01.009, method barnes2014b_float_step"
     --stdout-contains "Flat regions: 1, flat cells: 198, NO_FLOW cells: 195"
     --stdout-contains "Basin pixels  : 207"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_basin_stats_bad_output_format
+    lsdtt-basin-stats
+    basin_stats_bad_output_format.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "basin_stats_write_vector_format must be flatgeobuf, gpkg or csv"
 )
 
 # fill_before_routing: false (the two CLIs that have it). The NOTE is the

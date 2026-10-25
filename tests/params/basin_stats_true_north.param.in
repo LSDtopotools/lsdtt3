@@ -11,3 +11,4 @@ reject_nodata_edge_basins: false
 calculate_centre_of_mass_bearing: true
 calculate_shape_metrics: true
 bearings_relative_to_true_north: true
+basin_stats_write_vector_format: csv
