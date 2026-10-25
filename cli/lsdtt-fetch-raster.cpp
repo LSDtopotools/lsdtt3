@@ -136,7 +136,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Startup and parameter-file loading
     // -------------------------------------------------------------------------
-    print_banner();
+    if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))
+        print_banner();
 
     // Register drivers up front, not just before the fetch: reading bounds from
     // a vector file needs the OGR drivers, and that happens during parameter

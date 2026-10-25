@@ -199,7 +199,8 @@ public:
     // Construction
     // -------------------------------------------------------------------------
 
-    // Default - produces an empty parser. Always prefer the path+file constructor.
+    // Default - an empty placeholder (prints nothing). Always prefer the
+    // path+file constructor.
     lsdtt_param_parser();
 
     // Construct from a path and filename. Immediately parses the file.
@@ -412,6 +413,13 @@ public:
     // their own.
     // When no help is requested, path/fname resolution requires a parameter
     // file (exit(1) when none is given).
+    // True if these arguments ask for --help-json / -h json, read in the same
+    // order as parse_args_deferred (so "-v -h json" is a version request).
+    // CLIs print their welcome banner only when this is false: -h json
+    // writes nothing to stdout but the JSON document, so a program or a
+    // coding agent can parse it as it comes.
+    static bool help_json_requested(int argc, char* argv[]);
+
     static lsdtt_cli_args parse_args_deferred(
         int argc, char* argv[],
         const std::string& tool_name,
@@ -638,6 +646,18 @@ private:
     // Applies the key policy to the raw file keys. Called by both
     // parse_all_parameters overloads before any typed parse runs.
     void apply_key_policy(const std::vector<std::string>& declared_keys);
+
+    // Checks every supplied value against its declared type (whole numbers,
+    // finite numbers, true/false spellings, no empty numeric or boolean value,
+    // no quoted value) and adds a problem for each failure. If apply_key_policy
+    // or this found any problem, prints them all as FATAL lines and exits 1.
+    void validate_values(const std::vector<std::string>& int_keys,
+                         const std::vector<std::string>& float_keys,
+                         const std::vector<std::string>& double_keys,
+                         const std::vector<std::string>& bool_keys);
+
+    // Problems that stop the run, collected so one run reports all of them.
+    std::vector<std::string> fatal_problems_;
 
 public:
     // True if the parameter file actually contained this key.

@@ -91,7 +91,8 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Startup and parameter-file loading
     // -------------------------------------------------------------------------
-    print_banner();
+    if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))
+        print_banner();
 
     lsdtt::lsdtt_cli_args cli_args = lsdtt::lsdtt_param_parser::parse_args_deferred(
         argc, argv, k_tool_name, k_status, k_citation);

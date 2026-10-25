@@ -35,7 +35,10 @@ mechanical naming rules:
                         decision, so only the value is checked.
 
 A CLI whose `-h json` cannot be parsed is itself reported, as rule
-`help_json_unparseable`, through the same baseline mechanism.
+`help_json_unparseable`, through the same baseline mechanism. stdout of
+`-h json` must be the JSON document alone (no banner), so a program or a
+coding agent can parse it as it comes; `-h` for a person must still start
+with the welcome banner (rule `banner_missing`).
 
 REPORT-ONLY WITH A BASELINE ALLOW-LIST
 --------------------------------------
@@ -87,6 +90,7 @@ R_MINIMUM = "minimum_prefix"
 R_TOL = "tol_abbreviation"
 R_UNPARSEABLE = "help_json_unparseable"
 R_STATUS = "cli_status"
+R_BANNER = "banner_missing"
 CLI_STATUSES = ("experimental", "stable")
 
 # Section 3 / 10b deliberate exception to the `min_` rule.
@@ -215,7 +219,11 @@ def unmeasurable_clis(bin_dir: Path, cli_src_dir: Path) -> tuple[list[str], list
 
 
 def read_help_json(exe: Path, timeout: float) -> tuple[list[dict], object]:
-    """Run `<exe> -h json` and parse the JSON document that follows the banner.
+    """Run `<exe> -h json` and parse its stdout as one JSON document.
+
+    stdout must be the document and nothing else: no welcome banner or other
+    preamble, so a program or a coding agent can parse it as it comes. A CLI
+    that prints anything else is reported as unparseable.
 
     Returns (parameters, status). Raises RuntimeError with a short reason if
     the document cannot be read.
@@ -233,13 +241,13 @@ def read_help_json(exe: Path, timeout: float) -> tuple[list[dict], object]:
         raise RuntimeError("could not execute: %s" % exc)
 
     text = proc.stdout
-    brace = text.find("{")
-    if brace < 0:
+    if not text.lstrip().startswith("{"):
         raise RuntimeError(
-            "no JSON document in stdout (exit code %d)" % proc.returncode
+            "stdout is not just a JSON document (exit code %d); it starts %r"
+            % (proc.returncode, text.lstrip()[:40])
         )
     try:
-        doc = json.loads(text[brace:])
+        doc = json.loads(text)
     except json.JSONDecodeError as exc:
         raise RuntimeError("JSON parse error: %s" % exc)
 
@@ -247,6 +255,20 @@ def read_help_json(exe: Path, timeout: float) -> tuple[list[dict], object]:
     if not isinstance(params, list):
         raise RuntimeError("document has no 'parameters' array")
     return params, doc.get("status")
+
+
+def shows_banner(exe: Path, timeout: float) -> bool:
+    """True if `<exe> -h` (help for a person) starts with the welcome banner.
+
+    The banner is dropped only for `-h json`; everywhere else a user sees it.
+    """
+    try:
+        proc = lsdtt_test_env.run(
+            [str(exe), "-h"], capture_output=True, text=True, timeout=timeout
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return "Welcome to" in "\n".join(proc.stdout.lstrip().splitlines()[:3])
 
 
 def helptext(param: dict) -> str:
@@ -544,6 +566,15 @@ def main() -> int:
         n_parsed += 1
         n_params += len(params)
         violations.extend(check_cli(exe.name, params))
+        if not shows_banner(exe, args.timeout):
+            violations.append(
+                {
+                    "cli": exe.name,
+                    "parameter": "-",
+                    "rule": R_BANNER,
+                    "detail": "`-h` does not start with the welcome banner",
+                }
+            )
         if status not in CLI_STATUSES:
             violations.append(
                 {
