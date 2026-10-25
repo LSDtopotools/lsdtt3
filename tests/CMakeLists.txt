@@ -9119,6 +9119,21 @@ lsdtt_set_tests_properties(unit_param_parser_deprecation PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
 # =============================================================================
+# unit_param_parser_strict
+#
+# Where the parser finds the parameter file (a filename with its own directory,
+# absolute or relative, sets read_path to that directory) and that the
+# placeholder constructor every CLI declares prints nothing.
+# =============================================================================
+add_executable(lsdtt-test-param-parser-strict cpp/test_param_parser_strict.cpp)
+target_link_libraries(lsdtt-test-param-parser-strict PRIVATE lsdtt3_core)
+
+add_test(NAME unit_param_parser_strict
+         COMMAND lsdtt-test-param-parser-strict
+                 "${CMAKE_CURRENT_BINARY_DIR}/param_parser_strict")
+lsdtt_set_tests_properties(unit_param_parser_strict PROPERTIES LABELS "unit")
+
+# =============================================================================
 # lsdtt-fluvial-surfaces
 #
 # The tool between lsdtt-flat-surface-finder (which ground is flat?) and

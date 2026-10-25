@@ -199,7 +199,8 @@ public:
     // Construction
     // -------------------------------------------------------------------------
 
-    // Default - produces an empty parser. Always prefer the path+file constructor.
+    // Default - an empty placeholder (prints nothing). Always prefer the
+    // path+file constructor.
     lsdtt_param_parser();
 
     // Construct from a path and filename. Immediately parses the file.
@@ -638,6 +639,18 @@ private:
     // Applies the key policy to the raw file keys. Called by both
     // parse_all_parameters overloads before any typed parse runs.
     void apply_key_policy(const std::vector<std::string>& declared_keys);
+
+    // Checks every supplied value against its declared type (whole numbers,
+    // finite numbers, true/false spellings, no empty numeric or boolean value,
+    // no quoted value) and adds a problem for each failure. If apply_key_policy
+    // or this found any problem, prints them all as FATAL lines and exits 1.
+    void validate_values(const std::vector<std::string>& int_keys,
+                         const std::vector<std::string>& float_keys,
+                         const std::vector<std::string>& double_keys,
+                         const std::vector<std::string>& bool_keys);
+
+    // Problems that stop the run, collected so one run reports all of them.
+    std::vector<std::string> fatal_problems_;
 
 public:
     // True if the parameter file actually contained this key.

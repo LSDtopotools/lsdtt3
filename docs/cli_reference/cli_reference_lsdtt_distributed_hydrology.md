@@ -335,7 +335,7 @@ channel_n_ref_area_m2: 1e6
 # Interception
 run_interception: true
 landcover_fname: lulc.tif
-landcover_table: "grazing:code=1,lai=1.5,n=0.30,soil=CULT;woodland:code=2,lai=5.0,n=0.60,soil=SEMI"
+landcover_table: grazing:code=1,lai=1.5,n=0.30,soil=CULT;woodland:code=2,lai=5.0,n=0.60,soil=SEMI
 canopy_storage_mm_per_lai: 0.3
 lai_seasonal_factor: 1.0
 

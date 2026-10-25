@@ -20,6 +20,8 @@
 #include "lsdtt_gdal_init.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -53,18 +55,32 @@ std::string lsdtt3_package_version()
 // Construction
 // -----------------------------------------------------------------------------
 
-lsdtt_param_parser::lsdtt_param_parser()
-{
-    std::cout << "lsdtt_param_parser: created empty parser. "
-              << "Provide a path and filename to parse a parameter file.\n";
-}
+// Silent: every CLI declares a parser before assigning the real one, so a
+// message here was printed on every run and read like an error.
+lsdtt_param_parser::lsdtt_param_parser() = default;
 
 lsdtt_param_parser::lsdtt_param_parser(
     const std::string& path,
     const std::string& filename)
 {
-    param_file_path_ = fix_path(path);
-    param_fname_     = filename;
+    // A filename that carries its own directory ("/abs/dir/run.param", or
+    // "sub/run.param") is split, so read_path defaults to the directory that
+    // actually holds the file, as -h promises. Without the split, the one-
+    // argument form glued an absolute filename onto "./" (".//abs/dir/...").
+    const std::filesystem::path file(filename);
+    if (file.has_parent_path())
+    {
+        const std::filesystem::path dir = file.is_absolute()
+            ? file.parent_path()
+            : std::filesystem::path(fix_path(path)) / file.parent_path();
+        param_file_path_ = fix_path(dir.string());
+        param_fname_     = file.filename().string();
+    }
+    else
+    {
+        param_file_path_ = fix_path(path);
+        param_fname_     = filename;
+    }
 
     std::string full_path = param_file_path_ + param_fname_;
 
@@ -195,6 +211,100 @@ void lsdtt_param_parser::set_deprecated_compatibility_aliases(
             compatibility_storage_keys_.insert(policy.storage_key);
     }
 }
+
+// -----------------------------------------------------------------------------
+// Strict value reading
+//
+// The typed parses used std::stoi / std::stof, which read a leading number and
+// drop the rest: "1e3" and "1.5" for an integer became 1, "100m" became 100,
+// and an empty value threw an exception named only "stoi". Booleans were true
+// for six spellings and FALSE FOR EVERYTHING ELSE, so "yes" silently meant
+// false. Every value is now read whole, and anything that cannot be honoured
+// stops the run with the key, the value and the fix.
+// -----------------------------------------------------------------------------
+namespace
+{
+
+const std::set<std::string> k_bool_true  = {"true", "True", "TRUE", "t", "T", "1"};
+const std::set<std::string> k_bool_false = {"false", "False", "FALSE", "f", "F", "0"};
+
+// The whole of v as an integer. from_chars takes no leading '+', so skip one.
+bool read_whole_int(const std::string& v, long long& out)
+{
+    const char* first = v.data();
+    const char* last  = v.data() + v.size();
+    if (first != last && *first == '+') ++first;
+    if (first == last) return false;
+    const auto [ptr, ec] = std::from_chars(first, last, out);
+    return ec == std::errc() && ptr == last;
+}
+
+// The whole of v as a finite real. strtod rather than floating-point
+// from_chars, which the macOS toolchain lacks; the CLIs never call setlocale,
+// so this reads '.' decimals everywhere.
+bool read_whole_real(const std::string& v, double& out)
+{
+    if (v.empty() || std::isspace(static_cast<unsigned char>(v.front()))) return false;
+    errno = 0;
+    char* end = nullptr;
+    out = std::strtod(v.c_str(), &end);
+    return end == v.c_str() + v.size() && errno != ERANGE && std::isfinite(out);
+}
+
+std::size_t edit_distance(const std::string& a, const std::string& b)
+{
+    std::vector<std::size_t> row(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j) row[j] = j;
+    for (std::size_t i = 1; i <= a.size(); ++i)
+    {
+        std::size_t diagonal = row[0];
+        row[0] = i;
+        for (std::size_t j = 1; j <= b.size(); ++j)
+        {
+            const std::size_t above = row[j];
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1,
+                               diagonal + (a[i - 1] == b[j - 1] ? 0 : 1)});
+            diagonal = above;
+        }
+    }
+    return row[b.size()];
+}
+
+std::string lower_ascii(std::string s)
+{
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// The declared key an unknown key was probably meant to be, or "". A match is
+// the same key in another case, or (for keys of 4+ characters) one within
+// min(2, length/4) edits. The length rule stops a short unknown key such as
+// "m" being "corrected" to the one-letter keys K or D.
+std::string near_miss(const std::string& unknown,
+                      const std::set<std::string>& candidates)
+{
+    const std::string unknown_lower = lower_ascii(unknown);
+    for (const std::string& c : candidates)
+        if (lower_ascii(c) == unknown_lower) return c;
+    if (unknown.size() < 4) return "";
+    const std::size_t limit = std::min<std::size_t>(2, unknown.size() / 4);
+    std::string best;
+    std::size_t best_distance = limit + 1;
+    for (const std::string& c : candidates)
+    {
+        const std::size_t d = edit_distance(unknown, c);
+        if (d < best_distance) { best_distance = d; best = c; }
+    }
+    return best;
+}
+
+bool is_quoted(const std::string& v)
+{
+    return v.size() >= 2 && (v.front() == '"' || v.front() == '\'') &&
+           v.back() == v.front();
+}
+
+} // namespace
 
 void lsdtt_param_parser::apply_key_policy(
     const std::vector<std::string>& declared_keys)
@@ -385,16 +495,30 @@ void lsdtt_param_parser::apply_key_policy(
         parameter_map_.erase(old_key);
     }
 
-    // --- 5. Unknown keys: a warning, never fatal -----------------------------
+    // --- 5. Unknown keys ------------------------------------------------------
+    // One that is a near miss of a parameter this tool declares is a misspelt
+    // key, and running on would silently use the default for the parameter the
+    // user meant to set: it is a fatal problem, reported with the other value
+    // problems by parse_all_parameters. Any other unknown key is a warning.
     if (!report_unknown_keys_) return;
 
     const std::set<std::string> declared(declared_keys.begin(),
                                          declared_keys.end());
+    std::set<std::string> candidates = declared;
+    candidates.insert(reserved.begin(), reserved.end());
     std::vector<std::string> unknown;
     for (const auto& [key, value] : parameter_map_)
     {
         (void)value;
         if (reserved.count(key) || declared.count(key)) continue;
+        const std::string meant = near_miss(key, candidates);
+        if (!meant.empty())
+        {
+            fatal_problems_.push_back(
+                "parameter '" + key + "' is not a parameter of this tool. "
+                "Did you mean '" + meant + "'?");
+            continue;
+        }
         unknown.push_back(key);
     }
     if (unknown.empty()) return;
@@ -421,6 +545,8 @@ void lsdtt_param_parser::parse_all_parameters(
     for (const auto& kv : defaults_b) declared.push_back(kv.first);
     for (const auto& kv : defaults_s) declared.push_back(kv.first);
     apply_key_policy(declared);
+    validate_values(keys_of(defaults_i), keys_of(defaults_f), {},
+                    keys_of(defaults_b));
 
     parse_float_parameters(defaults_f);
     parse_int_parameters(defaults_i);
@@ -443,12 +569,114 @@ void lsdtt_param_parser::parse_all_parameters(
     for (const auto& kv : defaults_s) declared.push_back(kv.first);
     for (const auto& kv : defaults_d) declared.push_back(kv.first);
     apply_key_policy(declared);
+    validate_values(keys_of(defaults_i), keys_of(defaults_f), keys_of(defaults_d),
+                    keys_of(defaults_b));
 
     parse_float_parameters(defaults_f);
     parse_int_parameters(defaults_i);
     parse_bool_parameters(defaults_b);
     parse_string_parameters(defaults_s);
     parse_double_parameters(defaults_d);
+}
+
+void lsdtt_param_parser::validate_values(
+    const std::vector<std::string>& int_keys,
+    const std::vector<std::string>& float_keys,
+    const std::vector<std::string>& double_keys,
+    const std::vector<std::string>& bool_keys)
+{
+    auto value_of = [this](const std::string& key) -> const std::string*
+    {
+        const auto it = parameter_map_.find(key);
+        return it == parameter_map_.end() ? nullptr : &it->second;
+    };
+    auto problem = [this](const std::string& key, const std::string& text)
+    {
+        fatal_problems_.push_back("parameter '" + key + "' " + text);
+    };
+    auto no_value = [&](const std::string& key, const std::string& kind)
+    {
+        problem(key, "has no value. Give " + kind +
+                     ", or delete the line to use the default.");
+    };
+
+    for (const std::string& key : int_keys)
+    {
+        const std::string* v = value_of(key);
+        if (!v) continue;
+        if (v->empty()) { no_value(key, "a whole number"); continue; }
+        long long n = 0;
+        double real = 0.0;
+        if (read_whole_int(*v, n))
+        {
+            if (n < std::numeric_limits<int>::min() ||
+                n > std::numeric_limits<int>::max())
+                problem(key, "value '" + *v + "' is out of range for a whole "
+                             "number parameter.");
+            continue;
+        }
+        std::string fix = "Write a whole number, e.g. 1000.";
+        if (read_whole_real(*v, real) && real == std::floor(real) &&
+            std::fabs(real) <= std::numeric_limits<int>::max())
+        {
+            fix = "Write it as a whole number: " +
+                  std::to_string(static_cast<long long>(real)) + ".";
+        }
+        problem(key, "value '" + *v + "' is not a whole number. " + fix);
+    }
+
+    auto check_real = [&](const std::string& key, double max_abs)
+    {
+        const std::string* v = value_of(key);
+        if (!v) return;
+        if (v->empty()) { no_value(key, "a number"); return; }
+        double x = 0.0;
+        if (!read_whole_real(*v, x))
+        {
+            problem(key, "value '" + *v + "' is not a number. Write a plain "
+                         "number such as 0.5, 2 or 1e-4, with no units.");
+        }
+        else if (std::fabs(x) > max_abs)
+        {
+            problem(key, "value '" + *v + "' is out of range.");
+        }
+    };
+    for (const std::string& key : float_keys)
+        check_real(key, std::numeric_limits<float>::max());
+    for (const std::string& key : double_keys)
+        check_real(key, std::numeric_limits<double>::max());
+
+    for (const std::string& key : bool_keys)
+    {
+        const std::string* v = value_of(key);
+        if (!v) continue;
+        if (v->empty()) { no_value(key, "true or false"); continue; }
+        if (k_bool_true.count(*v) || k_bool_false.count(*v)) continue;
+        problem(key, "value '" + *v + "' is not true or false. Write true or "
+                     "false (also accepted: True, TRUE, t, T, 1 and False, "
+                     "FALSE, f, F, 0).");
+    }
+
+    // lsdtt3 never strips quotes, so a quoted value always includes them.
+    for (const auto& [key, v] : parameter_map_)
+    {
+        if (!is_quoted(v)) continue;
+        problem(key, "value " + v + " is quoted, and lsdtt3 keeps quote "
+                     "characters as part of the value. Write " +
+                     v.substr(1, v.size() - 2) + ".");
+    }
+
+    if (fatal_problems_.empty()) return;
+
+    // All of them in one run, as for removed keys, and the same exit: no CLI
+    // guards this call, so throwing would end in std::terminate.
+    std::cerr << "\n";
+    for (const std::string& text : fatal_problems_)
+        std::cerr << "FATAL: " << text << "\n";
+    std::cerr << "  " << fatal_problems_.size() << " problem(s) in "
+              << param_fname_ << ". Fix them and run again; \"-h <parameter>\""
+              << " explains any parameter.\n";
+    std::exit(1);
 }
 
 void lsdtt_param_parser::parse_float_parameters(
@@ -458,7 +686,9 @@ void lsdtt_param_parser::parse_float_parameters(
     {
         if (parameter_map_.count(key))
         {
-            float_parameters_[key] = std::stof(parameter_map_[key]);
+            double x = 0.0;
+            read_whole_real(parameter_map_[key], x);
+            float_parameters_[key] = static_cast<float>(x);
             parameters_read_map_[key] = parameter_map_[key];
         }
         else
@@ -476,7 +706,9 @@ void lsdtt_param_parser::parse_int_parameters(
     {
         if (parameter_map_.count(key))
         {
-            int_parameters_[key] = std::stoi(parameter_map_[key]);
+            long long n = 0;
+            read_whole_int(parameter_map_[key], n);
+            int_parameters_[key] = static_cast<int>(n);
             parameters_read_map_[key] = parameter_map_[key];
         }
         else
@@ -495,9 +727,7 @@ void lsdtt_param_parser::parse_bool_parameters(
         if (parameter_map_.count(key))
         {
             const std::string& v = parameter_map_[key];
-            bool result = (v == "true" || v == "True" || v == "TRUE" ||
-                           v == "t"    || v == "T"    || v == "1");
-            bool_parameters_[key] = result;
+            bool_parameters_[key] = k_bool_true.count(v) > 0;
             parameters_read_map_[key] = v;
         }
         else
@@ -533,7 +763,9 @@ void lsdtt_param_parser::parse_double_parameters(
     {
         if (parameter_map_.count(key))
         {
-            double_parameters_[key] = std::stod(parameter_map_[key]);
+            double x = 0.0;
+            read_whole_real(parameter_map_[key], x);
+            double_parameters_[key] = x;
             parameters_read_map_[key] = parameter_map_[key];
         }
         else
@@ -596,7 +828,12 @@ std::vector<int> lsdtt_param_parser::parse_int_vector(
     std::vector<int> result;
     for (const auto& s : parse_string_vector(key))
     {
-        result.push_back(std::stoi(s));
+        long long n = 0;
+        if (!read_whole_int(s, n) || n < std::numeric_limits<int>::min() ||
+            n > std::numeric_limits<int>::max())
+            throw std::runtime_error("parameter '" + key + "': list item '" + s +
+                                     "' is not a whole number");
+        result.push_back(static_cast<int>(n));
     }
     return result;
 }
@@ -607,7 +844,11 @@ std::vector<float> lsdtt_param_parser::parse_float_vector(
     std::vector<float> result;
     for (const auto& s : parse_string_vector(key))
     {
-        result.push_back(std::stof(s));
+        double x = 0.0;
+        if (!read_whole_real(s, x) || std::fabs(x) > std::numeric_limits<float>::max())
+            throw std::runtime_error("parameter '" + key + "': list item '" + s +
+                                     "' is not a number");
+        result.push_back(static_cast<float>(x));
     }
     return result;
 }
@@ -618,7 +859,11 @@ std::vector<double> lsdtt_param_parser::parse_double_vector(
     std::vector<double> result;
     for (const auto& s : parse_string_vector(key))
     {
-        result.push_back(std::stod(s));
+        double x = 0.0;
+        if (!read_whole_real(s, x))
+            throw std::runtime_error("parameter '" + key + "': list item '" + s +
+                                     "' is not a number");
+        result.push_back(x);
     }
     return result;
 }

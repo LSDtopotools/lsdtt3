@@ -28,8 +28,9 @@
 //              across, a warning names the replacement, and the run COMPLETES
 //              with the value applied - not merely accepted and dropped.
 //   unknown    the key is in neither list and no defaults map declares it. It
-//              is REPORTED rather than silently swallowed, but it is only a
-//              warning: a false positive must never stop a run.
+//              is REPORTED rather than silently swallowed. An unrelated key is
+//              only a warning; a near miss of a declared key (a misspelling)
+//              STOPS the run and names the key it was probably meant to be.
 //
 // A fourth arm checks the negative case - a clean parameter file must produce
 // none of the three - because three arms that only ever assert "something was
@@ -578,17 +579,32 @@ int run_parent(const std::string& self, const std::filesystem::path& dir)
     }
 
     // ---- arm 3: an unknown key is reported, not swallowed -------------------
+    // A key that is not a near miss of any declared key is only a warning.
     {
         std::cout << "\n-- an unknown key --\n";
         const child_run r = run_case(self, dir, "unknown.param",
-            k_clean_params + "ladder_levl_count: 4\n");
-        check(r.exit_code == 0, "an unknown key does NOT stop the run");
+            k_clean_params + "survey_operator_name: abc\n");
+        check(r.exit_code == 0, "an unrelated unknown key does NOT stop the run");
         check(contains(r.output, "CHILD_COMPLETED"),
               "  the run completes");
-        check(contains(r.output, "ladder_levl_count"),
+        check(contains(r.output, "survey_operator_name"),
               "  the unknown key is named in a warning");
         check(contains(r.output, "are not used by this tool"),
               "  and is reported as unused rather than silently dropped");
+    }
+
+    // ---- arm 3b: a misspelt key stops the run --------------------------------
+    // A near miss of a declared key would otherwise run silently with the
+    // default for the parameter the user meant to set.
+    {
+        std::cout << "\n-- a misspelt key --\n";
+        const child_run r = run_case(self, dir, "misspelt.param",
+            k_clean_params + "ladder_levl_count: 4\n");
+        check(r.exit_code != 0, "a misspelt key stops the run");
+        check(!contains(r.output, "CHILD_COMPLETED"),
+              "  before any parameter is used");
+        check(contains(r.output, "Did you mean 'ladder_level_count'?"),
+              "  and names the parameter it was probably meant to be");
     }
 
     // Reserved file-I/O keys are consumed by the parser itself and appear in no
