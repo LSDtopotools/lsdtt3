@@ -325,6 +325,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_binary_array2d_tracing.cpp
     src/utils/lsdtt_signal1d.cpp
     src/utils/lsdtt_natural_breaks.cpp
+    src/utils/lsdtt_threshold_selection.cpp
     src/utils/lsdtt_image_filters.cpp
 )
 

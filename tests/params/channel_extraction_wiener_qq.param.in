@@ -1,0 +1,20 @@
+# The Wiener source extraction's QQ table, pinned. It is the only caller of
+# compute_qq, which the threshold-selection utility (fluvial-surface methods
+# plan, phase 2) extends with percentile arguments; the default path must not
+# move. The pruning thresholds are lowered only so this small DEM yields a
+# source and the run completes.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: wq
+n_threads: 1
+source_extraction_algorithm_choice: wiener
+wiener_surface_fitting_radius_metres: 30
+wiener_connected_components_threshold_pixels: 5
+wiener_pruning_drainage_area_m2: 100
+wiener_write_qq_table: true
+write_channel_network_lines: true
+write_vector_format: csv
+write_channel_network_points: false
+write_channel_network_junctions: false
+calculate_spatial_index: false

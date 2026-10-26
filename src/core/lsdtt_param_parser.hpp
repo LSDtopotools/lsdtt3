@@ -195,7 +195,7 @@ struct lsdtt_deprecated_compatibility_alias
 {
     std::string storage_key;
     std::string replacement_key;
-    std::string note;
+    std::string note{};
 };
 
 class lsdtt_param_parser

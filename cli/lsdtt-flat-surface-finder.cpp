@@ -998,7 +998,7 @@ int main(int argc, char* argv[])
         const bool mode_relief     = (adm_mode == "relief");
         const bool mode_slope      = (adm_mode == "gradient");
         const bool mode_and        = (adm_mode == "relief_and_gradient");
-        const bool mode_or         = (adm_mode == "relief_or_gradient");
+        // relief_or_gradient is the remaining case below.
 
         if (!mode_relief)
         {

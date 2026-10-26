@@ -2490,6 +2490,35 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "mf_ingested_params.param:relief_threshold_algorithm_choice: fixed"
 )
 
+# The CDF-divergence relief bound, pinned 2026-10-26 before its code moved into
+# the shared threshold-selection utility (lsdtt_threshold_selection). The smoke
+# test above uses a fixed bound, so nothing else exercises this path.
+add_lsdtt_cli_smoke_test(
+    rigorous_mountain_front_cdf_divergence
+    lsdtt-mountain-front
+    mountain_front_cdf_divergence.param.in
+    mf_relief.tif
+    --stdout-contains "Best-fit distribution: normal"
+    --expect-raster-checksum mf_mountain_mask.tif:21
+    --expect-sha256 mf_relief_cdf.csv:ded637956d805c709491cfb3ac9e22eae6729a193e4b6b05ec6aa7ca4b843c43
+    --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
+)
+
+# The Wiener source extraction's QQ table: the only pin on compute_qq, which
+# the threshold-selection utility extends with percentile arguments. Pinned
+# 2026-10-26 before that change.
+add_lsdtt_cli_smoke_test(
+    rigorous_channel_extraction_wiener_qq
+    lsdtt-channel-extraction
+    channel_extraction_wiener_qq.param.in
+    wq_wiener_qq.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Number of source pixels: 1"
+    --expect-sha256 wq_wiener_qq.csv:6ceabf0a02d502387331ab90dcfce254e68db44b4c3b446dcacc63030356ab35
+)
+lsdtt_set_tests_properties(rigorous_channel_extraction_wiener_qq PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     smoke_feature_finder
     lsdtt-feature-finder
@@ -4575,6 +4604,18 @@ target_link_libraries(lsdtt-test-common-parameters PRIVATE lsdtt3_core)
 
 add_test(NAME unit_common_parameters COMMAND lsdtt-test-common-parameters)
 lsdtt_set_tests_properties(unit_common_parameters PROPERTIES LABELS "unit;core;parameters")
+
+# The shared threshold picker (fixed | qq_gaussian | cdf_divergence): the
+# Clubb et al. (2017) QQ rule against samples with a known answer, and the
+# persistence rule on written QQ tables. cdf_divergence is pinned end to end by
+# rigorous_flat_surface_finder_cdf_divergence and
+# rigorous_mountain_front_cdf_divergence.
+add_executable(lsdtt-test-threshold-selection cpp/test_threshold_selection.cpp)
+target_link_libraries(lsdtt-test-threshold-selection PRIVATE lsdtt3_utils)
+add_test(NAME unit_fluvial_surface_threshold_selection
+         COMMAND lsdtt-test-threshold-selection)
+lsdtt_set_tests_properties(unit_fluvial_surface_threshold_selection PROPERTIES
+    LABELS "unit;fluvial_surfaces")
 
 # Cosmogenic physics driver (docs/developer_notes/testing_and_benchmarking.md).  Writes its
 # plottable CSVs into the test working directory.
@@ -9537,6 +9578,21 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsf_combined_flat_mask.tif:13879
 )
 lsdtt_set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The CDF-divergence relief bound in this tool, pinned 2026-10-26 before its
+# code moved into the shared threshold-selection utility.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_cdf_divergence
+    lsdtt-flat-surface-finder
+    flat_surface_finder_cdf_divergence.param.in
+    fsf_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Final threshold   : 8.56527 m"
+    --expect-raster-checksum fsf_combined_flat_mask.tif:18337
+    --expect-sha256 fsf_relief_adaptive_cdf.csv:22a90923f965f5084afb8a07772ac094e910554aad93425fce2155b434b6817c
+)
+lsdtt_set_tests_properties(rigorous_flat_surface_finder_cdf_divergence PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The durable guard on parameter naming. Walks every built lsdtt-* CLI, reads its declared
