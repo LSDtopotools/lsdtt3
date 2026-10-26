@@ -94,6 +94,7 @@
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_status    = "experimental";
@@ -164,7 +165,7 @@ int main(int argc, char* argv[])
     // unless the parameter file names it; the run log says which is which.
     string_default_map["fluvial_surface_algorithm_choice"] = "ladder";
     help_map["fluvial_surface_algorithm_choice"] = {"string","ladder",
-        "Method preset: ladder or clubb2017.",
+        "Method preset: ladder, clubb2017 or cross_section_levels.",
         "Fills every stage parameter left at `preset`. ladder (default): the "
         "admitted ground (flat_mask_fname, or the built-in relief admission) "
         "is banded by a data-driven ladder on HAND, components labelled within "
@@ -173,27 +174,50 @@ int main(int argc, char* argv[])
         "gradient are both below bounds read off quantile-quantile plots, "
         "floodplain patches must contain a channel pixel, terraces above the "
         "floodplain bound measured from the nearest channel (swath baseline). "
+        "cross_section_levels: the ladder, but with the levels read from "
+        "supplied_levels_fname (normally <stem>_cross_section_levels.csv from "
+        "lsdtt-valley-centreline) instead of found. "
         "Any stage named in the parameter file overrides the preset, so e.g. "
         "clubb2017 with level_algorithm_choice: ladder bands the Clubb "
-        "admission with the ladder. Stage values (ladder / clubb2017): "
-        "admission_algorithm_choice flat_mask / floodplain_thresholds; "
-        "floodplain_threshold_algorithm_choice fixed / qq_gaussian; "
+        "admission with the ladder. Stage values (ladder / clubb2017 / "
+        "cross_section_levels): admission_algorithm_choice flat_mask / "
+        "floodplain_thresholds / flat_mask; "
+        "floodplain_threshold_algorithm_choice fixed / qq_gaussian / fixed; "
         "channel_definition_algorithm_choice contributing_pixels / "
-        "stream_order; level_algorithm_choice ladder / fixed_thresholds; "
-        "terrace_reference_field_algorithm_choice same / swath_baseline.",
+        "stream_order / contributing_pixels; level_algorithm_choice ladder / "
+        "fixed_thresholds / supplied_levels; "
+        "terrace_reference_field_algorithm_choice same / swath_baseline / "
+        "same.",
         "Method","switch",""};
 
     string_default_map["level_algorithm_choice"] = "preset";
     help_map["level_algorithm_choice"] = {"string","preset",
-        "How surfaces are put on levels: preset, ladder or fixed_thresholds.",
+        "How surfaces are put on levels: preset, ladder, fixed_thresholds or "
+        "supplied_levels.",
         "ladder: data-driven breaks in the reference field, as many levels as "
         "the DEM can resolve (the ladder_* parameters). fixed_thresholds: two "
         "levels from two bounds - floodplain below max_floodplain_hand_metres "
         "(and touching the channel), terrace above it by "
         "min_terrace_height_above_floodplain_metres - with the bounds chosen "
         "by floodplain_threshold_algorithm_choice. fixed_thresholds needs "
-        "reference_field_algorithm_choice hand.",
+        "reference_field_algorithm_choice hand. supplied_levels: the ladder's "
+        "machinery with the levels read from supplied_levels_fname - band "
+        "breaks at the midpoints between consecutive levels, per channel - "
+        "instead of found; band centres and the resolvability floor are still "
+        "measured and reported (status supplied in _ladder_windows.csv).",
         "Method","param","fluvial_surface_algorithm_choice"};
+
+    string_default_map["supplied_levels_fname"] = "";
+    help_map["supplied_levels_fname"] = {"string","",
+        "Levels file for level_algorithm_choice supplied_levels, in read_path.",
+        "CSV with at least source_id and level_hand_m columns (heights above "
+        "the channel, m): <stem>_cross_section_levels.csv from "
+        "lsdtt-valley-centreline, or a file written by hand from survey. A "
+        "source_id of -1 applies to every channel. Each channel's source_id "
+        "must match this run's channel scope - use the same source points and "
+        "threshold_contributing_pixels as the run that wrote it - and a "
+        "channel with no levels stops the run, naming it.",
+        "Method","io","level_algorithm_choice"};
 
     string_default_map["channel_definition_algorithm_choice"] = "preset";
     help_map["channel_definition_algorithm_choice"] = {"string","preset",
@@ -376,28 +400,18 @@ int main(int argc, char* argv[])
         "than silently substituting a different one.",
         "Ladder","param",""};
 
-    int_default_map["ladder_max_level_count"] = 12;
-    help_map["ladder_max_level_count"] = {"int","12",
-        "Ceiling on the level count considered under auto selection.",
-        "A ceiling on what one reach can plausibly carry, not a storage limit. "
-        "A reach resolving more than a dozen distinct fluvial levels is more "
-        "likely over-fitting noise than recording twelve terraces. Raise it "
-        "freely for a genuine long Quaternary staircase; there is no numeric "
-        "cliff behind it.",
-        "Ladder","param",""};
 
-    string_default_map["ladder_break_algorithm_choice"] = "antimode";
-    help_map["ladder_break_algorithm_choice"] = {"string","antimode",
-        "Break finder: gap, antimode or jenks.",
-        "antimode finds dips in a smoothed log10 density and is shared with "
-        "the valley engine. jenks is Fisher-Jenks on the linear field; it "
-        "takes the level count directly and is the source of the reported "
-        "goodness-of-variance fit. NOTE: antimode bins on log10 and therefore "
-        "cannot band a field with negative values, which every "
-        "fitted_surface residual has. This tool switches to jenks "
-        "automatically when you select fitted_surface without naming a break "
-        "algorithm, and rejects the combination if you ask for it explicitly.",
-        "Ladder","param",""};
+
+    // Shared with lsdtt-valley-centreline, which clusters cross-section break
+    // levels with the same rule (lsdtt_common_parameters).
+    lsdtt::declare_ladder_selection_parameters(
+        int_default_map, float_default_map, string_default_map, help_map);
+    help_map["ladder_break_algorithm_choice"][3] +=
+        " Here: antimode bins on log10 and therefore cannot band a field with "
+        "negative values, which every fitted_surface residual has. This tool "
+        "switches to jenks automatically when you select fitted_surface "
+        "without naming a break algorithm, and rejects the combination if you "
+        "ask for it explicitly.";
 
     string_default_map["ladder_gap_break_position"] = "midpoint";
     help_map["ladder_gap_break_position"] = {"string","midpoint",
@@ -586,22 +600,7 @@ int main(int argc, char* argv[])
         "was admitted on is the gradient its E_v was read from.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_metres"] = 0.0f;
-    help_map["vertical_accuracy_metres"] = {"float","0.0",
-        "Vertical accuracy of the DEM, E_v [m]. 0 disables the floor.",
-        "Two levels are only claimed as distinct when their band centres are "
-        "at least ladder_resolvability_kappa * E_v apart. This is metadata you "
-        "must supply: it cannot be derived from the DEM. 0 disables the check "
-        "and every window then reports resolved, carrying no instrument "
-        "guarantee at all. Note that a DEM whose vertical units are feet on a "
-        "metre grid has an effective E_v 3.28 times larger than you think.",
-        "Ladder","param",""};
 
-    float_default_map["ladder_resolvability_kappa"] = 3.0f;
-    help_map["ladder_resolvability_kappa"] = {"float","3.0",
-        "Multiplier on E_v in the resolvability floor.",
-        "Required band-centre gap = kappa * vertical_accuracy_metres.",
-        "Ladder","param",""};
 
     float_default_map["ladder_reach_window_metres"] = 0.0f;
     help_map["ladder_reach_window_metres"] = {"float","0.0",
@@ -1332,18 +1331,22 @@ int main(int argc, char* argv[])
     // so a run can be read back without the parameter file.
     // -------------------------------------------------------------------------
     const std::string method = sf["fluvial_surface_algorithm_choice"];
-    if (method != "ladder" && method != "clubb2017")
+    if (method != "ladder" && method != "clubb2017" &&
+        method != "cross_section_levels")
     {
         std::cerr << "FATAL: unknown fluvial_surface_algorithm_choice '"
-                  << method << "'. Valid: ladder, clubb2017.\n";
+                  << method << "'. Valid: ladder, clubb2017, "
+                     "cross_section_levels.\n";
         return 1;
     }
     const bool clubb_preset = (method == "clubb2017");
+    const bool xs_preset    = (method == "cross_section_levels");
     struct stage_value { std::string key, value, source; };
     std::vector<stage_value> stages;
     auto resolve_stage = [&](const std::string& key,
                              const std::string& ladder_value,
-                             const std::string& clubb_value) -> std::string
+                             const std::string& clubb_value,
+                             const std::string& xs_value) -> std::string
     {
         const std::string& v = sf[key];
         if (v != "preset")
@@ -1351,7 +1354,9 @@ int main(int argc, char* argv[])
             stages.push_back({key, v, "parameter file"});
             return v;
         }
-        const std::string& pv = clubb_preset ? clubb_value : ladder_value;
+        const std::string& pv = clubb_preset ? clubb_value
+                              : xs_preset    ? xs_value
+                                             : ladder_value;
         stages.push_back({key, pv, "preset " + method});
         return pv;
     };
@@ -1365,7 +1370,8 @@ int main(int argc, char* argv[])
         const bool named = sf["admission_algorithm_choice"] != "preset";
         const std::string& legacy =
             sf["legacy_fallback_admission_algorithm_choice"];
-        if (!named && !clubb_preset && !legacy.empty() && !have_mask)
+        if (!named && !clubb_preset && !xs_preset && !legacy.empty() &&
+            !have_mask)
         {
             admission_choice = (legacy == "slope") ? "gradient" : legacy;
             stages.push_back({"admission_algorithm_choice", admission_choice,
@@ -1376,7 +1382,8 @@ int main(int argc, char* argv[])
         else
         {
             admission_choice = resolve_stage("admission_algorithm_choice",
-                                             "flat_mask", "floodplain_thresholds");
+                                             "flat_mask", "floodplain_thresholds",
+                                             "flat_mask");
         }
         if (admission_choice != "flat_mask" && admission_choice != "relief" &&
             admission_choice != "gradient" &&
@@ -1400,16 +1407,18 @@ int main(int argc, char* argv[])
     }
 
     const std::string level_choice =
-        resolve_stage("level_algorithm_choice", "ladder", "fixed_thresholds");
+        resolve_stage("level_algorithm_choice", "ladder", "fixed_thresholds",
+                      "supplied_levels");
     const std::string floodplain_threshold_choice =
         resolve_stage("floodplain_threshold_algorithm_choice",
-                      "fixed", "qq_gaussian");
+                      "fixed", "qq_gaussian", "fixed");
     const std::string channel_definition =
         resolve_stage("channel_definition_algorithm_choice",
-                      "contributing_pixels", "stream_order");
+                      "contributing_pixels", "stream_order",
+                      "contributing_pixels");
     const std::string terrace_field_choice =
         resolve_stage("terrace_reference_field_algorithm_choice",
-                      "same", "swath_baseline");
+                      "same", "swath_baseline", "same");
 
     auto check_values = [&](const std::string& key, const std::string& v,
                             std::initializer_list<const char*> valid) -> bool
@@ -1421,7 +1430,7 @@ int main(int argc, char* argv[])
         return false;
     };
     if (!check_values("level_algorithm_choice", level_choice,
-                      {"ladder", "fixed_thresholds"}) ||
+                      {"ladder", "fixed_thresholds", "supplied_levels"}) ||
         !check_values("floodplain_threshold_algorithm_choice",
                       floodplain_threshold_choice,
                       {"fixed", "qq_gaussian", "cdf_divergence"}) ||
@@ -1432,6 +1441,40 @@ int main(int argc, char* argv[])
         return 1;
 
     const bool level_fixed     = (level_choice == "fixed_thresholds");
+    const bool level_supplied  = (level_choice == "supplied_levels");
+
+    // Supplied levels -> per-channel band breaks, read before any work so a
+    // missing or malformed file fails fast.
+    std::map<std::int32_t, std::vector<double>> supplied_breaks;
+    if (level_supplied)
+    {
+        if (sf["supplied_levels_fname"].empty())
+        {
+            std::cerr << "FATAL: level_algorithm_choice supplied_levels needs "
+                         "supplied_levels_fname.\n";
+            return 1;
+        }
+        try
+        {
+            const std::string lp =
+                pp.add_read_path_if_needed(sf["supplied_levels_fname"]);
+            const std::map<std::int32_t, std::vector<double>> levels =
+                lsdtt::read_cross_section_levels_csv(lp);
+            supplied_breaks = lsdtt::breaks_from_levels(levels);
+            std::cout << "Supplied levels: " << lp << "\n";
+            for (const auto& [sid, lv] : levels)
+            {
+                std::cout << "  channel " << sid << ":";
+                for (double v : lv) std::cout << " " << v;
+                std::cout << " m\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: supplied levels: " << e.what() << "\n";
+            return 1;
+        }
+    }
     const bool admit_by_bounds = (admission_choice == "floodplain_thresholds");
     // The bounds are chosen when either stage reads them.
     const bool use_floodplain_bounds = level_fixed || admit_by_bounds;
@@ -1452,6 +1495,7 @@ int main(int argc, char* argv[])
             {"min_terrace_height_above_floodplain_metres", !level_fixed},
             {"max_terrace_height_metres", !level_fixed},
             {"fill_floodplain_holes", !level_fixed},
+            {"supplied_levels_fname", !level_supplied},
             {"max_floodplain_gradient", !admit_by_bounds},
             {"floodplain_gradient_window_radius_metres", !admit_by_bounds},
             {"floodplain_qq_lower_percentile",
@@ -2420,6 +2464,7 @@ int main(int argc, char* argv[])
         creq.ladder_max_break_metres =
             static_cast<double>(ff["ladder_max_break_metres"]);
         creq.band_min_component_pixels   = ip["min_band_component_pixels"];
+        creq.ladder_supplied_breaks      = supplied_breaks;
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
         creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
@@ -2799,6 +2844,7 @@ int main(int argc, char* argv[])
         lreq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         lreq.reach_window_metres = -1.0;   // no reach on a fitted surface (C6)
+        lreq.supplied_breaks     = supplied_breaks;
         lreq.min_window_pixels   = ip["ladder_min_window_pixels"];
         lreq.hist_bins           = ip["ladder_hist_bins"];
         lreq.min_field_metres =
@@ -2862,17 +2908,27 @@ int main(int argc, char* argv[])
     }
     else
     {
-        std::int64_t n_res = 0, n_unres = 0, n_deg = 0;
+        std::int64_t n_res = 0, n_unres = 0, n_deg = 0, n_sup = 0, n_sup_low = 0;
         for (const lsdtt::ladder_window& w : ladder.windows)
         {
             if (w.status == lsdtt::ladder_status::resolved ||
                 w.status == lsdtt::ladder_status::forced) ++n_res;
             else if (w.status == lsdtt::ladder_status::unresolved) ++n_unres;
+            else if (w.status == lsdtt::ladder_status::supplied)
+            {
+                ++n_sup;
+                // Two measured bands at least (an empty band has no centre).
+                if (w.min_band_centre_gap_m > 0.0 &&
+                    w.min_band_centre_gap_m < w.required_gap_m) ++n_sup_low;
+            }
             else ++n_deg;
         }
         std::cout << "  " << banded.patches.size() << " patch(es)\n"
                   << "  ladder: " << n_res << " window(s) resolved, "
                   << n_unres << " unresolved, " << n_deg << " degenerate";
+        if (n_sup > 0)
+            std::cout << ", " << n_sup << " with supplied levels ("
+                      << n_sup_low << " below the resolvability floor)";
         if (!ladder.windows.empty())
         {
             // Under slope_dependent the floor is per window, so reporting one

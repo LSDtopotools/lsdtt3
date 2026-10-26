@@ -1,0 +1,20 @@
+# A levels file written by hand (source_id -1: the four tread heights for every
+# channel), banded without lsdtt-valley-centreline - the survey route.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: xsh
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: cross_section_levels
+supplied_levels_fname: staircase_levels_hand.csv
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+threshold_contributing_pixels: 500
+source_points_fname: staircase_sources.fgb
+vertical_accuracy_metres: 0.5
+write_band_index_raster: true
+write_ladder_windows_csv: true

@@ -2,7 +2,7 @@
 
 Estimates bankfull channel width and depth from a high-resolution DEM with Manning's equation. It builds a single-source channel network from user-supplied source points, extracts cross sections along it, measures the along-channel slope and drainage area at each section, and then, per section, finds the water depth whose Manning discharge matches a target discharge.
 
-`source_points_path` is required. Manning widths need `run_manning_widths: true` and a reach table (`reach_manning_parameters_path`) giving Manning's n and the target discharge for each stretch of channel. The tool does not derive either.
+`source_points_fname` is required. Manning widths need `run_manning_widths: true` and a reach table (`reach_manning_parameters_path`) giving Manning's n and the target discharge for each stretch of channel. The tool does not derive either.
 
 ## Usage
 
@@ -152,7 +152,7 @@ write_path: /data/output/
 write_fname: bf
 
 n_threads: 1
-source_points_path:            /data/sources/channel_sources.csv
+source_points_fname:            /data/sources/channel_sources.csv
 reach_manning_parameters_path: /data/reaches.csv
 
 cross_section_half_length_metres:    160

@@ -66,6 +66,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
@@ -211,6 +212,9 @@ struct flat_surface_classify_request
     double vertical_accuracy_gentle_metres = 0.0;
     double vertical_accuracy_steep_metres  = 0.0;
     double vertical_accuracy_break_gradient = 0.20;   // m/m
+    // Passed through to ladder_request::supplied_breaks: per channel source
+    // id, breaks to band with instead of finding them. Empty = find them.
+    std::map<std::int32_t, std::vector<double>> ladder_supplied_breaks;
     int    band_min_component_pixels     = 1;
     // Record each ladder window's linear field histogram, so a caller can plot
     // the density the breaks were chosen from. The separation ratio is always

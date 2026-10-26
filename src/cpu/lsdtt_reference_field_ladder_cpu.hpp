@@ -58,6 +58,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -319,7 +320,10 @@ enum class ladder_status : std::uint8_t
     resolved   = 0,   // an admissible k >= 2 was found
     unresolved = 1,   // no admissible k; one band emitted, levels not claimable
     forced     = 2,   // an explicit level_count was requested and honoured
-    degenerate = 3    // window population too small, or the field is constant
+    degenerate = 3,   // window population too small, or the field is constant
+    supplied   = 4    // breaks given by the caller (ladder_request::supplied_
+                      // breaks), not found; centres and the gap are still
+                      // measured, so a set below the floor is visible
 };
 
 // =============================================================================
@@ -340,6 +344,16 @@ struct ladder_request
     // labels are a global running counter, so nothing here is constrained by
     // the raster's float32 backing store until 2^24 patches.
     int    max_level_count = 12;
+
+    // Breaks supplied by the caller instead of found, per channel source id
+    // (the window's source). Empty = find them (the normal ladder). When set,
+    // every window uses its source's breaks as given (status supplied) and a
+    // source with no entry throws std::invalid_argument naming it. A global
+    // ladder (no windows) uses key -1, or the only entry when there is one.
+    // Band centres and the tightest centre gap are still measured on each
+    // window's own values and reported beside required_gap_m, so a supplied
+    // set the DEM cannot resolve is flagged rather than hidden.
+    std::map<std::int32_t, std::vector<double>> supplied_breaks;
 
     // Resolvability floor. Admissible iff
     //   min over j of (centre_j - centre_{j-1})  >=  kappa * E_v.
@@ -595,6 +609,10 @@ struct ladder_result
     std::int64_t n_windows_resolved   = 0;
     std::int64_t n_windows_unresolved = 0;
     std::int64_t n_windows_degenerate = 0;
+    // Supplied breaks: how many windows used them, and how many of those have
+    // band centres closer than the resolvability floor.
+    std::int64_t n_windows_supplied             = 0;
+    std::int64_t n_windows_supplied_below_floor = 0;
     int          max_band_index       = 0;
 
     // Anything the run did that the caller asked for but could not get, in
@@ -619,6 +637,29 @@ struct ladder_result
 // All three trailing arguments are optional. Supply no window arguments and the
 // ladder is global.
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// partition_population
+//
+// The ladder's rule on a plain list of values, with no raster and no windows:
+// candidate breaks from request.break_algorithm, then the largest k whose band
+// centres (medians) are at least kappa * E_v apart. Used by
+// lsdtt-valley-centreline to turn the break heights of many cross sections
+// into a few levels by exactly the rule the ladder applies to HAND.
+// -----------------------------------------------------------------------------
+struct population_partition
+{
+    int                 k      = 1;
+    ladder_status       status = ladder_status::degenerate;
+    std::vector<double> breaks;         // k - 1, ascending
+    std::vector<double> band_centres;   // k medians
+    double              min_band_centre_gap = 0.0;
+    double              required_gap        = 0.0;   // kappa * E_v
+};
+
+[[nodiscard]] population_partition partition_population(
+    const std::vector<double>& values,
+    const ladder_request&      request);
+
 [[nodiscard]] ladder_result build_reference_field_ladder(
     const lsdtt_raster_cpu&          reference_field,
     const lsdtt_raster_cpu&          admitted_mask,

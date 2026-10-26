@@ -1945,6 +1945,35 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_bankfull_width PROPERTIES
     FIXTURES_REQUIRED cross_sections_fixture)
 
+# The point-file key renamed 2026-10-26 (source_points_path ->
+# source_points_fname, resolved against read_path as in lsdtt-fluvial-surfaces):
+# an old file must still run, to the same result, with a warning.
+add_lsdtt_cli_smoke_test(
+    rigorous_cross_sections_legacy_points_key
+    lsdtt-cross-sections
+    cross_sections_legacy_points_key.param.in
+    xsec_cross_sections.fgb
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --stdout-contains "Cross sections written from 14 channel centres."
+    --stderr-contains "'source_points_path' is deprecated"
+    --stderr-contains "use 'source_points_fname'"
+)
+lsdtt_set_tests_properties(rigorous_cross_sections_legacy_points_key PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_bankfull_width_legacy_points_key
+    lsdtt-bankfull-width
+    bankfull_width_legacy_points_key.param.in
+    bf_manning_widths.csv
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --stdout-contains "Manning widths: 14 valid out of 14 sections matched to a reach by distance."
+    --stderr-contains "'source_points_path' is deprecated"
+    --stderr-contains "use 'source_points_fname'"
+)
+lsdtt_set_tests_properties(rigorous_bankfull_width_legacy_points_key PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
 if(LSDTT_ENABLE_PYTHON_TESTS)
     add_test(NAME fixture_marsh_topography_dem
         COMMAND ${Python3_EXECUTABLE}
@@ -8998,6 +9027,16 @@ add_test(NAME unit_fluvial_surface_floodplain_thresholds
 lsdtt_set_tests_properties(unit_fluvial_surface_floodplain_thresholds PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Phase 5: cross-section levels - the ladder's rule on a population
+# (partition_population), clustering section breaks with the support filter,
+# the levels file, and the ladder banding on supplied breaks (status supplied,
+# the floor still measured, an empty band, a missing channel, source_id -1).
+add_test(NAME unit_fluvial_surface_cross_section_levels
+         COMMAND lsdtt-test-fluvial-surfaces --cross-section-levels
+                 "${CMAKE_CURRENT_BINARY_DIR}/unit_fluvial_surface_cross_section_levels")
+lsdtt_set_tests_properties(unit_fluvial_surface_cross_section_levels PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME unit_fluvial_surface_coherence_diffusion
          COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
 lsdtt_set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
@@ -9628,6 +9667,56 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(failure_fluvial_surfaces_clubb2017_negative_terrace_height PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# ---- Fluvial-surface methods phase 5: cross-section levels ------------------
+# The three-stage workflow on the staircase, checked against the known treads:
+# levels within 1 m of 8/16/24/32 m, every window on the supplied levels, and
+# each band at least 95 % the tread it should be.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    add_test(NAME rigorous_fluvial_surfaces_cross_section_levels_workflow
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_cross_section_levels_workflow.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+            --param-dir "${LSDTT_TEST_PARAM_DIR}"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_cross_section_levels_workflow")
+    lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_cross_section_levels_workflow)
+else()
+    lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_cross_section_levels_workflow)
+endif()
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_cross_section_levels_workflow PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# A levels file written by hand (the survey route, no valley-centreline run):
+# source_id -1 applies to every channel. Pinned 2026-10-26; the same banding
+# as the cross-section route gives on this fixture.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_levels_hand
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_levels_hand.param.in
+    xsh_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "supplied_levels   (preset cross_section_levels)"
+    --stdout-contains "2 with supplied levels (0 below the resolvability floor)"
+    --expect-raster-values "xsh_band_index.tif:0,1,2,3"
+    --expect-raster-checksum xsh_band_index.tif:59958
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_levels_hand PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_levels_wrong_source
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_levels_wrong_source.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "the supplied levels have no entry for channel source_id 0"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_levels_wrong_source PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     failure_fluvial_surfaces_bad_reference_field
     lsdtt-fluvial-surfaces
@@ -9687,6 +9776,30 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_valley_centreline_legacy_threshold)
 endif()
 lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_threshold PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The point-file key renamed 2026-10-26 (source_points_path ->
+# source_points_fname, the same name and read_path resolution as
+# lsdtt-fluvial-surfaces): an old file must still run, with a warning.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME rigorous_valley_centreline_legacy_points_key
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fluvial_pipeline.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+            --surfaces-param "${LSDTT_TEST_PARAM_DIR}/fluvial_pipeline_surfaces.param.in"
+            --centreline-param "${LSDTT_TEST_PARAM_DIR}/valley_centreline_legacy_points_key.param.in"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_valley_centreline_legacy_points_key"
+            --expect vcold_valley_centreline.fgb
+            --stage2-stderr-contains "'source_points_path' is deprecated"
+            --stage2-stderr-contains "use 'source_points_fname'")
+    lsdtt_mark_test_runtime(python rigorous_valley_centreline_legacy_points_key)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_valley_centreline_legacy_points_key)
+endif()
+lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_points_key PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 

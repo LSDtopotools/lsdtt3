@@ -154,9 +154,10 @@ int main(int argc, char* argv[])
     };
 
     // --- Source-point input ---
-    string_default_map["source_points_path"] = "";
-    help_map["source_points_path"] = {"string", "",
-        "Path to the source-point input file.",
+    string_default_map["source_points_fname"] = "";
+    help_map["source_points_fname"] = {"string", "",
+        "Source-point input file, in read_path (an absolute path is used as "
+        "given).",
         "CSV input is interpreted as latitude/longitude in EPSG:4326 using the "
         "configured latitude/longitude field names. Georeferenced vector input "
         "such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR "
@@ -366,7 +367,10 @@ int main(int argc, char* argv[])
     pp.set_deprecated_aliases({
         {"cross_section_sample_points_output_format",
           "cross_section_sample_points_write_vector_format"},
-        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"} });
+        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"},
+        // 2026-10-26: the same name, and read_path resolution, as
+        // lsdtt-fluvial-surfaces and lsdtt-valley-centreline.
+        {"source_points_path", "source_points_fname"} });
     pp.set_deprecated_compatibility_aliases({
         {"channel_network_lines_output_format",
          {"legacy_channel_network_lines_write_vector_format", "write_vector_format"}},
@@ -413,9 +417,9 @@ int main(int argc, char* argv[])
         );
     };
 
-    if (sf["source_points_path"].empty())
+    if (sf["source_points_fname"].empty())
     {
-        std::cerr << "FATAL: source_points_path must be set.\n";
+        std::cerr << "FATAL: source_points_fname must be set.\n";
         return 1;
     }
 
@@ -651,7 +655,8 @@ int main(int argc, char* argv[])
     // Step 3 -- load source points and map them to raster pixels
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source-point input ---\n";
-    std::cout << "Source file: " << sf["source_points_path"] << "\n";
+    std::cout << "Source file: "
+              << pp.add_read_path_if_needed(sf["source_points_fname"]) << "\n";
     std::cout << "Input mode : " << sf["source_points_input_format"] << "\n";
 
     lsdtt::lsdtt_point_input_options point_opts;
@@ -667,7 +672,7 @@ int main(int argc, char* argv[])
     try
     {
         input_points = lsdtt::load_points_in_raster_crs(
-            sf["source_points_path"],
+            pp.add_read_path_if_needed(sf["source_points_fname"]),
             routed_dem.get_meta(),
             point_opts
         );

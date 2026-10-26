@@ -47,7 +47,7 @@ Parameter file lines are `key: value`; `#` starts a comment.
 | 10 | Write rasters, tables and vectors |
 
 **One centreline per resolved source.** There is no threshold-only all-channel
-mode; `source_points_path` is required.
+mode; `source_points_fname` is required.
 
 ---
 
@@ -74,28 +74,29 @@ which classifies the downstream points as outlets. Point files may be CSV
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_points_path` | string | | **Required.** Vector or CSV file with source points. |
+| `source_points_fname` | string | | **Required.** Vector or CSV file with source points, in `read_path` (an absolute path is used as given). |
 | `source_points_input_format` | string | `auto_detect` | `auto_detect`, `csv_latitude_longitude_epsg4326`, `ogr_vector_layer`. |
 | `source_points_layer_name` | string | | Optional layer name for vector input. |
 | `source_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
 | `source_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
-| `outlet_points_path` | string | | Optional outlet points file, to truncate channels. |
+| `outlet_points_fname` | string | | Optional outlet points file, to truncate channels. |
 | `outlet_points_input_format` | string | `auto_detect` | As the source format. |
 | `outlet_points_layer_name` | string | | Optional layer name. |
 | `outlet_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
 | `outlet_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
 
-> **Naming note.** This tool still spells these `source_points_path` /
-> `outlet_points_path`, while `lsdtt-fluvial-surfaces` spells the same concept
-> `source_points_fname` / `outlet_points_fname`. The two are not interchangeable;
-> use the spelling of the tool you are running.
+> **Renamed 2026-10-26.** These were `source_points_path` /
+> `outlet_points_path`, taken relative to the working directory. They are now
+> `source_points_fname` / `outlet_points_fname`, resolved against `read_path`
+> as in `lsdtt-fluvial-surfaces`. The old keys still run, with a warning; an
+> absolute path behaves as before.
 
 ## Channel scope
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
-| `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_path` into sources and outlets. Disabled when an explicit outlet file is given. |
+| `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_fname` into sources and outlets. Disabled when an explicit outlet file is given. |
 | `snap_sources_to_channel_threshold` | bool | `true` | Snap source points to the nearest cell meeting the threshold. |
 | `source_snap_max_search_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |
 | `outlet_snap_max_distance_metres` | float | `0` | Maximum distance between a raw outlet point and its traced-path node. `0` = unlimited. |
@@ -268,22 +269,27 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `source_points_path` | `string` | - | - | - | Vector or CSV file with source points. | REQUIRED. Each source defines one channel (traced downstream); one valley + centreline is produced per channel. A combined file may also contain outlets (see auto_detect_outlet_points). |
+| `source_points_fname` | `string` | - | - | - | Vector or CSV file with source points, in read_path (an absolute path is used as given). | REQUIRED. Each source defines one channel (traced downstream); one valley + centreline is produced per channel. A combined file may also contain outlets (see auto_detect_outlet_points). |
 | `source_points_input_format` | `string` | `auto_detect` | - | - | Point input format. | auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer. |
 | `source_points_layer_name` | `string` | - | - | - | Optional layer name for source-point vector input. | - |
 | `source_points_latitude_field_name` | `string` | `latitude` | - | - | Latitude column for CSV source points. | - |
 | `source_points_longitude_field_name` | `string` | `longitude` | - | - | Longitude column for CSV source points. | - |
-| `outlet_points_path` | `string` | - | - | - | Vector or CSV file with outlet points. | Optional. Bounds each traced channel at the matched outlet. |
+| `outlet_points_fname` | `string` | - | - | - | Vector or CSV file with outlet points, in read_path (an absolute path is used as given). | Optional. Bounds each traced channel at the matched outlet. |
 | `outlet_points_input_format` | `string` | `auto_detect` | - | - | Point input format. | auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer. |
 | `outlet_points_layer_name` | `string` | - | - | - | Optional layer name for outlet-point vector input. | - |
 | `outlet_points_latitude_field_name` | `string` | `latitude` | - | - | Latitude column for CSV outlet points. | - |
 | `outlet_points_longitude_field_name` | `string` | `longitude` | - | - | Longitude column for CSV outlet points. | - |
 
+### Channel scope
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `auto_detect_outlet_points` | `bool` | `true` | `param` | - | Auto-classify points in source_points_fname into sources and outlets. | A point downstream of another supplied point becomes an outlet. Disabled when an explicit outlet_points_fname is given. |
+
 ### Channel scope (mirrors lsdtt-flat-surface-finder)
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `auto_detect_outlet_points` | `bool` | `true` | `param` | - | Auto-classify points in source_points_path into sources and outlets. | A point downstream of another supplied point becomes an outlet. Disabled when an explicit outlet_points_path is given. |
 | `snap_sources_to_channel_threshold` | `bool` | `true` | `param` | - | Snap source points to the nearest cell meeting the channel threshold. | - |
 | `source_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square search radius for source snapping. | - |
 | `outlet_snap_max_distance_metres` | `float` | `0` | `param` | - | Maximum distance between a raw outlet point and its traced-path node. | 0 = unlimited. |
@@ -347,10 +353,21 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `min_section_reach_fraction` | `float` | `0.35` | `param` | - | Drop a station if the clipped transect length is below this fraction of the nominal full length. | Avoids tiny degenerate sections in tight hairpins. |
 | `write_cross_section_features` | `bool` | `true` | `switch` | - | Along each cross section, detect and write features: D8 channel crossings, left/right valley walls, hydraulic-step boundaries, maximum-curvature peaks and multidirectional-hillshade peaks. | Outputs _valley_cross_section_features.csv (one row per feature) and adds curvature / hillshade / is_channel columns to the per-sample CSV. Needs the DEM to derive curvature and hillshade; the channel mask comes from the resolved channel scope. |
 | `write_cross_section_hydraulics` | `bool` | `false` | `switch` | - | For every cross section, write the BankfullMapper-style hydraulic depth function: the profile is flooded stage by stage and, at each stage, the flow width, wetted area, wetted perimeter and hydraulic depth (area-to-width ratio A/W) are recorded. Breakpoints in the hydraulic depth vs elevation-above-thalweg curve mark bankfull / inset flat-surface levels (Delchiaro et al. 2025, Computers &amp; Geosciences, doi:10.1016/j.cageo.2025.106001). | Outputs _valley_cross_section_hydraulics.csv (one row per stage per station: stage_m, depth_above_thalweg_m, width_m, area_m2, wetted_perimeter_m, hydraulic_depth_m). |
+| `write_cross_section_levels_csv` | `bool` | `false` | `output` | - | Cluster every section's hydraulic breaks into levels per channel and write them. | Output file: &lt;stem&gt;_cross_section_levels.csv (source_id, level_hand_m, n_sections, spread_m, status, ...). The breaks of all sections on a channel are pooled and split by the ladder's own rule: the largest number of levels whose medians are at least ladder_resolvability_kappa * vertical_accuracy_metres apart. Feed the file to lsdtt-fluvial-surfaces as supplied_levels_fname (fluvial_surface_algorithm_choice cross_section_levels), with the same source points and threshold so the source ids match. Needs write_cross_section_features (the breaks come from that path). |
+| `cross_section_level_min_section_fraction` | `float` | `0.5` | `param` | `write_cross_section_levels_csv` | Fraction of a channel's sections a level must appear on to be kept. | A tread is crossed by most sections; a step only a few sections see - one running up a riser gap's ramp, or onto a valley wall - is not a level of the channel. Dropped levels are listed in the run log. |
 | `write_cross_section_informed_valley_mask_raster` | `bool` | `false` | `switch` | - | Build a valley-floor mask from the cross sections' HYDRAULIC BREAKS instead of the corridor HAND histogram: each corridor pixel's height above the nearest centreline node's thalweg baseline is compared with the channel's MEDIAN lowest hydraulic break (a single robust floodplain level, so an anomalous section cannot streak or leak onto the plateau). Needs write_cross_section_features (the breaks come from that path). | Outputs _cross_section_informed_valley_mask.tif (Byte; 0 = above the break, 1 = at/below the median lowest break [floodplain]) plus per-channel _cross_section_informed_valley_mask_ch&lt;sid&gt;.tif. |
 | `cross_section_curvature_radius_metres` | `float` | `30` | `param` | - | Polynomial-fit window radius (m) for the maximum-curvature raster used to find slope-break peaks along the cross sections. | Larger smooths over fine breaks (fewer, coarser peaks); smaller resolves finer risers but is noisier. |
 | `cross_section_feature_prominence_fraction` | `float` | `0.15` | `param` | - | Minimum prominence of a curvature / hillshade peak as a fraction of that profile's value range over the transect, for it to be reported. | Raise to keep only the strongest breaks; lower to catch subtler ones. |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | Allowed values: cog (default), gtiff, same_as_input. Set gtiff explicitly to retain plain GeoTIFF output. |
+
+### Ladder
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `ladder_max_level_count` | `int` | `12` | `param` | - | Ceiling on the level count considered under auto selection. | A ceiling on what one reach can plausibly carry, not a storage limit. A reach resolving more than a dozen distinct fluvial levels is more likely over-fitting noise than recording twelve terraces. Raise it freely for a genuine long Quaternary staircase; there is no numeric cliff behind it. |
+| `ladder_break_algorithm_choice` | `string` | `antimode` | `param` | - | Break finder: gap, antimode or jenks. | antimode finds dips in a smoothed log10 density. jenks is Fisher-Jenks on the linear values; it takes the level count directly and is the source of the reported goodness-of-variance fit. gap finds empty spans between clusters. |
+| `vertical_accuracy_metres` | `float` | `0.0` | `param` | - | Vertical accuracy of the DEM, E_v [m]. 0 disables the floor. | Two levels are only claimed as distinct when their band centres are at least ladder_resolvability_kappa * E_v apart. This is metadata you must supply: it cannot be derived from the DEM. 0 disables the check and every window then reports resolved, carrying no instrument guarantee at all. Note that a DEM whose vertical units are feet on a metre grid has an effective E_v 3.28 times larger than you think. |
+| `ladder_resolvability_kappa` | `float` | `3.0` | `param` | - | Multiplier on E_v in the resolvability floor. | Required band-centre gap = kappa * vertical_accuracy_metres. |
 
 ### Interior nodata
 

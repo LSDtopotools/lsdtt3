@@ -62,6 +62,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -87,6 +88,7 @@
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 #include "lsdtt_floodplain_thresholds_cpu.hpp"
+#include "lsdtt_valley_cross_sections_cpu.hpp"
 
 namespace
 {
@@ -782,6 +784,46 @@ void write_phase0b_fixtures(const std::string& output_dir)
     loader.write_full(st.channel_mask.get_data(), st.channel_mask.get_meta(),
                       output_dir + "/staircase_channel_mask.tif",
                       lsdtt::raster_output_format::gtiff);
+
+    // A channel cell a quarter of the way down the valley as a source point,
+    // so lsdtt-valley-centreline can trace the staircase's valley (the cross-
+    // section levels workflow). Not the head: the treads drain sideways into
+    // the channel, so a quarter of the way down it already carries thousands
+    // of contributing cells and snaps at any sensible threshold.
+    {
+        const int src_row = k_st_n_rows / 4;
+        const std::vector<float>& cm = st.channel_mask.get_data();
+        int head_col = -1;
+        for (int c = 0; c < k_st_n_cols; ++c)
+            if (cm[static_cast<std::size_t>(src_row) * k_st_n_cols + c] > 0.5f)
+            { head_col = c; break; }
+        if (head_col < 0)
+            throw std::runtime_error("staircase fixture: no channel cell in the "
+                                     "source row");
+        const lsdtt::lsdtt_xy xy =
+            lsdtt::cell_center_from_row_col(st.dem.get_meta(), src_row, head_col);
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"source_id"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::int64_type};
+        loader.begin_vector_write(
+            output_dir + "/staircase_sources.fgb", "staircase_sources",
+            schema, st.dem.get_meta().crs_wkt,
+            lsdtt::vector_output_format::flatgeobuf, /*spatial_index=*/false);
+        loader.write_point(xy.x, xy.y, {static_cast<std::int64_t>(0)});
+        loader.finish_vector_write();
+    }
+
+    // Levels files for level_algorithm_choice supplied_levels, written by hand
+    // as a user would from survey: the four tread heights for every channel
+    // (source_id -1), and the same keyed to a channel that does not exist.
+    {
+        std::ofstream f(output_dir + "/staircase_levels_hand.csv");
+        f << "source_id,level_hand_m\n";
+        for (int j = 1; j <= k_st_n_terraces; ++j)
+            f << "-1," << j * k_st_riser << "\n";
+        std::ofstream g(output_dir + "/staircase_levels_wrong_source.csv");
+        g << "source_id,level_hand_m\n7,8\n7,16\n";
+    }
 
     const lsdtt::lsdtt_alluvial_fan_surface fan =
         lsdtt::generate_alluvial_fan_surface(
@@ -2765,6 +2807,199 @@ void run_floodplain_threshold_checks()
     }
 }
 
+// =============================================================================
+// Cross-section levels and supplied breaks (fluvial-surface methods plan,
+// phase 5): partition_population, cluster_cross_section_levels with its
+// support filter, the levels file, breaks_from_levels, and
+// build_reference_field_ladder with supplied breaks.
+// =============================================================================
+void run_cross_section_levels_checks(const std::string& work_dir)
+{
+    std::cout << "\n--- cross-section levels and supplied breaks ---\n";
+    std::filesystem::create_directories(work_dir);
+
+    // A population with three levels, 30 values each, spread +/- 0.25 m.
+    auto three_levels = [](double a, double b, double c)
+    {
+        std::vector<double> v;
+        for (int i = 0; i < 30; ++i)
+        {
+            const double d = -0.25 + 0.5 * (i / 29.0);
+            v.push_back(a + d); v.push_back(b + d); v.push_back(c + d);
+        }
+        return v;
+    };
+    lsdtt::ladder_request lr;
+    lr.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+    lr.vertical_accuracy_metres = 0.5;
+    lr.resolvability_kappa      = 3.0;
+    {
+        const lsdtt::population_partition pp =
+            lsdtt::partition_population(three_levels(3.0, 8.0, 14.0), lr);
+        const bool centres_ok = pp.band_centres.size() == 3 &&
+            std::fabs(pp.band_centres[0] - 3.0) < 0.2 &&
+            std::fabs(pp.band_centres[1] - 8.0) < 0.2 &&
+            std::fabs(pp.band_centres[2] - 14.0) < 0.2;
+        check(pp.k == 3 && pp.status == lsdtt::ladder_status::resolved && centres_ok,
+              "XL1: three levels 5-6 m apart resolve as three, centres within 0.2 m");
+        const lsdtt::population_partition close =
+            lsdtt::partition_population(three_levels(3.0, 3.8, 4.6), lr);
+        check(close.k == 1 && close.status == lsdtt::ladder_status::unresolved,
+              "XL2: levels 0.8 m apart against a 1.5 m floor give one level, "
+              "unresolved");
+    }
+
+    // Sections: ten with breaks at 8 and 16 m above their thalweg, two of
+    // which also have one at 12 m (a riser-gap ramp).
+    lsdtt::valley_cross_section_result xr;
+    for (int i = 0; i < 10; ++i)
+    {
+        lsdtt::valley_cross_section xs;
+        xs.source_id   = 0;
+        xs.station_seq = i;
+        const double thalweg = 100.0 - i;
+        xs.hydraulic_break_stages = {thalweg, thalweg + 8.0 + 0.05 * i,
+                                     thalweg + 16.0 - 0.05 * i};
+        if (i < 2) xs.hydraulic_break_stages.push_back(thalweg + 12.0);
+        xr.sections.push_back(xs);
+    }
+    {
+        lsdtt::ladder_request gr = lr;
+        gr.break_algorithm = lsdtt::ladder_break_choice::gap;
+        const lsdtt::cross_section_levels_result half =
+            lsdtt::cluster_cross_section_levels(xr, gr, 0.5);
+        bool two = half.levels.size() == 2 &&
+                   std::fabs(half.levels[0].level_hand_m - 8.2) < 0.3 &&
+                   std::fabs(half.levels[1].level_hand_m - 15.8) < 0.3 &&
+                   half.levels[0].n_sections == 10 && half.levels[1].n_sections == 10;
+        check(two, "XL3: the two levels every section crosses are kept, each on "
+                   "10 of 10 sections");
+        check(half.dropped.size() == 1 &&
+                  std::fabs(half.dropped[0].level_hand_m - 12.0) < 0.01 &&
+                  half.dropped[0].n_sections == 2,
+              "XL4: the level only 2 of 10 sections see is dropped and listed");
+        const lsdtt::cross_section_levels_result all =
+            lsdtt::cluster_cross_section_levels(xr, gr, 0.1);
+        check(all.levels.size() == 3 && all.dropped.empty(),
+              "XL5: at a support fraction of 0.1 it is kept");
+        check(half.levels[1].min_level_gap_m > 7.0,
+              "XL6: the reported gap is between the KEPT levels");
+
+        // The levels file round-trips, and breaks are the midpoints.
+        const std::string path = work_dir + "/xl_levels.csv";
+        lsdtt::write_cross_section_levels_csv(path, half.levels);
+        const auto back = lsdtt::read_cross_section_levels_csv(path);
+        check(back.size() == 1 && back.at(0).size() == 2 &&
+                  std::fabs(back.at(0)[0] - half.levels[0].level_hand_m) < 1e-6,
+              "XL7: the levels file reads back to the levels written");
+        const auto brk = lsdtt::breaks_from_levels({{0, {2.0, 8.0, 14.0}}, {3, {5.0}}});
+        check(brk.at(0) == std::vector<double>({5.0, 11.0}) && brk.at(3).empty(),
+              "XL8: breaks are the midpoints; one level gives no break");
+    }
+    {
+        const std::string bad = work_dir + "/xl_bad.csv";
+        { std::ofstream f(bad); f << "source_id,level_hand_m\n0,8\n0,abc\n"; }
+        bool threw = false;
+        try { (void)lsdtt::read_cross_section_levels_csv(bad); }
+        catch (const std::runtime_error& e)
+        {
+            const std::string w = e.what();
+            threw = w.find("xl_bad.csv") != std::string::npos;
+        }
+        check(threw, "XL9: a non-numeric level stops the read, naming the file");
+        const std::string nocol = work_dir + "/xl_nocol.csv";
+        { std::ofstream f(nocol); f << "source_id,height\n0,8\n"; }
+        threw = false;
+        try { (void)lsdtt::read_cross_section_levels_csv(nocol); }
+        catch (const std::runtime_error& e)
+        {
+            threw = std::string(e.what()).find("level_hand_m") != std::string::npos;
+        }
+        check(threw, "XL10: a file without level_hand_m is refused, naming the column");
+    }
+
+    // Supplied breaks in the ladder: a field with two clusters, windowed by
+    // one source along the columns.
+    {
+        lsdtt::lsdtt_raster_meta m;
+        m.n_rows = 20; m.n_cols = 50; m.cell_size = 10.0;
+        m.x_min = 0.0; m.y_min = 0.0; m.no_data_value = -9999.0;
+        const std::size_t n = 20 * 50;
+        std::vector<float> fv(n), cv(n);
+        for (int r = 0; r < 20; ++r)
+            for (int c = 0; c < 50; ++c)
+            {
+                fv[static_cast<std::size_t>(r) * 50 + c] = (r < 10) ? 2.0f : 9.0f;
+                cv[static_cast<std::size_t>(r) * 50 + c] = static_cast<float>(c * 10);
+            }
+        const lsdtt::lsdtt_raster_cpu field(std::vector<float>(fv),
+                                            std::vector<uint8_t>(n, 1), m);
+        const lsdtt::lsdtt_raster_cpu adm(std::vector<float>(n, 1.0f),
+                                          std::vector<uint8_t>(n, 1), m);
+        const lsdtt::lsdtt_raster_cpu coord(std::vector<float>(cv),
+                                            std::vector<uint8_t>(n, 1), m);
+        const std::vector<std::int32_t> src(n, 0);
+        lsdtt::ladder_request sr = lr;
+        sr.reach_window_metres = 200.0;
+        sr.min_window_pixels   = 10;
+        sr.supplied_breaks     = {{0, {5.5}}};
+        const lsdtt::ladder_result res =
+            lsdtt::build_reference_field_ladder(field, adm, sr, &src, &coord);
+        bool all_supplied = !res.windows.empty();
+        for (const auto& w : res.windows)
+            if (w.status != lsdtt::ladder_status::supplied || w.k_selected != 2)
+                all_supplied = false;
+        bool bands_ok = true;
+        const std::vector<float>& bi = res.band_index.get_data();
+        for (std::size_t i = 0; i < n; ++i)
+            if (bi[i] != (fv[i] < 5.0f ? 0.0f : 1.0f)) bands_ok = false;
+        check(all_supplied && res.n_windows_supplied ==
+                  static_cast<std::int64_t>(res.windows.size()),
+              "XL11: every window takes the supplied breaks (status supplied)");
+        check(bands_ok, "XL12: the band index is the supplied break applied");
+
+        lsdtt::ladder_request tight = sr;
+        tight.vertical_accuracy_metres = 5.0;   // floor 15 m > the 7 m gap
+        const lsdtt::ladder_result low =
+            lsdtt::build_reference_field_ladder(field, adm, tight, &src, &coord);
+        check(low.n_windows_supplied_below_floor == low.n_windows_supplied &&
+                  low.n_windows_supplied > 0,
+              "XL13: supplied levels the DEM cannot resolve are flagged, not "
+              "dropped");
+
+        lsdtt::ladder_request three = sr;
+        three.supplied_breaks = {{0, {5.5, 20.0}}};   // band 2 is empty
+        const lsdtt::ladder_result emp =
+            lsdtt::build_reference_field_ladder(field, adm, three, &src, &coord);
+        bool nan_last = !emp.windows.empty();
+        for (const auto& w : emp.windows)
+            if (w.band_centres_m.size() != 3 || !std::isnan(w.band_centres_m[2]) ||
+                !(std::fabs(w.min_band_centre_gap_m - 7.0) < 1e-6))
+                nan_last = false;
+        check(nan_last && emp.n_windows_supplied_below_floor == 0,
+              "XL14: an empty supplied band has no centre and does not trip "
+              "the floor");
+
+        lsdtt::ladder_request wrong = sr;
+        wrong.supplied_breaks = {{7, {5.5}}};
+        bool threw = false;
+        try { (void)lsdtt::build_reference_field_ladder(field, adm, wrong, &src, &coord); }
+        catch (const std::invalid_argument& e)
+        {
+            threw = std::string(e.what()).find("source_id 0") != std::string::npos;
+        }
+        check(threw, "XL15: a channel with no supplied levels stops the run, "
+                     "naming its source_id");
+
+        lsdtt::ladder_request every = sr;
+        every.supplied_breaks = {{-1, {5.5}}};
+        const lsdtt::ladder_result ev =
+            lsdtt::build_reference_field_ladder(field, adm, every, &src, &coord);
+        check(ev.n_windows_supplied == static_cast<std::int64_t>(ev.windows.size()),
+              "XL16: source_id -1 supplies every channel");
+    }
+}
+
 void run_slope_dependent_ev_checks()
 {
     std::cout << "\n--- slope-dependent E_v (7d) ---\n";
@@ -3166,6 +3401,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--perona-malik")
         {
             run_perona_malik_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 3 && std::string(argv[1]) == "--cross-section-levels")
+        {
+            run_cross_section_levels_checks(argv[2]);
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

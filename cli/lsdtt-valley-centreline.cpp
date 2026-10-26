@@ -117,9 +117,10 @@ int main(int argc, char* argv[])
 
     for (const std::string& role : {std::string("source"), std::string("outlet")})
     {
-        string_default_map[role + "_points_path"] = "";
-        help_map[role + "_points_path"] = {"string","",
-            "Vector or CSV file with " + role + " points.",
+        string_default_map[role + "_points_fname"] = "";
+        help_map[role + "_points_fname"] = {"string","",
+            "Vector or CSV file with " + role + " points, in read_path (an "
+            "absolute path is used as given).",
             role == "source"
                 ? "REQUIRED. Each source defines one channel (traced "
                   "downstream); one valley + centreline is produced per "
@@ -145,10 +146,10 @@ int main(int argc, char* argv[])
 
     bool_default_map["auto_detect_outlet_points"] = true;
     help_map["auto_detect_outlet_points"] = {"bool","true",
-        "Auto-classify points in source_points_path into sources and outlets.",
+        "Auto-classify points in source_points_fname into sources and outlets.",
         "A point downstream of another supplied point becomes an outlet. "
-        "Disabled when an explicit outlet_points_path is given.",
-        "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
+        "Disabled when an explicit outlet_points_fname is given.",
+        "Channel scope", "param", ""};
 
     bool_default_map["snap_sources_to_channel_threshold"] = true;
     help_map["snap_sources_to_channel_threshold"] = {"bool","true",
@@ -477,6 +478,31 @@ int main(int argc, char* argv[])
         "wetted_perimeter_m, hydraulic_depth_m).",
         "Outputs", "switch", ""};
 
+    bool_default_map["write_cross_section_levels_csv"] = false;
+    help_map["write_cross_section_levels_csv"] = {"bool","false",
+        "Cluster every section's hydraulic breaks into levels per channel and "
+        "write them.",
+        "Output file: <stem>_cross_section_levels.csv (source_id, "
+        "level_hand_m, n_sections, spread_m, status, ...). The breaks of all "
+        "sections on a channel are pooled and split by the ladder's own rule: "
+        "the largest number of levels whose medians are at least "
+        "ladder_resolvability_kappa * vertical_accuracy_metres apart. Feed the "
+        "file to lsdtt-fluvial-surfaces as supplied_levels_fname "
+        "(fluvial_surface_algorithm_choice cross_section_levels), with the "
+        "same source points and threshold so the source ids match. Needs "
+        "write_cross_section_features (the breaks come from that path).",
+        "Outputs", "output", ""};
+    float_default_map["cross_section_level_min_section_fraction"] = 0.5f;
+    help_map["cross_section_level_min_section_fraction"] = {"float","0.5",
+        "Fraction of a channel's sections a level must appear on to be kept.",
+        "A tread is crossed by most sections; a step only a few sections see - "
+        "one running up a riser gap's ramp, or onto a valley wall - is not a "
+        "level of the channel. Dropped levels are listed in the run log.",
+        "Outputs", "param", "write_cross_section_levels_csv"};
+    // The ladder's selection rule, shared with lsdtt-fluvial-surfaces.
+    lsdtt::declare_ladder_selection_parameters(
+        int_default_map, float_default_map, string_default_map, help_map);
+
     bool_default_map["write_cross_section_informed_valley_mask_raster"] = false;
     help_map["write_cross_section_informed_valley_mask_raster"] = {"bool","false",
         "Build a valley-floor mask from the cross sections' HYDRAULIC BREAKS "
@@ -561,6 +587,10 @@ int main(int argc, char* argv[])
         {"write_cross_section_informed_valley_mask", "write_cross_section_informed_valley_mask_raster"},
         {"valley_corridor_width_metres", "valley_corridor_half_width_metres"},
         {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
+        // 2026-10-26: the same names, and the same read_path resolution, as
+        // lsdtt-fluvial-surfaces.
+        {"source_points_path", "source_points_fname"},
+        {"outlet_points_path", "outlet_points_fname"},
         {"channel_threshold_contributing_pixels",
          "threshold_contributing_pixels"} });
     pp.set_deprecated_numeric_aliases({
@@ -606,9 +636,9 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["source_points_path"].empty())
+    if (sf["source_points_fname"].empty())
     {
-        std::cerr << "FATAL: source_points_path is required - one valley and "
+        std::cerr << "FATAL: source_points_fname is required - one valley and "
                      "centreline is produced per source channel. The "
                      "all-channels threshold mode is not supported here.\n";
         return 1;
@@ -722,13 +752,21 @@ int main(int argc, char* argv[])
     lsdtt::channel_scope_result scope;
     try
     {
-        // The five-key convention lives in lsdtt_channel_scope_cpu; this CLI
-        // spells its paths as <role>_points_path and takes them verbatim.
+        // The five-key convention lives in lsdtt_channel_scope_cpu. Paths are
+        // <role>_points_fname, resolved against read_path, as in
+        // lsdtt-fluvial-surfaces.
         auto load_role_flats = [&](const std::string& role)
         {
             return lsdtt::load_role_point_flats_by_key(
-                role, "_path",
-                [&](const std::string& key) { return sf[key]; },
+                role, "_fname",
+                [&](const std::string& key) {
+                    const std::string v = sf[key];
+                    return (key.size() >= 6 &&
+                            key.compare(key.size() - 6, 6, "_fname") == 0 &&
+                            !v.empty())
+                        ? pp.add_read_path_if_needed(v)
+                        : v;
+                },
                 routing_dem.get_meta());
         };
 
@@ -744,7 +782,7 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["outlet_snap_max_distance_metres"]);
         scope_req.auto_detect_roles =
             bf["auto_detect_outlet_points"] &&
-            sf["outlet_points_path"].empty() &&
+            sf["outlet_points_fname"].empty() &&
             !scope_req.source_flats.empty();
 
         scope = lsdtt::resolve_channel_scope(*flow, scope_req);
@@ -1621,6 +1659,59 @@ int main(int argc, char* argv[])
             loader.write_csv(p,
                 {"source_id","station_seq","along_distance_m","break_index",
                  "stage_m","hand_m"}, rows);
+        }
+
+        // (e2) Levels: every section's breaks pooled per channel and split by
+        // the ladder's rule, for lsdtt-fluvial-surfaces' supplied_levels.
+        if (bf["write_cross_section_levels_csv"] && do_features)
+        {
+            lsdtt::ladder_request lr;
+            try
+            {
+                const std::string& ba = sf["ladder_break_algorithm_choice"];
+                if (ba == "gap")          lr.break_algorithm = lsdtt::ladder_break_choice::gap;
+                else if (ba == "antimode") lr.break_algorithm = lsdtt::ladder_break_choice::antimode;
+                else if (ba == "jenks")    lr.break_algorithm = lsdtt::ladder_break_choice::jenks;
+                else throw std::invalid_argument(
+                    "unknown ladder_break_algorithm_choice '" + ba +
+                    "'. Valid: gap, antimode, jenks.");
+                lr.max_level_count          = ifs["ladder_max_level_count"];
+                lr.vertical_accuracy_metres =
+                    static_cast<double>(ff["vertical_accuracy_metres"]);
+                lr.resolvability_kappa      =
+                    static_cast<double>(ff["ladder_resolvability_kappa"]);
+                const lsdtt::cross_section_levels_result lres =
+                    lsdtt::cluster_cross_section_levels(
+                        xres, lr, static_cast<double>(
+                            ff["cross_section_level_min_section_fraction"]));
+                const std::string p = pp.make_output_path(
+                    "_cross_section_levels", ".csv");
+                lsdtt::write_cross_section_levels_csv(p, lres.levels);
+                std::cout << "Writing cross-section levels: " << p << "\n";
+                for (const auto& lv : lres.levels)
+                    std::cout << "  channel " << lv.source_id << " level "
+                              << lv.level_index << ": " << lv.level_hand_m
+                              << " m (" << lv.n_sections << " of "
+                              << lres.n_sections_per_channel.at(lv.source_id)
+                              << " section(s), " << lv.n_breaks
+                              << " break(s))\n";
+                for (const auto& lv : lres.dropped)
+                    std::cout << "  channel " << lv.source_id << ": dropped "
+                              << lv.level_hand_m << " m, on only "
+                              << lv.n_sections << " of "
+                              << lres.n_sections_per_channel.at(lv.source_id)
+                              << " section(s)\n";
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: cross-section levels: " << e.what() << "\n";
+                return 1;
+            }
+        }
+        else if (bf["write_cross_section_levels_csv"])
+        {
+            std::cerr << "WARNING: write_cross_section_levels_csv needs "
+                         "write_cross_section_features; no levels written.\n";
         }
 
         // (f) Cross-section-informed valley mask from the hydraulic breaks.

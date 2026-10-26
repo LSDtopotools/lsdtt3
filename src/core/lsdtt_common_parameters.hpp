@@ -271,6 +271,19 @@ void declare_max_floodplain_gradient_parameter(
     float                         default_gradient,
     const std::string&            parent = "");
 
+// The ladder's selection rule - the largest level count whose band centres are
+// at least kappa * E_v apart - as used by lsdtt-fluvial-surfaces on HAND and by
+// lsdtt-valley-centreline on cross-section break heights:
+//   ladder_break_algorithm_choice  string  antimode   gap | antimode | jenks
+//   ladder_max_level_count         int     12
+//   vertical_accuracy_metres       float   0          E_v; 0 disables the floor
+//   ladder_resolvability_kappa     float   3
+void declare_ladder_selection_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+
 // How the floodplain bounds (max_floodplain_hand_metres,
 // max_floodplain_gradient) are chosen: fixed | qq_gaussian | cdf_divergence.
 // Shared by lsdtt-fluvial-surfaces and lsdtt-hillslope-channel-coupling.

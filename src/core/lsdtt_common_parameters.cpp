@@ -374,6 +374,49 @@ void declare_max_floodplain_gradient_parameter(
         "Floodplain", "param", parent};
 }
 
+void declare_ladder_selection_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    int_default_map["ladder_max_level_count"] = 12;
+    help_map["ladder_max_level_count"] = {"int","12",
+        "Ceiling on the level count considered under auto selection.",
+        "A ceiling on what one reach can plausibly carry, not a storage limit. "
+        "A reach resolving more than a dozen distinct fluvial levels is more "
+        "likely over-fitting noise than recording twelve terraces. Raise it "
+        "freely for a genuine long Quaternary staircase; there is no numeric "
+        "cliff behind it.",
+        "Ladder","param",""};
+
+    string_default_map["ladder_break_algorithm_choice"] = "antimode";
+    help_map["ladder_break_algorithm_choice"] = {"string","antimode",
+        "Break finder: gap, antimode or jenks.",
+        "antimode finds dips in a smoothed log10 density. jenks is "
+        "Fisher-Jenks on the linear values; it takes the level count directly "
+        "and is the source of the reported goodness-of-variance fit. gap "
+        "finds empty spans between clusters.",
+        "Ladder","param",""};
+
+    float_default_map["vertical_accuracy_metres"] = 0.0f;
+    help_map["vertical_accuracy_metres"] = {"float","0.0",
+        "Vertical accuracy of the DEM, E_v [m]. 0 disables the floor.",
+        "Two levels are only claimed as distinct when their band centres are "
+        "at least ladder_resolvability_kappa * E_v apart. This is metadata you "
+        "must supply: it cannot be derived from the DEM. 0 disables the check "
+        "and every window then reports resolved, carrying no instrument "
+        "guarantee at all. Note that a DEM whose vertical units are feet on a "
+        "metre grid has an effective E_v 3.28 times larger than you think.",
+        "Ladder","param",""};
+
+    float_default_map["ladder_resolvability_kappa"] = 3.0f;
+    help_map["ladder_resolvability_kappa"] = {"float","3.0",
+        "Multiplier on E_v in the resolvability floor.",
+        "Required band-centre gap = kappa * vertical_accuracy_metres.",
+        "Ladder","param",""};
+}
+
 void declare_floodplain_threshold_algorithm_parameter(
     std::map<std::string, std::string>& string_default_map,
     lsdtt_help_registry&                help_map,

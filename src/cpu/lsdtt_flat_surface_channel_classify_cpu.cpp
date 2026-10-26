@@ -309,6 +309,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             request.vertical_accuracy_steep_metres;
         lr.vertical_accuracy_break_gradient =
             request.vertical_accuracy_break_gradient;
+        lr.supplied_breaks = request.ladder_supplied_breaks;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
         lr.hist_bins               = request.band_hist_bins;
@@ -991,6 +992,7 @@ const char* ladder_status_name(ladder_status st)
         case ladder_status::resolved:   return "resolved";
         case ladder_status::unresolved: return "unresolved";
         case ladder_status::forced:     return "forced";
+        case ladder_status::supplied:   return "supplied";
         default:                        return "degenerate";
     }
 }

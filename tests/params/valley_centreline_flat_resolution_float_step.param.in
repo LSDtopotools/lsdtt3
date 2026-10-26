@@ -15,7 +15,7 @@ write_fname: vcvf
 n_threads: 1
 write_output_format: gtiff
 valley_mask_fname: flat_valley_mask.asc
-source_points_path: __READ_PATH__/flat_valley_source.csv
+source_points_fname: __READ_PATH__/flat_valley_source.csv
 threshold_contributing_pixels: 5
 fill_min_slope_for_routing: 0.0001
 fill_flat_resolution_choice: barnes2014b_float_step
