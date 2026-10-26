@@ -184,11 +184,18 @@ struct lsdtt_deprecated_numeric_alias
 
 // Compatibility aliases can store an old value in a hidden, injective key while
 // directing users to a canonical public parameter. This is used when formerly
-// independent selectors are consolidated but old files may set them differently.
+// independent selectors are consolidated but old files may set them differently,
+// and when the old value can only be converted with information or a function
+// the parser does not have (a cell size, a tangent): the CLI converts the stored
+// text after parsing and reports the result with record_resolved_parameter().
+//
+// note: replaces the default warning tail, which is written for consolidated
+// output-format selectors. Empty keeps that default.
 struct lsdtt_deprecated_compatibility_alias
 {
     std::string storage_key;
     std::string replacement_key;
+    std::string note;
 };
 
 class lsdtt_param_parser
@@ -674,6 +681,15 @@ public:
     // for would produce a run that is not the experiment requested.
     [[nodiscard]] bool parameter_supplied(const std::string& key) const
     { return parameter_map_.find(key) != parameter_map_.end(); }
+
+    // Records the value a CLI resolved for a declared key after parsing - a
+    // value converted from a compatibility alias, say - so that
+    // _ingested_params.param, which print_parameters() writes at the end of
+    // the run, reproduces the run. The key moves from the defaults section to
+    // the parameters-read section. The typed maps are NOT changed: the caller
+    // already holds the resolved value it is recording.
+    void record_resolved_parameter(const std::string& key,
+                                   const std::string& value);
 
 private:
 

@@ -19,10 +19,10 @@ write_output_format: gtiff
 
 # The fan falls at 0.03 m/m, so a 3-pixel window carries ~1 m of relief on the
 # older surface alone; 1 m would admit nothing at all.
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 3
-fallback_relief_threshold_metres: 3.0
-min_component_pixels: 50
+admission_algorithm_choice: relief
+relief_window_radius_metres: 30
+max_relief_metres: 3.0
+min_band_component_pixels: 50
 
 reference_field_algorithm_choice: fitted_surface
 fitted_surface_algorithm_choice: cone

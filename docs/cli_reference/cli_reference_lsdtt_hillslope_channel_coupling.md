@@ -336,8 +336,8 @@ prints the same information.
 | parameter | type | default | what it does |
 |---|---|---|---|
 | `find_floodplain` | bool | `false` | Detect a floodplain with a simple gradient + HAND rule. |
-| `floodplain_gradient_threshold` | float | `0.1` | Gradient below which a pixel may be floodplain. |
-| `floodplain_hand_threshold` | float | `5.0` | HAND (m) below which a pixel may be floodplain. |
+| `max_floodplain_gradient` | float | `0.1` | Gradient (m/m) above which ground is not floodplain. Replaces `floodplain_gradient_threshold`. |
+| `max_floodplain_hand_metres` | float | `5.0` | HAND (m) above which ground is not floodplain. Replaces `floodplain_hand_threshold`. The same names as in `lsdtt-fluvial-surfaces`. |
 | `floodplain_mask_fname` | string | `` | Optional binary floodplain raster to ingest. |
 
 ### Surface metrics
@@ -480,9 +480,9 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `floodplain_mask_fname` | `string` | - | `param` | - | Optional binary floodplain raster to ingest. | It does TWO things, and both matter: floodplain pixels are added to the SINK set, so a trace entering the valley floor terminates there, AND removed from the ridge set, so a floodplain-interior 'hilltop' cannot produce a degenerate zero-length row. |
-| `find_floodplain` | `bool` | `false` | `switch` | - | Detect a floodplain with a simple gradient + HAND rule. | floodplain = gradient &lt; threshold AND HAND &lt; threshold, hole-filled. This is a CONVENIENCE, not a classifier: it has no reach-relative banding and no terrace separation, so it will swallow terraces and plateaus. Use lsdtt-flat-surface-finder for real work. Default off so the tool's behaviour never silently depends on two arbitrary numbers. HAND is height above nearest drainage (Nobre et al. 2011, J. Hydrology 404:13-29). |
-| `floodplain_gradient_threshold` | `float` | `0.1` | `param` | `find_floodplain` | Gradient below which a pixel may be floodplain. | Used only when find_floodplain is true. |
-| `floodplain_hand_threshold` | `float` | `5.0` | `param` | `find_floodplain` | HAND (m) below which a pixel may be floodplain. | Used only when find_floodplain is true. |
+| `find_floodplain` | `bool` | `false` | `switch` | - | Detect a floodplain with a simple gradient + HAND rule. | floodplain = gradient &lt; threshold AND HAND &lt; threshold, hole-filled. This is a CONVENIENCE, not a classifier: it has no reach-relative banding and no terrace separation, so it will swallow terraces and plateaus. Use lsdtt-fluvial-surfaces for real work. Default off so the tool's behaviour never silently depends on two arbitrary numbers. HAND is height above nearest drainage (Nobre et al. 2011, J. Hydrology 404:13-29). |
+| `max_floodplain_gradient` | `float` | `0.1` | `param` | `find_floodplain` | Gradient (m/m) above which ground is not floodplain. | A gradient, not an angle (gradient = tan(angle)). Used only when find_floodplain is true. Replaces floodplain_gradient_threshold. |
+| `max_floodplain_hand_metres` | `float` | `5` | `param` | `find_floodplain` | HAND (m) above which ground is not floodplain. | HAND is height above nearest drainage (Nobre et al. 2011, J. Hydrology 404:13-29), measured along the flow path to the channel. Used only when find_floodplain is true. Replaces floodplain_hand_threshold. |
 
 ### Tracing
 

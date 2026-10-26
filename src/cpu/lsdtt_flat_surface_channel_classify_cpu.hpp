@@ -210,7 +210,7 @@ struct flat_surface_classify_request
         vertical_accuracy_choice::fixed;
     double vertical_accuracy_gentle_metres = 0.0;
     double vertical_accuracy_steep_metres  = 0.0;
-    double vertical_accuracy_break_degrees = 11.31;
+    double vertical_accuracy_break_gradient = 0.20;   // m/m
     int    band_min_component_pixels     = 1;
     // Record each ladder window's linear field histogram, so a caller can plot
     // the density the breaks were chosen from. The separation ratio is always
@@ -381,7 +381,7 @@ struct flat_surface_classify_result
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*  donor_flat            = nullptr,
     const lsdtt_raster_cpu*           channel_flow_distance = nullptr,
-    const lsdtt_raster_cpu*           slope_degrees         = nullptr,
+    const lsdtt_raster_cpu*           gradient              = nullptr,
     const lsdtt_raster_cpu*           terrain_aspect_degrees = nullptr
 );
 

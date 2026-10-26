@@ -137,16 +137,16 @@ next three sections say why.
 Pure morphometry. No flow routing, no channel network, no height reference — the
 program does not link against the flow layer at all.
 
-### Admission: relief, slope, or both
+### Admission: relief, gradient, or both
 
-`admission_mode` selects the test that admits a pixel:
+`admission_algorithm_choice` selects the test that admits a pixel:
 
-| mode | test |
+| choice | test |
 |---|---|
-| `relief` (default) | local relief in a moving window below `relief_threshold_metres` |
-| `slope` | gradient below `admission_slope_cap_degrees` |
-| `relief_and_slope` | both |
-| `relief_or_slope` | either |
+| `relief` (default) | local relief in a window of radius `relief_window_radius_metres` below `max_relief_metres` |
+| `gradient` | gradient (m/m) below `max_admission_gradient` |
+| `relief_and_gradient` | both |
+| `relief_or_gradient` | either |
 
 **These are not the same test and they reject different ground.** Local relief
 charges a surface for its own tilt, so a smooth terrace tread that slopes downvalley
@@ -154,21 +154,22 @@ fails a relief test while a rough but level surface passes it; a gradient cap do
 the opposite. On steep terrain the two admit nearly disjoint sets. Clubb et al.
 (2017) used gradient; the historical lsdtt3 behaviour used relief; offering both,
 and their conjunction and disjunction, is the honest resolution. Use
-`relief_or_slope` when the point is to find every candidate surface and let the
+`relief_or_gradient` when the point is to find every candidate surface and let the
 ladder in the next tool sort them out.
 
 The admission gradient is measured from a polynomial surface fitted over
-`admission_slope_window_radius_metres` rather than from a 3×3 difference, following the
-same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures pixel
-noise, and the cap has to be read at the scale of the surface being admitted. There
-is no default cap worth guessing — 5 degrees is a valley floor, 15 degrees admits
-fan and pediment — so run the census at more than one cap and report the
-sensitivity rather than defending one number.
+`admission_gradient_window_radius_metres` rather than from a 3×3 difference, following
+the same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures
+pixel noise, and the bound has to be read at the scale of the surface being admitted.
+There is no default bound worth guessing — a gradient of 0.087 (5 degrees) is a
+valley floor, 0.27 (15 degrees) admits fan and pediment — so run the census at more
+than one bound and report the sensitivity rather than defending one number.
 
 ### Choosing the threshold: CDF divergence, not the QQ plot
 
-`adaptive_relief_threshold` picks the relief threshold from the data, by finding
-where the empirical CDF diverges most from a fitted parametric distribution, and
+`relief_threshold_algorithm_choice: cdf_divergence` picks the relief bound from the
+data, by finding where the empirical CDF diverges most from a fitted parametric
+distribution, and
 writes the whole curve to `<stem>_relief_adaptive_cdf.csv` so you can see the break
 you are relying on. `relief_threshold_multiplier` scales the result.
 
@@ -409,8 +410,8 @@ from the DEM. Leaving it at 0 disables the floor, and then every window reports
 you do. (A DEM whose vertical units are feet on a metre grid has an effective
 accuracy 3.28 times larger than it looks, and nothing in the file will tell you.)
 
-`vertical_accuracy_mode: slope_dependent` reads a gentle value below a break
-gradient and a steep value above it, because photogrammetric and InSAR DEMs degrade
+`vertical_accuracy_algorithm_choice: slope_dependent` reads a gentle value below a
+break gradient (`vertical_accuracy_break_gradient`, m/m) and a steep value above it, because photogrammetric and InSAR DEMs degrade
 on slopes — TanDEM-X relative LE90 is roughly 2 m on gentle ground and 4 m on steep,
 and one number for a raster spanning a valley floor and a 40-degree wall is wrong in
 both places. `E_v` is resolved **per along-channel window, not per pixel**: the floor
@@ -452,8 +453,8 @@ which is pinned by a test.
 ### Classification, and where it sits relative to Clubb 2017
 
 For the `hand` field only, patches are classified as floodplain or terrace and
-written to `_surface_class.tif` and `_surface_class.csv`. `floodplain_max_height_metres`
-and `terrace_min_height_metres` are the direct descendants of the 2017 paper's single
+written to `_surface_class.tif` and `_surface_class.csv`. `max_floodplain_hand_metres`
+and `min_terrace_hand_metres` are the direct descendants of the 2017 paper's single
 "threshold height above the modern river channel", but they are **demoted from
 mechanism to optional override**: under band-then-label the ladder has already
 decided where one level ends and the next begins, and these are hard caps for cases
@@ -579,13 +580,13 @@ parameter has no successor, the reason is in the right-hand column.
 
 | `lsdtt-valley-metrics` | goes to | lsdtt3 |
 |---|---|---|
-| `surface_fitting_radius` | 1 | `admission_slope_window_radius_metres` |
-| `slope_threshold`, `use_absolute_thresholds` | 1 | `admission_slope_cap_degrees` with `admission_mode: slope` |
-| `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `adaptive_relief_threshold` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
-| `minimum_patch_size` | 1, 2 | `min_component_pixels` (in tool 2 it is **per band**, not global) |
+| `surface_fitting_radius` | 1 | `admission_gradient_window_radius_metres` |
+| `slope_threshold`, `use_absolute_thresholds` | 1 | `max_admission_gradient` with `admission_algorithm_choice: gradient` |
+| `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `relief_threshold_algorithm_choice: cdf_divergence` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
+| `minimum_patch_size` | 1, 2 | `min_component_pixels` in tool 1; `min_band_component_pixels` in tool 2, where it is **per band**, not global |
 | `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `threshold_contributing_pixels` |
-| `relief_threshold` | 2 | replaced by the ladder; `floodplain_max_height_metres` is the optional hard cap |
-| `minimum_terrace_height` | 2 | `terrace_min_height_metres`, demoted to an override |
+| `relief_threshold` | 2 | replaced by the ladder; `max_floodplain_hand_metres` is the optional hard cap |
+| `minimum_terrace_height` | 2 | `min_terrace_hand_metres`, demoted to an override |
 | `get_terraces` | 2 | no switch — `ladder_level_count` is the only control, and terraces are bands 1..n |
 | `fill_floodplain` | 2 | `fill_valley_mask_holes` (default true) |
 | `get_valley_centreline` | 3 | the tool itself |
@@ -615,9 +616,9 @@ Two structural differences worth stating plainly:
 ```
 # 1. which ground is flat
 #    lsdtt-flat-surface-finder
-admission_mode: relief_or_slope
-admission_slope_cap_degrees: 10
-adaptive_relief_threshold: true
+admission_algorithm_choice: relief_or_gradient
+max_admission_gradient: 0.18
+relief_threshold_algorithm_choice: cdf_divergence
 write_combined_flat_mask_raster: true
 
 # 2. which level is it on

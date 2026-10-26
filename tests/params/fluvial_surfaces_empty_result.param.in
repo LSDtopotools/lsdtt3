@@ -1,7 +1,7 @@
 # The empty-result regression, driven through lsdtt-fluvial-surfaces after
 # phase 4.
 #
-# Ground IS admitted; min_component_pixels is simply larger than the raster, so
+# Ground IS admitted; min_band_component_pixels is simply larger than the raster, so
 # no connected component survives the size filter and the patch table comes out
 # empty. Reaching the empty case this way rather than by admitting nothing is
 # deliberate: lsdtt-fluvial-surfaces treats a zero-admission run as a fatal user
@@ -22,9 +22,9 @@ write_fname: empty
 n_threads: 1
 write_output_format: gtiff
 
-fallback_relief_window_radius_pixels: 5
-fallback_relief_threshold_metres: 2.0
-min_component_pixels: 100000
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 100000
 
 
 ladder_break_algorithm_choice: jenks
@@ -32,8 +32,8 @@ ladder_level_count: 4
 vertical_accuracy_metres: 0.5
 
 threshold_contributing_pixels: 500
-floodplain_max_height_metres: 5.0
-terrace_min_height_metres: 5.0
+max_floodplain_hand_metres: 5.0
+min_terrace_hand_metres: 5.0
 
 write_banded_labels_raster: true
 write_band_index_raster: true

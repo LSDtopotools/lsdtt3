@@ -14,10 +14,10 @@ write_output_format: gtiff
 fill_before_routing: true
 fill_flat_resolution_choice: barnes2014b_float_step
 threshold_contributing_pixels: 20
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 2
-fallback_relief_threshold_metres: 2.0
-min_component_pixels: 5
+admission_algorithm_choice: relief
+relief_window_radius_metres: 20
+max_relief_metres: 2.0
+min_band_component_pixels: 5
 reference_field_algorithm_choice: hand
 vertical_accuracy_metres: 0.5
 write_hand_raster: true

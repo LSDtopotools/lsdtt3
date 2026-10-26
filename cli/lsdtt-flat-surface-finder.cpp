@@ -15,9 +15,10 @@
 //
 // Pipeline:
 //   1. Local relief threshold -> raw relief mask
-//      Threshold is either relief_threshold_metres or, with
-//      adaptive_relief_threshold, chosen by CDF divergence and scaled by
-//      relief_threshold_multiplier.
+//      The bound is max_relief_metres, or with relief_threshold_algorithm_choice
+//      cdf_divergence chosen from the relief CDF and scaled by
+//      relief_threshold_multiplier. admission_algorithm_choice can add or
+//      substitute a gradient bound (max_admission_gradient).
 //   2. Optional morphological closing  (flat_closing_radius_metres; 0 = skip)
 //      Seals small holes and narrow gaps inside flat blobs.
 //   3. Optional morphological opening  (flat_opening_radius_metres; 0 = skip)
@@ -67,6 +68,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <sstream>
 #include <memory>
 #include <queue>
 #include <stdexcept>
@@ -148,87 +150,75 @@ int main(int argc, char* argv[])
         "-", "io", ""};
 
     // --- Relief (always on) ---
-    int_default_map["relief_window_side_pixels"] = 5;
-    help_map["relief_window_side_pixels"] = {"int","5",
-        "Full window SIDE LENGTH (pixels) for local relief (max - min).",
-        "This is the side of the square window, not a radius: must be odd and "
-        ">= 3, and 5 means a 5x5 neighbourhood.  Note that "
-        "lsdtt-fluvial-surfaces spells its equivalent "
-        "fallback_relief_window_radius_pixels, which is a RADIUS and so means "
-        "something different for the same number.",
-        "Relief (always on)", "param", ""};
-
-    float_default_map["relief_threshold_metres"] = 1.0f;
-    help_map["relief_threshold_metres"] = {"float","1.0",
-        "Local relief value (m) below which a pixel is classed flat.",
-        "Read the threshold directly off the _relief_cdf.csv output.  "
-        "Only used when adaptive_relief_threshold = false.",
-        "Relief (always on)", "param", ""};
-
-    bool_default_map["adaptive_relief_threshold"] = false;
-    help_map["adaptive_relief_threshold"] = {"bool","false",
-        "Automatically select the relief threshold using CDF divergence.",
-        "Computes the relief CDF in 500 bins, fits the best parametric distribution, "
-        "and picks the x-value where the empirical CDF most exceeds the fitted CDF "
-        "(flat pixels inflate the empirical distribution at low relief values, causing "
-        "a positive deviation).  Prints the chosen threshold and writes the CDF to file. "
-        "Overrides relief_threshold_metres.",
-        "Relief (always on)", "param", ""};
+    // Shared names (lsdtt_common_parameters), the same window and bound as
+    // lsdtt-fluvial-surfaces and lsdtt-mountain-front. Two cells is the 5 x 5
+    // window this tool has always defaulted to.
+    lsdtt::declare_relief_window_parameter(float_default_map, help_map, 2);
+    lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f);
+    lsdtt::declare_relief_threshold_algorithm_parameter(
+        string_default_map, help_map, "fixed");
 
     float_default_map["relief_threshold_multiplier"] = 1.0f;
     help_map["relief_threshold_multiplier"] = {"float","1.0",
-        "Multiplier applied to the adaptively chosen relief threshold.",
-        "Allows leeway around the auto-detected threshold.  "
+        "Multiplier applied to an automatically chosen relief bound.",
+        "Allows leeway around the auto-detected value.  "
         "Values > 1 loosen the criterion (more flat pixels); "
         "values < 1 tighten it.  "
-        "Only used when adaptive_relief_threshold = true.",
-        "Relief (always on)", "param", ""};
+        "Not used when relief_threshold_algorithm_choice is fixed.",
+        "Admission", "param", "relief_threshold_algorithm_choice"};
 
     // --- Admission: relief, gradient, or both ---
-    string_default_map["admission_mode"] = "relief";
-    help_map["admission_mode"] = {"string","relief",
-        "Which test admits a pixel as flat: relief, slope, relief_and_slope "
-        "or relief_or_slope.",
+    string_default_map["admission_algorithm_choice"] = "relief";
+    help_map["admission_algorithm_choice"] = {"string","relief",
+        "Which test admits a pixel as flat: relief, gradient, "
+        "relief_and_gradient or relief_or_gradient.",
         "Local relief is not a gradient test and the two reject different "
         "ground. Relief charges a surface for its own tilt, so a smooth tread "
         "that slopes downvalley fails it while a rough level surface passes; a "
-        "gradient cap does the opposite. On a Himalayan gorge the two select "
-        "nearly disjoint sets. `relief` is the historical behaviour. `slope` "
-        "uses the gradient cap alone. `relief_and_slope` requires both, which "
-        "is the strictest reading of flat. `relief_or_slope` admits either, "
-        "which is the one to use when the point is to find every candidate "
-        "surface and let the ladder sort them.",
+        "gradient bound does the opposite. On a Himalayan gorge the two select "
+        "nearly disjoint sets. `relief` is the historical behaviour. "
+        "`gradient` uses max_admission_gradient alone. `relief_and_gradient` "
+        "requires both, which is the strictest reading of flat. "
+        "`relief_or_gradient` admits either, which is the one to use when the "
+        "point is to find every candidate surface and let the ladder sort "
+        "them. Replaces admission_mode (whose `slope` values are now "
+        "`gradient`).",
         "Admission", "param", ""};
 
-    float_default_map["admission_slope_cap_degrees"] = 0.0f;
-    help_map["admission_slope_cap_degrees"] = {"float","0",
-        "Gradient (degrees) below which a pixel is admitted. Required by every "
-        "admission_mode that names slope.",
-        "Measured from a polynomial surface fitted over "
-        "admission_slope_window_radius_metres, not from a 3x3 difference: a 3-cell "
-        "operator on a 30 m DEM measures pixel noise, and the cap has to be "
-        "read at the scale of the surface being admitted. There is no default "
-        "worth guessing - 5 degrees is a valley floor, 15 degrees admits fan "
-        "and pediment - so run the census at more than one cap and report the "
-        "sensitivity rather than defending one number.",
-        "Admission", "param", ""};
+    // Required by every admission_algorithm_choice that names gradient;
+    // there is no default worth guessing, so 0 there is an error.
+    lsdtt::declare_max_admission_gradient_parameter(
+        float_default_map, help_map, 0.0f, "admission_algorithm_choice");
+    help_map["max_admission_gradient"][3] +=
+        " Required by every admission_algorithm_choice that names gradient; "
+        "there is no default worth guessing - 0.087 (5 degrees) is a valley "
+        "floor, 0.27 (15 degrees) admits fan and pediment - so run the census "
+        "at more than one bound and report the sensitivity rather than "
+        "defending one number. Replaces admission_slope_cap_degrees; an old "
+        "value is converted with gradient = tan(angle).";
 
-    float_default_map["admission_slope_window_radius_metres"] = 0.0f;
-    help_map["admission_slope_window_radius_metres"] = {"float","0",
+    float_default_map["admission_gradient_window_radius_metres"] = 0.0f;
+    help_map["admission_gradient_window_radius_metres"] = {"float","0",
         "Window radius (m) of the polynomial fit the admission gradient is "
         "measured over. 0 = match the relief window.",
-        "Defaulting to relief_window_side_pixels x cell size keeps the two "
-        "admission tests commensurate: they then disagree about the ground, "
-        "not about the scale they are looking at.",
-        "Admission", "param", ""};
+        "Defaulting to the relief window keeps the two admission tests "
+        "commensurate: they then disagree about the ground, not about the "
+        "scale they are looking at.",
+        "Admission", "param", "admission_algorithm_choice"};
 
-    bool_default_map["write_admission_slope_raster"] = false;
-    help_map["write_admission_slope_raster"] = {"bool","false",
-        "Write the gradient raster the slope cap was applied to.",
-        "Write it the first time you set a cap on a new DEM. The cap is only "
-        "meaningful against the gradient distribution it is cutting, and that "
-        "distribution is not knowable in advance.",
+    bool_default_map["write_admission_gradient_raster"] = false;
+    help_map["write_admission_gradient_raster"] = {"bool","false",
+        "Write the gradient raster (m/m) the admission bound was applied to.",
+        "Output file: <stem>_admission_gradient.tif. Write it the first time "
+        "you set a bound on a new DEM. The bound is only meaningful against "
+        "the gradient distribution it is cutting, and that distribution is "
+        "not knowable in advance.",
         "Admission", "output", ""};
+
+    // Hidden storage for compatibility aliases, resolved after parsing.
+    string_default_map["legacy_relief_window_side_pixels"] = "";
+    string_default_map["legacy_adaptive_relief_threshold"] = "";
+    string_default_map["legacy_admission_slope_cap_degrees"] = "";
 
     // --- Morphological post-processing of relief mask ---
     float_default_map["flat_closing_radius_metres"] = 0.0f;
@@ -659,17 +649,40 @@ int main(int argc, char* argv[])
         {"write_slope_break_centreline", "write_slope_break_centreline_raster"},
         {"write_slope_break_bridge_mask", "write_slope_break_bridge_mask_raster"},
         {"write_slope_break_centreline_connected", "write_slope_break_centreline_connected_raster"},
-        {"relief_window_pixels",          "relief_window_side_pixels"},
         {"write_combined_flat_mask",      "write_combined_flat_mask_raster"},
         {"write_metric_flat_masks",       "write_metric_flat_mask_rasters"},
         {"test_surface_vector_file",      "test_surface_polygon_fname"},
         {"write_residual_relief_labelled_mask",
          "write_residual_relief_labelled_mask_raster"},
         {"write_residual_relief_skeleton",
-         "write_residual_relief_skeleton_raster"} });
+         "write_residual_relief_skeleton_raster"},
+        // 2026-10-26: one name per aim across the CLIs, bounds as max_,
+        // gradients in m/m.
+        {"relief_threshold_metres",              "max_relief_metres"},
+        {"admission_mode",                       "admission_algorithm_choice"},
+        {"admission_slope_window_radius_metres",
+         "admission_gradient_window_radius_metres"},
+        {"write_admission_slope_raster",         "write_admission_gradient_raster"} });
     pp.set_deprecated_numeric_aliases({
         {"admission_slope_window_metres",
-         {"admission_slope_window_radius_metres", 0.5, 0.0, true}} });
+         {"admission_gradient_window_radius_metres", 0.5, 0.0, true}} });
+    // Old values a plain or affine alias cannot carry, converted after parsing.
+    pp.set_deprecated_compatibility_aliases({
+        {"relief_window_side_pixels",
+         {"legacy_relief_window_side_pixels", "relief_window_radius_metres",
+          "The full window side in cells is converted to a radius in metres "
+          "with the DEM cell size; the radius used is in the run log."}},
+        {"relief_window_pixels",
+         {"legacy_relief_window_side_pixels", "relief_window_radius_metres",
+          "The full window side in cells is converted to a radius in metres "
+          "with the DEM cell size; the radius used is in the run log."}},
+        {"adaptive_relief_threshold",
+         {"legacy_adaptive_relief_threshold",
+          "relief_threshold_algorithm_choice",
+          "true is cdf_divergence, false is fixed."}},
+        {"admission_slope_cap_degrees",
+         {"legacy_admission_slope_cap_degrees", "max_admission_gradient",
+          "Converted with gradient = tan(angle)."}} });
 
     {
         // Everything that moved to lsdtt-fluvial-surfaces, plus the four keys
@@ -749,6 +762,82 @@ int main(int argc, char* argv[])
             out_format = lsdtt::raster_output_format::same_as_input;
     }
 
+    // Relief bound: relief_threshold_algorithm_choice, or a legacy
+    // adaptive_relief_threshold converted to one.
+    std::string relief_choice = sf["relief_threshold_algorithm_choice"];
+    // Admission: the canonical value names, with admission_mode's old `slope`
+    // spellings (carried here by the alias) still accepted.
+    std::string adm_mode = sf["admission_algorithm_choice"];
+    // Gradient bound, or a legacy angle converted to one. Held as float, the
+    // parameter's type, so the recorded value reads back exactly.
+    float max_adm_gradient = ff["max_admission_gradient"];
+    try
+    {
+        if (!sf["legacy_adaptive_relief_threshold"].empty() &&
+            !pp.parameter_supplied("relief_threshold_algorithm_choice"))
+        {
+            relief_choice = lsdtt::relief_threshold_choice_from_legacy_bool(
+                sf["legacy_adaptive_relief_threshold"],
+                "adaptive_relief_threshold");
+            pp.record_resolved_parameter("relief_threshold_algorithm_choice",
+                                         relief_choice);
+        }
+        if (!sf["legacy_admission_slope_cap_degrees"].empty() &&
+            !pp.parameter_supplied("max_admission_gradient"))
+        {
+            max_adm_gradient = static_cast<float>(
+                lsdtt::gradient_from_legacy_degrees(
+                    sf["legacy_admission_slope_cap_degrees"],
+                    "admission_slope_cap_degrees"));
+            std::ostringstream os;
+            os.precision(9);
+            os << max_adm_gradient;
+            pp.record_resolved_parameter("max_admission_gradient", os.str());
+            std::cout << "admission_slope_cap_degrees "
+                      << sf["legacy_admission_slope_cap_degrees"]
+                      << " -> max_admission_gradient " << os.str() << "\n";
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+    if (relief_choice != "fixed" && relief_choice != "cdf_divergence")
+    {
+        std::cerr << "FATAL: unknown relief_threshold_algorithm_choice '"
+                  << relief_choice << "'. Valid: fixed, cdf_divergence.\n";
+        return 1;
+    }
+    {
+        const std::map<std::string, std::string> old_values = {
+            {"slope", "gradient"},
+            {"relief_and_slope", "relief_and_gradient"},
+            {"relief_or_slope", "relief_or_gradient"}};
+        const auto it = old_values.find(adm_mode);
+        if (it != old_values.end())
+        {
+            std::cerr << "WARNING: admission_algorithm_choice '" << adm_mode
+                      << "' is deprecated; use '" << it->second << "'.\n";
+            adm_mode = it->second;
+            pp.record_resolved_parameter("admission_algorithm_choice", adm_mode);
+        }
+        if (adm_mode != "relief" && adm_mode != "gradient" &&
+            adm_mode != "relief_and_gradient" && adm_mode != "relief_or_gradient")
+        {
+            std::cerr << "FATAL: unknown admission_algorithm_choice '" << adm_mode
+                      << "'. Valid: relief, gradient, relief_and_gradient, "
+                         "relief_or_gradient.\n";
+            return 1;
+        }
+        if (adm_mode != "relief" && !(max_adm_gradient > 0.0f))
+        {
+            std::cerr << "FATAL: admission_algorithm_choice '" << adm_mode
+                      << "' needs max_admission_gradient > 0.\n";
+            return 1;
+        }
+    }
+
     std::cout << "Switches for analysis are:\n";
     std::cout << "  relief: always on\n";
     std::cout << "  slope break finder (VEC adaptive skeleton): always on\n";
@@ -796,20 +885,61 @@ int main(int argc, char* argv[])
     // closing/dilation/component filtering are hancled in the CLI below
     req.directional_close_line_length_pixels = 0;
     req.min_component_pixels       = 1;  // all components kept; CLI does its own filtering
+    // Relief window as a full side in cells (2r + 1), from
+    // relief_window_radius_metres or a legacy relief_window_side_pixels.
+    int relief_side = 0;
+    {
+        const double cell = dem.get_meta().cell_size;
+        const std::string& legacy_side = sf["legacy_relief_window_side_pixels"];
+        try
+        {
+            if (!legacy_side.empty() &&
+                !pp.parameter_supplied("relief_window_radius_metres"))
+            {
+                std::size_t used = 0;
+                relief_side = std::stoi(legacy_side, &used);
+                if (used != legacy_side.size() || relief_side < 3 ||
+                    relief_side % 2 == 0)
+                    throw std::invalid_argument(
+                        "relief_window_side_pixels must be odd and >= 3; got '"
+                        + legacy_side + "'.");
+                std::ostringstream os;
+                os.precision(9);
+                os << static_cast<float>(((relief_side - 1) / 2) * cell);
+                pp.record_resolved_parameter("relief_window_radius_metres",
+                                             os.str());
+            }
+            else
+            {
+                relief_side = 2 * lsdtt::relief_window_radius_pixels(
+                                      ff["relief_window_radius_metres"], cell, 2)
+                              + 1;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "Relief window: radius " << (relief_side - 1) / 2
+                  << " cell(s) = " << ((relief_side - 1) / 2) * cell
+                  << " m (" << relief_side << " x " << relief_side << ")\n";
+    }
+
     req.cdf_n_bins                 = ip["cdf_n_bins"];
-    req.relief_window_pixels       = ip["relief_window_side_pixels"];
-    req.relief_threshold_metres    = static_cast<double>(ff["relief_threshold_metres"]);
+    req.relief_window_pixels       = relief_side;
+    req.relief_threshold_metres    = static_cast<double>(ff["max_relief_metres"]);
     req.n_threads                  = ip["n_threads"];
     req.test_surface_vector_file   = sf["test_surface_polygon_fname"];
 
     // -------------------------------------------------------------------------
     // Adaptive relief threshold
     // -------------------------------------------------------------------------
-    if (bf["adaptive_relief_threshold"])
+    if (relief_choice == "cdf_divergence")
     {
         std::cout << "Computing adaptive relief threshold...\n";
 
-        const int    wpix          = ip["relief_window_side_pixels"];
+        const int    wpix          = relief_side;
         const int    half          = (wpix - 1) / 2;
         const double relief_radius = static_cast<double>(std::max(1, half))
                                      * dem.get_meta().cell_size;
@@ -831,7 +961,7 @@ int main(int argc, char* argv[])
         {
             std::cerr << "Warning: adaptive threshold failed (" << e.what()
                       << ") - using relief_threshold_metres = "
-                      << ff["relief_threshold_metres"] << "\n";
+                      << ff["max_relief_metres"] << "\n";
         }
     }
 
@@ -864,62 +994,46 @@ int main(int argc, char* argv[])
     // of the other, which is why the combination is named rather than assumed.
     // -------------------------------------------------------------------------
     {
-        const std::string& adm_mode = sf["admission_mode"];
+        // adm_mode was validated after parsing.
         const bool mode_relief     = (adm_mode == "relief");
-        const bool mode_slope      = (adm_mode == "slope");
-        const bool mode_and        = (adm_mode == "relief_and_slope");
-        const bool mode_or         = (adm_mode == "relief_or_slope");
-        if (!mode_relief && !mode_slope && !mode_and && !mode_or)
-        {
-            std::cerr << "FATAL: unknown admission_mode '" << adm_mode
-                      << "'. Valid: relief, slope, relief_and_slope, "
-                         "relief_or_slope.\n";
-            return 1;
-        }
+        const bool mode_slope      = (adm_mode == "gradient");
+        const bool mode_and        = (adm_mode == "relief_and_gradient");
+        const bool mode_or         = (adm_mode == "relief_or_gradient");
 
         if (!mode_relief)
         {
-            const double cap_deg =
-                static_cast<double>(ff["admission_slope_cap_degrees"]);
-            if (!(cap_deg > 0.0))
-            {
-                std::cerr << "FATAL: admission_mode '" << adm_mode
-                          << "' needs admission_slope_cap_degrees > 0.\n";
-                return 1;
-            }
-
             const double cell = dem.get_meta().cell_size;
             // direct_polyfit takes the full physical window diameter.
             double lambda = 2.0 *
-                static_cast<double>(ff["admission_slope_window_radius_metres"]);
+                static_cast<double>(ff["admission_gradient_window_radius_metres"]);
             if (!(lambda > 0.0))
             {
                 // Same scale as the relief test, so the two disagree about the
                 // ground rather than about the window they read it through.
-                lambda = static_cast<double>(ip["relief_window_side_pixels"]) * cell;
+                lambda = static_cast<double>(relief_side) * cell;
             }
             if (lambda < cell)
             {
-                std::cerr << "FATAL: admission_slope_window_radius_metres ("
-                          << ff["admission_slope_window_radius_metres"]
+                std::cerr << "FATAL: admission_gradient_window_radius_metres ("
+                          << ff["admission_gradient_window_radius_metres"]
                           << " m) is below one cell (" << cell << " m).\n";
                 return 1;
             }
 
             std::cout << "Admission gradient: polyfit window " << lambda
-                      << " m, cap " << cap_deg << " degrees\n";
+                      << " m, bound " << max_adm_gradient << " (m/m)\n";
 
-            lsdtt::lsdtt_raster_cpu slope_deg;
+            lsdtt::lsdtt_raster_cpu gradient_raster;
             try
             {
                 const lsdtt::poly_fit_coeffs fit =
                     lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
                 lsdtt::polyfit_metric_request mreq;
-                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.metrics   = {lsdtt::polyfit_metric::slope};
                 mreq.n_threads = ip["n_threads"];
                 lsdtt::polyfit_metric_result mres =
                     lsdtt::compute_polyfit_metrics(fit, mreq);
-                slope_deg = mres.at(lsdtt::polyfit_metric::slope_degrees);
+                gradient_raster = mres.at(lsdtt::polyfit_metric::slope);
             }
             catch (const std::exception& e)
             {
@@ -930,21 +1044,21 @@ int main(int argc, char* argv[])
 
             const lsdtt::lsdtt_raster_cpu slope_mask =
                 lsdtt::algebra::raster_binary_true_below_threshold(
-                    slope_deg, static_cast<float>(cap_deg));
+                    gradient_raster, max_adm_gradient);
 
-            if (bf["write_admission_slope_raster"])
+            if (bf["write_admission_gradient_raster"])
             {
                 const std::string sp = pp.get_full_write_path()
-                                       + "_admission_slope_degrees.tif";
+                                       + "_admission_gradient.tif";
                 std::cout << "Writing admission gradient: " << sp << "\n";
-                loader.write_full(slope_deg.get_data(), slope_deg.get_meta(),
+                loader.write_full(gradient_raster.get_data(), gradient_raster.get_meta(),
                                   sp, out_format);
             }
 
             // Combine. The polyfit is only valid where a full window fits with
             // no nodata, so it is nodata on a margin the relief mask covers;
             // a pixel the gradient could not be measured at is not admitted by
-            // any mode that names slope, including relief_or_slope. Claiming it
+            // any mode that names slope, including relief_or_gradient. Claiming it
             // on the strength of relief alone would silently reinstate the
             // rejected test along every edge and around every hole.
             const std::vector<float>&   rd = flat_mask.get_data();
@@ -1415,7 +1529,7 @@ int main(int argc, char* argv[])
         }
         else if (!pa.plane_residual_raster.get_data().empty())
         {
-            const int    wpix   = ip["relief_window_side_pixels"];
+            const int    wpix   = relief_side;
             const int    half   = (wpix - 1) / 2;
             const double radius = static_cast<double>(std::max(1, half))
                                   * dem.get_meta().cell_size;

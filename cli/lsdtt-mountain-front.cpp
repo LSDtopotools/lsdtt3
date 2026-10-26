@@ -13,11 +13,11 @@
 // Identifies mountain masses in a DEM via adaptive relief thresholding.
 //
 // Pipeline:
-//   Stage 1 - Local relief (square window, relief_window_side_pixels)
+//   Stage 1 - Local relief (square window, relief_window_radius_metres)
 //   Stage 2 - Flat mask: adaptive (CDF divergence threshold) or fixed value.
 //             Adaptive: 500-bin empirical CDF vs best-fit parametric distribution;
 //             threshold at x of maximum positive divergence.  Writes CDF CSV.
-//             Fixed: relief_threshold_metres applied directly.
+//             Fixed: max_relief_metres applied directly.
 //   Stage 3 - Remove small flat components (< min_flat_component_pixels).
 //   Stage 4 - morphological closing of flat mask (flat_closing_radius_metres):
 //             dilate to connect adjacent flat patches, then BFS-reconstruct to
@@ -54,6 +54,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -128,32 +129,19 @@ int main(int argc, char* argv[])
         "cog, gtiff, or same_as_input.",
         "-", "io", ""};
 
-    // --- Stage 1: relief ---
-    int_default_map["relief_window_side_pixels"] = 5;
-    help_map["relief_window_side_pixels"] = {"int","5",
-        "Full window SIDE LENGTH (pixels) for local relief (max - min).",
-        "This is the side of the square window, not a radius: must be odd and "
-        ">= 3, and 5 means a 5x5 neighbourhood.  Note that "
-        "lsdtt-fluvial-surfaces spells its equivalent "
-        "fallback_relief_window_radius_pixels, which is a RADIUS and so means "
-        "something different for the same number.",
-        "Stage 1: relief", "param", ""};
-
-    // --- Stage 2: relief threshold ---
-    bool_default_map["adaptive_relief_threshold"] = true;
-    help_map["adaptive_relief_threshold"] = {"bool","true",
-        "Automatically select the relief threshold using CDF divergence.",
-        "Computes a 500-bin empirical CDF, fits the best parametric distribution, "
-        "and picks the x-value where the empirical CDF most exceeds the fitted CDF. "
-        "Set to false to use relief_threshold_metres instead.",
-        "Stage 2: relief threshold", "param", ""};
-
-    float_default_map["relief_threshold_metres"] = 1.0f;
-    help_map["relief_threshold_metres"] = {"float","1.0",
-        "Local relief value (m) below which a pixel is classed flat.",
-        "Read the threshold directly off the _relief_cdf.csv output.  "
-        "Only used when adaptive_relief_threshold = false.",
-        "Stage 2: relief threshold", "param", ""};
+    // --- Stages 1-2: relief and its bound ---
+    // Shared names (lsdtt_common_parameters), the same window and bound as
+    // lsdtt-flat-surface-finder and lsdtt-fluvial-surfaces. Two cells is the
+    // 5 x 5 window this tool has always defaulted to; the bound is chosen from
+    // the relief CDF by default, as it always has been here.
+    lsdtt::declare_relief_window_parameter(float_default_map, help_map, 2);
+    lsdtt::declare_relief_threshold_algorithm_parameter(
+        string_default_map, help_map, "cdf_divergence");
+    lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f,
+                                        "relief_threshold_algorithm_choice");
+    // Hidden storage for compatibility aliases, resolved after parsing.
+    string_default_map["legacy_relief_window_side_pixels"] = "";
+    string_default_map["legacy_adaptive_relief_threshold"] = "";
 
     // --- Stages 4-7: flat mask post-processing ---
     int_default_map["min_flat_component_pixels"] = 500;
@@ -281,12 +269,25 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // A pure rename: the value carries across unchanged. The new spelling says
-    // what the number is - a full window side, not a radius - because the same
-    // idea is a RADIUS in lsdtt-fluvial-surfaces.
+    // Renames. Since 2026-10-26 the relief admission names are shared with
+    // lsdtt-flat-surface-finder and lsdtt-fluvial-surfaces (one name per aim).
     pp.set_deprecated_aliases({
-        {"relief_window_pixels", "relief_window_side_pixels"},
-        {"min_contributing_pixels", "basin_minimum_contributing_pixels"} });
+        {"min_contributing_pixels", "basin_minimum_contributing_pixels"},
+        {"relief_threshold_metres", "max_relief_metres"} });
+    // Old values a plain alias cannot carry, converted after parsing.
+    pp.set_deprecated_compatibility_aliases({
+        {"relief_window_side_pixels",
+         {"legacy_relief_window_side_pixels", "relief_window_radius_metres",
+          "The full window side in cells is converted to a radius in metres "
+          "with the DEM cell size; the radius used is in the run log."}},
+        {"relief_window_pixels",
+         {"legacy_relief_window_side_pixels", "relief_window_radius_metres",
+          "The full window side in cells is converted to a radius in metres "
+          "with the DEM cell size; the radius used is in the run log."}},
+        {"adaptive_relief_threshold",
+         {"legacy_adaptive_relief_threshold",
+          "relief_threshold_algorithm_choice",
+          "true is cdf_divergence, false is fixed."}} });
 
     pp.parse_all_parameters(float_default_map, int_default_map,
                             bool_default_map, string_default_map);
@@ -346,9 +347,38 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 1: local relief (square window)
     // -------------------------------------------------------------------------
-    const int wpix = ip["relief_window_side_pixels"];
-    if (wpix < 3 || wpix % 2 == 0)
-    { std::cerr << "Error: relief_window_side_pixels must be odd and >= 3\n"; return 1; }
+    // Full window side in cells (2r + 1), from relief_window_radius_metres or
+    // a legacy relief_window_side_pixels.
+    int wpix = 0;
+    try
+    {
+        const double cell = dem.get_meta().cell_size;
+        const std::string& legacy_side = sf["legacy_relief_window_side_pixels"];
+        if (!legacy_side.empty() &&
+            !pp.parameter_supplied("relief_window_radius_metres"))
+        {
+            std::size_t used = 0;
+            wpix = std::stoi(legacy_side, &used);
+            if (used != legacy_side.size() || wpix < 3 || wpix % 2 == 0)
+                throw std::invalid_argument(
+                    "relief_window_side_pixels must be odd and >= 3; got '"
+                    + legacy_side + "'.");
+            std::ostringstream os;
+            os.precision(9);
+            os << static_cast<float>(((wpix - 1) / 2) * cell);
+            pp.record_resolved_parameter("relief_window_radius_metres", os.str());
+        }
+        else
+        {
+            wpix = 2 * lsdtt::relief_window_radius_pixels(
+                           ff["relief_window_radius_metres"], cell, 2) + 1;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
 
     std::cout << "Stage 1: computing local relief (square window, "
               << wpix << " pixels)...\n";
@@ -368,7 +398,31 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Stage 2: build flat mask
     // -------------------------------------------------------------------------
-    const bool use_adaptive = bf["adaptive_relief_threshold"];
+    std::string relief_choice = sf["relief_threshold_algorithm_choice"];
+    if (!sf["legacy_adaptive_relief_threshold"].empty() &&
+        !pp.parameter_supplied("relief_threshold_algorithm_choice"))
+    {
+        try
+        {
+            relief_choice = lsdtt::relief_threshold_choice_from_legacy_bool(
+                sf["legacy_adaptive_relief_threshold"],
+                "adaptive_relief_threshold");
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        pp.record_resolved_parameter("relief_threshold_algorithm_choice",
+                                     relief_choice);
+    }
+    if (relief_choice != "fixed" && relief_choice != "cdf_divergence")
+    {
+        std::cerr << "FATAL: unknown relief_threshold_algorithm_choice '"
+                  << relief_choice << "'. Valid: fixed, cdf_divergence.\n";
+        return 1;
+    }
+    const bool use_adaptive = (relief_choice == "cdf_divergence");
 
     lsdtt::lsdtt_raster_cpu flat_mask;
     if (use_adaptive)
@@ -385,7 +439,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        const double fixed = static_cast<double>(ff["relief_threshold_metres"]);
+        const double fixed = static_cast<double>(ff["max_relief_metres"]);
         std::cout << "Stage 2: building flat mask (fixed threshold = "
                   << fixed << " m)...\n";
         flat_mask = lsdtt::algebra::raster_binary_true_below_threshold(

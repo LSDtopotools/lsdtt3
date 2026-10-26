@@ -493,9 +493,13 @@ void lsdtt_param_parser::apply_key_policy(
         {
             parameter_map_[policy.storage_key] = parameter_map_[old_key];
             std::cerr << "WARNING: '" << old_key << "' is deprecated; use '"
-                      << policy.replacement_key << "'. Its value is preserved "
-                      << "for this output in this run; review consolidated "
-                      << "format settings before removing the old key.\n";
+                      << policy.replacement_key << "'. ";
+            if (policy.note.empty())
+                std::cerr << "Its value is preserved for this output in this "
+                          << "run; review consolidated format settings before "
+                          << "removing the old key.\n";
+            else
+                std::cerr << policy.note << "\n";
         }
         parameter_map_.erase(old_key);
     }
@@ -1950,6 +1954,13 @@ void lsdtt_param_parser::write_reference_files(
 void lsdtt_param_parser::print_parameters() const
 {
     print_parameters(write_fname_ + "_ingested_params.param");
+}
+
+void lsdtt_param_parser::record_resolved_parameter(const std::string& key,
+                                                   const std::string& value)
+{
+    defaults_used_map_.erase(key);
+    parameters_read_map_[key] = value;
 }
 
 void lsdtt_param_parser::print_parameters(const std::string& fname_prefix) const

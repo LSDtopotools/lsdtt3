@@ -4,8 +4,10 @@
 
 #include "lsdtt_common_parameters.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <map>
+#include <stdexcept>
 #include <string>
 
 namespace
@@ -212,6 +214,79 @@ void test_selective_synthetic_declarations()
 
 } // namespace
 
+// The shared admission and floodplain names (2026-10-26). The defaults are
+// arguments because the tools differ, so check that the argument reaches both
+// the map and the documented default, and that the conversions behind the
+// compatibility aliases give the numbers the old keys meant.
+void test_admission_and_floodplain_declarations()
+{
+    std::map<std::string, float>       floats;
+    std::map<std::string, std::string> strings;
+    lsdtt::lsdtt_help_registry         help;
+    lsdtt::declare_relief_window_parameter(floats, help, 5, "parent_key");
+    lsdtt::declare_max_relief_parameter(floats, help, 2.5f);
+    lsdtt::declare_relief_threshold_algorithm_parameter(strings, help,
+                                                        "cdf_divergence");
+    lsdtt::declare_max_admission_gradient_parameter(floats, help, 0.05f);
+    lsdtt::declare_max_floodplain_hand_parameter(floats, help, 5.0f);
+    lsdtt::declare_max_floodplain_gradient_parameter(floats, help, 0.1f);
+
+    check(floats.at("relief_window_radius_metres") == 0.0f &&
+              help_field(help, "relief_window_radius_metres", 2).find("0 = 5 cells") !=
+                  std::string::npos &&
+              help_field(help, "relief_window_radius_metres", 3).find("11 x 11") !=
+                  std::string::npos &&
+              help_field(help, "relief_window_radius_metres", 6) == "parent_key",
+          "relief window: default 0, help states the cell default and window");
+    check(floats.at("max_relief_metres") == 2.5f &&
+              help_field(help, "max_relief_metres", 1) == "2.5",
+          "max_relief_metres: argument default in map and help");
+    check(strings.at("relief_threshold_algorithm_choice") == "cdf_divergence",
+          "relief_threshold_algorithm_choice: argument default");
+    check(floats.at("max_admission_gradient") == 0.05f &&
+              help_field(help, "max_admission_gradient", 1) == "0.05",
+          "max_admission_gradient: argument default, shortest text");
+    check(floats.at("max_floodplain_hand_metres") == 5.0f &&
+              floats.at("max_floodplain_gradient") == 0.1f &&
+              help_field(help, "max_floodplain_gradient", 1) == "0.1",
+          "floodplain bounds: argument defaults");
+
+    check(lsdtt::relief_window_radius_pixels(0.0, 30.0, 5) == 5 &&
+              lsdtt::relief_window_radius_pixels(45.0, 30.0, 5) == 2 &&
+              lsdtt::relief_window_radius_pixels(1.0, 30.0, 5) == 1 &&
+              lsdtt::relief_window_radius_pixels(150.0, 30.0, 2) == 5,
+          "relief_window_radius_pixels: 0 = default, nearest cell, at least 1");
+    bool threw = false;
+    try { (void)lsdtt::relief_window_radius_pixels(-1.0, 30.0, 5); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "relief_window_radius_pixels: negative radius throws");
+
+    check(lsdtt::gradient_from_legacy_degrees("0", "k") == 0.0 &&
+              std::fabs(lsdtt::gradient_from_legacy_degrees("45", "k") - 1.0) < 1e-12 &&
+              std::fabs(lsdtt::gradient_from_legacy_degrees("11.31", "k") - 0.2) < 1e-4,
+          "gradient_from_legacy_degrees: tan, with 0 exactly 0");
+    int n_threw = 0;
+    for (const char* bad : {"90", "-1", "5deg", "", "nan"})
+    {
+        try { (void)lsdtt::gradient_from_legacy_degrees(bad, "old_key"); }
+        catch (const std::invalid_argument& e)
+        {
+            if (std::string(e.what()).find("old_key") != std::string::npos) ++n_threw;
+        }
+    }
+    check(n_threw == 5,
+          "gradient_from_legacy_degrees: out of range or malformed throws, naming the key");
+
+    check(lsdtt::relief_threshold_choice_from_legacy_bool("true", "k") == "cdf_divergence" &&
+              lsdtt::relief_threshold_choice_from_legacy_bool("1", "k") == "cdf_divergence" &&
+              lsdtt::relief_threshold_choice_from_legacy_bool("False", "k") == "fixed",
+          "relief_threshold_choice_from_legacy_bool: parser spellings map");
+    threw = false;
+    try { (void)lsdtt::relief_threshold_choice_from_legacy_bool("yes", "k"); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "relief_threshold_choice_from_legacy_bool: other text throws");
+}
+
 int main()
 {
     test_independent_selection();
@@ -221,6 +296,7 @@ int main()
     test_basin_outlet_declaration();
     test_overwrite_policy();
     test_selective_synthetic_declarations();
+    test_admission_and_floodplain_declarations();
 
     if (n_failed != 0)
     {

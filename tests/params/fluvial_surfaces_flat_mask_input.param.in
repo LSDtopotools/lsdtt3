@@ -1,0 +1,30 @@
+# Stage 2 of the two-step workflow: lsdtt-fluvial-surfaces on the flat mask
+# that lsdtt-flat-surface-finder wrote in rigorous_flat_surface_finder_staircase_mask.
+#
+# This is the documented workflow and the default admission path
+# (flat_mask_fname set), which no other test exercises: smoke_fluvial_surfaces
+# uses the built-in fallback. Ladder settings match fluvial_surfaces_smoke.param.in
+# so the two runs differ only in where the admitted set came from.
+#
+# flat_mask_fname is relative to read_path (the fluvial_surfaces_fixture
+# directory); the stage-1 test writes into its sibling work directory.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsfm
+
+n_threads: 1
+write_output_format: gtiff
+
+flat_mask_fname: ../rigorous_flat_surface_finder_staircase_mask/out/fsfst_combined_flat_mask.tif
+min_band_component_pixels: 50
+
+reference_field_algorithm_choice: hand
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+ladder_resolvability_kappa: 3.0
+
+threshold_contributing_pixels: 500
+max_floodplain_hand_metres: 5.0
+min_terrace_hand_metres: 5.0

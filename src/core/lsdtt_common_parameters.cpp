@@ -13,6 +13,12 @@
 
 #include "lsdtt_common_parameters.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+
 namespace lsdtt
 {
 
@@ -38,6 +44,29 @@ std::string prefixed_group_label(const std::string& prefix,
         return group;
     }
     return group + " (" + bare + ")";
+}
+
+// Shortest text that reads back to the same float, for the default column of
+// a help entry ("0.05", not "0.050000").
+std::string round_trip_text(float value)
+{
+    for (int precision = 1; precision <= 9; ++precision)
+    {
+        std::ostringstream os;
+        os.imbue(std::locale::classic());
+        os.precision(precision);
+        os << value;
+        std::istringstream is(os.str());
+        is.imbue(std::locale::classic());
+        float back = 0.0f;
+        is >> back;
+        if (back == value) return os.str();
+    }
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(9);
+    os << value;
+    return os.str();
 }
 
 } // namespace
@@ -239,6 +268,148 @@ void declare_channel_initiation_parameters(
         "threshold_contributing_pixels x cell area. Where a genuine area is "
         "wanted instead, the convention is <what>_area_threshold_m2.",
         group, "param", ""};
+}
+
+// -----------------------------------------------------------------------------
+// Flat-ground admission and floodplain bounds
+// -----------------------------------------------------------------------------
+void declare_relief_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    int                           default_cells,
+    const std::string&            parent)
+{
+    const std::string cells = std::to_string(default_cells);
+    float_default_map["relief_window_radius_metres"] = 0.0f;
+    help_map["relief_window_radius_metres"] = {"float", "0",
+        "Radius (m) of the square window local relief (max - min) is measured "
+        "over. 0 = " + cells + " cells.",
+        "Converted to the nearest whole number of cells, at least one; the run "
+        "log states the radius actually used. A radius r cells is a (2r+1) x "
+        "(2r+1) window, so the default is a " +
+        std::to_string(2 * default_cells + 1) + " x " +
+        std::to_string(2 * default_cells + 1) + " window. Replaces "
+        "relief_window_side_pixels (a full side) and "
+        "fallback_relief_window_radius_pixels (a radius in cells), which "
+        "spelled the same idea two ways.",
+        "Admission", "param", parent};
+}
+
+void declare_max_relief_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent)
+{
+    float_default_map["max_relief_metres"] = default_metres;
+    help_map["max_relief_metres"] = {"float", round_trip_text(default_metres),
+        "Local relief (m) below which a pixel is admitted as flat.",
+        "Read a value off the relief CDF the tool writes. Where the tool has "
+        "relief_threshold_algorithm_choice, this is the value used by `fixed`.",
+        "Admission", "param", parent};
+}
+
+void declare_relief_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice)
+{
+    string_default_map["relief_threshold_algorithm_choice"] = default_choice;
+    help_map["relief_threshold_algorithm_choice"] = {"string", default_choice,
+        "How the relief bound is chosen: fixed or cdf_divergence.",
+        "fixed uses max_relief_metres. cdf_divergence computes the relief CDF, "
+        "fits the best of a family of parametric distributions (normal, "
+        "exponential, Weibull, Pareto) and takes the relief at which the "
+        "empirical CDF most exceeds the fit: flat pixels inflate the empirical "
+        "distribution at low relief. The CDF and the chosen value are written "
+        "out. Replaces the boolean adaptive_relief_threshold.",
+        "Admission", "param", ""};
+}
+
+void declare_max_admission_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent)
+{
+    float_default_map["max_admission_gradient"] = default_gradient;
+    help_map["max_admission_gradient"] = {"float",
+        round_trip_text(default_gradient),
+        "Gradient (m/m) below which a pixel is admitted as flat.",
+        "A gradient, not an angle: 0.087 is 5 degrees, 0.176 is 10, 0.268 is "
+        "15 (gradient = tan(angle)). Measured from a fitted polynomial surface "
+        "rather than a 3x3 difference.",
+        "Admission", "param", parent};
+}
+
+void declare_max_floodplain_hand_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent)
+{
+    float_default_map["max_floodplain_hand_metres"] = default_metres;
+    help_map["max_floodplain_hand_metres"] = {"float",
+        round_trip_text(default_metres),
+        "HAND (m) above which ground is not floodplain.",
+        "HAND is height above nearest drainage (Nobre et al. 2011, J. "
+        "Hydrology 404:13-29), measured along the flow path to the channel.",
+        "Floodplain", "param", parent};
+}
+
+void declare_max_floodplain_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent)
+{
+    float_default_map["max_floodplain_gradient"] = default_gradient;
+    help_map["max_floodplain_gradient"] = {"float",
+        round_trip_text(default_gradient),
+        "Gradient (m/m) above which ground is not floodplain.",
+        "A gradient, not an angle (gradient = tan(angle)).",
+        "Floodplain", "param", parent};
+}
+
+int relief_window_radius_pixels(double radius_metres,
+                                double cell_size,
+                                int    default_cells)
+{
+    if (!std::isfinite(radius_metres) || radius_metres < 0.0)
+        throw std::invalid_argument(
+            "relief_window_radius_metres must be a finite value >= 0");
+    if (radius_metres == 0.0) return default_cells;
+    if (!(cell_size > 0.0))
+        throw std::invalid_argument("relief window: cell size must be > 0");
+    const long r = std::lround(radius_metres / cell_size);
+    return static_cast<int>(std::max(1L, r));
+}
+
+double gradient_from_legacy_degrees(const std::string& text,
+                                    const std::string& old_key)
+{
+    std::size_t used = 0;
+    double deg = 0.0;
+    try { deg = std::stod(text, &used); }
+    catch (const std::exception&) { used = 0; }
+    if (used == 0 || used != text.size() || !std::isfinite(deg) ||
+        deg < 0.0 || deg >= 90.0)
+        throw std::invalid_argument(
+            "'" + old_key + "' must be an angle in [0, 90) degrees to convert "
+            "to a gradient; got '" + text + "'.");
+    if (deg == 0.0) return 0.0;
+    return std::tan(deg * 3.14159265358979323846 / 180.0);
+}
+
+std::string relief_threshold_choice_from_legacy_bool(const std::string& text,
+                                                     const std::string& old_key)
+{
+    for (const char* t : {"true", "True", "TRUE", "t", "T", "1"})
+        if (text == t) return "cdf_divergence";
+    for (const char* f : {"false", "False", "FALSE", "f", "F", "0"})
+        if (text == f) return "fixed";
+    throw std::invalid_argument(
+        "'" + old_key + "' must be true or false; got '" + text + "'.");
 }
 
 // -----------------------------------------------------------------------------

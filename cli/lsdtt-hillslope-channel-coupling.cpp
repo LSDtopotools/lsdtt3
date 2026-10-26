@@ -336,23 +336,24 @@ int main(int argc, char* argv[])
         "floodplain = gradient < threshold AND HAND < threshold, hole-filled. "
         "This is a CONVENIENCE, not a classifier: it has no reach-relative "
         "banding and no terrace separation, so it will swallow terraces and "
-        "plateaus. Use lsdtt-flat-surface-finder for real work. Default off so "
+        "plateaus. Use lsdtt-fluvial-surfaces for real work. Default off so "
         "the tool's behaviour never silently depends on two arbitrary numbers. "
         "HAND is height above nearest drainage (Nobre et al. 2011, J. Hydrology "
         "404:13-29).",
         "Floodplain", "switch", ""};
 
-    float_default_map["floodplain_gradient_threshold"] = 0.1f;
-    help_map["floodplain_gradient_threshold"] = {"float", "0.1",
-        "Gradient below which a pixel may be floodplain.",
-        "Used only when find_floodplain is true.",
-        "Floodplain", "param", "find_floodplain"};
-
-    float_default_map["floodplain_hand_threshold"] = 5.0f;
-    help_map["floodplain_hand_threshold"] = {"float", "5.0",
-        "HAND (m) below which a pixel may be floodplain.",
-        "Used only when find_floodplain is true.",
-        "Floodplain", "param", "find_floodplain"};
+    // Shared names (lsdtt_common_parameters): the same floodplain bounds as
+    // lsdtt-fluvial-surfaces.
+    lsdtt::declare_max_floodplain_gradient_parameter(
+        float_default_map, help_map, 0.1f, "find_floodplain");
+    help_map["max_floodplain_gradient"][3] +=
+        " Used only when find_floodplain is true. Replaces "
+        "floodplain_gradient_threshold.";
+    lsdtt::declare_max_floodplain_hand_parameter(
+        float_default_map, help_map, 5.0f, "find_floodplain");
+    help_map["max_floodplain_hand_metres"][3] +=
+        " Used only when find_floodplain is true. Replaces "
+        "floodplain_hand_threshold.";
 
     // ---- tracing -------------------------------------------------------------
     string_default_map["trace_surface_choice"] = "raw";
@@ -581,6 +582,8 @@ int main(int argc, char* argv[])
             {"source_pixels_threshold", "threshold_contributing_pixels"},
             {"minimum_elevation", "min_elevation"},
             {"minimum_basin_pixels", "min_basin_pixels"},
+            {"floodplain_gradient_threshold", "max_floodplain_gradient"},
+            {"floodplain_hand_threshold", "max_floodplain_hand_metres"},
             {"chi_critical_divergence_m", "chi_critical_divergence_metres"},
             {"surface_fitting_window_radius", "surface_fitting_window_radius_metres"},
             {"hilltop_points_output_format", "hilltop_points_write_vector_format"} });
@@ -1025,8 +1028,8 @@ int main(int argc, char* argv[])
                     dem_routed.get_mask_array().get_vector(),
                     chan_u8);
 
-            const float g_thr = ff.at("floodplain_gradient_threshold");
-            const float h_thr = ff.at("floodplain_hand_threshold");
+            const float g_thr = ff.at("max_floodplain_gradient");
+            const float h_thr = ff.at("max_floodplain_hand_metres");
             std::vector<float> raw_fp(ncell, 0.0f);
             for (int r = 0; r < nr; ++r)
                 for (int c = 0; c < nc; ++c)

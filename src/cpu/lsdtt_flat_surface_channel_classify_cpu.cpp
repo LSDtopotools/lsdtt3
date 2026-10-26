@@ -235,7 +235,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*     donor_flat,
     const lsdtt_raster_cpu*              channel_flow_distance,
-    const lsdtt_raster_cpu*              slope_degrees,
+    const lsdtt_raster_cpu*              gradient,
     const lsdtt_raster_cpu*              terrain_aspect_degrees)
 {
     const lsdtt_raster_meta& meta = labelled_flat_mask.get_meta();
@@ -307,8 +307,8 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             request.vertical_accuracy_gentle_metres;
         lr.vertical_accuracy_steep_metres =
             request.vertical_accuracy_steep_metres;
-        lr.vertical_accuracy_break_degrees =
-            request.vertical_accuracy_break_degrees;
+        lr.vertical_accuracy_break_gradient =
+            request.vertical_accuracy_break_gradient;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
         lr.hist_bins               = request.band_hist_bins;
@@ -364,7 +364,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
 
         lad = build_reference_field_ladder(
             height_above_channel, admitted, lr, src_ptr, dist_ptr,
-            slope_degrees);
+            gradient);
 
         banded = label_components_within_bands(
             lad.band_index, admitted, height_above_channel,
@@ -1037,8 +1037,8 @@ void write_ladder_windows_csv(
             // Beside required_gap_m rather than replacing it, because the floor
             // is the constraint and E_v is where the constraint came from.
             std::to_string(w.vertical_accuracy_m),
-            std::isfinite(w.median_slope_degrees)
-                ? std::to_string(w.median_slope_degrees) : std::string(),
+            std::isfinite(w.median_gradient)
+                ? std::to_string(w.median_gradient) : std::string(),
             std::to_string(w.goodness_of_variance_fit),
             join_doubles(w.separation_ratio) });
     }
@@ -1048,7 +1048,7 @@ void write_ladder_windows_csv(
          "min_band_centre_gap_m","required_gap_m",
          "k_bootstrap_mode","k_stability","k_ci_lo","k_ci_hi","n_bootstrap",
          "vertical_accuracy_m",
-         "median_slope_degrees","goodness_of_variance_fit",
+         "median_gradient","goodness_of_variance_fit",
          "separation_ratio"},
         rows);
 }

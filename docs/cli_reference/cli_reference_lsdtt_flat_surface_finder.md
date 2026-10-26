@@ -34,10 +34,10 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | Step | What happens | Controlled by |
 |---|---|---|
 | 1 | Load DEM, check it is projected in metres | — |
-| 2 | Local relief (max − min) in a square window | `relief_window_side_pixels` |
-| 3 | Threshold relief, fixed or adaptive | `relief_threshold_metres`, `adaptive_relief_threshold` |
-| 4 | Optional gradient cap from a fitted polynomial surface | `admission_slope_cap_degrees`, `admission_slope_window_radius_metres` |
-| 5 | Combine the two tests | `admission_mode` |
+| 2 | Local relief (max − min) in a square window | `relief_window_radius_metres` |
+| 3 | Bound relief, fixed or chosen from the data | `max_relief_metres`, `relief_threshold_algorithm_choice` |
+| 4 | Optional gradient bound from a fitted polynomial surface | `max_admission_gradient`, `admission_gradient_window_radius_metres` |
+| 5 | Combine the two tests | `admission_algorithm_choice` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
 | 8 | Optional VEC break-of-slope skeleton | `vec_adaptive_*`, `slope_break_*` |
@@ -64,12 +64,12 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `relief_window_side_pixels` | int | `5` | Full window **side length** in pixels for local relief (max − min). Not a radius: must be odd and ≥ 3, so `5` is a 5×5 neighbourhood. `lsdtt-fluvial-surfaces` spells its equivalent `fallback_relief_window_radius_pixels`, which is a **radius**, so the same number means a different window there. The old name `relief_window_pixels` is accepted as a deprecated alias. |
-| `relief_threshold_metres` | float | `1.0` | Local relief (m) below which a pixel is classed flat. |
-| `adaptive_relief_threshold` | bool | `false` | Choose the relief threshold automatically, at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF. Ignores `relief_threshold_metres`. |
-| `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to the adaptively chosen threshold. |
+| `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window local relief (max − min) is measured over, converted to the nearest whole number of cells. `0` = 2 cells, a 5×5 window. The same name and meaning as in `lsdtt-fluvial-surfaces` and `lsdtt-mountain-front`. |
+| `max_relief_metres` | float | `1.0` | Local relief (m) below which a pixel is admitted as flat. |
+| `relief_threshold_algorithm_choice` | string | `fixed` | `fixed` uses `max_relief_metres`; `cdf_divergence` chooses the bound at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF. |
+| `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to a bound chosen by `cdf_divergence`. |
 
-`adaptive_relief_threshold` writes `<write_fname>_relief_adaptive_cdf.csv` — the
+`relief_threshold_algorithm_choice: cdf_divergence` writes `<write_fname>_relief_adaptive_cdf.csv` — the
 whole curve, so you can see the break the run relied on rather than only the
 number it picked.
 
@@ -79,23 +79,24 @@ number it picked.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `admission_mode` | string | `relief` | Which test admits a pixel: `relief`, `slope`, `relief_and_slope`, `relief_or_slope`. |
-| `admission_slope_cap_degrees` | float | `0` | Gradient (degrees) below which a pixel is admitted. **Required** by every mode that names slope. |
-| `admission_slope_window_radius_metres` | float | `0` | Window radius (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
-| `write_admission_slope_raster` | bool | `false` | Write the gradient raster the cap was applied to. |
+| `admission_algorithm_choice` | string | `relief` | Which test admits a pixel: `relief`, `gradient`, `relief_and_gradient`, `relief_or_gradient`. |
+| `max_admission_gradient` | float | `0` | Gradient (m/m) below which a pixel is admitted. **Required** by every choice that names gradient. |
+| `admission_gradient_window_radius_metres` | float | `0` | Window radius (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
+| `write_admission_gradient_raster` | bool | `false` | Write the gradient raster (m/m) the bound was applied to. |
 
-**Relief and slope are different tests and reject different ground.** Relief
+**Relief and gradient are different tests and reject different ground.** Relief
 charges a surface for its own tilt, so a smooth tread that slopes downvalley
-fails it while a rough level surface passes; a gradient cap does the opposite. On
-steep terrain the two admit nearly disjoint sets. Use `relief_or_slope` when the
-point is to find every candidate surface and let `lsdtt-fluvial-surfaces` sort
+fails it while a rough level surface passes; a gradient bound does the opposite.
+On steep terrain the two admit nearly disjoint sets. Use `relief_or_gradient` when
+the point is to find every candidate surface and let `lsdtt-fluvial-surfaces` sort
 them.
 
 The gradient comes from a polynomial surface fitted over
-`admission_slope_window_radius_metres`, not a 3×3 difference: a three-cell operator on a
-30 m DEM measures pixel noise. There is no default cap worth guessing — about
-5 degrees is a valley floor, 15 degrees admits fan and pediment — so run the
-census at more than one cap and report the sensitivity.
+`admission_gradient_window_radius_metres`, not a 3×3 difference: a three-cell
+operator on a 30 m DEM measures pixel noise. Gradients are m/m, not angles. There
+is no default bound worth guessing — about 0.087 (5 degrees) is a valley floor,
+0.27 (15 degrees) admits fan and pediment — so run the census at more than one
+bound and report the sensitivity.
 
 ---
 
@@ -226,9 +227,9 @@ separation without a second labelling pass over the whole raster.
 | `<write_fname>_combined_flat_mask.tif` | `write_combined_flat_mask_raster` (default on) — **the input to `lsdtt-fluvial-surfaces`** |
 | `<write_fname>_labelled_flat_mask.tif` | always |
 | `<write_fname>_relief.tif`, `_relief_flat_mask.tif` | `write_metric_flat_mask_rasters` |
-| `<write_fname>_admission_slope_degrees.tif` | `write_admission_slope_raster` |
+| `<write_fname>_admission_gradient.tif` | `write_admission_gradient_raster` |
 | `<write_fname>_relief_cdf.csv`, `_dist_fits.csv` | always |
-| `<write_fname>_relief_adaptive_cdf.csv` | `adaptive_relief_threshold` |
+| `<write_fname>_relief_adaptive_cdf.csv` | `relief_threshold_algorithm_choice: cdf_divergence` |
 | `<write_fname>_flat_vertical_excess_curvature.tif`, `_slope_break_*` | the slope-break switches |
 | `<write_fname>_plane_fits.csv`, `_plane_residual.tif`, `_residual_relief*.tif` | `run_plane_analysis` |
 | `<write_fname>_README.csv` / `.html` | every successful run — the resolved parameters for that run |
@@ -253,7 +254,14 @@ rather than being ignored, so a stale parameter file cannot silently do nothing.
 | `write_residual_relief_labelled_mask` | `write_residual_relief_labelled_mask_raster` |
 | `write_residual_relief_skeleton` | `write_residual_relief_skeleton_raster` |
 | `test_surface_vector_file` | `test_surface_polygon_fname` |
-| `floodplain_max_height_metres`, `terrace_min_height_metres`, `channel_adjacency_radius_metres`, `terrace_max_hand_spread_metres`, `terrace_corridor_per_pixel`, `band_reach_window_metres`, `terrace_max_distance_to_channel_metres` | moved to `lsdtt-fluvial-surfaces` |
+| `relief_window_side_pixels`, `relief_window_pixels` | `relief_window_radius_metres` — the full side in cells is converted to a radius in metres with the cell size |
+| `relief_threshold_metres` | `max_relief_metres` |
+| `adaptive_relief_threshold` | `relief_threshold_algorithm_choice` — `true` is `cdf_divergence`, `false` is `fixed` |
+| `admission_mode` | `admission_algorithm_choice`; its values `slope`, `relief_and_slope`, `relief_or_slope` are now `gradient`, `relief_and_gradient`, `relief_or_gradient` |
+| `admission_slope_cap_degrees` | `max_admission_gradient` — converted with gradient = tan(angle) |
+| `admission_slope_window_radius_metres` | `admission_gradient_window_radius_metres` |
+| `write_admission_slope_raster` | `write_admission_gradient_raster`; the file is now `_admission_gradient.tif`, in m/m |
+| `floodplain_max_height_metres`, `terrace_min_height_metres`, `channel_adjacency_radius_metres`, `terrace_max_hand_spread_metres`, `terrace_corridor_per_pixel`, `band_reach_window_metres`, `terrace_max_distance_to_channel_metres` | moved to `lsdtt-fluvial-surfaces` (where the first two are now `max_floodplain_hand_metres` and `min_terrace_hand_metres`) |
 | every `source_points_*`, `outlet_points_*`, `write_channel_*`, `break_flats_with_channels`, `fill_before_routing`, `connect_flat_surfaces_to_channels` | moved to `lsdtt-fluvial-surfaces` — this tool no longer does flow routing |
 
 ---
@@ -288,23 +296,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `n_threads` | `int` | `0` | `io` | - | OpenMP thread count. | 0 = all hardware threads. |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | cog, gtiff, or same_as_input. |
 
-### Relief (always on)
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `relief_window_side_pixels` | `int` | `5` | `param` | - | Full window SIDE LENGTH (pixels) for local relief (max - min). | This is the side of the square window, not a radius: must be odd and &gt;= 3, and 5 means a 5x5 neighbourhood. Note that lsdtt-fluvial-surfaces spells its equivalent fallback_relief_window_radius_pixels, which is a RADIUS and so means something different for the same number. |
-| `relief_threshold_metres` | `float` | `1.0` | `param` | - | Local relief value (m) below which a pixel is classed flat. | Read the threshold directly off the _relief_cdf.csv output. Only used when adaptive_relief_threshold = false. |
-| `adaptive_relief_threshold` | `bool` | `false` | `param` | - | Automatically select the relief threshold using CDF divergence. | Computes the relief CDF in 500 bins, fits the best parametric distribution, and picks the x-value where the empirical CDF most exceeds the fitted CDF (flat pixels inflate the empirical distribution at low relief values, causing a positive deviation). Prints the chosen threshold and writes the CDF to file. Overrides relief_threshold_metres. |
-| `relief_threshold_multiplier` | `float` | `1.0` | `param` | - | Multiplier applied to the adaptively chosen relief threshold. | Allows leeway around the auto-detected threshold. Values &gt; 1 loosen the criterion (more flat pixels); values &lt; 1 tighten it. Only used when adaptive_relief_threshold = true. |
-
 ### Admission
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `admission_mode` | `string` | `relief` | `param` | - | Which test admits a pixel as flat: relief, slope, relief_and_slope or relief_or_slope. | Local relief is not a gradient test and the two reject different ground. Relief charges a surface for its own tilt, so a smooth tread that slopes downvalley fails it while a rough level surface passes; a gradient cap does the opposite. On a Himalayan gorge the two select nearly disjoint sets. `relief` is the historical behaviour. `slope` uses the gradient cap alone. `relief_and_slope` requires both, which is the strictest reading of flat. `relief_or_slope` admits either, which is the one to use when the point is to find every candidate surface and let the ladder sort them. |
-| `admission_slope_cap_degrees` | `float` | `0` | `param` | - | Gradient (degrees) below which a pixel is admitted. Required by every admission_mode that names slope. | Measured from a polynomial surface fitted over admission_slope_window_radius_metres, not from a 3x3 difference: a 3-cell operator on a 30 m DEM measures pixel noise, and the cap has to be read at the scale of the surface being admitted. There is no default worth guessing - 5 degrees is a valley floor, 15 degrees admits fan and pediment - so run the census at more than one cap and report the sensitivity rather than defending one number. |
-| `admission_slope_window_radius_metres` | `float` | `0` | `param` | - | Window radius (m) of the polynomial fit the admission gradient is measured over. 0 = match the relief window. | Defaulting to relief_window_side_pixels x cell size keeps the two admission tests commensurate: they then disagree about the ground, not about the scale they are looking at. |
-| `write_admission_slope_raster` | `bool` | `false` | `output` | - | Write the gradient raster the slope cap was applied to. | Write it the first time you set a cap on a new DEM. The cap is only meaningful against the gradient distribution it is cutting, and that distribution is not knowable in advance. |
+| `relief_window_radius_metres` | `float` | `0` | `param` | - | Radius (m) of the square window local relief (max - min) is measured over. 0 = 2 cells. | Converted to the nearest whole number of cells, at least one; the run log states the radius actually used. A radius r cells is a (2r+1) x (2r+1) window, so the default is a 5 x 5 window. Replaces relief_window_side_pixels (a full side) and fallback_relief_window_radius_pixels (a radius in cells), which spelled the same idea two ways. |
+| `max_relief_metres` | `float` | `1` | `param` | - | Local relief (m) below which a pixel is admitted as flat. | Read a value off the relief CDF the tool writes. Where the tool has relief_threshold_algorithm_choice, this is the value used by `fixed`. |
+| `relief_threshold_algorithm_choice` | `string` | `fixed` | `param` | - | How the relief bound is chosen: fixed or cdf_divergence. | fixed uses max_relief_metres. cdf_divergence computes the relief CDF, fits the best of a family of parametric distributions (normal, exponential, Weibull, Pareto) and takes the relief at which the empirical CDF most exceeds the fit: flat pixels inflate the empirical distribution at low relief. The CDF and the chosen value are written out. Replaces the boolean adaptive_relief_threshold. |
+| `relief_threshold_multiplier` | `float` | `1.0` | `param` | `relief_threshold_algorithm_choice` | Multiplier applied to an automatically chosen relief bound. | Allows leeway around the auto-detected value. Values &gt; 1 loosen the criterion (more flat pixels); values &lt; 1 tighten it. Not used when relief_threshold_algorithm_choice is fixed. |
+| `admission_algorithm_choice` | `string` | `relief` | `param` | - | Which test admits a pixel as flat: relief, gradient, relief_and_gradient or relief_or_gradient. | Local relief is not a gradient test and the two reject different ground. Relief charges a surface for its own tilt, so a smooth tread that slopes downvalley fails it while a rough level surface passes; a gradient bound does the opposite. On a Himalayan gorge the two select nearly disjoint sets. `relief` is the historical behaviour. `gradient` uses max_admission_gradient alone. `relief_and_gradient` requires both, which is the strictest reading of flat. `relief_or_gradient` admits either, which is the one to use when the point is to find every candidate surface and let the ladder sort them. Replaces admission_mode (whose `slope` values are now `gradient`). |
+| `max_admission_gradient` | `float` | `0` | `param` | `admission_algorithm_choice` | Gradient (m/m) below which a pixel is admitted as flat. | A gradient, not an angle: 0.087 is 5 degrees, 0.176 is 10, 0.268 is 15 (gradient = tan(angle)). Measured from a fitted polynomial surface rather than a 3x3 difference. Required by every admission_algorithm_choice that names gradient; there is no default worth guessing - 0.087 (5 degrees) is a valley floor, 0.27 (15 degrees) admits fan and pediment - so run the census at more than one bound and report the sensitivity rather than defending one number. Replaces admission_slope_cap_degrees; an old value is converted with gradient = tan(angle). |
+| `admission_gradient_window_radius_metres` | `float` | `0` | `param` | `admission_algorithm_choice` | Window radius (m) of the polynomial fit the admission gradient is measured over. 0 = match the relief window. | Defaulting to the relief window keeps the two admission tests commensurate: they then disagree about the ground, not about the scale they are looking at. |
+| `write_admission_gradient_raster` | `bool` | `false` | `output` | - | Write the gradient raster (m/m) the admission bound was applied to. | Output file: &lt;stem&gt;_admission_gradient.tif. Write it the first time you set a bound on a new DEM. The bound is only meaningful against the gradient distribution it is cutting, and that distribution is not knowable in advance. |
 
 ### Morphological post-processing of relief mask
 

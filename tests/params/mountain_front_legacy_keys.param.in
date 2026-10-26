@@ -1,0 +1,22 @@
+# mountain_front_smoke.param.in under the names used before 2026-10-26: a
+# window side in cells, the adaptive switch as a bool, and the old relief
+# bound name. The outlets must be identical to smoke_mountain_front's.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: mf
+
+write_output_format: gtiff
+write_vector_format: csv
+
+relief_window_side_pixels: 3
+adaptive_relief_threshold: false
+relief_threshold_metres: 8
+min_flat_component_pixels: 1
+flat_closing_radius_metres: 0
+erosion_radius_metres: 0
+min_component_pixels: 1
+basin_minimum_contributing_pixels: 1
+
+write_relief_raster: true
+write_mountain_front_outlets: true

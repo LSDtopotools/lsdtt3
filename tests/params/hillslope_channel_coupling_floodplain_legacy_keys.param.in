@@ -1,0 +1,28 @@
+# hillslope_channel_coupling_floodplain.param.in under the names used before
+# 2026-10-26. The floodplain mask must be identical.
+read_path: __READ_PATH__
+read_fname: hilltop_cli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hccfp
+
+boundary_conditions: oooo
+threshold_contributing_pixels: 60
+basin_selection_choice: all_junctions
+min_basin_pixels: 80
+
+stream_network_padding_pixels: 2
+threshold_hilltop_gradient: 0.4
+remove_positive_curvature_hilltops: true
+critical_hillslope_slope: 0.8
+
+hilltop_points_write_vector_format: csv
+write_ridgelines: true
+write_vector_format: flatgeobuf
+write_hillslope_traces: false
+write_output_format: gtiff
+n_threads: 1
+
+find_floodplain: true
+floodplain_hand_threshold: 5.0
+floodplain_gradient_threshold: 0.1
+write_floodplain_mask_raster: true

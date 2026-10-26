@@ -382,9 +382,9 @@ struct ladder_request
         vertical_accuracy_choice::fixed;
     double vertical_accuracy_gentle_metres = 0.0;
     double vertical_accuracy_steep_metres  = 0.0;
-    // Default 11.31 degrees is a 20 percent grade - the figure the TanDEM-X
-    // accuracy specification splits on.
-    double vertical_accuracy_break_degrees = 11.31;
+    // Gradient (m/m) at which the steep value takes over. Default 0.20 - a 20
+    // percent grade, the figure the TanDEM-X accuracy specification splits on.
+    double vertical_accuracy_break_gradient = 0.20;
 
     // Reach-relative windowing. The breaks are found per along-channel window,
     // so a break level can track downstream changes in incision rather than
@@ -524,7 +524,7 @@ struct ladder_window
     // from. Under vertical_accuracy_choice::fixed the gradient is NaN and E_v
     // is the single supplied value.
     double vertical_accuracy_m      = 0.0;
-    double median_slope_degrees     = std::numeric_limits<double>::quiet_NaN();
+    double median_gradient          = std::numeric_limits<double>::quiet_NaN();
     double goodness_of_variance_fit = 0.0;   // reported only, never scored
 
     // -------------------------------------------------------------------------
@@ -611,7 +611,7 @@ struct ladder_result
 // admitted_mask    : > 0.5 where a pixel may take part
 // window_source_id : per-pixel channel source id, full grid, -1 where none
 // window_coordinate: per-pixel along-channel coordinate (m), co-registered
-// slope_degrees    : per-pixel gradient, co-registered. Only read under
+// gradient         : per-pixel gradient (m/m), co-registered. Only read under
 //                    vertical_accuracy_choice::slope_dependent; a null pointer
 //                    there falls back to vertical_accuracy_metres and says so
 //                    in ladder_result::notes.
@@ -625,7 +625,7 @@ struct ladder_result
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id  = nullptr,
     const lsdtt_raster_cpu*          window_coordinate = nullptr,
-    const lsdtt_raster_cpu*          slope_degrees     = nullptr
+    const lsdtt_raster_cpu*          gradient          = nullptr
 );
 
 // =============================================================================

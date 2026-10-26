@@ -1,0 +1,31 @@
+# The simple floodplain detector (find_floodplain), pinned: gradient below
+# max_floodplain_gradient AND HAND below max_floodplain_hand_metres,
+# hole-filled. Pinned before it moves onto the shared floodplain engine that
+# lsdtt-fluvial-surfaces will use for Clubb et al. (2017), so that move can be
+# shown to change nothing here.
+read_path: __READ_PATH__
+read_fname: hilltop_cli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hccfp
+
+boundary_conditions: oooo
+threshold_contributing_pixels: 60
+basin_selection_choice: all_junctions
+min_basin_pixels: 80
+
+stream_network_padding_pixels: 2
+threshold_hilltop_gradient: 0.4
+remove_positive_curvature_hilltops: true
+critical_hillslope_slope: 0.8
+
+hilltop_points_write_vector_format: csv
+write_ridgelines: true
+write_vector_format: flatgeobuf
+write_hillslope_traces: false
+write_output_format: gtiff
+n_threads: 1
+
+find_floodplain: true
+max_floodplain_hand_metres: 5.0
+max_floodplain_gradient: 0.1
+write_floodplain_mask_raster: true

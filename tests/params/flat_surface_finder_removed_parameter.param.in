@@ -8,8 +8,8 @@ write_fname: rem
 
 n_threads: 1
 write_output_format: gtiff
-relief_window_side_pixels: 5
-relief_threshold_metres: 2.0
+relief_window_radius_metres: 20
+max_relief_metres: 2.0
 min_component_pixels: 50
 
 find_floodplain: true

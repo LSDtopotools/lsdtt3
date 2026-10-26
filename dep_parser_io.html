@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Help: dep_parser_io</title>
+<style>table,th,td{border:1px solid black;border-collapse:collapse;padding:4px;}</style>
+</head>
+<body>
+<h1>Help: dep_parser_io</h1>
+<p>Version: lsdtt3 0.7.1-dev, git v0.7.1-37-ga332987-dirty</p>
+<p>Status: test</p>
+<p>Citation: <a href="test">test</a></p>
+<h2>Usage</h2>
+<p>Call with a parameter file: <code>dep_parser_io my_params.driver</code></p>
+<p>Parameter file format: <code>key: value</code> (one per line, # for comments)</p>
+<p>All keys use snake_case. No spaces in key names.</p>
+<h2>Parameters</h2>
+<table>
+<tr><th>name</th><th>type</th><th>default</th><th>description</th><th>guidance</th><th>group</th><th>role</th><th>parent</th></tr>
+<tr><td>basin_minimum_contributing_pixels</td><td colspan="7">not available</td></tr>
+<tr><td>big_channel_threshold_contributing_pixels</td><td colspan="7">not available</td></tr>
+<tr><td>channel_mask_threshold_specific_area</td><td colspan="7">not available</td></tr>
+<tr><td>fill_before_routing</td><td colspan="7">not available</td></tr>
+<tr><td>incision_threshold_specific_area</td><td colspan="7">not available</td></tr>
+<tr><td>ladder_level_count</td><td colspan="7">not available</td></tr>
+<tr><td>ladder_reach_window_metres</td><td colspan="7">not available</td></tr>
+<tr><td>max_cap_gradient</td><td colspan="7">not available</td></tr>
+<tr><td>precision_radius_metres</td><td colspan="7">not available</td></tr>
+<tr><td>raster_is_filled</td><td colspan="7">not available</td></tr>
+<tr><td>read_fname</td><td>string</td><td>nonexistent.tif</td><td>Resolved input filename, including its extension.</td><td>Read from read_path; defaults to the parameter filename stem when omitted.</td><td>File I/O</td><td>io</td><td></td></tr>
+<tr><td>read_path</td><td>string</td><td>./</td><td>Resolved directory from which input files are read.</td><td>Defaults to the directory holding the parameter file.</td><td>File I/O</td><td>io</td><td></td></tr>
+<tr><td>reference_field_algorithm_choice</td><td colspan="7">not available</td></tr>
+<tr><td>smoothing_window_radius_metres</td><td colspan="7">not available</td></tr>
+<tr><td>threshold_contributing_pixels</td><td colspan="7">not available</td></tr>
+<tr><td>valley_corridor_half_width_metres</td><td colspan="7">not available</td></tr>
+<tr><td>write_band_index_raster</td><td colspan="7">not available</td></tr>
+<tr><td>write_fname</td><td>string</td><td>dep</td><td>Resolved output filename prefix (no path or extension).</td><td>Defaults to the stem of read_fname when omitted.</td><td>File I/O</td><td>io</td><td></td></tr>
+<tr><td>write_path</td><td>string</td><td>./</td><td>Resolved directory to which output files are written.</td><td>Defaults to read_path when omitted.</td><td>File I/O</td><td>io</td><td></td></tr>
+<tr><td>write_vector_format</td><td colspan="7">not available</td></tr>
+</table>
+</body>
+</html>

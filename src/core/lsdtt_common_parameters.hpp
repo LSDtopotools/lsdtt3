@@ -219,6 +219,77 @@ void declare_channel_initiation_parameters(
     const std::string&          prefix = "");
 
 // -----------------------------------------------------------------------------
+// Flat-ground admission and floodplain bounds, shared by
+// lsdtt-flat-surface-finder, lsdtt-fluvial-surfaces, lsdtt-mountain-front and
+// lsdtt-hillslope-channel-coupling. One name per aim (2026-10-26); each tool
+// declares only the concepts it uses. Defaults differ legitimately between the
+// tools, so each is an argument rather than an overwrite after the call: the
+// help text then always states the default the tool actually uses.
+//
+//   relief_window_radius_metres       float   0 = default_cells x cell size
+//   max_relief_metres                 float   default_metres
+//   relief_threshold_algorithm_choice string  fixed | cdf_divergence
+//   max_admission_gradient            float   m/m
+//   max_floodplain_hand_metres        float   m
+//   max_floodplain_gradient           float   m/m
+//
+// Gradients are m/m, never angles.
+// -----------------------------------------------------------------------------
+void declare_relief_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    int                           default_cells,
+    const std::string&            parent = "");
+
+void declare_max_relief_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent = "");
+
+void declare_relief_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice);
+
+void declare_max_admission_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent = "");
+
+void declare_max_floodplain_hand_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent = "");
+
+void declare_max_floodplain_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent = "");
+
+// Window radius in whole pixels from relief_window_radius_metres: 0 gives
+// default_cells; otherwise the nearest whole number of cells, at least 1.
+// Throws std::invalid_argument on a negative or non-finite radius.
+[[nodiscard]] int relief_window_radius_pixels(double radius_metres,
+                                              double cell_size,
+                                              int    default_cells);
+
+// Conversions for compatibility aliases (lsdtt_deprecated_compatibility_alias),
+// applied by the CLI after parsing. Each throws std::invalid_argument naming
+// old_key when the stored text is not a valid old value.
+//
+// gradient_from_legacy_degrees: tan of an angle in [0, 90); 0 stays exactly 0.
+// relief_threshold_choice_from_legacy_bool: true -> cdf_divergence,
+//   false -> fixed, accepting the parser's boolean spellings.
+[[nodiscard]] double gradient_from_legacy_degrees(const std::string& text,
+                                                  const std::string& old_key);
+[[nodiscard]] std::string relief_threshold_choice_from_legacy_bool(
+    const std::string& text, const std::string& old_key);
+
+// -----------------------------------------------------------------------------
 // Output formats. Declare only the capabilities a CLI actually exposes.
 // -----------------------------------------------------------------------------
 void declare_raster_output_format_parameter(

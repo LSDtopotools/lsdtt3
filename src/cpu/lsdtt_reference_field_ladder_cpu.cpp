@@ -792,7 +792,7 @@ ladder_result build_reference_field_ladder(
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id,
     const lsdtt_raster_cpu*          window_coordinate,
-    const lsdtt_raster_cpu*          slope_degrees)
+    const lsdtt_raster_cpu*          gradient)
 {
     static const char* fn = "lsdtt::build_reference_field_ladder";
 
@@ -853,11 +853,11 @@ ladder_result build_reference_field_ladder(
 
     const std::vector<float>*   sld = nullptr;
     const std::vector<uint8_t>* slm = nullptr;
-    if (want_slope_ev && slope_degrees != nullptr &&
-        slope_degrees->get_data().size() == n)
+    if (want_slope_ev && gradient != nullptr &&
+        gradient->get_data().size() == n)
     {
-        sld = &slope_degrees->get_data();
-        slm = &slope_degrees->get_mask();
+        sld = &gradient->get_data();
+        slm = &gradient->get_mask();
     }
     else if (want_slope_ev)
     {
@@ -873,7 +873,7 @@ ladder_result build_reference_field_ladder(
         if (sld == nullptr || slopes.empty())
             return request.vertical_accuracy_metres;
         const double med = compute_median_of_copy(slopes);
-        return (med <= request.vertical_accuracy_break_degrees)
+        return (med <= request.vertical_accuracy_break_gradient)
             ? request.vertical_accuracy_gentle_metres
             : request.vertical_accuracy_steep_metres;
     };
@@ -1024,7 +1024,7 @@ ladder_result build_reference_field_ladder(
         w.min_band_centre_gap_m = sel.min_centre_gap;
         w.required_gap_m        = required_gap;
         w.vertical_accuracy_m   = global_ev;
-        w.median_slope_degrees  = median_slope_of(all_slopes);
+        w.median_gradient       = median_slope_of(all_slopes);
         w.goodness_of_variance_fit = sel.gvf;
         {
             const bootstrap_summary bs = bootstrap_k(
@@ -1162,7 +1162,7 @@ ladder_result build_reference_field_ladder(
             rec.n_pixels        = static_cast<std::int64_t>(pooled.size());
             rec.required_gap_m  = win_gap;
             rec.vertical_accuracy_m  = win_ev;
-            rec.median_slope_degrees = median_slope_of(pooled_slopes);
+            rec.median_gradient      = median_slope_of(pooled_slopes);
 
             if (static_cast<int>(pooled.size()) >= request.min_window_pixels)
             {

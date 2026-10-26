@@ -2472,6 +2472,24 @@ add_lsdtt_cli_smoke_test(
     --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
 )
 
+# mountain_front_smoke under the names used before 2026-10-26 (a window side in
+# cells, adaptive_relief_threshold, relief_threshold_metres): the same outlets.
+add_lsdtt_cli_smoke_test(
+    rigorous_mountain_front_legacy_keys
+    lsdtt-mountain-front
+    mountain_front_legacy_keys.param.in
+    mf_relief.tif
+    --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
+    --stderr-contains "'relief_window_side_pixels' is deprecated"
+    --stderr-contains "use 'relief_window_radius_metres'"
+    --stderr-contains "'adaptive_relief_threshold' is deprecated"
+    --stderr-contains "use 'relief_threshold_algorithm_choice'"
+    --stderr-contains "'relief_threshold_metres' is deprecated"
+    --stderr-contains "use 'max_relief_metres'"
+    --expect-file-contains "mf_ingested_params.param:relief_window_radius_metres: 1"
+    --expect-file-contains "mf_ingested_params.param:relief_threshold_algorithm_choice: fixed"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_feature_finder
     lsdtt-feature-finder
@@ -5436,6 +5454,25 @@ add_hilltop_coupling_cli_test(
     hcc_hilltop_points.csv
     --expect hcc_ridgelines.fgb
     --stdout-contains "never traced (DEM border)")
+
+# The simple floodplain detector, pinned under its 2026-10-26 names and under
+# the old ones. Phase 4 of the fluvial-surface consolidation moves it onto the
+# shared floodplain engine; the mask must not move.
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_floodplain
+    hillslope_channel_coupling_floodplain.param.in
+    hccfp_floodplain_mask.tif
+    --expect-raster-checksum hccfp_floodplain_mask.tif:448)
+
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_floodplain_legacy_keys
+    hillslope_channel_coupling_floodplain_legacy_keys.param.in
+    hccfp_floodplain_mask.tif
+    --expect-raster-checksum hccfp_floodplain_mask.tif:448
+    --stderr-contains "'floodplain_hand_threshold' is deprecated"
+    --stderr-contains "use 'max_floodplain_hand_metres'"
+    --stderr-contains "'floodplain_gradient_threshold' is deprecated"
+    --stderr-contains "use 'max_floodplain_gradient'")
 
 add_hilltop_coupling_cli_test(
     rigorous_hillslope_channel_coupling_legacy_threshold
@@ -8917,7 +8954,7 @@ add_test(NAME smoke_flat_surface_finder_help
          COMMAND lsdtt-flat-surface-finder -h)
 lsdtt_set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
     LABELS "smoke;cli"
-    PASS_REGULAR_EXPRESSION "relief_threshold_metres")
+    PASS_REGULAR_EXPRESSION "max_relief_metres")
 
 add_test(NAME smoke_valley_centreline_help
          COMMAND lsdtt-valley-centreline -h)
@@ -8969,7 +9006,7 @@ add_lsdtt_cli_smoke_test(
     --expect btl_surface_class.tif
     --stdout-contains "Ladder and band-then-label"
     --expect-raster-values "btl_band_index.tif:0,1,2,3"
-    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_gradient,goodness_of_variance_fit,separation_ratio"
     --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
 )
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
@@ -9022,21 +9059,23 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Phase 7a. `admission_mode` exists because local relief and a gradient cap
-# reject different ground; if a refactor ever collapsed them into one test, or
-# wired relief_or_slope back to the relief mask alone, every count would still
-# look plausible. The synthetic DEM is built to make the two disagree - a smooth
-# 8 percent ramp that only the cap admits, a rough flat that only relief could,
-# a smooth flat that both take and a 45 degree slope that neither does - and the
-# assertions are on the SET RELATIONS between the four modes, which survive the
-# morphological post-processing that the raw counts do not.
+# Phase 7a. `admission_algorithm_choice` exists because local relief and a
+# gradient bound reject different ground; if a refactor ever collapsed them into
+# one test, or wired relief_or_gradient back to the relief mask alone, every
+# count would still look plausible. The synthetic DEM is built to make the two
+# disagree - a smooth 8 percent ramp that only the gradient bound admits, a
+# rough flat that only relief could, a smooth flat that both take and a
+# gradient-1 slope that neither does - and the assertions are on the SET
+# RELATIONS between the four modes, which survive the morphological
+# post-processing that the raw counts do not. It also runs the pre-2026-10-26
+# admission keys and requires byte-identical output to the canonical ones.
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
     add_test(NAME rigorous_flat_surface_finder_admission_modes
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_admission_modes.py"
             --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_flat_surface_finder_admission_modes"
-            --cap 15.0)
+            --cap-degrees 15.0)
     lsdtt_mark_test_runtime(python rigorous_flat_surface_finder_admission_modes)
 else()
     lsdtt_mark_test_unregistered(python_geo rigorous_flat_surface_finder_admission_modes)
@@ -9199,7 +9238,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "window(s) resolved"
     --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
     --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
-    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_gradient,goodness_of_variance_fit,separation_ratio"
 )
 lsdtt_set_tests_properties(smoke_fluvial_surfaces PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -9263,6 +9302,135 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-values "fsfan_band_index.tif:0,1"
 )
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_fitted_surface PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Output pins for lsdtt-fluvial-surfaces, recorded 2026-10-26 before the method
+# consolidation (Clubb 2017, threshold pickers, parameter renames) touches the
+# CLI. The smoke tests above pin schemas and band VALUES; these pin the numbers,
+# so a later change can show it moved nothing it did not mean to. Each run was
+# checked identical at n_threads 1 and 8 before pinning.
+#
+# A moved pin is not automatically a regression, but it must be explained
+# before it is re-blessed. The float outputs (HAND, the fitted residual, the
+# CSV medians and gaps) are the ones a different compiler or libm could move by
+# an ulp; the integer rasters (band, label, class, valley mask) should not move
+# unless a decision moved. The README is not pinned: it carries a timestamp.
+#
+# Re-blessed once, 2026-10-26: the three _ladder_windows.csv hashes, for the
+# column rename median_slope_degrees -> median_gradient (gradients in m/m). With
+# the header renamed back each file is byte-identical to its first pin; no
+# raster moved.
+
+# Fallback admission, HAND ladder, the staircase. Same template as
+# smoke_fluvial_surfaces.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_checksums
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_smoke.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsurf_band_index.tif:57493
+    --expect-raster-checksum fsurf_banded_labels.tif:55857
+    --expect-raster-checksum fsurf_surface_class.tif:37966
+    --expect-raster-checksum fsurf_valley_mask.tif:972
+    --expect-raster-checksum fsurf_hand.tif:57881
+    --expect-raster-checksum fsurf_reference_field.tif:57881
+    --expect-sha256 fsurf_ladder_windows.csv:fb3a5878d6e6551bbd0160a15cd20318f97cc7d005398ae24749ad249982207f
+    --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
+    --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_checksums PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Fitted-surface (cone) reference field on the fan. Same template as
+# smoke_fluvial_surfaces_fitted_surface.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_fitted_surface_checksums
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fitted_surface.param.in
+    fsfan_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsfan_band_index.tif:6394
+    --expect-raster-checksum fsfan_banded_labels.tif:26071
+    --expect-raster-checksum fsfan_valley_mask.tif:24826
+    --expect-raster-checksum fsfan_reference_field.tif:2938
+    --expect-sha256 fsfan_ladder_windows.csv:dc25767b08748452aa37bc804263bf3f4fcbe6ac1379214151a02a4e42dce5da
+    --expect-sha256 fsfan_surface_patches.csv:ec68e8291333913c801c26b7ec251decaa0c374e1478857c58f9dced03ceb0c3
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fitted_surface_checksums PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The two-step workflow: lsdtt-flat-surface-finder writes the flat mask, then
+# lsdtt-fluvial-surfaces bands it. This is the default admission path
+# (flat_mask_fname set), which no other test reaches. Stage 1 is a fixture of
+# stage 2, so `ctest -R rigorous_fluvial_surfaces_flat_mask_input` runs both.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_staircase_mask
+    lsdtt-flat-surface-finder
+    flat_surface_finder_staircase_mask.param.in
+    fsfst_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsfst_combined_flat_mask.tif:21440
+)
+lsdtt_set_tests_properties(rigorous_flat_surface_finder_staircase_mask PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture
+    FIXTURES_SETUP fluvial_surfaces_staircase_flat_mask)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_flat_mask_input
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_mask_input.param.in
+    fsfm_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Loading flat mask"
+    --expect-raster-checksum fsfm_band_index.tif:55597
+    --expect-raster-checksum fsfm_banded_labels.tif:57592
+    --expect-raster-checksum fsfm_surface_class.tif:37252
+    --expect-raster-checksum fsfm_valley_mask.tif:1128
+    --expect-raster-checksum fsfm_reference_field.tif:57881
+    --expect-sha256 fsfm_ladder_windows.csv:7d2ea486a0d3f4d88815aa1bb09b7965f28684ad42084b33afbda25970bf638d
+    --expect-sha256 fsfm_surface_patches.csv:20dae3570717df72dfb17d6b40086a6df84d5afff05b470fc1f2323d4a600e3b
+    --expect-sha256 fsfm_surface_class.csv:dbf403d3098b67472eefb257cfd05bf9937ad39688d584c57978eabc86a7b9bb
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_flat_mask_input PROPERTIES
+    FIXTURES_REQUIRED "fluvial_surfaces_fixture;fluvial_surfaces_staircase_flat_mask")
+
+# The renames of 2026-10-26 must carry every value: fluvial_surfaces_smoke under
+# the old names, held to exactly the pins of rigorous_fluvial_surfaces_checksums,
+# with the converted values recorded in the ingested file so a rerun from it
+# reproduces the run without the old keys.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_legacy_keys
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_legacy_keys.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsurf_band_index.tif:57493
+    --expect-raster-checksum fsurf_banded_labels.tif:55857
+    --expect-raster-checksum fsurf_surface_class.tif:37966
+    --expect-raster-checksum fsurf_valley_mask.tif:972
+    --expect-raster-checksum fsurf_hand.tif:57881
+    --expect-sha256 fsurf_ladder_windows.csv:fb3a5878d6e6551bbd0160a15cd20318f97cc7d005398ae24749ad249982207f
+    --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
+    --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
+    --stderr-contains "'fallback_admission_algorithm_choice' is deprecated"
+    --stderr-contains "use 'admission_algorithm_choice'"
+    --stderr-contains "'fallback_relief_window_radius_pixels' is deprecated"
+    --stderr-contains "use 'relief_window_radius_metres'"
+    --stderr-contains "'vertical_accuracy_break_degrees' is deprecated"
+    --stderr-contains "use 'vertical_accuracy_break_gradient'. Converted with gradient = tan(angle)."
+    --stderr-contains "'min_component_pixels' is deprecated"
+    --stderr-contains "use 'min_band_component_pixels'"
+    --stdout-contains "vertical_accuracy_break_degrees 11.31 -> vertical_accuracy_break_gradient 0.200001225"
+    --expect-file-contains "fsurf_ingested_params.param:relief_window_radius_metres: 50"
+    --expect-file-contains "fsurf_ingested_params.param:admission_algorithm_choice: relief"
+    --expect-file-contains "fsurf_ingested_params.param:vertical_accuracy_break_gradient: 0.200001225"
+    --expect-file-not-contains "fsurf_ingested_params.param:fallback_"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_relief_window_radius_pixels"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_vertical_accuracy_break_degrees"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_fallback_admission_algorithm_choice"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_legacy_keys PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(

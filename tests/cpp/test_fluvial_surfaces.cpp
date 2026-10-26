@@ -2316,7 +2316,7 @@ void run_slope_dependent_ev_checks()
             ad[i]  = 1.0f;
             cdv[i] = static_cast<float>(c * cell);
             // Gentle over the first half of the channel, steep over the second.
-            sd[i]  = (c < n_cols / 2) ? 4.0f : 25.0f;
+            sd[i]  = (c < n_cols / 2) ? 0.07f : 0.47f;   // gradient, m/m
         }
     }
 
@@ -2337,7 +2337,7 @@ void run_slope_dependent_ev_checks()
         lsdtt::vertical_accuracy_choice::slope_dependent;
     req.vertical_accuracy_gentle_metres = 2.0;
     req.vertical_accuracy_steep_metres  = 4.0;
-    req.vertical_accuracy_break_degrees = 11.31;
+    req.vertical_accuracy_break_gradient = 0.20;
 
     const lsdtt::ladder_result res = lsdtt::build_reference_field_ladder(
         field, admitted, req, &src, &coord, &slope);

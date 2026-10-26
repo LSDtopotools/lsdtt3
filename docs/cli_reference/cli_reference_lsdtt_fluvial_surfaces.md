@@ -185,9 +185,9 @@ not name one, and rejects an explicit `antimode` with that explanation.
 spaced roughly linearly in height above the channel, and the log10 binning
 compresses the upper treads until they merge.
 
-**`min_component_pixels` is per band here**, unlike in
-`lsdtt-flat-surface-finder` where the same name filters components of the whole
-mask. Here it is a floor on the size of one surface on one level.
+**`min_band_component_pixels` is per band**: a floor on the size of one surface
+on one level, not the whole-mask filter that `min_component_pixels` is in
+`lsdtt-flat-surface-finder` - which is why the two names differ.
 
 **Cleaning the valley mask can make it bigger.** `clean_valley_mask` erodes,
 drops patches that do not reach the channel, then regrows — and the regrow fills
@@ -250,11 +250,11 @@ exactly what it was given.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `fallback_admission_algorithm_choice` | string | `relief` | Built-in admission when `flat_mask_fname` is empty: `relief` or `slope`. |
-| `fallback_relief_window_radius_pixels` | int | `5` | Moving-window **radius** in pixels for the fallback relief admission. Not a window side: `5` gives an 11×11 window. `lsdtt-flat-surface-finder` and `lsdtt-mountain-front` spell their equivalent `relief_window_side_pixels`, which is a full **side length**, so the same number means a different window there. The old name `fallback_relief_window_pixels` is accepted as a deprecated alias. |
-| `fallback_relief_threshold_metres` | float | `1.0` | Local relief below which a cell is admitted as flat [m]. |
-| `fallback_slope_threshold` | float | `0.05` | Gradient magnitude below which a cell is admitted as flat [m/m]. |
-| `min_component_pixels` | int | `50` | Minimum patch size in pixels, **applied per band**. |
+| `admission_algorithm_choice` | string | `flat_mask` | `flat_mask` reads `flat_mask_fname`; `relief` and `gradient` are a coarse built-in admission for a quick look. With `flat_mask_fname` empty, `flat_mask` falls back to `relief`. |
+| `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window for the built-in relief admission, converted to whole cells. `0` = 5 cells, an 11×11 window. The same name and meaning as in `lsdtt-flat-surface-finder` and `lsdtt-mountain-front`. |
+| `max_relief_metres` | float | `1.0` | Local relief below which a cell is admitted as flat [m]. |
+| `max_admission_gradient` | float | `0.05` | Gradient below which a cell is admitted as flat [m/m]. |
+| `min_band_component_pixels` | int | `50` | Minimum patch size in pixels, **applied per band**. |
 
 ### Reference field
 
@@ -296,11 +296,11 @@ exactly what it was given.
 |---|---|---|---|
 | `vertical_accuracy_metres` | float | `0.0` | Vertical accuracy of the DEM, `E_v` [m]. **`0` disables the floor** and every window then reports `resolved` with no instrument guarantee. |
 | `ladder_resolvability_kappa` | float | `3.0` | Multiplier on `E_v`. Required band-centre gap = `kappa * E_v`. |
-| `vertical_accuracy_mode` | string | `fixed` | How `E_v` is arrived at: `fixed` or `slope_dependent`. |
+| `vertical_accuracy_algorithm_choice` | string | `fixed` | How `E_v` is arrived at: `fixed` or `slope_dependent`. |
 | `vertical_accuracy_gentle_metres` | float | `0.0` | `E_v` [m] for windows at or below the break gradient. `slope_dependent` only. |
 | `vertical_accuracy_steep_metres` | float | `0.0` | `E_v` [m] for windows above the break gradient. `slope_dependent` only. |
-| `vertical_accuracy_break_degrees` | float | `11.31` | Gradient [degrees] separating gentle from steep `E_v`. |
-| `vertical_accuracy_slope_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the window gradient is measured over. `0` = five cells. |
+| `vertical_accuracy_break_gradient` | float | `0.2` | Gradient [m/m] separating gentle from steep `E_v`; 0.2 is the 20 percent grade the TanDEM-X specification splits on. |
+| `vertical_accuracy_gradient_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the window gradient is measured over. `0` = five cells. |
 | `ladder_reach_window_metres` | float | `0.0` | Along-channel window length for reach-relative breaks [m]. `0` = auto, negative = one global ladder. Ignored for `fitted_surface`. |
 | `ladder_min_window_pixels` | int | `1000` | Minimum admitted pixels for a window to find its own breaks. |
 
@@ -308,8 +308,8 @@ exactly what it was given.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `floodplain_max_height_metres` | float | `1.0` | Upper HAND bound of the floodplain class [m]. An optional hard cap; the ladder already decides where a level ends. |
-| `terrace_min_height_metres` | float | `0.0` | Lower HAND bound of the terrace class [m]. |
+| `max_floodplain_hand_metres` | float | `1.0` | Upper HAND bound of the floodplain class [m]. An optional hard cap; the ladder already decides where a level ends. The same name as in `lsdtt-hillslope-channel-coupling`. |
+| `min_terrace_hand_metres` | float | `0.0` | Lower HAND bound of the terrace class [m]. |
 | `channel_adjacency_radius_metres` | float | `0.0` | Distance within which a surface counts as channel-adjacent [m]. |
 | `valley_corridor_half_width_metres` | float | `5000.0` | Valley-corridor half-width [m]. `0` or negative = no limit. |
 | `clip_corridor_per_pixel` | bool | `true` | Apply the corridor limit per pixel as well as per surface. |
@@ -395,6 +395,27 @@ the patch table keep their holes and their speckle.
 - [CLI reference: lsdtt-flat-surface-finder](cli_reference_lsdtt_flat_surface_finder.md)
 - [CLI reference: lsdtt-valley-centreline](cli_reference_lsdtt_valley_centreline.md)
 
+### Renamed parameters (2026-10-26)
+
+Old keys still run, with a warning naming the replacement; converted values are
+written to `_ingested_params.param`.
+
+| Old key | Now |
+|---|---|
+| `fallback_admission_algorithm_choice` | `admission_algorithm_choice` — still only applies when `flat_mask_fname` is empty; `slope` is now `gradient` |
+| `fallback_relief_window_radius_pixels`, `fallback_relief_window_pixels` | `relief_window_radius_metres` — converted with the cell size |
+| `fallback_relief_threshold_metres` | `max_relief_metres` |
+| `fallback_slope_threshold` | `max_admission_gradient` |
+| `min_component_pixels` | `min_band_component_pixels` |
+| `vertical_accuracy_mode` | `vertical_accuracy_algorithm_choice` |
+| `vertical_accuracy_break_degrees` | `vertical_accuracy_break_gradient` — converted with gradient = tan(angle) |
+| `vertical_accuracy_slope_window_radius_metres` | `vertical_accuracy_gradient_window_radius_metres` |
+| `floodplain_max_height_metres` | `max_floodplain_hand_metres` |
+| `terrace_min_height_metres` | `min_terrace_hand_metres` |
+
+The `_ladder_windows.csv` column `median_slope_degrees` is now `median_gradient`
+(m/m).
+
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters
 
@@ -423,12 +444,12 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `flat_mask_fname` | `string` | - | `io` | - | Flat mask raster from lsdtt-flat-surface-finder, in read_path. | Cells &gt; 0.5 are admitted. This is normally &lt;stem&gt;_combined_flat_mask.tif from lsdtt-flat-surface-finder, which is the intended two-step workflow: detect flat ground there, sort it into levels here. Leave empty to use the built-in fallback admission instead, which is coarser and is meant for a quick look rather than for a result you intend to publish. |
-| `fallback_admission_algorithm_choice` | `string` | `relief` | `param` | `flat_mask_fname` | Built-in admission when flat_mask_fname is empty: relief or slope. | relief admits cells whose local relief over fallback_relief_window_radius_pixels is below fallback_relief_threshold_metres. slope admits cells whose gradient magnitude is below fallback_slope_threshold. |
-| `fallback_relief_window_radius_pixels` | `int` | `5` | `param` | `flat_mask_fname` | Moving-window RADIUS in pixels for the fallback relief admission. | This is a radius, not a window side: 5 means an 11x11 window. Note that lsdtt-flat-surface-finder and lsdtt-mountain-front spell their equivalent relief_window_side_pixels, which is a full SIDE LENGTH and so means something different for the same number. Only used when flat_mask_fname is empty and the fallback is relief. |
-| `fallback_relief_threshold_metres` | `float` | `1.0` | `param` | `flat_mask_fname` | Local relief below which a cell is admitted as flat [m]. | Only used when flat_mask_fname is empty and the fallback is relief. |
-| `fallback_slope_threshold` | `float` | `0.05` | `param` | `flat_mask_fname` | Gradient magnitude below which a cell is admitted as flat [m/m]. | Only used when flat_mask_fname is empty and the fallback is slope. |
-| `min_component_pixels` | `int` | `50` | `param` | - | Minimum patch size in pixels, applied PER BAND. | Note the change of meaning from lsdtt-flat-surface-finder, where the same name filters components of the whole mask. Here components are formed inside each band, so this is a floor on the size of one surface on one level. |
+| `flat_mask_fname` | `string` | - | `io` | - | Flat mask raster from lsdtt-flat-surface-finder, in read_path. | Cells &gt; 0.5 are admitted. This is normally &lt;stem&gt;_combined_flat_mask.tif from lsdtt-flat-surface-finder, which is the intended two-step workflow: detect flat ground there, sort it into levels here. Leave empty to use the built-in relief or gradient admission (admission_algorithm_choice) instead, which is coarser and is meant for a quick look rather than for a result you intend to publish. |
+| `admission_algorithm_choice` | `string` | `flat_mask` | `param` | - | Which ground is admitted: flat_mask, relief or gradient. | flat_mask (default) reads flat_mask_fname, normally &lt;stem&gt;_combined_flat_mask.tif from lsdtt-flat-surface-finder. relief and gradient are a coarse built-in admission for a quick look when there is no flat mask: relief admits cells whose local relief over relief_window_radius_metres is below max_relief_metres; gradient admits cells whose gradient is below max_admission_gradient. flat_mask with flat_mask_fname empty falls back to relief, as earlier versions did. Replaces fallback_admission_algorithm_choice (whose `slope` is now `gradient`). |
+| `relief_window_radius_metres` | `float` | `0` | `param` | `admission_algorithm_choice` | Radius (m) of the square window local relief (max - min) is measured over. 0 = 5 cells. | Converted to the nearest whole number of cells, at least one; the run log states the radius actually used. A radius r cells is a (2r+1) x (2r+1) window, so the default is a 11 x 11 window. Replaces relief_window_side_pixels (a full side) and fallback_relief_window_radius_pixels (a radius in cells), which spelled the same idea two ways. |
+| `max_relief_metres` | `float` | `1` | `param` | `admission_algorithm_choice` | Local relief (m) below which a pixel is admitted as flat. | Read a value off the relief CDF the tool writes. Where the tool has relief_threshold_algorithm_choice, this is the value used by `fixed`. |
+| `max_admission_gradient` | `float` | `0.05` | `param` | `admission_algorithm_choice` | Gradient (m/m) below which a pixel is admitted as flat. | A gradient, not an angle: 0.087 is 5 degrees, 0.176 is 10, 0.268 is 15 (gradient = tan(angle)). Measured from a fitted polynomial surface rather than a 3x3 difference. |
+| `min_band_component_pixels` | `int` | `50` | `param` | - | Minimum patch size in pixels, applied PER BAND. | Components are formed inside each band, so this is a floor on the size of one surface on one level - not the whole-mask filter that min_component_pixels is in lsdtt-flat-surface-finder, which is why the name differs. Replaces min_component_pixels here. |
 
 ### Reference field
 
@@ -462,11 +483,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `ladder_max_break_metres` | `float` | `0.0` | `param` | - | Reject any break above this height [m]. 0 = unbounded. | The companion to ladder_min_break_metres, and the direct lever against a break landing far above the valley in a landscape whose flat uplands dominate the population. |
 | `ladder_k_bootstrap` | `int` | `0` | `param` | - | Resample each window and re-run the break search this many times, to report how stable the chosen level count is. 0 = off. | `k_selected` on its own says nothing about whether a different draw of the same landscape would have given the same answer, and a ladder that returns k = 7 every time is not the same claim as one that returns it once in fifteen. This costs B times the break search per window, and the break search is where the cost sits, not the pixel count - every finder bins before it searches. Measured on a 3.58 M cell DEM with 41 windows, 15 replicates added 4.9 s under `gap` (16.4 to 21.3 s). The same DEM's whole ladder is 6.2 s under `antimode` and 37.7 s under `jenks`, so scale accordingly: affordable on gap, think first on jenks. Results go to _ladder_windows.csv as k_bootstrap_mode, k_stability, k_ci_lo, k_ci_hi and n_bootstrap. |
 | `ladder_k_bootstrap_seed` | `int` | `1` | `param` | `ladder_k_bootstrap` | Seed for the k bootstrap, so a stability figure is reproducible. | Each window is seeded from this plus its own source and index, so a window's stability does not shift because a neighbouring reach changed. The generator is specified in the source rather than taken from the standard library, so the number reproduces across platforms. |
-| `vertical_accuracy_mode` | `string` | `fixed` | `param` | - | How E_v is arrived at: fixed or slope_dependent. | Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single number for a raster spanning a valley floor and a 40-degree wall states an accuracy that is wrong in both places. Under slope_dependent each along-channel WINDOW reads one E_v off the median gradient of its own admitted cells. Per window, not per pixel: the resolvability floor constrains the separation between band CENTRES, and a band centre is a property of a partition rather than of a place, so it has no slope of its own. The value each window used is written to _ladder_windows.csv. |
+| `vertical_accuracy_algorithm_choice` | `string` | `fixed` | `param` | - | How E_v is arrived at: fixed or slope_dependent. | Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single number for a raster spanning a valley floor and a 40-degree wall states an accuracy that is wrong in both places. Under slope_dependent each along-channel WINDOW reads one E_v off the median gradient of its own admitted cells. Per window, not per pixel: the resolvability floor constrains the separation between band CENTRES, and a band centre is a property of a partition rather than of a place, so it has no slope of its own. The value each window used is written to _ladder_windows.csv. |
 | `vertical_accuracy_gentle_metres` | `float` | `0.0` | `param` | - | E_v [m] for windows at or below the break gradient. slope_dependent only. | For TanDEM-X this is the quoted relative LE90 on gentle ground, about 2 m. |
 | `vertical_accuracy_steep_metres` | `float` | `0.0` | `param` | - | E_v [m] for windows above the break gradient. slope_dependent only. | About 4 m for TanDEM-X. It must be the LARGER of the two or the mode is doing nothing useful. |
-| `vertical_accuracy_break_degrees` | `float` | `11.31` | `param` | - | Gradient [degrees] separating the gentle and steep E_v. | 11.31 degrees is a 20 percent grade, which is where the TanDEM-X accuracy specification splits. |
-| `vertical_accuracy_slope_window_radius_metres` | `float` | `0` | `param` | - | Window radius [m] of the polynomial fit the window gradient is measured over. 0 = five cells. slope_dependent only. | Stated in cells by default because a length tuned on lidar is sub-pixel on 30 m COP30. This is the same measurement lsdtt-flat-surface-finder makes for admission_slope_cap_degrees, and it is worth using the same window in both so the gradient a surface was admitted on is the gradient its E_v was read from. |
+| `vertical_accuracy_break_gradient` | `float` | `0.2` | `param` | - | Gradient [m/m] separating the gentle and steep E_v. | 0.2 is a 20 percent grade, which is where the TanDEM-X accuracy specification splits. Replaces vertical_accuracy_break_degrees; an old value is converted with gradient = tan(angle). |
+| `vertical_accuracy_gradient_window_radius_metres` | `float` | `0` | `param` | - | Window radius [m] of the polynomial fit the window gradient is measured over. 0 = five cells. slope_dependent only. | Stated in cells by default because a length tuned on lidar is sub-pixel on 30 m COP30. This is the same measurement lsdtt-flat-surface-finder makes for max_admission_gradient, and it is worth using the same window in both so the gradient a surface was admitted on is the gradient its E_v was read from. |
 | `vertical_accuracy_metres` | `float` | `0.0` | `param` | - | Vertical accuracy of the DEM, E_v [m]. 0 disables the floor. | Two levels are only claimed as distinct when their band centres are at least ladder_resolvability_kappa * E_v apart. This is metadata you must supply: it cannot be derived from the DEM. 0 disables the check and every window then reports resolved, carrying no instrument guarantee at all. Note that a DEM whose vertical units are feet on a metre grid has an effective E_v 3.28 times larger than you think. |
 | `ladder_resolvability_kappa` | `float` | `3.0` | `param` | - | Multiplier on E_v in the resolvability floor. | Required band-centre gap = kappa * vertical_accuracy_metres. |
 | `ladder_reach_window_metres` | `float` | `0.0` | `param` | - | Along-channel window length for reach-relative breaks [m]. | 0 = auto: the larger of 2 km and an eighth of each channel's length. Negative = one global partition over the whole population. Windowing lets a break level track downstream changes in incision instead of being averaged into a single basin-wide ladder. Ignored for the fitted_surface field, which has no along-channel coordinate. |
@@ -515,12 +536,17 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_channel_network_points` | `bool` | `false` | `switch` | `write_channel_network` | Write channel nodes as points. | Output file: &lt;stem&gt;_channel_network_points.fgb. |
 | `write_junction_network_points` | `bool` | `false` | `switch` | `write_channel_network` | Write junctions as points. | Output file: &lt;stem&gt;_junction_network_points.fgb. |
 
+### Floodplain
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `max_floodplain_hand_metres` | `float` | `1` | `param` | - | HAND (m) above which ground is not floodplain. | Here an optional absolute override on the lowest band's upper bound. Under band-then-label the ladder already decides where one level ends and the next begins; this is a hard cap for cases where you know the floodplain height independently. Only meaningful for the hand field. Replaces floodplain_max_height_metres. |
+
 ### Classification
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `floodplain_max_height_metres` | `float` | `1.0` | `param` | - | Upper HAND bound of the floodplain class [m]. | An optional absolute override on the lowest band's upper bound. Under band-then-label the ladder already decides where one level ends and the next begins; this is a hard cap for cases where you know the floodplain height independently. Only meaningful for the hand field. |
-| `terrace_min_height_metres` | `float` | `0.0` | `param` | - | Lower HAND bound of the terrace class [m]. | As floodplain_max_height_metres, at the other end. Only meaningful for the hand field. |
+| `min_terrace_hand_metres` | `float` | `0.0` | `param` | - | Lower HAND bound of the terrace class [m]. | As max_floodplain_hand_metres, at the other end. Only meaningful for the hand field. Replaces terrace_min_height_metres. |
 | `channel_adjacency_radius_metres` | `float` | `0.0` | `param` | - | Distance within which a surface counts as channel-adjacent [m]. | 0 = touching only. |
 | `valley_corridor_half_width_metres` | `float` | `5000.0` | `param` | - | Valley-corridor half-width [m]. 0 or negative = no limit. | A terrace must have at least one pixel within this Euclidean distance of an in-scope channel. This is what keeps the regional upland out of the terrace class: an interfluve is also flat and also elevated above the trunk channel, but it is not a fluvial terrace. |
 | `clip_corridor_per_pixel` | `bool` | `true` | `param` | `valley_corridor_half_width_metres` | Apply the corridor limit per pixel as well as per surface. | Stops a surface that merely touches the valley edge from carrying its class across the whole interfluve. |

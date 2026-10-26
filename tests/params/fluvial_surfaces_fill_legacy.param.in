@@ -7,10 +7,10 @@ write_fname: fsurf_fill_legacy
 n_threads: 1
 write_output_format: gtiff
 
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 5
-fallback_relief_threshold_metres: 2.0
-min_component_pixels: 50
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
 
 reference_field_algorithm_choice: hand
 ladder_break_algorithm_choice: jenks
@@ -21,7 +21,7 @@ ladder_resolvability_kappa: 3.0
 # Keep both old spellings explicit: false must reach the unfilled routing path.
 fill_dem_for_flow_routing: false
 channel_threshold_contributing_pixels: 500
-floodplain_max_height_metres: 5.0
-terrace_min_height_metres: 5.0
+max_floodplain_hand_metres: 5.0
+min_terrace_hand_metres: 5.0
 
 write_hand_raster: true

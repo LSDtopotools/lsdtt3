@@ -1,0 +1,26 @@
+# lsdtt3 parameter file - ingested parameters
+# File I/O
+read_path: ./
+read_fname: nonexistent.tif
+write_path: ./
+write_fname: dep
+
+# Parameters read from file
+ladder_level_count: 2
+
+# Default parameters used
+basin_minimum_contributing_pixels: 1000
+big_channel_threshold_contributing_pixels: 5000
+channel_mask_threshold_specific_area: 0
+fill_before_routing: true
+incision_threshold_specific_area: 0
+ladder_reach_window_metres: -1
+max_cap_gradient: 0
+precision_radius_metres: -1
+raster_is_filled: false
+reference_field_algorithm_choice: hand
+smoothing_window_radius_metres: -1
+threshold_contributing_pixels: 1000
+valley_corridor_half_width_metres: -1
+write_band_index_raster: false
+write_vector_format: flatgeobuf

@@ -67,6 +67,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -160,49 +161,45 @@ int main(int argc, char* argv[])
         "Cells > 0.5 are admitted. This is normally "
         "<stem>_combined_flat_mask.tif from lsdtt-flat-surface-finder, which "
         "is the intended two-step workflow: detect flat ground there, sort it "
-        "into levels here. Leave empty to use the built-in fallback admission "
-        "instead, which is coarser and is meant for a quick look rather than "
+        "into levels here. Leave empty to use the built-in relief or gradient "
+        "admission (admission_algorithm_choice) instead, which is coarser and is meant for a quick look rather than "
         "for a result you intend to publish.",
         "Admission","io",""};
 
-    string_default_map["fallback_admission_algorithm_choice"] = "relief";
-    help_map["fallback_admission_algorithm_choice"] = {"string","relief",
-        "Built-in admission when flat_mask_fname is empty: relief or slope.",
-        "relief admits cells whose local relief over "
-        "fallback_relief_window_radius_pixels is below "
-        "fallback_relief_threshold_metres. slope admits cells whose gradient "
-        "magnitude is below fallback_slope_threshold.",
-        "Admission","param","flat_mask_fname"};
+    string_default_map["admission_algorithm_choice"] = "flat_mask";
+    help_map["admission_algorithm_choice"] = {"string","flat_mask",
+        "Which ground is admitted: flat_mask, relief or gradient.",
+        "flat_mask (default) reads flat_mask_fname, normally "
+        "<stem>_combined_flat_mask.tif from lsdtt-flat-surface-finder. relief "
+        "and gradient are a coarse built-in admission for a quick look when "
+        "there is no flat mask: relief admits cells whose local relief over "
+        "relief_window_radius_metres is below max_relief_metres; gradient "
+        "admits cells whose gradient is below max_admission_gradient. "
+        "flat_mask with flat_mask_fname empty falls back to relief, as "
+        "earlier versions did. Replaces fallback_admission_algorithm_choice "
+        "(whose `slope` is now `gradient`).",
+        "Admission","param",""};
 
-    int_default_map["fallback_relief_window_radius_pixels"] = 5;
-    help_map["fallback_relief_window_radius_pixels"] = {"int","5",
-        "Moving-window RADIUS in pixels for the fallback relief admission.",
-        "This is a radius, not a window side: 5 means an 11x11 window.  Note "
-        "that lsdtt-flat-surface-finder and lsdtt-mountain-front spell their "
-        "equivalent relief_window_side_pixels, which is a full SIDE LENGTH and "
-        "so means something different for the same number.  Only used when "
-        "flat_mask_fname is empty and the fallback is relief.",
-        "Admission","param","flat_mask_fname"};
+    // Built-in admission, shared names (lsdtt_common_parameters): the same
+    // window and bound as lsdtt-flat-surface-finder and lsdtt-mountain-front.
+    // Five cells is the radius this tool has always used (an 11 x 11 window).
+    lsdtt::declare_relief_window_parameter(float_default_map, help_map, 5,
+                                           "admission_algorithm_choice");
+    lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f,
+                                        "admission_algorithm_choice");
+    lsdtt::declare_max_admission_gradient_parameter(
+        float_default_map, help_map, 0.05f, "admission_algorithm_choice");
+    // Hidden storage for compatibility aliases, resolved after the DEM loads.
+    string_default_map["legacy_relief_window_radius_pixels"] = "";
+    string_default_map["legacy_fallback_admission_algorithm_choice"] = "";
 
-    float_default_map["fallback_relief_threshold_metres"] = 1.0f;
-    help_map["fallback_relief_threshold_metres"] = {"float","1.0",
-        "Local relief below which a cell is admitted as flat [m].",
-        "Only used when flat_mask_fname is empty and the fallback is relief.",
-        "Admission","param","flat_mask_fname"};
-
-    float_default_map["fallback_slope_threshold"] = 0.05f;
-    help_map["fallback_slope_threshold"] = {"float","0.05",
-        "Gradient magnitude below which a cell is admitted as flat [m/m].",
-        "Only used when flat_mask_fname is empty and the fallback is slope.",
-        "Admission","param","flat_mask_fname"};
-
-    int_default_map["min_component_pixels"] = 50;
-    help_map["min_component_pixels"] = {"int","50",
+    int_default_map["min_band_component_pixels"] = 50;
+    help_map["min_band_component_pixels"] = {"int","50",
         "Minimum patch size in pixels, applied PER BAND.",
-        "Note the change of meaning from lsdtt-flat-surface-finder, where the "
-        "same name filters components of the whole mask. Here components are "
-        "formed inside each band, so this is a floor on the size of one "
-        "surface on one level.",
+        "Components are formed inside each band, so this is a floor on the "
+        "size of one surface on one level - not the whole-mask filter that "
+        "min_component_pixels is in lsdtt-flat-surface-finder, which is why "
+        "the name differs. Replaces min_component_pixels here.",
         "Admission","param",""};
 
     // --- Reference field ---
@@ -458,8 +455,8 @@ int main(int argc, char* argv[])
         "sub-pixel on 30 m COP30.",
         "Outputs", "output", "write_patch_terrain_aspect"};
 
-    string_default_map["vertical_accuracy_mode"] = "fixed";
-    help_map["vertical_accuracy_mode"] = {"string","fixed",
+    string_default_map["vertical_accuracy_algorithm_choice"] = "fixed";
+    help_map["vertical_accuracy_algorithm_choice"] = {"string","fixed",
         "How E_v is arrived at: fixed or slope_dependent.",
         "Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative "
         "LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single "
@@ -488,20 +485,22 @@ int main(int argc, char* argv[])
         "is doing nothing useful.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_break_degrees"] = 11.31f;
-    help_map["vertical_accuracy_break_degrees"] = {"float","11.31",
-        "Gradient [degrees] separating the gentle and steep E_v.",
-        "11.31 degrees is a 20 percent grade, which is where the TanDEM-X "
-        "accuracy specification splits.",
+    float_default_map["vertical_accuracy_break_gradient"] = 0.20f;
+    help_map["vertical_accuracy_break_gradient"] = {"float","0.2",
+        "Gradient [m/m] separating the gentle and steep E_v.",
+        "0.2 is a 20 percent grade, which is where the TanDEM-X accuracy "
+        "specification splits. Replaces vertical_accuracy_break_degrees; an "
+        "old value is converted with gradient = tan(angle).",
         "Ladder", "param", ""};
+    string_default_map["legacy_vertical_accuracy_break_degrees"] = "";
 
-    float_default_map["vertical_accuracy_slope_window_radius_metres"] = 0.0f;
-    help_map["vertical_accuracy_slope_window_radius_metres"] = {"float","0",
+    float_default_map["vertical_accuracy_gradient_window_radius_metres"] = 0.0f;
+    help_map["vertical_accuracy_gradient_window_radius_metres"] = {"float","0",
         "Window radius [m] of the polynomial fit the window gradient is "
         "measured over. 0 = five cells. slope_dependent only.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30. This is the same measurement "
-        "lsdtt-flat-surface-finder makes for admission_slope_cap_degrees, and "
+        "lsdtt-flat-surface-finder makes for max_admission_gradient, and "
         "it is worth using the same window in both so the gradient a surface "
         "was admitted on is the gradient its E_v was read from.",
         "Ladder", "param", ""};
@@ -560,20 +559,21 @@ int main(int argc, char* argv[])
         "Ladder","param",""};
 
     // --- Classification (hand field) ---
-    float_default_map["floodplain_max_height_metres"] = 1.0f;
-    help_map["floodplain_max_height_metres"] = {"float","1.0",
-        "Upper HAND bound of the floodplain class [m].",
-        "An optional absolute override on the lowest band's upper bound. Under "
-        "band-then-label the ladder already decides where one level ends and "
-        "the next begins; this is a hard cap for cases where you know the "
-        "floodplain height independently. Only meaningful for the hand field.",
-        "Classification","param",""};
+    // Shared name with lsdtt-hillslope-channel-coupling's floodplain rule.
+    lsdtt::declare_max_floodplain_hand_parameter(float_default_map, help_map,
+                                                 1.0f);
+    help_map["max_floodplain_hand_metres"][3] =
+        "Here an optional absolute override on the lowest band's upper bound. "
+        "Under band-then-label the ladder already decides where one level ends "
+        "and the next begins; this is a hard cap for cases where you know the "
+        "floodplain height independently. Only meaningful for the hand field. "
+        "Replaces floodplain_max_height_metres.";
 
-    float_default_map["terrace_min_height_metres"] = 0.0f;
-    help_map["terrace_min_height_metres"] = {"float","0.0",
+    float_default_map["min_terrace_hand_metres"] = 0.0f;
+    help_map["min_terrace_hand_metres"] = {"float","0.0",
         "Lower HAND bound of the terrace class [m].",
-        "As floodplain_max_height_metres, at the other end. Only meaningful "
-        "for the hand field.",
+        "As max_floodplain_hand_metres, at the other end. Only meaningful "
+        "for the hand field. Replaces terrace_min_height_metres.",
         "Classification","param",""};
 
     float_default_map["channel_adjacency_radius_metres"] = 0.0f;
@@ -1102,21 +1102,49 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
 
-    // A pure rename: the value carries across unchanged. The new spelling says
-    // what the number is - a radius, so 5 is an 11x11 window - because the same
-    // idea is a full window SIDE in lsdtt-flat-surface-finder and
-    // lsdtt-mountain-front.
+    // Renames. Since 2026-10-26 the admission and floodplain names are shared
+    // with lsdtt-flat-surface-finder, lsdtt-mountain-front and
+    // lsdtt-hillslope-channel-coupling (one name per aim), bounds take min_ /
+    // max_ prefixes, and gradients are m/m.
     pp.set_deprecated_aliases({
-        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
         {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
         {"fill_dem_for_flow_routing", "fill_before_routing"},
         {"channel_threshold_contributing_pixels",
-         "threshold_contributing_pixels"} });
+         "threshold_contributing_pixels"},
+        {"fallback_relief_threshold_metres", "max_relief_metres"},
+        {"fallback_slope_threshold", "max_admission_gradient"},
+        {"min_component_pixels", "min_band_component_pixels"},
+        {"vertical_accuracy_mode", "vertical_accuracy_algorithm_choice"},
+        {"vertical_accuracy_slope_window_radius_metres",
+         "vertical_accuracy_gradient_window_radius_metres"},
+        {"floodplain_max_height_metres", "max_floodplain_hand_metres"},
+        {"terrace_min_height_metres", "min_terrace_hand_metres"} });
     pp.set_deprecated_numeric_aliases({
         {"patch_aspect_window_metres",
          {"patch_aspect_window_radius_metres", 0.5, 0.0, true}},
         {"vertical_accuracy_slope_window_metres",
-         {"vertical_accuracy_slope_window_radius_metres", 0.5, 0.0, true}} });
+         {"vertical_accuracy_gradient_window_radius_metres", 0.5, 0.0, true}} });
+    // Old values that cannot be carried by a plain or affine alias: converted
+    // after parsing (a window in cells needs the cell size; degrees need a
+    // tangent; the old admission selector only applied without a flat mask).
+    pp.set_deprecated_compatibility_aliases({
+        {"fallback_relief_window_radius_pixels",
+         {"legacy_relief_window_radius_pixels", "relief_window_radius_metres",
+          "The radius in cells is converted to metres with the DEM cell size; "
+          "the radius used is in the run log."}},
+        {"fallback_relief_window_pixels",
+         {"legacy_relief_window_radius_pixels", "relief_window_radius_metres",
+          "The radius in cells is converted to metres with the DEM cell size; "
+          "the radius used is in the run log."}},
+        {"fallback_admission_algorithm_choice",
+         {"legacy_fallback_admission_algorithm_choice",
+          "admission_algorithm_choice",
+          "It applies only when flat_mask_fname is empty, as it always did; "
+          "its `slope` is now `gradient`."}},
+        {"vertical_accuracy_break_degrees",
+         {"legacy_vertical_accuracy_break_degrees",
+          "vertical_accuracy_break_gradient",
+          "Converted with gradient = tan(angle)."}} });
 
     try
     {
@@ -1144,6 +1172,71 @@ int main(int argc, char* argv[])
             out_format = lsdtt::raster_output_format::gtiff;
         else if (fmt == "same_as_input")
             out_format = lsdtt::raster_output_format::same_as_input;
+    }
+
+    // Admission. A legacy fallback_admission_algorithm_choice only ever chose
+    // the built-in admission when there was no flat mask, so it is honoured
+    // only then; with a flat mask it was ignored before and still is.
+    std::string admission_choice = sf["admission_algorithm_choice"];
+    {
+        const bool named = pp.parameter_supplied("admission_algorithm_choice");
+        const std::string& legacy =
+            sf["legacy_fallback_admission_algorithm_choice"];
+        const bool have_mask = !sf["flat_mask_fname"].empty();
+        if (!named && !legacy.empty() && !have_mask)
+        {
+            admission_choice = (legacy == "slope") ? "gradient" : legacy;
+            pp.record_resolved_parameter("admission_algorithm_choice",
+                                         admission_choice);
+        }
+        if (admission_choice != "flat_mask" && admission_choice != "relief" &&
+            admission_choice != "gradient")
+        {
+            std::cerr << "FATAL: unknown admission_algorithm_choice '"
+                      << admission_choice
+                      << "'. Valid: flat_mask, relief, gradient.\n";
+            return 1;
+        }
+        if (named && have_mask && admission_choice != "flat_mask")
+        {
+            std::cerr << "FATAL: admission_algorithm_choice is "
+                      << admission_choice << " but flat_mask_fname is set. "
+                         "Use flat_mask to read the mask, or clear "
+                         "flat_mask_fname to use the built-in admission.\n";
+            return 1;
+        }
+        if (admission_choice == "flat_mask" && !have_mask)
+            admission_choice = "relief";   // no mask: the built-in fallback
+    }
+
+    // vertical_accuracy_break_gradient, or a legacy angle converted to one.
+    // Held as float, the parameter's type, so the value recorded for
+    // _ingested_params.param reads back exactly.
+    float ev_break_gradient = ff["vertical_accuracy_break_gradient"];
+    if (!sf["legacy_vertical_accuracy_break_degrees"].empty() &&
+        !pp.parameter_supplied("vertical_accuracy_break_gradient"))
+    {
+        try
+        {
+            ev_break_gradient = static_cast<float>(
+                lsdtt::gradient_from_legacy_degrees(
+                    sf["legacy_vertical_accuracy_break_degrees"],
+                    "vertical_accuracy_break_degrees"));
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        std::ostringstream os;
+        os.precision(9);
+        os << ev_break_gradient;
+        pp.record_resolved_parameter("vertical_accuracy_break_gradient",
+                                     os.str());
+        std::cout << "vertical_accuracy_break_degrees "
+                  << sf["legacy_vertical_accuracy_break_degrees"]
+                  << " -> vertical_accuracy_break_gradient " << os.str()
+                  << "\n";
     }
 
     lsdtt::reference_field_choice field_choice =
@@ -1222,11 +1315,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    const std::string& ev_mode_name = sf["vertical_accuracy_mode"];
+    const std::string& ev_mode_name = sf["vertical_accuracy_algorithm_choice"];
     const bool ev_slope_dependent = (ev_mode_name == "slope_dependent");
     if (ev_mode_name != "fixed" && !ev_slope_dependent)
     {
-        std::cerr << "FATAL: unknown vertical_accuracy_mode '" << ev_mode_name
+        std::cerr << "FATAL: unknown vertical_accuracy_algorithm_choice '" << ev_mode_name
                   << "'. Valid: fixed, slope_dependent.\n";
         return 1;
     }
@@ -1236,7 +1329,7 @@ int main(int argc, char* argv[])
         const double es = static_cast<double>(ff["vertical_accuracy_steep_metres"]);
         if (!(eg > 0.0) || !(es > 0.0))
         {
-            std::cerr << "FATAL: vertical_accuracy_mode slope_dependent needs "
+            std::cerr << "FATAL: vertical_accuracy_algorithm_choice slope_dependent needs "
                          "both vertical_accuracy_gentle_metres and "
                          "vertical_accuracy_steep_metres > 0.\n";
             return 1;
@@ -1371,7 +1464,7 @@ int main(int argc, char* argv[])
     lsdtt::lsdtt_raster_cpu admitted;
     {
         std::cout << "--- Admission ---\n";
-        if (!sf["flat_mask_fname"].empty())
+        if (admission_choice == "flat_mask")
         {
             lsdtt::lsdtt_raster_cpu in_mask;
             try
@@ -1399,7 +1492,7 @@ int main(int argc, char* argv[])
             // No flat mask: a coarse built-in admission so the tool can be run
             // on its own for a first look. This is deliberately not as good as
             // lsdtt-flat-surface-finder's texture metrics.
-            const std::string& how = sf["fallback_admission_algorithm_choice"];
+            const std::string& how = admission_choice;
             std::cout << "No flat_mask_fname; using the built-in " << how
                       << " admission.\n"
                       << "  For a publishable result run "
@@ -1411,18 +1504,53 @@ int main(int argc, char* argv[])
 
             if (how == "relief")
             {
+                // Radius in cells: relief_window_radius_metres, or a legacy
+                // fallback_relief_window_radius_pixels, or the default 5.
+                int radius_px = 0;
+                const std::string& legacy_px =
+                    sf["legacy_relief_window_radius_pixels"];
+                try
+                {
+                    if (!legacy_px.empty() &&
+                        !pp.parameter_supplied("relief_window_radius_metres"))
+                    {
+                        std::size_t used = 0;
+                        radius_px = std::stoi(legacy_px, &used);
+                        if (used != legacy_px.size() || radius_px < 1)
+                            throw std::invalid_argument(
+                                "fallback_relief_window_radius_pixels must be "
+                                "a whole number >= 1; got '" + legacy_px + "'.");
+                        std::ostringstream os;
+                        os.precision(9);
+                        os << static_cast<float>(radius_px * meta.cell_size);
+                        pp.record_resolved_parameter(
+                            "relief_window_radius_metres", os.str());
+                    }
+                    else
+                    {
+                        radius_px = lsdtt::relief_window_radius_pixels(
+                            ff["relief_window_radius_metres"],
+                            meta.cell_size, 5);
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: " << e.what() << "\n";
+                    return 1;
+                }
                 const double radius =
-                    static_cast<double>(ip["fallback_relief_window_radius_pixels"]) *
-                    meta.cell_size;
+                    static_cast<double>(radius_px) * meta.cell_size;
+                std::cout << "  Relief window radius: " << radius_px
+                          << " cell(s) = " << radius << " m\n";
                 const lsdtt::lsdtt_raster_cpu relief =
                     lsdtt::moving_window_local_relief(dem, radius);
                 const std::vector<float>& rv = relief.get_data();
-                const float thr = ff["fallback_relief_threshold_metres"];
+                const float thr = ff["max_relief_metres"];
                 for (std::size_t i = 0; i < n_pixels; ++i)
                     if (dm[i] && std::isfinite(rv[i]) && rv[i] < thr)
                         ad[i] = 1.0f;
             }
-            else if (how == "slope")
+            else if (how == "gradient")
             {
                 const lsdtt::poly_fit_coeffs pc =
                     lsdtt::direct_polyfit(dem, 2.0 * meta.cell_size,
@@ -1433,16 +1561,15 @@ int main(int argc, char* argv[])
                     lsdtt::compute_polyfit_metrics(pc, mreq);
                 const std::vector<float>& sv =
                     mres.at(lsdtt::polyfit_metric::slope).get_data();
-                const float thr = ff["fallback_slope_threshold"];
+                const float thr = ff["max_admission_gradient"];
                 for (std::size_t i = 0; i < n_pixels; ++i)
                     if (dm[i] && std::isfinite(sv[i]) && sv[i] < thr)
                         ad[i] = 1.0f;
             }
             else
             {
-                std::cerr << "FATAL: unknown "
-                             "fallback_admission_algorithm_choice '" << how
-                          << "'. Valid: relief, slope.\n";
+                std::cerr << "FATAL: unknown admission_algorithm_choice '"
+                          << how << "'. Valid: flat_mask, relief, gradient.\n";
                 return 1;
             }
             admitted = lsdtt::lsdtt_raster_cpu(
@@ -1737,9 +1864,9 @@ int main(int argc, char* argv[])
     {
         lsdtt::flat_surface_classify_request creq;
         creq.floodplain_max_height_metres =
-            static_cast<double>(ff["floodplain_max_height_metres"]);
+            static_cast<double>(ff["max_floodplain_hand_metres"]);
         creq.terrace_min_height_metres =
-            static_cast<double>(ff["terrace_min_height_metres"]);
+            static_cast<double>(ff["min_terrace_hand_metres"]);
         creq.channel_adjacency_radius_metres =
             static_cast<double>(ff["channel_adjacency_radius_metres"]);
         creq.terrace_max_distance_to_channel_metres =
@@ -1764,8 +1891,8 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
         creq.vertical_accuracy_steep_metres =
             static_cast<double>(ff["vertical_accuracy_steep_metres"]);
-        creq.vertical_accuracy_break_degrees =
-            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
+        creq.vertical_accuracy_break_gradient =
+            static_cast<double>(ev_break_gradient);
         creq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         creq.band_reach_window_metres =
@@ -1815,7 +1942,7 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_min_break_metres"]);
         creq.ladder_max_break_metres =
             static_cast<double>(ff["ladder_max_break_metres"]);
-        creq.band_min_component_pixels   = ip["min_component_pixels"];
+        creq.band_min_component_pixels   = ip["min_band_component_pixels"];
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
         creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
@@ -1852,21 +1979,21 @@ int main(int argc, char* argv[])
             const double cell = dem.get_meta().cell_size;
             // direct_polyfit takes the full physical window diameter.
             double lambda = 2.0 * static_cast<double>(
-                ff["vertical_accuracy_slope_window_radius_metres"]);
+                ff["vertical_accuracy_gradient_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Window gradient for E_v: polyfit window " << lambda
                       << " m, break at "
-                      << ff["vertical_accuracy_break_degrees"] << " degrees\n";
+                      << ev_break_gradient << " (gradient)\n";
             try
             {
                 const lsdtt::poly_fit_coeffs fit =
                     lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
                 lsdtt::polyfit_metric_request mreq;
-                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.metrics   = {lsdtt::polyfit_metric::slope};
                 mreq.n_threads = ip["n_threads"];
                 lsdtt::polyfit_metric_result mres =
                     lsdtt::compute_polyfit_metrics(fit, mreq);
-                ev_slope = mres.at(lsdtt::polyfit_metric::slope_degrees);
+                ev_slope = mres.at(lsdtt::polyfit_metric::slope);
                 have_ev_slope = true;
             }
             catch (const std::exception& e)
@@ -1955,8 +2082,8 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
         lreq.vertical_accuracy_steep_metres =
             static_cast<double>(ff["vertical_accuracy_steep_metres"]);
-        lreq.vertical_accuracy_break_degrees =
-            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
+        lreq.vertical_accuracy_break_gradient =
+            static_cast<double>(ev_break_gradient);
         lreq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         lreq.reach_window_metres = -1.0;   // no reach on a fitted surface (C6)
@@ -2001,7 +2128,7 @@ int main(int argc, char* argv[])
                 reference_field, admitted, lreq);
             banded = lsdtt::label_components_within_bands(
                 ladder.band_index, admitted, reference_field,
-                std::max(1, ip["min_component_pixels"]),
+                std::max(1, ip["min_band_component_pixels"]),
                 lsdtt::pixel_connectivity::d4, nullptr, true_north.get());
         }
         catch (const std::exception& e)
