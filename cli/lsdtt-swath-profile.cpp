@@ -36,6 +36,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_swath_cpu.hpp"
@@ -136,6 +137,9 @@ int main(int argc, char* argv[])
             k_tool_name, k_status, k_citation, help_map, cli_args);
         return 0;
     }
+
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
 
     // -------------------------------------------------------------------------
     // Load parameter file
@@ -368,5 +372,5 @@ int main(int argc, char* argv[])
                   k_status, k_citation);
     pp.print_parameters();
     std::cout << "\nlsdtt-swath-profile: done.\n";
-    return 0;
+    return run_record.succeed();
 }

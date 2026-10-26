@@ -47,6 +47,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_cosmo_site_cpu.hpp"
@@ -562,6 +563,9 @@ int main(int argc, char* argv[])
             k_tool_name, k_status, k_citation, help_map, cli_args);
         return 0;
     }
+
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
 
     lsdtt::lsdtt_param_parser pp;
     try { pp = lsdtt::lsdtt_param_parser(cli_args.path, cli_args.fname); }
@@ -1564,5 +1568,6 @@ int main(int argc, char* argv[])
 
     pp.print_help(help_map, pp.get_write_fname() + "_README",
                   k_status, k_citation);
-    return 0;
+    pp.print_parameters();
+    return run_record.succeed();
 }

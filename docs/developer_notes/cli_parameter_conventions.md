@@ -317,8 +317,35 @@ This is on by default and is separate from the three maps above. Any key in the
 (read_path, read_fname, write_path, write_fname, boundary_conditions) is reported
 as unknown. This catches typos.
 
-A warning is printed but the run continues — a CLI may legitimately read a key
-by another route, or a key may be intended for a plugin or workflow wrapper.
+A key that is a **near miss** of a declared or reserved key stops the run with
+"Did you mean '<key>'?": the same key in another case, or, for keys of four or
+more characters, one within `min(2, length/4)` edits. Running on would silently
+use the default for the parameter the user meant. The length rule keeps short
+unknown keys (`m`) from being "corrected" to one-letter keys (`K`, `D`). Any
+other unknown key is a warning and the run continues — a key may be intended
+for a plugin or workflow wrapper. The check runs after the alias rewrite, so a
+deprecated name gets its own message, never a near-miss stop.
+
+### Value checks
+
+`parse_all_parameters` also checks every supplied value against its declared
+type before any typed parse, and stops the run (all problems reported at once,
+`FATAL:` lines, exit 1) on:
+
+- a boolean other than `true/True/TRUE/t/T/1` or `false/False/FALSE/f/F/0`;
+- an integer that is not a whole number in range (`1e3`, `1.5`, `100m`);
+- a float or double that is not a finite number (`100m`, `nan`), or a float
+  outside float range;
+- an empty value for an integer, float, double or boolean key (an empty
+  string key is fine);
+- a quoted value (lsdtt3 keeps quote characters).
+
+A default that is not finite (`nan` as "not set") is written to
+`_ingested_params.param` as a comment, since the parser would reject it as a
+value. Float and double defaults are written with the shortest text that reads
+back to the same value, so the ingested file reproduces the run; the smoke
+tests re-run one test per CLI from it (`LSDTT_RERUN_FROM_INGESTED_TESTS` in
+`tests/CMakeLists.txt`).
 
 ### Implementation in a CLI
 

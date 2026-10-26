@@ -268,7 +268,12 @@ def shows_banner(exe: Path, timeout: float) -> bool:
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
-    return "Welcome to" in "\n".join(proc.stdout.lstrip().splitlines()[:3])
+    # The banners are hand-written per tool (not all say "Welcome to", nor
+    # name the tool the same way), so look for the box: a frame line, then a
+    # "|| " line.
+    lines = proc.stdout.lstrip().splitlines()[:2]
+    return (len(lines) == 2 and lines[0].startswith("=====")
+            and lines[1].startswith("|| "))
 
 
 def helptext(param: dict) -> str:

@@ -40,6 +40,7 @@
 
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_hydraulic_graph_cpu.hpp"
@@ -370,6 +371,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
@@ -451,7 +455,7 @@ int main(int argc, char* argv[])
     {
         std::cout << "No raster outputs requested. Nothing to do.\n";
         pp.print_parameters();
-        return 0;
+        return run_record.succeed();
     }
 
     if (bf["use_point_inflow"])
@@ -883,5 +887,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-graphflood: done.\n";
-    return 0;
+    return run_record.succeed();
 }

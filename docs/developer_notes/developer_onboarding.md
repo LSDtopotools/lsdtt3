@@ -39,16 +39,19 @@ Every CLI uses `lsdtt_param_parser`. The full required layout is the
 In outline:
 
 1. file header, includes, and `k_tool_name` / `k_status` / `k_citation`
-2. `print_banner()`
+2. `print_banner()`, skipped when `lsdtt_param_parser::help_json_requested()`
+   is true so `-h json` prints only JSON
 3. `lsdtt_param_parser::parse_args_deferred()`, which handles `-v`, `-c`, no
    arguments and bad arguments, and records `-h`
 4. parameter defaults grouped by theme, each followed immediately by its
    `help_map` entry
 5. if help was requested, `print_terminal_help()` and return. Help is rendered
-   from the declarations, so no parameter file is needed
+   from the declarations, so no parameter file is needed. Then create the run
+   record, `lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);`
 6. parameter parsing and cross-parameter logic
 7. input loading, processing pipeline, output writing
-8. `print_help()` and `print_parameters()` for reproducibility
+8. `print_help()` and `print_parameters()` for reproducibility, then
+   `return run_record.succeed();` on every successful path
 
 Do not add command-line flags. Every option goes in the parameter file. The
 `-h` output must be enough for someone with only the binary to write a

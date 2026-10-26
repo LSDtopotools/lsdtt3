@@ -9134,6 +9134,21 @@ add_test(NAME unit_param_parser_strict
 lsdtt_set_tests_properties(unit_param_parser_strict PROPERTIES LABELS "unit")
 
 # =============================================================================
+# unit_run_record
+#
+# How every CLI run ends (lsdtt_run_record): the finished-OK line and run
+# summary on success; the RUN FAILED box, ERROR line and failed summary after a
+# return 1, a std::exit(1) and an uncaught exception; which files the summary
+# lists as outputs.
+# =============================================================================
+add_executable(lsdtt-test-run-record cpp/test_run_record.cpp)
+target_link_libraries(lsdtt-test-run-record PRIVATE lsdtt3_core)
+
+add_test(NAME unit_run_record
+         COMMAND lsdtt-test-run-record "${CMAKE_CURRENT_BINARY_DIR}/run_record")
+lsdtt_set_tests_properties(unit_run_record PROPERTIES LABELS "unit")
+
+# =============================================================================
 # lsdtt-fluvial-surfaces
 #
 # The tool between lsdtt-flat-surface-finder (which ground is flat?) and
@@ -9550,7 +9565,7 @@ set(LSDTT_DOMAIN_RULES
     # because "fill" would otherwise claim breach tests that mention filling.
     "breach"                 "network"
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
-    "param|secret|cli_reference|wheel_cli_inventory|version_consistency|python_bindings_smoke|test_env|configure_contract" "core"
+    "param|secret|cli_reference|wheel_cli_inventory|version_consistency|python_bindings_smoke|test_env|configure_contract|run_record" "core"
     "depression_hierarchy"   "network"
     "point_input"            "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
@@ -10212,6 +10227,50 @@ endif()
 # This block is LAST so that it also reaches tests registered after the
 # classification pass (unit_build_is_current).
 # =============================================================================
+# =============================================================================
+# Re-run from the ingested parameters
+#
+# Every run writes <write_fname>_ingested_params.param: every value it used,
+# read or default. Running the tool on that file (write_path moved to a fresh
+# directory) must write the same files with the same bytes, or the record does
+# not reproduce the run (it did not: float defaults were written with six
+# decimals, so a tolerance of 1e-12 came back as 0). One smoke test per CLI
+# does the re-run (run_cli_smoke.py, LSDTT_RERUN_FROM_INGESTED). Not covered,
+# for want of a run_cli_smoke.py test to reuse: lsdtt-graphflood,
+# lsdtt-lithology-erodibility, lsdtt-ridgeline-analysis,
+# lsdtt-sediment-routing and lsdtt-cosmo-column-tool.
+# =============================================================================
+set(LSDTT_RERUN_FROM_INGESTED_TESTS
+    smoke_advection_diffusion smoke_bankfull_width smoke_basin_extraction
+    smoke_basin_stats smoke_basin_surface_metrics smoke_channel_extraction
+    smoke_channel_network_analysis_area_scaling smoke_chi_analysis
+    smoke_cosmo_landslides_crn_site_mode smoke_cosmo_prediction_multi_isotope
+    smoke_cosmo_tool_lsdn smoke_cross_sections
+    smoke_distributed_hydrology_flat_resolution_topmodel_float_step
+    smoke_divide_migration_clusters smoke_drainage_analysis
+    smoke_feature_finder smoke_fetch_erosion_rates_offline
+    smoke_fetch_lithology_offline smoke_flat_surface_finder
+    smoke_fluvial_surfaces smoke_hillslope_channel_coupling
+    smoke_internal_drainage_both smoke_lem_cellular_particles
+    smoke_linear_stats smoke_marsh_topography smoke_mountain_front
+    smoke_outlet_matching_identity smoke_raster_calculator_difference
+    smoke_raster_preprocessing smoke_slope_area
+    smoke_spectral_analysis_valley_spacing smoke_stream_burning
+    smoke_surface_metrics smoke_swath_profile_plane
+    smoke_synthetic_networks_island smoke_synthetic_surfaces_phase5_defaults
+    smoke_valley_centreline_flat_resolution_float_step
+    smoke_water_centreline smoke_water_line_repair)
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    foreach(_test IN LISTS LSDTT_RERUN_FROM_INGESTED_TESTS)
+        if(NOT TEST ${_test})
+            message(FATAL_ERROR "LSDTT_RERUN_FROM_INGESTED_TESTS names ${_test}, "
+                "which is not a test. Pick another smoke test for that CLI.")
+        endif()
+        set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT
+                     "LSDTT_RERUN_FROM_INGESTED=1")
+    endforeach()
+endif()
+
 get_property(_lsdtt_all_tests DIRECTORY PROPERTY TESTS)
 foreach(_test IN LISTS _lsdtt_all_tests)
     set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "LSDTT_NONINTERACTIVE=1")

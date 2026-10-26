@@ -58,6 +58,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
@@ -790,6 +791,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
@@ -966,7 +970,7 @@ int main(int argc, char* argv[])
                   << "  calculate_multi_isotope_step_change: true\n"
                   << "  calculate_multi_isotope_transient: true\n"
                   << "  calculate_accumulated_crn_concentration: true\n";
-        return 0;
+        return run_record.succeed();
     }
 
     // The multi-isotope mode supersedes the single-nuclide step change: it
@@ -2388,5 +2392,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-cosmo-prediction complete.\n";
-    return 0;
+    return run_record.succeed();
 }

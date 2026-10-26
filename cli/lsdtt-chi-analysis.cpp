@@ -50,6 +50,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
@@ -638,6 +639,9 @@ int main(int argc, char* argv[])
             k_tool_name, k_status, k_citation, help_map, cli_args);
         return 0;
     }
+
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
 
     // -------------------------------------------------------------------------
     // Load parameter file
@@ -2432,5 +2436,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-chi-analysis: done.\n";
-    return 0;
+    return run_record.succeed();
 }

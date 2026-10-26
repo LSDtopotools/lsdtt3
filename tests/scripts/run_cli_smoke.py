@@ -2,6 +2,8 @@
 
 import argparse
 import hashlib
+import json
+import os
 import pathlib
 import re
 import shutil
@@ -452,6 +454,144 @@ def assert_sha256(file_path: pathlib.Path, expected_hex: str) -> None:
         )
 
 
+# Files that legitimately differ between a run and its re-run: they name the
+# write_path, or record the run itself.
+RERUN_DIFFERENT_BY_DESIGN = ("_README.csv", "_README.html",
+                             "_ingested_params.param", "_run_summary.json",
+                             # GDAL statistics sidecars, written by this
+                             # script's own raster checks after the run
+                             ".aux.xml")
+
+
+def rerun_from_ingested(exe: pathlib.Path, work_dir: pathlib.Path,
+                        out_dir: pathlib.Path, stdout: str) -> str:
+    """Re-run the tool from its own <write_fname>_ingested_params.param.
+
+    The ingested file records every value the run used, read or default, so
+    running the tool on it (with write_path moved to a fresh directory) must
+    write the same files with the same bytes. A default that does not survive
+    the round trip (e.g. a float written with too few digits) shows up here.
+    Also checks the re-run's ingested file equals the first one apart from
+    write_path, i.e. the record is a fixed point. Returns "" or the problem.
+    """
+    m = re.search(r"summary: (.+)$", stdout.strip().splitlines()[-1])
+    summary = json.loads(pathlib.Path(m.group(1)).read_text(encoding="utf-8"))
+    write_fname = summary["write_fname"]
+    ingested = out_dir / f"{write_fname}_ingested_params.param"
+    if not ingested.is_file():
+        return f"no {ingested.name} was written"
+
+    rerun_dir = work_dir / "rerun"
+    out2 = rerun_dir / "out"
+    if rerun_dir.exists():
+        shutil.rmtree(rerun_dir)
+    out2.mkdir(parents=True)
+
+    def moved(text: str) -> list[str]:
+        return [f"write_path: {out2}" if l.startswith("write_path:") else l
+                for l in text.splitlines()]
+
+    def values(text: str) -> dict[str, str]:
+        # key -> value, ignoring comments, sections and write_path: a value
+        # read from the file and the same value as a default are the same.
+        out = {}
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
+                continue
+            key, value = (part.strip() for part in line.split(":", 1))
+            if key != "write_path":
+                out[key] = value
+        return out
+
+    first_ingested = ingested.read_text(encoding="utf-8")
+    (rerun_dir / "rerun_params.txt").write_text("\n".join(moved(first_ingested)) + "\n",
+                                                 encoding="utf-8")
+    result = lsdtt_test_env.run_logged([str(exe), str(rerun_dir), "rerun_params.txt"],
+                                       rerun_dir, cwd=rerun_dir)
+    if result.returncode != 0:
+        return f"the re-run exited {result.returncode}"
+
+    def outputs(root: pathlib.Path) -> dict[str, pathlib.Path]:
+        found = {}
+        for entry in root.iterdir():
+            if not entry.name.startswith(write_fname + "_"):
+                continue
+            files = [entry] if entry.is_file() else [p for p in entry.rglob("*") if p.is_file()]
+            for p in files:
+                rel = p.relative_to(root).as_posix()
+                if not rel.endswith(RERUN_DIFFERENT_BY_DESIGN):
+                    found[rel] = p
+        return found
+
+    a, b = outputs(out_dir), outputs(out2)
+    if set(a) != set(b):
+        return (f"different output files: only in the first run "
+                f"{sorted(set(a) - set(b))[:5]}, only in the re-run "
+                f"{sorted(set(b) - set(a))[:5]}")
+    differ = [rel for rel in sorted(a) if a[rel].read_bytes() != b[rel].read_bytes()]
+    if differ:
+        return f"outputs with different bytes: {differ[:5]}"
+
+    second = out2 / ingested.name
+    if not second.is_file():
+        return f"the re-run wrote no {ingested.name}"
+    v1, v2 = values(first_ingested), values(second.read_text(encoding="utf-8"))
+    if v1 != v2:
+        diff = sorted(k for k in set(v1) | set(v2) if v1.get(k) != v2.get(k))
+        return ("the re-run's ingested parameters differ: "
+                + ", ".join(f"{k}: {v1.get(k)!r} -> {v2.get(k)!r}" for k in diff[:5]))
+    return ""
+
+
+def check_run_record(result, out_dir: pathlib.Path, expect_failure: bool) -> str:
+    """Check how the run ended (lsdtt_run_record). Returns "" or the problem.
+
+    A failed run shows the boxed RUN FAILED message on stdout. A successful
+    run ends with "lsdtt3: <tool> finished OK; <n> output files; summary:
+    <path>", and that summary says status ok and lists every file the run
+    wrote under write_path in an entry named <write_fname>_...
+    """
+    if expect_failure:
+        if "|| RUN FAILED: " not in result.stdout:
+            return "a failed run did not print the RUN FAILED box on stdout"
+        return ""
+
+    lines = [l for l in result.stdout.splitlines() if l.strip()]
+    last = lines[-1] if lines else ""
+    m = re.match(r"lsdtt3: \S+ finished OK; (\d+) output files?; summary: (.+)$", last)
+    if not m:
+        return f"the last stdout line is not the finished-OK line: {last!r}"
+    summary_path = pathlib.Path(m.group(2))
+    if not summary_path.is_file():
+        return f"the run summary named on the last line does not exist: {summary_path}"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return f"the run summary is not valid JSON: {exc}"
+    if summary.get("status") != "ok":
+        return f"the run summary status is {summary.get('status')!r}, not 'ok'"
+    listed = {o["path"] for o in summary.get("outputs", [])}
+    if int(m.group(1)) != len(listed):
+        return (f"the last line counts {m.group(1)} outputs, the summary lists "
+                f"{len(listed)}")
+    write_path = pathlib.Path(summary["write_path"])
+    prefix = summary["write_fname"] + "_"
+    written = set()
+    if write_path.resolve() == out_dir.resolve():
+        for entry in out_dir.iterdir():
+            if not entry.name.startswith(prefix):
+                continue
+            files = [entry] if entry.is_file() else [p for p in entry.rglob("*") if p.is_file()]
+            for p in files:
+                rel = p.relative_to(out_dir).as_posix()
+                if rel != summary_path.name:
+                    written.add(rel)
+    missing = sorted(written - listed)
+    if missing:
+        return f"the run summary does not list these outputs: {missing[:5]}"
+    return ""
+
+
 def main() -> int:
     args = parse_args()
 
@@ -550,6 +690,13 @@ def main() -> int:
             print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
             return 5
 
+    record_problem = check_run_record(result, out_dir, args.expect_failure)
+    if record_problem:
+        print(f"Validation failed: {record_problem}", file=sys.stderr)
+        print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
+        print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
+        return 6
+
     if args.expect_failure:
         print(f"PASS (expected failure): {exe.name}")
         return 0
@@ -638,6 +785,14 @@ def main() -> int:
         print(f"Stdout: {work_dir / 'stdout.log'}", file=sys.stderr)
         print(f"Stderr: {work_dir / 'stderr.log'}", file=sys.stderr)
         return 3
+
+    if os.environ.get("LSDTT_RERUN_FROM_INGESTED") == "1":
+        problem = rerun_from_ingested(exe, work_dir, out_dir, result.stdout)
+        if problem:
+            print(f"Rerun from ingested parameters failed: {problem}", file=sys.stderr)
+            print(f"Rerun logs: {work_dir / 'rerun'}", file=sys.stderr)
+            return 7
+        print(f"Rerun from ingested parameters reproduced the outputs: {exe.name}")
 
     print(f"PASS: {exe.name}")
     return 0

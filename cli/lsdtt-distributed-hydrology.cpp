@@ -75,6 +75,7 @@
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_junction_network_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
@@ -1942,6 +1943,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
@@ -1995,8 +1999,9 @@ int main(int argc, char* argv[])
     const std::string column_model_str = lsdtt::to_lower_ascii(sf["column_model"]);
     if (column_model_str == "hype")
     {
-        return run_hype_model(pp, bf, ff, ifs, sf, help_map, out_fmt,
-                              flat_choice);
+        const int hype_status = run_hype_model(pp, bf, ff, ifs, sf, help_map,
+                                               out_fmt, flat_choice);
+        return hype_status == 0 ? run_record.succeed() : hype_status;
     }
     if (column_model_str != "topmodel")
     {
@@ -3653,5 +3658,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-distributed-hydrology: done.\n";
-    return 0;
+    return run_record.succeed();
 }

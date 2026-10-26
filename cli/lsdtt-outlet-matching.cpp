@@ -50,6 +50,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_point_input.hpp"
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
@@ -302,6 +303,9 @@ int main(int argc, char* argv[])
             lsdtt::k_tool_name, lsdtt::k_status, lsdtt::k_citation, help, args);
         return 0;
     }
+
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(lsdtt::k_tool_name, argc, argv);
 
     // =========================================================================
     // Phase 4 - Load and parse the parameter file
@@ -615,5 +619,5 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: " << exception.what() << "\n";
         return 1;
     }
-    return 0;
+    return run_record.succeed();
 }

@@ -1216,11 +1216,20 @@ CLI source files follow this layout, in order:
    `unit_cli_parameter_conventions` checks only the value)
 5. helper free functions (if unavoidable — see helper rule below)
 6. `main()`:
-   a. call `print_banner()` and `lsdtt_param_parser::parse_args_deferred()`
+   a. call `print_banner()`, guarded by
+      `if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))` so
+      that `-h json` prints nothing but the JSON document; then
+      `lsdtt_param_parser::parse_args_deferred()`
    b. declare all five maps and fill defaults + help (see below)
    c. if `cli_args.help_requested`, call
       `lsdtt_param_parser::print_terminal_help(...)` and return 0
       (help is rendered from the declarations, so no parameter file is needed)
+   c2. immediately after the help branch, create the run record:
+      `lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);`
+      (`src/core/lsdtt_run_record.hpp`). It prints the closing line or the
+      RUN FAILED box and writes `<write_fname>_run_summary.json`; the parser
+      gives it the paths, and it picks the error lines out of stderr, so no
+      failure path needs changing
    d. construct `lsdtt_param_parser` from `cli_args.path` / `cli_args.fname`
    e. call `parse_all_parameters`
    f. read results back from the parser
@@ -1228,8 +1237,16 @@ CLI source files follow this layout, in order:
    h. load DEM and verify projection
    i. build flow routing and channel network (if needed)
    j. run analysis pipeline
-   k. write outputs
+   k. write outputs; an output whose name does not start with
+      `<write_fname>_` is registered with
+      `lsdtt::lsdtt_run_record::add_output(path)` so the summary lists it
    l. call `pp.print_help(...)` then `pp.print_parameters()`
+   m. end every successful path with `return run_record.succeed();` (it
+      returns 0). Any other ending (`return 1`, the parser's `std::exit(1)`, an
+      uncaught exception) is recorded as a failure, so a `return 0` that skips
+      `succeed()` reports a successful run as RUN FAILED. The smoke runner
+      (`tests/scripts/run_cli_smoke.py`) checks the closing line and the
+      summary on every smoke run
 
 All CLIs use this deferred flow (the legacy `parse_args()` was removed
 2026-07-15 once the last CLI migrated). See `cli/lsdtt-raster-preprocessing.cpp`

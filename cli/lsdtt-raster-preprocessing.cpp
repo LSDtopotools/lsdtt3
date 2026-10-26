@@ -77,6 +77,7 @@
 
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_raster_meta.hpp"
 #include "../src/core/lsdtt_raster_reproject.hpp"
@@ -997,6 +998,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
@@ -1346,6 +1350,8 @@ int main(int argc, char* argv[])
                     in_path, raster_frame, entry.second,
                     ifs["rotate_back_epsg"], out_path, back_opts);
                 for (const auto& w : rb.warnings) std::cerr << "WARNING: " << w << "\n";
+                // Named after the input, not <write_fname>_, so say so.
+                lsdtt::lsdtt_run_record::add_output(rb.out_path);
                 std::cout << "Rotated back (" << entry.second << "): " << in_path << "\n"
                           << "  -> " << rb.out_path << "  (" << rb.n_cols << " x "
                           << rb.n_rows << " cells of " << rb.cell_size << ")\n";
@@ -1360,7 +1366,7 @@ int main(int argc, char* argv[])
         pp.print_help(help_map, pp.get_write_fname() + "_README", k_status, k_citation);
         pp.print_parameters();
         std::cout << "\nlsdtt-raster-preprocessing: done.\n";
-        return 0;
+        return run_record.succeed();
     }
 
     // -------------------------------------------------------------------------
@@ -2890,5 +2896,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-raster-preprocessing: done.\n";
-    return 0;
+    return run_record.succeed();
 }

@@ -48,6 +48,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/cpu/lsdtt_lem_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
@@ -383,6 +384,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     lsdtt::lsdtt_param_parser parser(cli.path, cli.fname);
     parser.parse_all_parameters(
         float_default_map, int_default_map,
@@ -699,6 +703,7 @@ int main(int argc, char* argv[])
     loader.write_full(
         current.get_data(), current.get_meta(), final_path, format);
     write_diagnostics(current, "_modelled");
+    parser.print_parameters();
     std::cout << "\nlsdtt-advection-diffusion: done.\n";
-    return 0;
+    return run_record.succeed();
 }

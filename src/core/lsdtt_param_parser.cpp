@@ -15,6 +15,7 @@
 // parameter_name: value
 // lines with hash at beginning are treated as comments
 #include "lsdtt_param_parser.hpp"
+#include "lsdtt_run_record.hpp"
 #include "../utils/lsdtt_output_file.hpp"
 
 #include "lsdtt_gdal_init.hpp"
@@ -101,6 +102,13 @@ lsdtt_param_parser::lsdtt_param_parser(
     parse_file(full_path);
     parse_file_io();
     check_paths();
+    report_paths_to_run_record();
+}
+
+void lsdtt_param_parser::report_paths_to_run_record() const
+{
+    lsdtt_run_record::note_paths(param_file_path_ + param_fname_, read_path_,
+                                 read_fname_ + read_ext_, write_path_, write_fname_);
 }
 
 // -----------------------------------------------------------------------------
@@ -134,8 +142,17 @@ void lsdtt_param_parser::parse_file(const std::string& full_path)
 
 void lsdtt_param_parser::parse_file_io()
 {
+    // An I/O key with an empty value ("read_path:") is the same as leaving it
+    // out: it takes its default. Otherwise an empty read_path read inputs from
+    // the current directory, not the parameter file's.
+    auto supplied = [this](const std::string& key)
+    {
+        const auto it = parameter_map_.find(key);
+        return it != parameter_map_.end() && !strip_control_chars(it->second).empty();
+    };
+
     // read_path
-    if (parameter_map_.count("read_path"))
+    if (supplied("read_path"))
     {
         read_path_ = strip_control_chars(parameter_map_["read_path"]);
     }
@@ -145,19 +162,19 @@ void lsdtt_param_parser::parse_file_io()
     }
 
     // write_path
-    if (parameter_map_.count("write_path"))
+    if (supplied("write_path"))
     {
         write_path_ = strip_control_chars(parameter_map_["write_path"]);
     }
 
     // read_fname
-    if (parameter_map_.count("read_fname"))
+    if (supplied("read_fname"))
     {
         read_fname_ = strip_control_chars(parameter_map_["read_fname"]);
     }
 
     // write_fname
-    if (parameter_map_.count("write_fname"))
+    if (supplied("write_fname"))
     {
         write_fname_ = strip_control_chars(parameter_map_["write_fname"]);
     }
@@ -296,6 +313,26 @@ std::string near_miss(const std::string& unknown,
         if (d < best_distance) { best_distance = d; best = c; }
     }
     return best;
+}
+
+// The shortest decimal text that reads back as exactly v. Defaults are written
+// to <write_fname>_ingested_params.param, which reproduces the run only if
+// they survive the round trip; std::to_string keeps six decimals, which wrote
+// a tolerance of 1e-12 as 0.000000.
+template<typename T>
+std::string round_trip_text(T v)
+{
+    for (int digits = 6; digits <= std::numeric_limits<T>::max_digits10; ++digits)
+    {
+        std::ostringstream out;
+        out << std::setprecision(digits) << v;
+        double back = 0.0;
+        if (read_whole_real(out.str(), back) && static_cast<T>(back) == v)
+            return out.str();
+    }
+    std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<T>::max_digits10) << v;
+    return out.str();
 }
 
 bool is_quoted(const std::string& v)
@@ -552,6 +589,7 @@ void lsdtt_param_parser::parse_all_parameters(
     parse_int_parameters(defaults_i);
     parse_bool_parameters(defaults_b);
     parse_string_parameters(defaults_s);
+    report_paths_to_run_record();
 }
 
 void lsdtt_param_parser::parse_all_parameters(
@@ -577,6 +615,7 @@ void lsdtt_param_parser::parse_all_parameters(
     parse_bool_parameters(defaults_b);
     parse_string_parameters(defaults_s);
     parse_double_parameters(defaults_d);
+    report_paths_to_run_record();
 }
 
 void lsdtt_param_parser::validate_values(
@@ -625,7 +664,10 @@ void lsdtt_param_parser::validate_values(
         problem(key, "value '" + *v + "' is not a whole number. " + fix);
     }
 
-    auto check_real = [&](const std::string& key, double max_abs)
+    // A float key is in range if the value is still finite as a float: the
+    // shortest text for the largest float, 3.4028235e+38, is a hair above it
+    // as a double and rounds back to it.
+    auto check_real = [&](const std::string& key, bool as_float)
     {
         const std::string* v = value_of(key);
         if (!v) return;
@@ -636,15 +678,13 @@ void lsdtt_param_parser::validate_values(
             problem(key, "value '" + *v + "' is not a number. Write a plain "
                          "number such as 0.5, 2 or 1e-4, with no units.");
         }
-        else if (std::fabs(x) > max_abs)
+        else if (as_float && !std::isfinite(static_cast<float>(x)))
         {
             problem(key, "value '" + *v + "' is out of range.");
         }
     };
-    for (const std::string& key : float_keys)
-        check_real(key, std::numeric_limits<float>::max());
-    for (const std::string& key : double_keys)
-        check_real(key, std::numeric_limits<double>::max());
+    for (const std::string& key : float_keys)  check_real(key, true);
+    for (const std::string& key : double_keys) check_real(key, false);
 
     for (const std::string& key : bool_keys)
     {
@@ -694,7 +734,7 @@ void lsdtt_param_parser::parse_float_parameters(
         else
         {
             float_parameters_[key] = default_val;
-            defaults_used_map_[key] = std::to_string(default_val);
+            defaults_used_map_[key] = round_trip_text(default_val);
         }
     }
 }
@@ -771,7 +811,7 @@ void lsdtt_param_parser::parse_double_parameters(
         else
         {
             double_parameters_[key] = default_val;
-            defaults_used_map_[key] = std::to_string(default_val);
+            defaults_used_map_[key] = round_trip_text(default_val);
         }
     }
 }
@@ -845,7 +885,7 @@ std::vector<float> lsdtt_param_parser::parse_float_vector(
     for (const auto& s : parse_string_vector(key))
     {
         double x = 0.0;
-        if (!read_whole_real(s, x) || std::fabs(x) > std::numeric_limits<float>::max())
+        if (!read_whole_real(s, x) || !std::isfinite(static_cast<float>(x)))
             throw std::runtime_error("parameter '" + key + "': list item '" + s +
                                      "' is not a number");
         result.push_back(static_cast<float>(x));
@@ -1182,8 +1222,11 @@ void write_parameter_file_guide(std::ostream& os,
        << "  - keys are case-sensitive; any parameter left out takes its default\n"
        << "  - a value must not contain spaces: lists are comma-separated with no\n"
        << "    spaces (a,b,c), and paths must not contain spaces\n"
-       << "  - booleans are true or false\n"
-       << "  - # starts a comment; blank lines are ignored\n"
+       << "  - values are never quoted: write my_dem.tif, not \"my_dem.tif\"\n"
+       << "  - booleans are true or false; whole-number parameters take whole\n"
+       << "    numbers (1000, not 1e3 or 1000.0); numbers have no units\n"
+       << "  - # starts a comment anywhere on a line; blank lines are ignored\n"
+       << "  - if a key appears twice, the last value is used\n"
        << "  - read_path and write_path are optional: read_path defaults to the\n"
        << "    parameter file's directory and write_path to read_path. If you set\n"
        << "    either, that directory must already exist or the run stops\n"
@@ -1191,7 +1234,13 @@ void write_parameter_file_guide(std::ostream& os,
        << "    a relative path such as inputs/outlets.csv is relative to read_path,\n"
        << "    and an absolute path is used as given\n"
        << "  - outputs are named <write_fname>_<descriptor>.<ext> in write_path\n"
-       << "  - unrecognised keys are reported as warnings and ignored\n"
+       << "  - a value the tool cannot read stops the run before it starts, as\n"
+       << "    does a key that looks like a misspelling of a parameter; other\n"
+       << "    unrecognised keys are reported as warnings and ignored\n"
+       << "  - every run writes <write_fname>_run_summary.json (status, errors,\n"
+       << "    warnings and every output file) and\n"
+       << "    <write_fname>_ingested_params.param (every value used, read or\n"
+       << "    default; run the tool on it to repeat the run)\n"
        << "\n"
        << "Example parameter file, saved next to the DEM as my_params.driver:\n"
        << "  # read_path and write_path are left out, so my_dem.tif is read from\n"
@@ -1914,25 +1963,47 @@ void lsdtt_param_parser::print_parameters(const std::string& fname_prefix) const
         return;
     }
 
+    // Running the tool on this file must reproduce the run, so every key is
+    // written once. The four I/O keys normally take the parser's resolved
+    // values; a tool that declares one of them itself (lsdtt-advection-diffusion
+    // reads a starting grid only when read_path and read_fname are set) owns
+    // its meaning, so its own value is written instead.
+    const std::map<std::string, std::string> resolved_io = {
+        {"read_path",   read_path_},
+        {"read_fname",  read_fname_ + read_ext_},
+        {"write_path",  write_path_},
+        {"write_fname", write_fname_}};
     out << "# lsdtt3 parameter file - ingested parameters\n";
     out << "# File I/O\n";
-    out << "read_path: "   << read_path_            << "\n";
-    out << "read_fname: "  << read_fname_ << read_ext_ << "\n";
-    out << "write_path: "  << write_path_  << "\n";
-    out << "write_fname: " << write_fname_ << "\n\n";
+    for (const char* key : {"read_path", "read_fname", "write_path", "write_fname"})
+    {
+        const auto declared = string_parameters_.find(key);
+        out << key << ": " << (declared != string_parameters_.end()
+                                   ? declared->second : resolved_io.at(key))
+            << "\n";
+    }
+    out << "\n";
 
     out << "# Parameters read from file\n";
     for (const auto& [key, val] : parameters_read_map_)
     {
-        if (compatibility_storage_keys_.count(key)) continue;
+        if (compatibility_storage_keys_.count(key) || resolved_io.count(key)) continue;
         out << key << ": " << val << "\n";
     }
 
+    // A non-finite default (nan, used by some tools to mean "not set") cannot
+    // be written as a value: the parser rejects it. It is written as a comment,
+    // and leaving the key out gives the same default.
     out << "\n# Default parameters used\n";
     for (const auto& [key, val] : defaults_used_map_)
     {
-        if (compatibility_storage_keys_.count(key)) continue;
-        out << key << ": " << val << "\n";
+        if (compatibility_storage_keys_.count(key) || resolved_io.count(key)) continue;
+        double x = 0.0;
+        const bool non_finite_number =
+            (float_parameters_.count(key) || double_parameters_.count(key)) &&
+            !read_whole_real(val, x);
+        out << (non_finite_number ? "# " : "") << key << ": " << val
+            << (non_finite_number ? "   (default, not set)" : "") << "\n";
     }
 }
 

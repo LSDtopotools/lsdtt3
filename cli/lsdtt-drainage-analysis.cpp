@@ -47,6 +47,7 @@
 #include "../src/core/lsdtt_types.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_connectivity_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
@@ -593,6 +594,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     // -------------------------------------------------------------------------
     // Load parameter file
     // -------------------------------------------------------------------------
@@ -869,7 +873,7 @@ int main(int argc, char* argv[])
         std::cout << "No outputs requested. "
                   << "Enable at least one write_*_raster parameter.\n";
         pp.print_parameters();
-        return 0;
+        return run_record.succeed();
     }
 
     // How flats are made drainable (Barnes et al. 2014b options). Checked
@@ -2110,5 +2114,5 @@ int main(int argc, char* argv[])
     pp.print_parameters();
 
     std::cout << "\nlsdtt-drainage-analysis: done.\n";
-    return 0;
+    return run_record.succeed();
 }

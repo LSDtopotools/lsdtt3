@@ -659,6 +659,10 @@ private:
     // Problems that stop the run, collected so one run reports all of them.
     std::vector<std::string> fatal_problems_;
 
+    // Tells the live lsdtt_run_record (if any) where this run reads and
+    // writes, so the run summary and the closing message can name its files.
+    void report_paths_to_run_record() const;
+
 public:
     // True if the parameter file actually contained this key.
     //

@@ -44,6 +44,7 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
+#include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
@@ -423,6 +424,9 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    // Records the run: closing message, run summary file, failure box.
+    lsdtt::lsdtt_run_record run_record(k_tool_name, argc, argv);
+
     try
     {
         lsdtt::lsdtt_param_parser parser(cli_args.path, cli_args.fname);
@@ -640,11 +644,12 @@ int main(int argc, char* argv[])
             : sf.at("summary_csv_fname");
         write_summary(parser.get_write_path() + "/" + summary_name,
                       lambda_files);
+        parser.print_parameters();
     }
     catch (const std::exception& error)
     {
         std::cerr << "Error: " << error.what() << "\n";
         return 1;
     }
-    return 0;
+    return run_record.succeed();
 }
