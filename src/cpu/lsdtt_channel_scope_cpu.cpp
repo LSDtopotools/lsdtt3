@@ -17,6 +17,7 @@
 #include <functional>
 #include "lsdtt_channel_scope_cpu.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -60,6 +61,12 @@ void validate_request(
             "resolve_channel_scope: auto_detect_roles cannot be combined with "
             "explicit outlet_flats. Supply all points in source_flats, or give "
             "explicit source/outlet lists with auto_detect_roles disabled.");
+    }
+    if (request.channel_definition == channel_definition_choice::stream_order &&
+        request.min_stream_order < 1)
+    {
+        throw std::invalid_argument(
+            "resolve_channel_scope: min_stream_order must be >= 1.");
     }
     if (request.threshold_contributing_pixels < 1)
     {
@@ -141,6 +148,72 @@ std::vector<char> classify_downstream_outlets(
 
 } // namespace
 
+
+channel_definition_choice parse_channel_definition_choice(
+    const std::string& name)
+{
+    if (name == "contributing_pixels")
+        return channel_definition_choice::contributing_pixels;
+    if (name == "stream_order")
+        return channel_definition_choice::stream_order;
+    throw std::invalid_argument(
+        "unknown channel definition '" + name +
+        "'. Valid: contributing_pixels, stream_order.");
+}
+
+std::vector<std::int32_t> channel_strahler_order(
+    const lsdtt_flow_base& flow,
+    int                    threshold_contributing_pixels)
+{
+    if (flow.empty() || !flow.has_s_vector())
+        throw std::invalid_argument(
+            "channel_strahler_order: needs a flow object with an s_vector.");
+
+    const std::size_t grid_size = flow.full_grid_size();
+    std::vector<std::int32_t> order(grid_size, 0);
+
+    // The network: contributing pixels (include self) at or above the
+    // threshold. Downstream of a head the count only grows, so this is exactly
+    // the set traced down from get_sources_index_threshold.
+    const std::uint64_t thr =
+        static_cast<std::uint64_t>(std::max(1, threshold_contributing_pixels));
+    std::vector<std::int64_t> net;
+    for (std::size_t f = 0; f < grid_size; ++f)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (!flow.is_valid_cell(flat)) continue;
+        if (flow.s_vector_size_unchecked(flat) >= thr) net.push_back(flat);
+    }
+
+    // A donor always has fewer contributing pixels than its receiver, so
+    // ascending count visits every donor before its receiver - a topological
+    // order without walking the stack. Ties cannot be donor and receiver.
+    std::stable_sort(net.begin(), net.end(),
+        [&](std::int64_t a, std::int64_t b)
+        {
+            return flow.s_vector_size_unchecked(a) <
+                   flow.s_vector_size_unchecked(b);
+        });
+
+    // Highest donor order seen at each pixel, and how many donors had it.
+    std::vector<std::int32_t> top(grid_size, 0);
+    std::vector<std::int32_t> n_top(grid_size, 0);
+    for (const std::int64_t flat : net)
+    {
+        const std::size_t f = static_cast<std::size_t>(flat);
+        const std::int32_t o =
+            (top[f] == 0) ? 1 : (n_top[f] >= 2 ? top[f] + 1 : top[f]);
+        order[f] = o;
+
+        if (flow.is_outlet_unchecked(flat)) continue;
+        const std::int64_t r = flow.receiver_of_unchecked(flat);
+        if (r == flat || !flow.is_flat_in_range(r)) continue;
+        const std::size_t rf = static_cast<std::size_t>(r);
+        if (o > top[rf])       { top[rf] = o; n_top[rf] = 1; }
+        else if (o == top[rf]) { ++n_top[rf]; }
+    }
+    return order;
+}
 
 channel_scope_result resolve_channel_scope(
     const lsdtt_flow_base&       flow,
@@ -387,6 +460,35 @@ channel_scope_result resolve_channel_scope(
                     result.channel_mask[flat] = 1;
                 }
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Stream-order channel definition: keep only pixels of order >= the
+    // minimum. Applied last, so it composes with every mode and with outlet
+    // truncation rather than changing how either works.
+    // -------------------------------------------------------------------------
+    if (request.channel_definition == channel_definition_choice::stream_order)
+    {
+        result.stream_order = channel_strahler_order(
+            flow, request.threshold_contributing_pixels);
+        const std::int32_t min_order = request.min_stream_order;
+        for (std::size_t f = 0; f < grid_size; ++f)
+        {
+            if (result.channel_mask[f] && result.stream_order[f] < min_order)
+            {
+                result.channel_mask[f]      = 0;
+                result.channel_source_id[f] = -1;
+            }
+        }
+        for (std::vector<std::int64_t>& nodes : result.channel_node_lists)
+        {
+            nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+                [&](std::int64_t flat)
+                {
+                    return result.stream_order[static_cast<std::size_t>(flat)]
+                           < min_order;
+                }), nodes.end());
         }
     }
 

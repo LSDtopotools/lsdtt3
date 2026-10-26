@@ -530,6 +530,76 @@ lsdtt_raster_cpu distance_to_point_set(
 
 
 // =============================================================================
+// relief_above_nearest_baseline
+// =============================================================================
+baseline_relief_result relief_above_nearest_baseline(
+    const lsdtt_raster_cpu&          dem,
+    const std::vector<std::int64_t>& baseline_flats,
+    double                           max_distance_metres,
+    int                              n_threads)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error(
+            "lsdtt::relief_above_nearest_baseline: invalid raster metadata");
+    meta.check_projected_metres();
+
+    const int threads = resolve_thread_count(n_threads);
+    const int nr      = meta.n_rows;
+    const int nc      = meta.n_cols;
+    const std::size_t npix =
+        static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
+
+    const std::vector<float>&   z  = dem.get_data();
+    const std::vector<uint8_t>& zm = dem.get_mask();
+    auto valid = [&](std::size_t i)
+    {
+        return zm[i] != 0 && std::isfinite(z[i]) && !meta.is_nodata(z[i]);
+    };
+
+    const double INF = std::numeric_limits<double>::infinity();
+    std::vector<double>       sq_dist(npix, INF);
+    std::vector<std::int64_t> nearest(npix, -1);
+
+    bool have_seed = false;
+    for (const std::int64_t f : baseline_flats)
+    {
+        if (f < 0 || static_cast<std::size_t>(f) >= npix) continue;
+        if (!valid(static_cast<std::size_t>(f))) continue;
+        sq_dist[static_cast<std::size_t>(f)] = 0.0;
+        have_seed = true;
+    }
+
+    baseline_relief_result out;
+    std::vector<float>   rel(npix, static_cast<float>(meta.no_data_value));
+    std::vector<uint8_t> rm(npix, uint8_t{0});
+    out.nearest_baseline_flat.assign(npix, -1);
+
+    if (have_seed)
+    {
+        dt2d_with_nearest_source(sq_dist, nearest, nr, nc, threads);
+
+        // sq_dist is in pixel units.
+        const double limit_px = max_distance_metres / meta.cell_size;
+        const double limit_sq = (max_distance_metres > 0.0)
+                                    ? limit_px * limit_px : INF;
+        for (std::size_t i = 0; i < npix; ++i)
+        {
+            if (!valid(i)) continue;
+            const std::int64_t src = nearest[i];
+            if (src < 0 || static_cast<std::size_t>(src) >= npix) continue;
+            if (sq_dist[i] > limit_sq) continue;
+            rel[i] = z[i] - z[static_cast<std::size_t>(src)];
+            rm[i]  = uint8_t{1};
+            out.nearest_baseline_flat[i] = src;
+        }
+    }
+
+    out.relief = lsdtt_raster_cpu(std::move(rel), std::move(rm), meta);
+    return out;
+}
+
+// =============================================================================
 // difference_to_nearest_true_mask_value
 // =============================================================================
 lsdtt_raster_cpu difference_to_nearest_true_mask_value(

@@ -64,6 +64,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <set>
@@ -84,6 +85,7 @@
 #include "lsdtt_valley_centreline_cpu.hpp"
 #include "lsdtt_channel_scope_cpu.hpp"
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
+#include "lsdtt_proximity_cpu.hpp"
 
 namespace
 {
@@ -2283,6 +2285,288 @@ void run_coherence_diffusion_checks()
 // fall back to the fixed value AND say so, rather than silently using whatever
 // vertical_accuracy_metres happened to be left at.
 // =============================================================================
+// =============================================================================
+// Strahler channel definition and swath-baseline relief (fluvial-surface
+// methods plan, phase 3) - the two reference-field pieces Clubb et al. (2017)
+// need that lsdtt3 did not have.
+//
+// Every check compares against a brute-force evaluation of the same definition
+// on the same flow object, over a real branching network (the linear-range
+// surface), rather than against a hand-drawn network: the brute force walks the
+// network differently (recursion over donors, receiver walks, an all-pairs
+// nearest search), so agreement everywhere says the fast path implements the
+// definition, and the network is large enough to contain every case.
+// =============================================================================
+void run_channel_order_and_swath_checks()
+{
+    std::cout << "\n--- Strahler channel definition and swath relief ---\n";
+    const lsdtt::lsdtt_mountain_range_surface range = make_range_surface();
+    const lsdtt::lsdtt_raster_cpu filled =
+        lsdtt::fill_pits(range.dem, 0.0001f, /*n_threads=*/1);
+
+    lsdtt::lsdtt_flowinfo_options fo;
+    fo.boundary_conditions     = "oooo";
+    fo.build_topological_order = true;
+    fo.build_s_vector          = true;
+    fo.n_threads               = 1;
+    const std::unique_ptr<lsdtt::lsdtt_flow_base> flow = lsdtt::make_flow_base(
+        filled.get_data_array(), filled.get_mask_array(), filled.get_meta(), fo);
+
+    const int thr = 50;
+    const std::size_t n = flow->full_grid_size();
+    const std::vector<std::int32_t> order =
+        lsdtt::channel_strahler_order(*flow, thr);
+
+    // ---- brute-force Strahler: donors from receivers, then memoised DFS ----
+    std::vector<char> on_net(n, 0);
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (flow->is_valid_cell(flat) &&
+            flow->s_vector_size_unchecked(flat) >= static_cast<std::uint64_t>(thr))
+            on_net[f] = 1;
+    }
+    std::vector<std::vector<std::int64_t>> donors(n);
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        if (!on_net[f]) continue;
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (flow->is_outlet_unchecked(flat)) continue;
+        const std::int64_t r = flow->receiver_of_unchecked(flat);
+        if (r != flat) donors[static_cast<std::size_t>(r)].push_back(flat);
+    }
+    std::vector<std::int32_t> brute(n, 0);
+    for (std::size_t start = 0; start < n; ++start)
+    {
+        if (!on_net[start] || brute[start] != 0) continue;
+        std::vector<std::pair<std::int64_t, bool>> stack = {
+            {static_cast<std::int64_t>(start), false}};
+        while (!stack.empty())
+        {
+            auto [flat, expanded] = stack.back();
+            stack.pop_back();
+            const std::size_t f = static_cast<std::size_t>(flat);
+            if (brute[f] != 0) continue;
+            if (!expanded)
+            {
+                stack.push_back({flat, true});
+                for (std::int64_t d : donors[f])
+                    if (brute[static_cast<std::size_t>(d)] == 0)
+                        stack.push_back({d, false});
+                continue;
+            }
+            std::int32_t top = 0, n_top = 0;
+            for (std::int64_t d : donors[f])
+            {
+                const std::int32_t o = brute[static_cast<std::size_t>(d)];
+                if (o > top) { top = o; n_top = 1; }
+                else if (o == top) ++n_top;
+            }
+            brute[f] = (top == 0) ? 1 : (n_top >= 2 ? top + 1 : top);
+        }
+    }
+
+    std::size_t n_net = 0, n_mismatch = 0;
+    std::int32_t max_order = 0;
+    bool off_net_zero = true, monotone = true;
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        if (!on_net[f]) { if (order[f] != 0) off_net_zero = false; continue; }
+        ++n_net;
+        if (order[f] != brute[f]) ++n_mismatch;
+        max_order = std::max(max_order, order[f]);
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (!flow->is_outlet_unchecked(flat))
+        {
+            const std::int64_t r = flow->receiver_of_unchecked(flat);
+            if (r != flat && order[static_cast<std::size_t>(r)] < order[f])
+                monotone = false;
+        }
+    }
+    std::cout << "  network " << n_net << " pixels, highest order " << max_order
+              << ", " << n_mismatch << " mismatch(es)\n";
+    check(max_order >= 3,
+          "SO1: the test network reaches order 3 or more (the case is real)");
+    check(n_mismatch == 0,
+          "SO2: Strahler order equals a brute-force recursive evaluation at "
+          "every network pixel");
+    check(off_net_zero, "SO3: off the network the order is 0");
+    check(monotone, "SO4: order never decreases downstream");
+    bool heads_first = true;
+    for (std::int64_t h : flow->get_sources_index_threshold(thr))
+        if (order[static_cast<std::size_t>(h)] != 1) heads_first = false;
+    check(heads_first, "SO5: every channel head is order 1");
+
+    // ---- the scope filter ----
+    lsdtt::channel_scope_request req;
+    req.threshold_contributing_pixels = thr;
+    const lsdtt::channel_scope_result plain = lsdtt::resolve_channel_scope(*flow, req);
+
+    req.channel_definition = lsdtt::channel_definition_choice::stream_order;
+    req.min_stream_order   = 1;
+    const lsdtt::channel_scope_result so1 = lsdtt::resolve_channel_scope(*flow, req);
+    check(so1.channel_mask == plain.channel_mask &&
+              so1.channel_source_id == plain.channel_source_id,
+          "SO6: stream_order with min 1 is exactly the contributing-pixel scope");
+
+    req.min_stream_order = 3;
+    const lsdtt::channel_scope_result so3 = lsdtt::resolve_channel_scope(*flow, req);
+    bool mask_ok = true, ids_ok = true, nodes_ok = true;
+    std::size_t n_kept = 0;
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        const bool want = plain.channel_mask[f] && order[f] >= 3;
+        if (static_cast<bool>(so3.channel_mask[f]) != want) mask_ok = false;
+        if (!want && so3.channel_source_id[f] != -1) ids_ok = false;
+        if (want && so3.channel_source_id[f] != plain.channel_source_id[f]) ids_ok = false;
+        if (want) ++n_kept;
+    }
+    for (const auto& nodes : so3.channel_node_lists)
+        for (std::int64_t f : nodes)
+            if (order[static_cast<std::size_t>(f)] < 3) nodes_ok = false;
+    std::cout << "  order >= 3 keeps " << n_kept << " channel pixel(s)\n";
+    check(n_kept > 0 && mask_ok,
+          "SO7: min order 3 keeps exactly the scope pixels of order >= 3");
+    check(ids_ok, "SO8: removed pixels lose their source id; kept ones keep it");
+    check(nodes_ok, "SO9: no node list keeps a pixel below the minimum order");
+
+    // A user-source scope: the same filter applied after tracing.
+    {
+        lsdtt::channel_scope_request ur;
+        ur.threshold_contributing_pixels = thr;
+        ur.snap_sources = false;
+        ur.source_flats = {flow->get_sources_index_threshold(thr).front()};
+        const lsdtt::channel_scope_result u_plain = lsdtt::resolve_channel_scope(*flow, ur);
+        ur.channel_definition = lsdtt::channel_definition_choice::stream_order;
+        ur.min_stream_order   = 2;
+        const lsdtt::channel_scope_result u_so = lsdtt::resolve_channel_scope(*flow, ur);
+        std::vector<std::int64_t> expect;
+        for (std::int64_t f : u_plain.channel_node_lists[0])
+            if (order[static_cast<std::size_t>(f)] >= 2) expect.push_back(f);
+        check(u_so.channel_node_lists[0] == expect,
+              "SO10: in a user-source scope the node list is the traced path "
+              "with the low-order pixels removed, order preserved");
+    }
+
+    bool threw = false;
+    try
+    {
+        lsdtt::channel_scope_request bad = req;
+        bad.min_stream_order = 0;
+        (void)lsdtt::resolve_channel_scope(*flow, bad);
+    }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "SO11: min_stream_order below 1 is rejected");
+
+    // ---- HAND on the order >= 3 channel against a receiver walk ----
+    {
+        const std::vector<float>& z = filled.get_data();
+        const lsdtt::lsdtt_raster_result hand =
+            flow->get_height_above_channel_mask_raster(
+                z, filled.get_mask(), so3.channel_mask);
+        std::size_t n_bad = 0, n_undefined = 0;
+        for (std::size_t f = 0; f < n; ++f)
+        {
+            const std::int64_t flat = static_cast<std::int64_t>(f);
+            if (!flow->is_valid_cell(flat)) continue;
+            // Walk receivers to the first channel pixel; reaching base level
+            // without one leaves the relief undefined.
+            std::int64_t cur = flat;
+            bool reached = false;
+            while (true)
+            {
+                if (so3.channel_mask[static_cast<std::size_t>(cur)]) { reached = true; break; }
+                if (flow->is_outlet_unchecked(cur)) break;
+                const std::int64_t r = flow->receiver_of_unchecked(cur);
+                if (r == cur) break;
+                cur = r;
+            }
+            if (!reached)
+            {
+                ++n_undefined;
+                if (hand.mask[f]) ++n_bad;
+                continue;
+            }
+            const float want = z[f] - z[static_cast<std::size_t>(cur)];
+            if (!hand.mask[f] || std::fabs(hand.data[f] - want) > 1e-4f) ++n_bad;
+        }
+        std::cout << "  HAND: " << n_undefined
+                  << " pixel(s) reach base level without an order-3 channel\n";
+        check(n_undefined > 0,
+              "SO12: some pixels drain to base level without meeting the "
+              "channel (the undefined case is exercised)");
+        check(n_bad == 0,
+              "SO13: HAND on the stream-order channel equals a receiver walk, "
+              "and is undefined exactly where the walk finds no channel");
+    }
+
+    // ---- swath-baseline relief against an all-pairs nearest search ----
+    {
+        std::vector<std::int64_t> baseline;
+        for (std::size_t f = 0; f < n; ++f)
+            if (so3.channel_mask[f]) baseline.push_back(static_cast<std::int64_t>(f));
+        const double half_width = 300.0;
+        const lsdtt::baseline_relief_result br =
+            lsdtt::relief_above_nearest_baseline(filled, baseline, half_width, 1);
+
+        const std::vector<float>& z  = filled.get_data();
+        const int nc = filled.get_meta().n_cols;
+        const double cell = filled.get_meta().cell_size;
+        std::size_t n_bad_nearest = 0, n_bad_relief = 0, n_bad_extent = 0;
+        std::size_t n_inside = 0, n_outside = 0;
+        for (std::size_t f = 0; f < n; ++f)
+        {
+            if (!filled.get_mask()[f]) continue;
+            const int r = static_cast<int>(f / nc), c = static_cast<int>(f % nc);
+            double dmin = std::numeric_limits<double>::infinity();
+            for (std::int64_t b : baseline)
+            {
+                const double dr = static_cast<int>(b / nc) - r;
+                const double dc = static_cast<int>(b % nc) - c;
+                dmin = std::min(dmin, std::sqrt(dr * dr + dc * dc) * cell);
+            }
+            const bool inside = dmin <= half_width + 1e-9;
+            const bool got    = br.relief.get_mask()[f] != 0;
+            if (inside) ++n_inside; else ++n_outside;
+            if (inside != got) { ++n_bad_extent; continue; }
+            if (!got) continue;
+            const std::int64_t nb = br.nearest_baseline_flat[f];
+            const double dr = static_cast<int>(nb / nc) - r;
+            const double dc = static_cast<int>(nb % nc) - c;
+            // Ties between equidistant nodes may go either way; the chosen node
+            // must be at the minimum distance, and the relief must be its own.
+            if (std::fabs(std::sqrt(dr * dr + dc * dc) * cell - dmin) > 1e-6)
+                ++n_bad_nearest;
+            if (std::fabs(br.relief.get_data()[f] -
+                          (z[f] - z[static_cast<std::size_t>(nb)])) > 1e-4f)
+                ++n_bad_relief;
+        }
+        std::cout << "  swath: " << baseline.size() << " baseline node(s), "
+                  << n_inside << " pixel(s) within " << half_width << " m, "
+                  << n_outside << " beyond\n";
+        check(n_inside > 0 && n_outside > 0,
+              "SW1: the half-width cuts the grid (both cases exercised)");
+        check(n_bad_extent == 0,
+              "SW2: relief is defined exactly within the half-width");
+        check(n_bad_nearest == 0,
+              "SW3: every pixel is referenced to a nearest baseline node");
+        check(n_bad_relief == 0,
+              "SW4: relief is the elevation above that node");
+
+        const lsdtt::baseline_relief_result all =
+            lsdtt::relief_above_nearest_baseline(filled, baseline, 0.0, 1);
+        bool all_defined = true;
+        for (std::size_t f = 0; f < n; ++f)
+            if (filled.get_mask()[f] && !all.relief.get_mask()[f]) all_defined = false;
+        check(all_defined, "SW5: a half-width of 0 means no limit");
+        const lsdtt::baseline_relief_result none =
+            lsdtt::relief_above_nearest_baseline(filled, {}, 300.0, 1);
+        bool none_defined = true;
+        for (std::uint8_t m : none.relief.get_mask()) if (m) none_defined = false;
+        check(none_defined, "SW6: an empty baseline leaves everything nodata");
+    }
+}
+
 void run_slope_dependent_ev_checks()
 {
     std::cout << "\n--- slope-dependent E_v (7d) ---\n";
@@ -2684,6 +2968,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--perona-malik")
         {
             run_perona_malik_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--channel-order-swath")
+        {
+            run_channel_order_and_swath_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

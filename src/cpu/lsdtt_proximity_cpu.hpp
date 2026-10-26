@@ -115,6 +115,43 @@ lsdtt_raster_cpu difference_to_nearest_true_mask_value(
 
 
 // =============================================================================
+// relief_above_nearest_baseline
+//
+// For every valid DEM pixel within max_distance_metres (Euclidean) of a
+// baseline pixel:
+//
+//   relief(pixel) = dem(pixel) - dem(nearest baseline pixel)
+//
+// and nodata beyond it. The baseline is a set of flat indices - typically the
+// nodes of the in-scope channels - so this is the "swath baseline" relief of
+// Clubb et al. (2017): height above the nearest point of the channel, not above
+// the channel a pixel drains to. Unlike flow-path HAND it does not follow
+// drainage, so a terrace above a confluence is referenced to the nearest
+// channel rather than to whichever one its flow path reaches.
+//
+// nearest_baseline_flat records the baseline pixel used (-1 where relief is
+// nodata), so a caller can attribute each pixel to a channel.
+//
+// max_distance_metres <= 0 means no limit. Baseline flats that are out of range
+// or nodata in the DEM are ignored; with none left everything is nodata.
+//
+// Throws std::runtime_error if the DEM metadata is invalid or not projected in
+// metres.
+// =============================================================================
+struct baseline_relief_result
+{
+    lsdtt_raster_cpu          relief;
+    std::vector<std::int64_t> nearest_baseline_flat;
+};
+
+[[nodiscard]] baseline_relief_result relief_above_nearest_baseline(
+    const lsdtt_raster_cpu&          dem,
+    const std::vector<std::int64_t>& baseline_flats,
+    double                           max_distance_metres,
+    int                              n_threads = 0
+);
+
+// =============================================================================
 // inflate_values_to_nearest_source
 //
 // Region-grows ("inflates") a sparse value raster into a surrounding domain:

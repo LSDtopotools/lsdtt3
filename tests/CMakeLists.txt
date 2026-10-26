@@ -8962,6 +8962,15 @@ add_test(NAME unit_fluvial_surface_slope_dependent_ev
 lsdtt_set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Fluvial-surface methods phase 3: the Strahler channel definition (orders
+# against a brute-force recursion, the scope filter in mode 1 and a user-source
+# mode, HAND on that channel against a receiver walk including the undefined
+# case) and the swath-baseline relief against an all-pairs nearest search.
+add_test(NAME unit_fluvial_surface_channel_order_swath
+         COMMAND lsdtt-test-fluvial-surfaces --channel-order-swath)
+lsdtt_set_tests_properties(unit_fluvial_surface_channel_order_swath PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME unit_fluvial_surface_coherence_diffusion
          COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
 lsdtt_set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
