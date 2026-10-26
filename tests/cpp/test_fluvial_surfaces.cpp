@@ -86,6 +86,7 @@
 #include "lsdtt_channel_scope_cpu.hpp"
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
 #include "lsdtt_proximity_cpu.hpp"
+#include "lsdtt_floodplain_thresholds_cpu.hpp"
 
 namespace
 {
@@ -2567,6 +2568,203 @@ void run_channel_order_and_swath_checks()
     }
 }
 
+// =============================================================================
+// Floodplain and terraces from two bounds (fluvial-surface methods plan,
+// phase 4) - classify_floodplain_terraces_by_thresholds, the engine behind
+// lsdtt-fluvial-surfaces' fixed_thresholds and lsdtt-hillslope-channel-
+// coupling's simple floodplain.
+//
+// A 20 x 20 grid built so every count can be written down: a channel down
+// column 10, HAND = 0.5 m per cell of distance from it, so the floodplain
+// bound selects whole columns. Departures from that layout are placed one at a
+// time, each to exercise one rule.
+// =============================================================================
+namespace ft {
+
+constexpr int N = 20;
+
+lsdtt::lsdtt_raster_meta meta()
+{
+    lsdtt::lsdtt_raster_meta m;
+    m.n_rows = N; m.n_cols = N; m.cell_size = 10.0;
+    m.x_min = 0.0; m.y_min = 0.0; m.no_data_value = -9999.0;
+    return m;
+}
+std::size_t at(int r, int c) { return static_cast<std::size_t>(r) * N + c; }
+
+lsdtt::lsdtt_raster_cpu raster(const std::vector<float>& v)
+{
+    std::vector<uint8_t> m(v.size(), 1);
+    for (std::size_t i = 0; i < v.size(); ++i)
+        if (v[i] == -9999.0f) m[i] = 0;
+    return lsdtt::lsdtt_raster_cpu(std::vector<float>(v), std::move(m), meta());
+}
+std::int64_t count(const lsdtt::lsdtt_raster_cpu& r)
+{
+    std::int64_t n = 0;
+    for (float v : r.get_data()) if (v > 0.5f) ++n;
+    return n;
+}
+
+} // namespace ft
+
+void run_floodplain_threshold_checks()
+{
+    std::cout << "\n--- floodplain and terraces from two bounds ---\n";
+    using namespace ft;
+    const std::size_t n = static_cast<std::size_t>(N) * N;
+
+    std::vector<float> hand(n), grad(n, 0.01f), all(n, 1.0f);
+    std::vector<std::uint8_t> chan(n, 0);
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < N; ++c)
+        {
+            hand[at(r, c)] = 0.5f * static_cast<float>(std::abs(c - 10));
+            if (c == 10) chan[at(r, c)] = 1;
+        }
+    // An isolated low hollow far from the channel: 3 x 3 at the top left.
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) hand[at(r, c)] = 0.1f;
+
+    lsdtt::floodplain_threshold_request base;
+    base.max_floodplain_hand_metres = 1.2;   // |c - 10| <= 2: columns 8..12
+    base.seed_channel_pixels        = true;
+    base.require_channel_contact    = true;
+
+    // FT1: the floodplain is the five columns next to the channel; the hollow
+    // is low and flat but does not touch the channel, so it is not floodplain.
+    {
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, base);
+        check(count(res.floodplain_mask) == 5 * N &&
+                  res.n_floodplain_dropped_no_channel == 1,
+              "FT1: floodplain = the 5 columns by the channel; the hollow is "
+              "dropped for not touching the channel");
+        auto b = base; b.require_channel_contact = false;
+        const auto res2 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, b);
+        check(count(res2.floodplain_mask) == 5 * N + 9,
+              "FT2: without the contact test the hollow is kept");
+        b.min_component_pixels = 10;
+        const auto res3 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, b);
+        check(count(res3.floodplain_mask) == 5 * N &&
+                  res3.n_floodplain_dropped_small == 1,
+              "FT3: a component of 9 pixels is dropped at a minimum of 10");
+    }
+
+    // FT4: a channel pixel with no HAND is still floodplain when seeded, and a
+    // hole in the floodplain when not; hole filling closes it.
+    {
+        std::vector<float> h = hand;
+        h[at(5, 10)] = -9999.0f;
+        const auto seeded = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, base);
+        check(seeded.floodplain_mask.get_data()[at(5, 10)] > 0.5f,
+              "FT4: a seeded channel pixel is floodplain even without a HAND");
+        auto b = base; b.seed_channel_pixels = false;
+        const auto unseeded = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, b);
+        b.fill_holes = true;
+        const auto filled = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, b);
+        check(unseeded.floodplain_mask.get_data()[at(5, 10)] < 0.5f &&
+                  filled.floodplain_mask.get_data()[at(5, 10)] > 0.5f,
+              "FT5: unseeded it is a hole, and fill_holes closes it");
+    }
+
+    // FT6: the gradient bound removes a steep column from the floodplain.
+    {
+        std::vector<float> g = grad;
+        for (int r = 0; r < N; ++r) g[at(r, 8)] = 0.5f;
+        auto b = base; b.max_floodplain_gradient = 0.1;
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(g), chan, nullptr, b);
+        check(count(res.floodplain_mask) == 4 * N,
+              "FT6: the gradient bound removes the steep column");
+    }
+
+    // Terraces on the HAND field: above 1.2 + 1.0 = 2.2 m and at most 3.0 m,
+    // so |c - 10| in {5, 6}: columns 4, 5, 15, 16.
+    {
+        auto b = base;
+        b.find_terraces = true;
+        b.min_terrace_height_above_floodplain_metres = 1.0;
+        b.max_terrace_height_metres = 3.0;
+        const lsdtt::lsdtt_raster_cpu tf = raster(hand);
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, &tf, b);
+        check(count(res.terrace_mask) == 4 * N && res.n_terrace_components == 2,
+              "FT7: terraces are the columns between 2.2 and 3.0 m (two strips)");
+        bool disjoint = true, above = true, banded = true;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const bool f = res.floodplain_mask.get_data()[i] > 0.5f;
+            const bool t = res.terrace_mask.get_data()[i] > 0.5f;
+            if (f && t) disjoint = false;
+            if (t && !(hand[i] > 2.2f)) above = false;
+            const float bi = res.band_index.get_data()[i];
+            if ((f && bi != 0.0f) || (t && bi != 1.0f) || (!f && !t && bi != -1.0f))
+                banded = false;
+        }
+        check(disjoint && above,
+              "FT8: no cell is both, and every terrace cell is above the start");
+        check(banded, "FT9: band index is 0 floodplain, 1 terrace, -1 neither");
+
+        // With no gap above the floodplain and no ceiling, terraces start at
+        // the first column above it and run to the edge (the hollow is low).
+        b.min_terrace_height_above_floodplain_metres = 0.0;
+        b.max_terrace_height_metres = 0.0;
+        const auto res2 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, &tf, b);
+        check(count(res2.terrace_mask) == (N - 5) * N - 9,
+              "FT10: with no gap and no ceiling every non-floodplain column is "
+              "terrace, except the low hollow");
+    }
+
+    // FT11-12: the overlap D2 forbids is refused rather than produced.
+    {
+        const lsdtt::lsdtt_raster_cpu tf = raster(hand);
+        auto b = base; b.find_terraces = true;
+        b.min_terrace_height_above_floodplain_metres = -0.5;
+        bool threw = false;
+        try { (void)lsdtt::classify_floodplain_terraces_by_thresholds(
+                  raster(all), raster(hand), raster(grad), chan, &tf, b); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "FT11: a negative height above the floodplain is refused");
+        b.min_terrace_height_above_floodplain_metres = 1.0;
+        b.max_terrace_height_metres = 2.0;
+        threw = false;
+        try { (void)lsdtt::classify_floodplain_terraces_by_thresholds(
+                  raster(all), raster(hand), raster(grad), chan, &tf, b); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "FT12: a ceiling at or below where terraces start is refused");
+    }
+
+    // FT13: the hillslope-coupling configuration is the plain rule - HAND and
+    // gradient below their bounds - with holes filled.
+    {
+        std::vector<float> g = grad;
+        for (int r = 0; r < N; ++r) g[at(r, 12)] = 0.5f;
+        lsdtt::floodplain_threshold_request h;
+        h.max_floodplain_hand_metres = 1.2;
+        h.max_floodplain_gradient    = 0.1;
+        h.seed_channel_pixels        = false;
+        h.require_channel_contact    = false;
+        h.min_component_pixels       = 0;
+        h.fill_holes                 = true;
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(g), chan, nullptr, h);
+        std::vector<float> rule(n, 0.0f);
+        for (std::size_t i = 0; i < n; ++i)
+            if (hand[i] < 1.2f && g[i] < 0.1f) rule[i] = 1.0f;
+        const lsdtt::lsdtt_raster_cpu want =
+            lsdtt::binary_fill_holes(raster(rule));
+        check(res.floodplain_mask.get_data() == want.get_data(),
+              "FT13: with the filters off it is HAND and gradient below their "
+              "bounds, holes filled - hillslope-coupling's rule");
+    }
+}
+
 void run_slope_dependent_ev_checks()
 {
     std::cout << "\n--- slope-dependent E_v (7d) ---\n";
@@ -2968,6 +3166,15 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--perona-malik")
         {
             run_perona_malik_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--floodplain-thresholds")
+        {
+            run_floodplain_threshold_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

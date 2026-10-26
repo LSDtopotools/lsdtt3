@@ -142,6 +142,7 @@
 #include <string>
 
 #include "lsdtt_param_parser.hpp"
+#include "../utils/lsdtt_threshold_selection.hpp"
 
 namespace lsdtt
 {
@@ -269,6 +270,36 @@ void declare_max_floodplain_gradient_parameter(
     lsdtt_help_registry&          help_map,
     float                         default_gradient,
     const std::string&            parent = "");
+
+// How the floodplain bounds (max_floodplain_hand_metres,
+// max_floodplain_gradient) are chosen: fixed | qq_gaussian | cdf_divergence.
+// Shared by lsdtt-fluvial-surfaces and lsdtt-hillslope-channel-coupling.
+void declare_floodplain_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice);
+
+// The Clubb et al. (2017) QQ rule's controls, for one quantity:
+//   <prefix>_qq_lower_percentile    float  25
+//   <prefix>_qq_upper_percentile    float  75
+//   <prefix>_qq_threshold_fraction  float  0.01  (of the data range)
+// e.g. prefix "floodplain" or "relief".
+void declare_qq_threshold_parameters(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix,
+    const std::string&            parent);
+
+// A threshold_selection_request from a *_threshold_algorithm_choice value, the
+// fixed value to use under `fixed`, and the <prefix>_qq_* parameters. Throws
+// std::invalid_argument on an unknown choice, naming choice_key and the valid
+// values.
+[[nodiscard]] threshold_selection_request threshold_request_from_parameters(
+    const std::string&                  choice,
+    const std::string&                  choice_key,
+    double                              fixed_value,
+    const std::map<std::string, float>& float_parameters,
+    const std::string&                  prefix);
 
 // Window radius in whole pixels from relief_window_radius_metres: 0 gives
 // default_cells; otherwise the nearest whole number of cells, at least 1.

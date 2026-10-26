@@ -182,8 +182,16 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `relief_window_radius_metres` | `float` | `0` | `param` | - | Radius (m) of the square window local relief (max - min) is measured over. 0 = 2 cells. | Converted to the nearest whole number of cells, at least one; the run log states the radius actually used. A radius r cells is a (2r+1) x (2r+1) window, so the default is a 5 x 5 window. Replaces relief_window_side_pixels (a full side) and fallback_relief_window_radius_pixels (a radius in cells), which spelled the same idea two ways. |
-| `relief_threshold_algorithm_choice` | `string` | `cdf_divergence` | `param` | - | How the relief bound is chosen: fixed or cdf_divergence. | fixed uses max_relief_metres. cdf_divergence computes the relief CDF, fits the best of a family of parametric distributions (normal, exponential, Weibull, Pareto) and takes the relief at which the empirical CDF most exceeds the fit: flat pixels inflate the empirical distribution at low relief. The CDF and the chosen value are written out. Replaces the boolean adaptive_relief_threshold. |
+| `relief_threshold_algorithm_choice` | `string` | `cdf_divergence` | `param` | - | How the relief bound is chosen: fixed, cdf_divergence or qq_gaussian. | fixed uses max_relief_metres. cdf_divergence computes the relief CDF, fits the best of a family of parametric distributions (normal, exponential, Weibull, Pareto) and takes the relief at which the empirical CDF most exceeds the fit: flat pixels inflate the empirical distribution at low relief. qq_gaussian is the Clubb et al. (2017) rule: the lowest relief at which the quantiles rejoin a Gaussian drawn through two percentiles of the QQ plot (relief_qq_*) and stay on it. The table and the chosen value are written out. Replaces the boolean adaptive_relief_threshold. |
 | `max_relief_metres` | `float` | `1` | `param` | `relief_threshold_algorithm_choice` | Local relief (m) below which a pixel is admitted as flat. | Read a value off the relief CDF the tool writes. Where the tool has relief_threshold_algorithm_choice, this is the value used by `fixed`. |
+
+### Threshold selection
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `relief_qq_lower_percentile` | `float` | `25` | `param` | `relief_threshold_algorithm_choice` | Lower percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | 25 and 75 (the IQR) are the values Clubb et al. (2017) used. |
+| `relief_qq_upper_percentile` | `float` | `75` | `param` | `relief_threshold_algorithm_choice` | Upper percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | Must be above the lower percentile. |
+| `relief_qq_threshold_fraction` | `float` | `0.01` | `param` | `relief_threshold_algorithm_choice` | Fraction of the data range within which a quantile counts as on the Gaussian line (qq_gaussian). | 0.01 (1%) is the paper's value. The threshold is the lowest quantile that is on the line and stays on it for the next 200 quantiles of 10000. Larger values admit more ground. |
 
 ### Stages 4-7: flat mask post-processing
 

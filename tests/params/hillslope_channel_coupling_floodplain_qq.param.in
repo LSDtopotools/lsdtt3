@@ -1,0 +1,31 @@
+# The simple floodplain detector with its bounds chosen by the Clubb et al.
+# (2017) QQ rule. On this small DEM the HAND quantiles never settle onto the
+# Gaussian line, so no bound exists: the run must stop and say so, not
+# return an empty floodplain the way LSDTopoTools2 did.
+read_path: __READ_PATH__
+read_fname: hilltop_cli_dem.tif
+write_path: __WRITE_PATH__
+write_fname: hccqq
+
+boundary_conditions: oooo
+threshold_contributing_pixels: 60
+basin_selection_choice: all_junctions
+min_basin_pixels: 80
+
+stream_network_padding_pixels: 2
+threshold_hilltop_gradient: 0.4
+remove_positive_curvature_hilltops: true
+critical_hillslope_slope: 0.8
+
+hilltop_points_write_vector_format: csv
+write_ridgelines: true
+write_vector_format: flatgeobuf
+write_hillslope_traces: false
+write_output_format: gtiff
+n_threads: 1
+
+find_floodplain: true
+max_floodplain_hand_metres: 5.0
+max_floodplain_gradient: 0.1
+write_floodplain_mask_raster: true
+floodplain_threshold_algorithm_choice: qq_gaussian

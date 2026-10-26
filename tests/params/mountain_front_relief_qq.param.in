@@ -1,0 +1,22 @@
+# lsdtt-mountain-front on the linear-range surface with the relief bound from
+# the Clubb et al. (2017) QQ rule. The same relief, window and DEM as
+# flat_surface_finder_relief_qq.param.in: the two QQ tables must be identical.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: mf
+
+write_output_format: gtiff
+write_vector_format: csv
+
+relief_window_radius_metres: 0
+relief_threshold_algorithm_choice: qq_gaussian
+max_relief_metres: 8
+min_flat_component_pixels: 1
+flat_closing_radius_metres: 0
+erosion_radius_metres: 0
+min_component_pixels: 1
+basin_minimum_contributing_pixels: 1
+
+write_relief_raster: true
+write_mountain_front_outlets: true

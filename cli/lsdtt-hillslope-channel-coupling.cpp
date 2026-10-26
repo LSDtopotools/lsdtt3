@@ -82,6 +82,7 @@
 #include "../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
 #include "../src/cpu/lsdtt_basin_outline_cpu.hpp"
 #include "../src/cpu/lsdtt_divide_diagnostics_cpu.hpp"
+#include "../src/cpu/lsdtt_floodplain_thresholds_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_hilltop_flow_routing_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
@@ -354,6 +355,14 @@ int main(int argc, char* argv[])
     help_map["max_floodplain_hand_metres"][3] +=
         " Used only when find_floodplain is true. Replaces "
         "floodplain_hand_threshold.";
+    // The two bounds can be chosen from the data instead, by the same rules
+    // lsdtt-fluvial-surfaces offers; fixed (the default) keeps them as given.
+    lsdtt::declare_floodplain_threshold_algorithm_parameter(
+        string_default_map, help_map, "fixed");
+    help_map["floodplain_threshold_algorithm_choice"][6] = "find_floodplain";
+    lsdtt::declare_qq_threshold_parameters(
+        float_default_map, help_map, "floodplain",
+        "floodplain_threshold_algorithm_choice");
 
     // ---- tracing -------------------------------------------------------------
     string_default_map["trace_surface_choice"] = "raw";
@@ -1028,26 +1037,90 @@ int main(int argc, char* argv[])
                     dem_routed.get_mask_array().get_vector(),
                     chan_u8);
 
-            const float g_thr = ff.at("max_floodplain_gradient");
-            const float h_thr = ff.at("max_floodplain_hand_metres");
-            std::vector<float> raw_fp(ncell, 0.0f);
-            for (int r = 0; r < nr; ++r)
-                for (int c = 0; c < nc; ++c)
-                {
-                    const std::size_t k = static_cast<std::size_t>(r) * nc + c;
-                    if (!hand.mask[k]) continue;
-                    if (!grad_r->get_mask_array().at(r, c)) continue;
-                    if (grad_r->get_data_array().at(r, c) < g_thr &&
-                        hand.data[k] < h_thr)
-                        raw_fp[k] = 1.0f;
-                }
-
-            lsdtt::lsdtt_raster_cpu fp_raster(
-                std::move(raw_fp),
-                std::vector<std::uint8_t>(dem_raw.get_mask_array().get_vector()),
+            float g_thr = ff.at("max_floodplain_gradient");
+            float h_thr = ff.at("max_floodplain_hand_metres");
+            const std::vector<std::uint8_t> dem_mask(
+                dem_raw.get_mask_array().get_vector());
+            const lsdtt::lsdtt_raster_cpu hand_r(
+                std::vector<float>(hand.data), std::vector<std::uint8_t>(hand.mask),
                 meta);
-            const lsdtt::lsdtt_raster_cpu filled = lsdtt::binary_fill_holes(fp_raster);
-            floodplain = filled.get_data_array().get_vector();
+
+            // Bounds chosen from the data, over the pixels where both quantities
+            // are defined, when asked; fixed keeps the values as given.
+            const std::string& how = sf.at("floodplain_threshold_algorithm_choice");
+            if (how != "fixed")
+            {
+                std::vector<double> hv, gv;
+                for (std::size_t k = 0; k < ncell; ++k)
+                {
+                    if (!hand.mask[k] || !std::isfinite(hand.data[k])) continue;
+                    const float g = grad_r->get_data()[k];
+                    if (!grad_r->get_mask()[k] || !std::isfinite(g)) continue;
+                    hv.push_back(hand.data[k]);
+                    gv.push_back(g);
+                }
+                try
+                {
+                    const lsdtt::threshold_selection_result hs =
+                        lsdtt::select_threshold(hv,
+                            lsdtt::threshold_request_from_parameters(
+                                how, "floodplain_threshold_algorithm_choice",
+                                h_thr, ff, "floodplain"));
+                    const lsdtt::threshold_selection_result gs =
+                        lsdtt::select_threshold(gv,
+                            lsdtt::threshold_request_from_parameters(
+                                how, "floodplain_threshold_algorithm_choice",
+                                g_thr, ff, "floodplain"));
+                    if (!hs.found || !gs.found)
+                    {
+                        std::cerr << "FATAL: floodplain_threshold_algorithm_choice "
+                                  << how << " found no "
+                                  << (!hs.found ? "HAND" : "gradient")
+                                  << " bound. Set the bounds and use fixed.\n";
+                        return 1;
+                    }
+                    h_thr = static_cast<float>(hs.threshold);
+                    g_thr = static_cast<float>(gs.threshold);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: floodplain bounds: " << e.what() << "\n";
+                    return 1;
+                }
+                std::ostringstream hs_txt, gs_txt;
+                hs_txt.precision(9); hs_txt << h_thr;
+                gs_txt.precision(9); gs_txt << g_thr;
+                pp.record_resolved_parameter("max_floodplain_hand_metres", hs_txt.str());
+                pp.record_resolved_parameter("max_floodplain_gradient", gs_txt.str());
+                std::cout << "Floodplain bounds (" << how << "): HAND < "
+                          << hs_txt.str() << " m, gradient < " << gs_txt.str()
+                          << "\n";
+            }
+
+            // The shared floodplain engine with its patch filters off: no
+            // channel seeding or contact test, no size filter, holes filled.
+            lsdtt::floodplain_threshold_request freq;
+            freq.max_floodplain_hand_metres = h_thr;
+            freq.max_floodplain_gradient    = g_thr;
+            freq.seed_channel_pixels        = false;
+            freq.require_channel_contact    = false;
+            freq.min_component_pixels       = 0;
+            freq.fill_holes                 = true;
+            const lsdtt::lsdtt_raster_cpu everywhere(
+                std::vector<float>(ncell, 1.0f), std::vector<std::uint8_t>(dem_mask),
+                meta);
+            lsdtt::floodplain_threshold_result fres;
+            try
+            {
+                fres = lsdtt::classify_floodplain_terraces_by_thresholds(
+                    everywhere, hand_r, *grad_r, chan_u8, nullptr, freq);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: floodplain: " << e.what() << "\n";
+                return 1;
+            }
+            floodplain = fres.floodplain_mask.get_data_array().get_vector();
             have_floodplain = true;
 
             if (bf.at("write_hand_raster"))

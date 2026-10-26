@@ -316,13 +316,16 @@ void declare_relief_threshold_algorithm_parameter(
 {
     string_default_map["relief_threshold_algorithm_choice"] = default_choice;
     help_map["relief_threshold_algorithm_choice"] = {"string", default_choice,
-        "How the relief bound is chosen: fixed or cdf_divergence.",
+        "How the relief bound is chosen: fixed, cdf_divergence or qq_gaussian.",
         "fixed uses max_relief_metres. cdf_divergence computes the relief CDF, "
         "fits the best of a family of parametric distributions (normal, "
         "exponential, Weibull, Pareto) and takes the relief at which the "
         "empirical CDF most exceeds the fit: flat pixels inflate the empirical "
-        "distribution at low relief. The CDF and the chosen value are written "
-        "out. Replaces the boolean adaptive_relief_threshold.",
+        "distribution at low relief. qq_gaussian is the Clubb et al. (2017) "
+        "rule: the lowest relief at which the quantiles rejoin a Gaussian drawn "
+        "through two percentiles of the QQ plot (relief_qq_*) and stay on it. "
+        "The table and the chosen value are written out. Replaces the boolean "
+        "adaptive_relief_threshold.",
         "Admission", "param", ""};
 }
 
@@ -369,6 +372,85 @@ void declare_max_floodplain_gradient_parameter(
         "Gradient (m/m) above which ground is not floodplain.",
         "A gradient, not an angle (gradient = tan(angle)).",
         "Floodplain", "param", parent};
+}
+
+void declare_floodplain_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice)
+{
+    string_default_map["floodplain_threshold_algorithm_choice"] = default_choice;
+    help_map["floodplain_threshold_algorithm_choice"] = {"string", default_choice,
+        "How the floodplain bounds are chosen: fixed, qq_gaussian or "
+        "cdf_divergence.",
+        "fixed uses max_floodplain_hand_metres and max_floodplain_gradient as "
+        "given. qq_gaussian is Clubb et al. (2017): for each quantity, the "
+        "lowest value at which the data rejoin a Gaussian drawn through two "
+        "percentiles of the quantile-quantile plot (floodplain_qq_*), and stay "
+        "on it. cdf_divergence fits a family of distributions and takes the "
+        "value at which the empirical CDF most exceeds the best fit. The chosen "
+        "values are printed and written to the ingested-parameters file, so a "
+        "run can be repeated with fixed.",
+        "Floodplain", "param", ""};
+}
+
+void declare_qq_threshold_parameters(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix,
+    const std::string&            parent)
+{
+    const std::string lo = prefix + "_qq_lower_percentile";
+    const std::string hi = prefix + "_qq_upper_percentile";
+    const std::string fr = prefix + "_qq_threshold_fraction";
+    float_default_map[lo] = 25.0f;
+    help_map[lo] = {"float", "25",
+        "Lower percentile of the QQ cloud the Gaussian reference line is drawn "
+        "through (qq_gaussian).",
+        "25 and 75 (the IQR) are the values Clubb et al. (2017) used.",
+        "Threshold selection", "param", parent};
+    float_default_map[hi] = 75.0f;
+    help_map[hi] = {"float", "75",
+        "Upper percentile of the QQ cloud the Gaussian reference line is drawn "
+        "through (qq_gaussian).",
+        "Must be above the lower percentile.",
+        "Threshold selection", "param", parent};
+    float_default_map[fr] = 0.01f;
+    help_map[fr] = {"float", "0.01",
+        "Fraction of the data range within which a quantile counts as on the "
+        "Gaussian line (qq_gaussian).",
+        "0.01 (1%) is the paper's value. The threshold is the lowest quantile "
+        "that is on the line and stays on it for the next 200 quantiles of "
+        "10000. Larger values admit more ground.",
+        "Threshold selection", "param", parent};
+}
+
+threshold_selection_request threshold_request_from_parameters(
+    const std::string&                  choice,
+    const std::string&                  choice_key,
+    double                              fixed_value,
+    const std::map<std::string, float>& float_parameters,
+    const std::string&                  prefix)
+{
+    threshold_selection_request r;
+    if (choice == "fixed")               r.method = threshold_selection_choice::fixed;
+    else if (choice == "qq_gaussian")    r.method = threshold_selection_choice::qq_gaussian;
+    else if (choice == "cdf_divergence") r.method = threshold_selection_choice::cdf_divergence;
+    else
+        throw std::invalid_argument(
+            "unknown " + choice_key + " '" + choice +
+            "'. Valid: fixed, qq_gaussian, cdf_divergence.");
+    r.fixed_value = fixed_value;
+    auto get = [&](const std::string& key, double fallback)
+    {
+        const auto it = float_parameters.find(key);
+        return it == float_parameters.end() ? fallback
+                                            : static_cast<double>(it->second);
+    };
+    r.qq_lower_percentile   = get(prefix + "_qq_lower_percentile", 25.0);
+    r.qq_upper_percentile   = get(prefix + "_qq_upper_percentile", 75.0);
+    r.qq_threshold_fraction = get(prefix + "_qq_threshold_fraction", 0.01);
+    return r;
 }
 
 int relief_window_radius_pixels(double radius_metres,

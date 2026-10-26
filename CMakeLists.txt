@@ -391,6 +391,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_outlet_basin_verification_cpu.cpp
     src/cpu/lsdtt_channel_scope_cpu.cpp
     src/cpu/lsdtt_flat_surface_channel_classify_cpu.cpp
+    src/cpu/lsdtt_floodplain_thresholds_cpu.cpp
     src/cpu/lsdtt_valley_centreline_cpu.cpp
     src/cpu/lsdtt_valley_cross_sections_cpu.cpp
     src/cpu/lsdtt_basin_cpu.cpp

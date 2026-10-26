@@ -157,6 +157,8 @@ int main(int argc, char* argv[])
     lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f);
     lsdtt::declare_relief_threshold_algorithm_parameter(
         string_default_map, help_map, "fixed");
+    lsdtt::declare_qq_threshold_parameters(
+        float_default_map, help_map, "relief", "relief_threshold_algorithm_choice");
 
     float_default_map["relief_threshold_multiplier"] = 1.0f;
     help_map["relief_threshold_multiplier"] = {"float","1.0",
@@ -803,10 +805,12 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
-    if (relief_choice != "fixed" && relief_choice != "cdf_divergence")
+    if (relief_choice != "fixed" && relief_choice != "cdf_divergence" &&
+        relief_choice != "qq_gaussian")
     {
         std::cerr << "FATAL: unknown relief_threshold_algorithm_choice '"
-                  << relief_choice << "'. Valid: fixed, cdf_divergence.\n";
+                  << relief_choice
+                  << "'. Valid: fixed, cdf_divergence, qq_gaussian.\n";
         return 1;
     }
     {
@@ -963,6 +967,42 @@ int main(int argc, char* argv[])
                       << ") - using relief_threshold_metres = "
                       << ff["max_relief_metres"] << "\n";
         }
+    }
+    else if (relief_choice == "qq_gaussian")
+    {
+        std::cout << "Computing relief threshold from the QQ plot...\n";
+        const int    half          = (relief_side - 1) / 2;
+        const double relief_radius = static_cast<double>(std::max(1, half))
+                                     * dem.get_meta().cell_size;
+        const lsdtt::lsdtt_raster_cpu relief_raster =
+            lsdtt::moving_window_local_relief(dem, relief_radius);
+        std::vector<double> vals;
+        const auto& rd = relief_raster.get_data();
+        const auto& rm = relief_raster.get_mask();
+        for (std::size_t i = 0; i < rd.size(); ++i)
+            if (rm[i] && std::isfinite(rd[i]) &&
+                !relief_raster.get_meta().is_nodata(rd[i]))
+                vals.push_back(rd[i]);
+        const lsdtt::threshold_selection_result sel = lsdtt::select_threshold(
+            vals, lsdtt::threshold_request_from_parameters(
+                      "qq_gaussian", "relief_threshold_algorithm_choice",
+                      ff["max_relief_metres"], ff, "relief"));
+        if (!sel.found)
+        {
+            std::cerr << "FATAL: qq_gaussian found no relief bound: the relief "
+                         "quantiles never settle onto the reference line. Set "
+                         "max_relief_metres and use fixed.\n";
+            return 1;
+        }
+        const std::string p = pp.get_full_write_path() + "_relief_qq.csv";
+        lsdtt::write_qq_csv(loader, p, sel.qq);
+        const double multiplier = static_cast<double>(ff["relief_threshold_multiplier"]);
+        std::cout << "  QQ quantile       : " << sel.qq_index << " of "
+                  << sel.qq.data_quantile.size() << "\n"
+                  << "  Multiplier        : " << multiplier << "\n"
+                  << "  Final threshold   : " << sel.threshold * multiplier
+                  << " m\n\n";
+        req.relief_threshold_metres = sel.threshold * multiplier;
     }
 
     // -------------------------------------------------------------------------

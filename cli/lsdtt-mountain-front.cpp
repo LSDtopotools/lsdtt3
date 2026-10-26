@@ -62,6 +62,7 @@
 #include <memory>
 
 #include "../src/core/lsdtt_common_parameters.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
@@ -137,6 +138,8 @@ int main(int argc, char* argv[])
     lsdtt::declare_relief_window_parameter(float_default_map, help_map, 2);
     lsdtt::declare_relief_threshold_algorithm_parameter(
         string_default_map, help_map, "cdf_divergence");
+    lsdtt::declare_qq_threshold_parameters(
+        float_default_map, help_map, "relief", "relief_threshold_algorithm_choice");
     lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f,
                                         "relief_threshold_algorithm_choice");
     // Hidden storage for compatibility aliases, resolved after parsing.
@@ -416,10 +419,12 @@ int main(int argc, char* argv[])
         pp.record_resolved_parameter("relief_threshold_algorithm_choice",
                                      relief_choice);
     }
-    if (relief_choice != "fixed" && relief_choice != "cdf_divergence")
+    if (relief_choice != "fixed" && relief_choice != "cdf_divergence" &&
+        relief_choice != "qq_gaussian")
     {
         std::cerr << "FATAL: unknown relief_threshold_algorithm_choice '"
-                  << relief_choice << "'. Valid: fixed, cdf_divergence.\n";
+                  << relief_choice
+                  << "'. Valid: fixed, cdf_divergence, qq_gaussian.\n";
         return 1;
     }
     const bool use_adaptive = (relief_choice == "cdf_divergence");
@@ -436,6 +441,33 @@ int main(int argc, char* argv[])
             std::cerr << "Error in Stage 2: " << e.what() << "\n";
             return 1;
         }
+    }
+    else if (relief_choice == "qq_gaussian")
+    {
+        std::cout << "Stage 2: building flat mask (QQ plot, Clubb et al. 2017)...\n";
+        std::vector<double> vals;
+        const auto& rd = relief.get_data();
+        const auto& rm = relief.get_mask();
+        for (std::size_t i = 0; i < rd.size(); ++i)
+            if (rm[i] && std::isfinite(rd[i]) && !relief.get_meta().is_nodata(rd[i]))
+                vals.push_back(rd[i]);
+        const lsdtt::threshold_selection_result sel = lsdtt::select_threshold(
+            vals, lsdtt::threshold_request_from_parameters(
+                      "qq_gaussian", "relief_threshold_algorithm_choice",
+                      ff["max_relief_metres"], ff, "relief"));
+        if (!sel.found)
+        {
+            std::cerr << "FATAL: qq_gaussian found no relief bound: the relief "
+                         "quantiles never settle onto the reference line. Set "
+                         "max_relief_metres and use fixed.\n";
+            return 1;
+        }
+        lsdtt::write_qq_csv(loader, stem + "_relief_qq.csv", sel.qq);
+        std::cout << "  QQ quantile " << sel.qq_index << " of "
+                  << sel.qq.data_quantile.size() << ": threshold "
+                  << sel.threshold << " m\n";
+        flat_mask = lsdtt::algebra::raster_binary_true_below_threshold(
+            relief, static_cast<float>(sel.threshold));
     }
     else
     {
