@@ -1026,10 +1026,87 @@ ladder_result build_reference_field_ladder(
         if (global_supplied == nullptr && request.supplied_breaks.size() == 1)
             global_supplied = &request.supplied_breaks.begin()->second;
     }
+
+    // Training polygons (ladder_request::training): statistics on this field,
+    // the fit over every training cell, and the selection built from a fit -
+    // trained lower breaks, then the ladder's own search on the values above
+    // the top one.
+    const bool training_on = request.training != nullptr && !supplied;
+    training_set tset;
+    if (training_on)
+    {
+        if (request.training->polygon_of_pixel.size() != n)
+            throw std::invalid_argument(
+                std::string(fn) + ": training polygons are not on the field's grid");
+        tset = *request.training;
+        compute_training_polygon_stats(
+            tset, reference_field, request.training_spread_factor * required_gap);
+        result.training_polygons = tset.polygons;
+    }
+    auto training_cell = [&](std::size_t i) -> std::int32_t
+    {
+        if (!training_on || !fm[i] || !std::isfinite(fv[i])) return -1;
+        return tset.polygon_of_pixel[i];
+    };
+    if (training_on)
+    {
+        std::vector<std::pair<std::int32_t, double>> all_training;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::int32_t f = training_cell(i);
+            if (f >= 0) all_training.emplace_back(f, static_cast<double>(fv[i]));
+        }
+        result.training_global_fit = fit_training_window(
+            all_training, tset, required_gap, request.training_min_cells_per_class);
+    }
+    // A fit is usable when its lowest level is floodplain and it has a break.
+    auto fit_usable = [&](const training_window_fit& f) -> bool
+    {
+        return !f.breaks.empty() && !f.levels.empty() && !f.levels[0].empty() &&
+               tset.polygons[static_cast<std::size_t>(f.levels[0][0])].cls == 0;
+    };
+    auto trained_selection = [&](const std::vector<double>& values,
+                                 const std::vector<double>& trained,
+                                 double                     gap_m) -> selection
+    {
+        std::vector<double> brk = trained;
+        ladder_status st = ladder_status::supplied;
+        std::vector<double> above;
+        for (const double v : values)
+            if (v > trained.back()) above.push_back(v);
+        if (static_cast<int>(above.size()) >= request.min_window_pixels)
+        {
+            std::vector<std::int64_t> h(static_cast<std::size_t>(nbins), 0);
+            for (const double v : above) ++h[static_cast<std::size_t>(log_bin(v))];
+            const std::vector<double> cand = clamp_breaks(
+                request.break_algorithm == ladder_break_choice::gap
+                    ? gap_break_candidates(above, request, nullptr, nullptr)
+                    : find_population_breaks(h, lo_log, hi_log,
+                                             request.max_valley_fraction),
+                request);
+            const selection up = select_partition(above, cand, request, gap_m);
+            if (up.status == ladder_status::resolved ||
+                up.status == ladder_status::forced)
+            {
+                for (const double b : up.breaks)
+                    if (b > brk.back()) brk.push_back(b);
+                st = up.status;
+            }
+        }
+        selection sel = make_supplied(values, brk);
+        sel.status = st;
+        return sel;
+    };
+    const bool global_trained =
+        training_on && fit_usable(result.training_global_fit);
+
     const selection global_selection = (global_supplied != nullptr)
         ? make_supplied(all_values, *global_supplied)
-        : select_partition(all_values, result.global_breaks_m, request,
-                           required_gap);
+        : global_trained
+            ? trained_selection(all_values, result.training_global_fit.breaks,
+                                required_gap)
+            : select_partition(all_values, result.global_breaks_m, request,
+                               required_gap);
 
     // -------------------------------------------------------------------------
     // Windowing. A fan has no along-channel coordinate, so the fitted-surface
@@ -1068,6 +1145,14 @@ ladder_result build_reference_field_ladder(
         w.status                = sel.status;
         w.used_global_breaks    = true;
         w.breaks_m              = sel.breaks;
+        if (global_trained)
+        {
+            w.n_trained_breaks = static_cast<int>(
+                result.training_global_fit.breaks.size());
+            w.training_source  = "global";
+            w.training_fit     = result.training_global_fit;
+            result.n_windows_trained = 1;
+        }
         {
             double hlo = 0.0, hhi = 0.0;
             std::vector<std::int64_t> hc;
@@ -1136,6 +1221,8 @@ ladder_result build_reference_field_ladder(
         // Gradients of the same cells, in the same order, so a window's E_v is
         // read off the ground the window actually covers.
         std::vector<std::vector<double>> window_slopes;
+        // Training cells (polygon id, field value), when training.
+        std::vector<std::vector<std::pair<std::int32_t, double>>> window_training;
     };
 
     // Per-source coordinate range.
@@ -1168,6 +1255,7 @@ ladder_result build_reference_field_ladder(
         sb.n_windows = static_cast<int>(span / sb.wstep) + 1;
         sb.window_values.resize(static_cast<std::size_t>(sb.n_windows));
         sb.window_slopes.resize(static_cast<std::size_t>(sb.n_windows));
+        sb.window_training.resize(static_cast<std::size_t>(sb.n_windows));
         bins.emplace(s, std::move(sb));
     }
 
@@ -1190,6 +1278,22 @@ ladder_result build_reference_field_ladder(
         if (sld != nullptr && (*slm)[i] && std::isfinite((*sld)[i]))
         {
             sb.window_slopes[w].push_back(static_cast<double>((*sld)[i]));
+        }
+    }
+
+    // Training cells need not be admitted: they bin by their own coordinate.
+    if (training_on)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::int32_t f = training_cell(i);
+            if (f < 0 || !cm[i] || !std::isfinite(cd[i])) continue;
+            const auto bit = bins.find((*window_source_id)[i]);
+            if (bit == bins.end()) continue;
+            source_bins& sb = bit->second;
+            sb.window_training[static_cast<std::size_t>(
+                window_of(sb, static_cast<double>(cd[i])))]
+                .emplace_back(f, static_cast<double>(fv[i]));
         }
     }
 
@@ -1232,6 +1336,39 @@ ladder_result build_reference_field_ladder(
             rec.required_gap_m  = win_gap;
             rec.vertical_accuracy_m  = win_ev;
             rec.median_gradient      = median_slope_of(pooled_slopes);
+
+            if (training_on)
+            {
+                std::vector<std::pair<std::int32_t, double>> tcells;
+                for (int k = std::max(w - 1, 0);
+                     k <= std::min(w + 1, sb.n_windows - 1); ++k)
+                {
+                    const auto& src = sb.window_training[static_cast<std::size_t>(k)];
+                    tcells.insert(tcells.end(), src.begin(), src.end());
+                }
+                rec.training_fit = fit_training_window(
+                    tcells, tset, win_gap, request.training_min_cells_per_class);
+                const bool own = fit_usable(rec.training_fit);
+                if ((own || global_trained) && !pooled.empty())
+                {
+                    const std::vector<double>& tb = own
+                        ? rec.training_fit.breaks
+                        : result.training_global_fit.breaks;
+                    const selection sel = trained_selection(pooled, tb, win_gap);
+                    selected[static_cast<std::size_t>(w)] = sel;
+                    has_own[static_cast<std::size_t>(w)]  = 1;
+                    rec.k_selected            = sel.k;
+                    rec.status                = sel.status;
+                    rec.breaks_m              = sel.breaks;
+                    rec.band_centres_m        = sel.band_centres;
+                    rec.min_band_centre_gap_m = sel.min_centre_gap;
+                    rec.n_trained_breaks      = static_cast<int>(tb.size());
+                    rec.training_source       = own ? "window" : "global";
+                    wb[static_cast<std::size_t>(w)] = sel.breaks;
+                    result.windows.push_back(std::move(rec));
+                    continue;
+                }
+            }
 
             if (supplied)
             {
@@ -1427,6 +1564,7 @@ ladder_result build_reference_field_ladder(
 
     for (const ladder_window& w : result.windows)
     {
+        if (!w.training_source.empty()) ++result.n_windows_trained;
         if (w.status == ladder_status::resolved ||
             w.status == ladder_status::forced)          ++result.n_windows_resolved;
         else if (w.status == ladder_status::unresolved) ++result.n_windows_unresolved;

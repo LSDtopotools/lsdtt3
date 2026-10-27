@@ -8992,6 +8992,15 @@ add_test(NAME unit_fluvial_surface_method_comparison COMMAND lsdtt-test-surface-
 lsdtt_set_tests_properties(unit_fluvial_surface_method_comparison PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Training polygons (plan 7i): class labels, best separation, a window fit
+# with a mislabelled terrace number, a flagged polygon and a shared level, and
+# the reach windows, on populations small enough to check by hand.
+add_executable(lsdtt-test-surface-training cpp/test_surface_training.cpp)
+target_link_libraries(lsdtt-test-surface-training PRIVATE lsdtt3_cpu)
+add_test(NAME unit_fluvial_surface_training COMMAND lsdtt-test-surface-training)
+lsdtt_set_tests_properties(unit_fluvial_surface_training PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
 target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
 
@@ -9796,6 +9805,59 @@ add_lsdtt_cli_smoke_test(
     --expect-vector-feature-min ml_clubb2017_surface_class_polygons.fgb:7
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_methods_list PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# fill_admitted_holes: the one enclosed gap a strict relief admission leaves
+# on the linear-range surface is admitted (11966 -> 11967 cells).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_fill_admitted_holes
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fill_admitted_holes.param.in
+    fah_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "fill_admitted_holes: 1 enclosed cell(s) admitted"
+    --stdout-contains "11967 admitted cell(s)"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fill_admitted_holes PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Training polygons (plan 7i) on the staircase: fp / t1 / T5 drawn on treads
+# 1-3. The trained breaks fall midway between the polygon cores (8.3 | 13.3 m
+# and 16.6 | 21.3 m); the ladder's own search adds the break above them (k 4,
+# the third break 24.88 m in the ladder windows CSV); under
+# clubb2017 the trained bound replaces the QQ bound and the second pass is
+# skipped.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_training
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training.param.in
+    trn_ladder_training_levels.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect trn_ladder_training_fit.csv
+    --expect trn_ladder_training_polygons.csv
+    --expect trn_clubb2017_training_fit.csv
+    --expect trn_clubb2017_training_levels.tif
+    --stdout-contains "training: 2 of 2 window(s) banded with trained breaks"
+    --stdout-contains "over all training: 10.8167 18.9667 m"
+    --stdout-contains "floodplain / terrace HAND bound 10.8167 m over all training (J 1)"
+    --stdout-contains "the second pass is skipped"
+    --expect-file-contains "trn_ladder_ladder_windows.csv:0,500.000000,21458,4,resolved,0,10.816666"
+    --expect-file-contains "trn_ladder_training_fit.csv:window,0,500,window,break_2,18.9666634,1,1297,1291,1297,1291,"
+    --expect-file-contains "trn_ladder_training_polygons.csv:2,T5,terrace,5,1600,1600,24.1999969"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_training_bad_field
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training_bad_field.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "field 'kind' not found"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_training_bad_field PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(

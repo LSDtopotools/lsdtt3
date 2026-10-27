@@ -84,6 +84,15 @@ floodplain_threshold_result classify_floodplain_terraces_by_thresholds(
     const bool use_gradient = request.max_floodplain_gradient > 0.0;
     const float hand_bound  = static_cast<float>(request.max_floodplain_hand_metres);
     const float grad_bound  = static_cast<float>(request.max_floodplain_gradient);
+    const std::vector<float>* cell_bound = request.hand_bound_per_cell;
+    if (cell_bound != nullptr && cell_bound->size() != n)
+        throw std::invalid_argument(fn + "hand_bound_per_cell differs in size");
+    auto bound_at = [&](std::size_t i) -> float
+    {
+        if (cell_bound != nullptr && std::isfinite((*cell_bound)[i]))
+            return (*cell_bound)[i];
+        return hand_bound;
+    };
 
     auto passes_gradient = [&](std::size_t i)
     {
@@ -106,7 +115,7 @@ floodplain_threshold_result classify_floodplain_terraces_by_thresholds(
             continue;
         }
         if (!(ad[i] > 0.5f)) continue;
-        if (!defined(hand, i) || !(hand.get_data()[i] < hand_bound)) continue;
+        if (!defined(hand, i) || !(hand.get_data()[i] < bound_at(i))) continue;
         if (!passes_gradient(i)) continue;
         cand[i] = 1.0f;
         ++out.n_floodplain_candidates;
@@ -162,6 +171,14 @@ floodplain_threshold_result classify_floodplain_terraces_by_thresholds(
         const float start = static_cast<float>(
             request.max_floodplain_hand_metres +
             request.min_terrace_height_above_floodplain_metres);
+        const float above = static_cast<float>(
+            request.min_terrace_height_above_floodplain_metres);
+        auto start_at = [&](std::size_t i) -> float
+        {
+            if (cell_bound != nullptr && std::isfinite((*cell_bound)[i]))
+                return (*cell_bound)[i] + above;
+            return start;
+        };
         const bool  capped  = request.max_terrace_height_metres > 0.0;
         const float ceiling = static_cast<float>(request.max_terrace_height_metres);
         const std::vector<float>& fpd = fp_r.get_data();
@@ -172,7 +189,7 @@ floodplain_threshold_result classify_floodplain_terraces_by_thresholds(
             if (!am[i] || !(ad[i] > 0.5f) || fpd[i] > 0.5f) continue;
             if (!defined(*terrace_field, i)) continue;
             const float t = terrace_field->get_data()[i];
-            if (!(t > start)) continue;
+            if (!(t > start_at(i))) continue;
             if (capped && t > ceiling) continue;
             if (!passes_gradient(i)) continue;
             tcand[i] = 1.0f;

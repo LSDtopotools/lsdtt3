@@ -66,6 +66,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "../core/lsdtt_true_north.hpp"
 #include "lsdtt_raster_surface_fitting_cpu.hpp" // plane / poly2 coefficients
+#include "lsdtt_surface_training_cpu.hpp"        // training polygons (7i)
 
 namespace lsdtt
 {
@@ -355,6 +356,21 @@ struct ladder_request
     // set the DEM cannot resolve is flagged rather than hidden.
     std::map<std::int32_t, std::vector<double>> supplied_breaks;
 
+    // Training polygons (fluvial-surface methods plan 7i; see
+    // lsdtt_surface_training_cpu). When set, a window's lower breaks come from
+    // the training cells pooled over the same windows as its values (k-1..k+1):
+    // floodplain / terrace and terrace / terrace breaks by best separation.
+    // Above the top trained break the ladder's own search runs on the values
+    // above it. A window whose training has no floodplain level or no break
+    // takes the fit over all training cells; when that has none either, the
+    // ladder searches as usual. Polygon statistics are measured here, on the
+    // field banded; a polygon whose p90 - p10 exceeds
+    // training_spread_factor x the global required gap is flagged (not a
+    // single level). Ignored with supplied_breaks set. Not owned.
+    const training_set* training = nullptr;
+    double training_spread_factor       = 3.0;
+    int    training_min_cells_per_class = 20;
+
     // Resolvability floor. Admissible iff
     //   min over j of (centre_j - centre_{j-1})  >=  kappa * E_v.
     // E_v = 0 disables the floor: legitimate when the vertical accuracy is
@@ -501,6 +517,12 @@ struct ladder_window
     int           k_selected      = 1;
     ladder_status status          = ladder_status::degenerate;
     bool          used_global_breaks = false;
+    // Training: how many of the lowest breaks came from it, and from where
+    // ("window", "global", or "" when not trained). training_fit is this
+    // window's own fit, whether or not it was used.
+    int                 n_trained_breaks = 0;
+    std::string         training_source;
+    training_window_fit training_fit;
 
     std::vector<double> breaks_m;         // k-1 breaks, ascending
 
@@ -614,6 +636,13 @@ struct ladder_result
     std::int64_t n_windows_supplied             = 0;
     std::int64_t n_windows_supplied_below_floor = 0;
     int          max_band_index       = 0;
+
+    // Training (ladder_request::training): the polygons with the statistics
+    // measured on the banded field, the fit over all training cells, and how
+    // many windows took trained breaks.
+    std::vector<training_polygon> training_polygons;
+    training_window_fit           training_global_fit;
+    std::int64_t n_windows_trained = 0;
 
     // Anything the run did that the caller asked for but could not get, in
     // words. A caller should print these: a request that silently degrades is

@@ -813,6 +813,33 @@ void write_phase0b_fixtures(const std::string& output_dir)
         loader.finish_vector_write();
     }
 
+    // Training polygons (training_surfaces_fname, plan 7i) on the east flank,
+    // inset 50 m from each tread's edges, rows 60..140: tread 1 labelled
+    // "fp", tread 2 "t1", tread 3 "T5" (a wrong number - numbers are ignored).
+    // Tread 4 is left for the ladder's own search above the trained breaks.
+    {
+        const lsdtt::lsdtt_raster_meta& m = st.dem.get_meta();
+        const double x_channel = m.x_min + (k_st_n_cols / 2 + 0.5) * k_st_cell_size;
+        const double y_top = m.y_max() - 60.0 * k_st_cell_size;
+        const double y_bot = m.y_max() - 140.0 * k_st_cell_size;
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"class"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+        loader.begin_vector_write(
+            output_dir + "/staircase_training.fgb", "staircase_training",
+            schema, m.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
+        const char* labels[3] = {"fp", "t1", "T5"};
+        for (int j = 1; j <= 3; ++j)
+        {
+            const double x0 = x_channel + (j - 1) * k_st_tread_width + 50.0;
+            const double x1 = x_channel + j * k_st_tread_width - 50.0;
+            loader.write_polygon({{x0, y_bot}, {x1, y_bot}, {x1, y_top},
+                                  {x0, y_top}, {x0, y_bot}},
+                                 {std::string(labels[j - 1])});
+        }
+        loader.finish_vector_write();
+    }
+
     // Levels files for level_algorithm_choice supplied_levels, written by hand
     // as a user would from survey: the four tread heights for every channel
     // (source_id -1), and the same keyed to a channel that does not exist.

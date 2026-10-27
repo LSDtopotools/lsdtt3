@@ -312,6 +312,9 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         lr.vertical_accuracy_break_gradient =
             request.vertical_accuracy_break_gradient;
         lr.supplied_breaks = request.ladder_supplied_breaks;
+        lr.training                     = request.ladder_training;
+        lr.training_spread_factor       = request.ladder_training_spread_factor;
+        lr.training_min_cells_per_class = request.ladder_training_min_cells_per_class;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
         lr.hist_bins               = request.band_hist_bins;
@@ -343,24 +346,10 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             donor_flat->size() == n &&
             channel_flow_distance->get_data().size() == n)
         {
-            const std::vector<float>&   fd  = channel_flow_distance->get_data();
-            const std::vector<uint8_t>& fdm = channel_flow_distance->get_mask();
-
-            pixel_source.assign(n, -1);
-            std::vector<float>   dd(n, 0.0f);
-            std::vector<uint8_t> dm(n, 0);
-            for (std::size_t i = 0; i < n; ++i)
-            {
-                const std::int64_t df = (*donor_flat)[i];
-                if (df < 0) continue;
-                const std::size_t dfi = static_cast<std::size_t>(df);
-                if (dfi >= n || !fdm[dfi] || !std::isfinite(fd[dfi])) continue;
-                pixel_source[i] = channel_source_id[dfi];
-                dd[i] = fd[dfi];
-                dm[i] = 1;
-            }
-            donor_distance = lsdtt_raster_cpu(
-                std::move(dd), std::move(dm), meta);
+            donor_reach_coordinate rc = donor_reach_coordinates(
+                *donor_flat, *channel_flow_distance, channel_source_id);
+            pixel_source   = std::move(rc.source_of_pixel);
+            donor_distance = std::move(rc.distance);
             src_ptr  = &pixel_source;
             dist_ptr = &donor_distance;
         }
@@ -978,6 +967,9 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
         result.banded_labels_raster = std::move(banded.labels);
         result.patches              = std::move(banded.patches);
         result.ladder_windows       = lad.windows;
+        result.ladder_training_polygons    = lad.training_polygons;
+        result.ladder_training_global_fit  = lad.training_global_fit;
+        result.ladder_n_windows_trained    = lad.n_windows_trained;
         result.ladder_window_index  = lad.window_index;
         result.global_breaks_m      = lad.global_breaks_m;
         // The ladder's band index is the authoritative per-pixel band here;

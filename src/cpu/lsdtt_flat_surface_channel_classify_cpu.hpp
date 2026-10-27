@@ -215,6 +215,10 @@ struct flat_surface_classify_request
     // Passed through to ladder_request::supplied_breaks: per channel source
     // id, breaks to band with instead of finding them. Empty = find them.
     std::map<std::int32_t, std::vector<double>> ladder_supplied_breaks;
+    // Passed through to ladder_request::training (and its two settings).
+    const training_set* ladder_training                     = nullptr;
+    double              ladder_training_spread_factor       = 3.0;
+    int                 ladder_training_min_cells_per_class = 20;
     int    band_min_component_pixels     = 1;
     // segmentation_algorithm_choice whole_mask: label the admitted mask minus
     // whole_mask_barrier once, each component taking its majority band
@@ -347,6 +351,10 @@ struct flat_surface_classify_result
     // than kept internal.
     std::vector<ladder_window> ladder_windows;
     lsdtt_raster_cpu           ladder_window_index;
+    // ladder_result's training outputs, when ladder_training was set.
+    std::vector<training_polygon> ladder_training_polygons;
+    training_window_fit           ladder_training_global_fit;
+    std::int64_t                  ladder_n_windows_trained = 0;
     bool                       used_band_then_label = false;
     // segment_whole_mask only: admitted cells removed by the barrier, and
     // cells whose band changed to their component's majority band.

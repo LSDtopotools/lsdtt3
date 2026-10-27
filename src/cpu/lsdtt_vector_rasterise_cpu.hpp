@@ -296,14 +296,24 @@ struct polygon_field_rasterise_result
     std::size_t n_overlap_pixels   = 0;      // centres claimed by two values
     std::size_t n_features_read    = 0;
     std::size_t n_features_skipped = 0;
+    // Which feature claimed each pixel's centre (index into feature_values,
+    // the burned features in layer order); -1 = none, or assigned only by the
+    // coverage gap fill. Where two features with different values claim a
+    // centre, the one whose value wins (the lower index) is recorded.
+    std::vector<std::int32_t> feature_index;
+    std::vector<std::string>  feature_values;
 };
 
+// fill_coverage_gaps false: the cell-centre rule only, no gap fill - for
+// training or reference polygons, where growing each polygon by up to a pixel
+// at its edges would bias what it says.
 polygon_field_rasterise_result rasterise_polygon_field_values(
     const lsdtt_raster_cpu& reference_raster,
     const std::string&      vector_path,
     const std::string&      layer_name,    // "" = the first layer
     const std::string&      field_name,
-    int                     oversample = 4);
+    int                     oversample = 4,
+    bool                    fill_coverage_gaps = true);
 
 // The extent (in the layer's own CRS) and CRS WKT of a polygon layer, and its
 // field names. layer_name "" = the first layer.

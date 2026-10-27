@@ -84,6 +84,13 @@ struct floodplain_threshold_request
     double min_terrace_height_above_floodplain_metres = 0.0;
     // <= 0: no ceiling.
     double max_terrace_height_metres                  = 0.0;
+
+    // A HAND bound per cell (full grid) in place of max_floodplain_hand_metres
+    // where the value is finite - the bound trained per reach window from
+    // training polygons (lsdtt_surface_training_cpu). Non-finite cells fall
+    // back to max_floodplain_hand_metres. The terrace start follows the
+    // cell's bound. nullptr = the one bound everywhere.
+    const std::vector<float>* hand_bound_per_cell = nullptr;
 };
 
 struct floodplain_threshold_result

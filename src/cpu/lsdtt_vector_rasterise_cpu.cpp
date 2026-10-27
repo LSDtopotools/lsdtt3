@@ -1153,7 +1153,8 @@ std::vector<std::uint16_t> coverage_counts(const lsdtt_raster_meta& meta, OGRGeo
 
 polygon_field_rasterise_result rasterise_polygon_field_values(
     const lsdtt_raster_cpu& reference_raster, const std::string& vector_path,
-    const std::string& layer_name, const std::string& field_name, int oversample)
+    const std::string& layer_name, const std::string& field_name, int oversample,
+    bool fill_coverage_gaps)
 {
     const lsdtt_raster_meta& meta = reference_raster.get_meta();
     if (!meta.is_valid())
@@ -1220,10 +1221,13 @@ polygon_field_rasterise_result rasterise_polygon_field_values(
     const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
     const std::vector<std::uint8_t>& ref_mask = reference_raster.get_mask();
     out.value_index.assign(npix, -1);
+    out.feature_index.assign(npix, -1);
+    out.feature_values = raw_values;
 
     // 1. Cell-centre burn, one feature at a time over its own window.
-    for (const auto& pf : features)
+    for (std::size_t fi = 0; fi < features.size(); ++fi)
     {
+        const polygon_feature& pf = features[fi];
         const int rows = pf.row1 - pf.row0 + 1, cols = pf.col1 - pf.col0 + 1;
         double gt[6];
         fill_window_geotransform(meta, pf.row0, pf.col0, 1, gt);
@@ -1241,10 +1245,15 @@ polygon_field_rasterise_result rasterise_polygon_field_values(
                     static_cast<std::size_t>(pf.row0 + r) * meta.n_cols + (pf.col0 + c);
                 if (!ref_mask[i]) continue;
                 std::int32_t& v = out.value_index[i];
-                if (v < 0) v = pf.value;
+                if (v < 0)
+                {
+                    v = pf.value;
+                    out.feature_index[i] = static_cast<std::int32_t>(fi);
+                }
                 else if (v != pf.value)
                 {
                     ++out.n_overlap_pixels;
+                    if (pf.value < v) out.feature_index[i] = static_cast<std::int32_t>(fi);
                     v = std::min(v, pf.value);
                 }
             }
@@ -1255,7 +1264,7 @@ polygon_field_rasterise_result rasterise_polygon_field_values(
     std::size_t n_unmapped = 0;
     for (std::size_t i = 0; i < npix; ++i)
         if (ref_mask[i] && out.value_index[i] < 0) { unmapped[i] = 1; ++n_unmapped; }
-    if (n_unmapped > 0)
+    if (fill_coverage_gaps && n_unmapped > 0)
     {
         std::vector<std::vector<std::pair<std::int32_t, std::uint32_t>>> cover(npix);
         constexpr int k_chunk = 512;   // bounds one burn at 512^2 * oversample^2 bytes
@@ -1304,6 +1313,10 @@ polygon_field_rasterise_result rasterise_polygon_field_values(
             else
                 ++out.n_unmapped_valid;
         }
+    }
+    else
+    {
+        out.n_unmapped_valid = n_unmapped;
     }
     return out;
 }

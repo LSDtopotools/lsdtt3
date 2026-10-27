@@ -84,6 +84,7 @@
 #include "../src/core/lsdtt_run_record.hpp"
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_method_comparison_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_training_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -330,6 +331,61 @@ int main(int argc, char* argv[])
     // Hidden storage for compatibility aliases, resolved after the DEM loads.
     string_default_map["legacy_relief_window_radius_pixels"] = "";
     string_default_map["legacy_fallback_admission_algorithm_choice"] = "";
+
+    bool_default_map["fill_admitted_holes"] = false;
+    help_map["fill_admitted_holes"] = {"bool","false",
+        "Fill enclosed holes in the admitted ground (admission flat_mask, "
+        "relief or gradient).",
+        "Roughness - DEM noise, crops, buildings - leaves enclosed gaps in a "
+        "relief- or gradient-based admission, which become holes in every "
+        "surface built on it. A gap is filled only if it is entirely "
+        "surrounded by admitted ground. Not applied to the "
+        "floodplain_thresholds admission, whose floodplain has "
+        "fill_floodplain_holes.",
+        "Admission","param",""};
+
+    // Training polygons (fluvial-surface methods plan 7i).
+    string_default_map["training_surfaces_fname"] = "";
+    help_map["training_surfaces_fname"] = {"string","",
+        "Polygons (gpkg, fgb, shp) of floodplain and terrace drawn by hand, used "
+        "to choose the HAND thresholds.",
+        "Class values: floodplain or fp; terrace, terraceN, tN or 'terrace N' "
+        "(case and spaces ignored). Terrace numbers are ignored: the levels come "
+        "from the HAND inside the polygons. Each polygon is summarised by its "
+        "median and its 10-90 percentile core; per reach window (the ladder's "
+        "windows) the floodplain / terrace bound and the breaks between "
+        "terrace levels are chosen by best separation (Youden's J) of those "
+        "cores. clubb2017: the bound replaces the data-chosen HAND bound per "
+        "window (and the second pass is skipped). ladder: the trained breaks "
+        "are the lowest breaks and the ladder's own search runs above the top "
+        "one. A window with too little training takes the fit over all "
+        "training cells. Writes <stem>_training_levels.tif, "
+        "<stem>_training_fit.csv and <stem>_training_polygons.csv. Needs "
+        "reference_field_choice hand.",
+        "Training","param",""};
+    string_default_map["training_surfaces_layer_name"] = "";
+    help_map["training_surfaces_layer_name"] = {"string","",
+        "Layer of training_surfaces_fname; empty = the first layer.",
+        "", "Training","param",""};
+    string_default_map["training_surfaces_class_field_name"] = "class";
+    help_map["training_surfaces_class_field_name"] = {"string","class",
+        "Field of training_surfaces_fname holding each polygon's class.",
+        "", "Training","param",""};
+    float_default_map["training_spread_factor"] = 3.0f;
+    help_map["training_spread_factor"] = {"float","3.0",
+        "A training polygon whose HAND p90 - p10 exceeds this many required "
+        "gaps (kappa x E_v) is not a single level.",
+        "Such a polygon (a sloping surface, or one drawn across a riser) still "
+        "counts as terrace for the floodplain / terrace bound but takes no part "
+        "in the terrace level breaks. Flagged in <stem>_training_polygons.csv. "
+        "With E_v 0 nothing is flagged.",
+        "Training","param",""};
+    int_default_map["min_training_cells_per_class"] = 20;
+    help_map["min_training_cells_per_class"] = {"int","20",
+        "Core cells a training population needs in a window to take part.",
+        "Below it the window falls back to the fit over all training cells, "
+        "and below it there the threshold is the data-chosen one.",
+        "Training","param",""};
 
     int_default_map["min_band_component_pixels"] = 50;
     help_map["min_band_component_pixels"] = {"int","50",
@@ -1730,6 +1786,10 @@ int main(int argc, char* argv[])
             {"max_terrace_height_metres", !level_fixed},
             {"fill_floodplain_holes", !level_fixed},
             {"supplied_levels_fname", !level_supplied},
+            {"training_surfaces_layer_name", sf["training_surfaces_fname"].empty()},
+            {"training_surfaces_class_field_name", sf["training_surfaces_fname"].empty()},
+            {"training_spread_factor", sf["training_surfaces_fname"].empty()},
+            {"min_training_cells_per_class", sf["training_surfaces_fname"].empty()},
             {"run_terrace_classification", !level_fixed},
             {"floodplain_second_pass_algorithm_choice", !level_fixed},
             {"write_floodplain_polygons", !level_fixed},
@@ -2170,6 +2230,20 @@ int main(int argc, char* argv[])
                 std::move(ad), std::move(am), meta);
         }
 
+        // fill_admitted_holes: roughness (noise, crops, buildings) leaves
+        // enclosed gaps in a relief / gradient / flat-mask admission that
+        // become holes in every surface built on it (Mayoco's flat mask:
+        // 988 holes). The floodplain_thresholds admission is not filled here:
+        // its floodplain has its own fill (fill_floodplain_holes).
+        if (!admit_by_bounds && bf["fill_admitted_holes"])
+        {
+            std::int64_t before = 0, after = 0;
+            for (const float v : admitted.get_data()) if (v > 0.5f) ++before;
+            admitted = lsdtt::binary_fill_holes(admitted);
+            for (const float v : admitted.get_data()) if (v > 0.5f) ++after;
+            std::cout << "  fill_admitted_holes: " << (after - before)
+                      << " enclosed cell(s) admitted\n";
+        }
         std::int64_t n_admitted = 0;
         for (const float v : admitted.get_data()) if (v > 0.5f) ++n_admitted;
         std::cout << "  " << n_admitted << " admitted cell(s)\n\n";
@@ -2731,6 +2805,87 @@ int main(int argc, char* argv[])
                          "to 0 for the antimode ladder\n";
     }
 
+    // ---- training polygons (plan 7i) ----------------------------------------
+    const bool training_on = !sf["training_surfaces_fname"].empty();
+    lsdtt::training_set training;
+    std::vector<lsdtt::training_polygon>  training_polygon_stats;
+    std::vector<std::vector<std::string>> training_fit_rows;
+    const double training_spread_factor =
+        static_cast<double>(ff["training_spread_factor"]);
+    const int training_min_cells = ip["min_training_cells_per_class"];
+    if (training_on)
+    {
+        std::cout << "--- Training polygons ---\n";
+        if (!use_hand)
+        {
+            std::cerr << "FATAL: training_surfaces_fname sets HAND bounds and "
+                         "breaks; reference_field_choice "
+                      << sf["reference_field_choice"] << " has no HAND.\n";
+            return 1;
+        }
+        const std::string tp =
+            pp.add_read_path_if_needed(sf["training_surfaces_fname"]);
+        try
+        {
+            training = lsdtt::read_training_surfaces(
+                reference_field, tp, sf["training_surfaces_layer_name"],
+                sf["training_surfaces_class_field_name"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: training polygons: " << e.what() << "\n";
+            return 1;
+        }
+        std::int64_t n_poly[2] = {0, 0}, n_cell[2] = {0, 0};
+        for (const lsdtt::training_polygon& tpoly : training.polygons)
+        {
+            ++n_poly[tpoly.cls];
+            n_cell[tpoly.cls] += tpoly.n_cells;
+        }
+        std::cout << "  " << tp << ": " << n_poly[0] << " floodplain polygon(s) ("
+                  << n_cell[0] << " cells), " << n_poly[1]
+                  << " terrace polygon(s) (" << n_cell[1] << " cells)\n";
+        if (level_supplied)
+            std::cout << "  NOTE: supplied levels are used as given; the "
+                         "training polygons do not set the ladder breaks.\n";
+
+        std::vector<float> tl(n_pixels, -1.0f);
+        for (std::size_t i = 0; i < n_pixels; ++i)
+        {
+            const std::int32_t f = training.polygon_of_pixel[i];
+            if (f >= 0)
+                tl[i] = static_cast<float>(
+                    training.polygons[static_cast<std::size_t>(f)].cls);
+        }
+        lsdtt::lsdtt_raster_meta tmeta = meta;
+        tmeta.no_data_value = -1.0;
+        const std::string p = stem + "_training_levels.tif";
+        std::cout << "  writing training levels (0 floodplain, 1 terrace): "
+                  << p << "\n\n";
+        loader.write_full(tl, tmeta, p, out_format);
+    }
+    auto add_training_fit_rows = [&](const std::string& scope,
+                                     std::int32_t source, double centre,
+                                     const std::string& used,
+                                     const lsdtt::training_window_fit& fit)
+    {
+        auto row = [&](const std::string& name, const lsdtt::training_split& sp)
+        {
+            training_fit_rows.push_back({
+                scope, std::to_string(source), num9(centre), used, name,
+                num9(sp.threshold), num9(sp.youden_j),
+                std::to_string(sp.n_lower), std::to_string(sp.n_upper),
+                std::to_string(sp.lower_below), std::to_string(sp.upper_above),
+                fit.note});
+        };
+        if (fit.has_bound) row("floodplain_bound", fit.bound);
+        for (std::size_t b = 0; b < fit.break_fits.size(); ++b)
+            row("break_" + std::to_string(b + 1), fit.break_fits[b]);
+        if (!fit.has_bound && fit.break_fits.empty())
+            training_fit_rows.push_back({scope, std::to_string(source),
+                num9(centre), used, "none", "", "", "", "", "", "", fit.note});
+    };
+
     // -------------------------------------------------------------------------
     // The ladder, band-then-label, and classification
     //
@@ -2835,6 +2990,9 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_max_break_metres"]);
         creq.band_min_component_pixels   = ip["min_band_component_pixels"];
         creq.ladder_supplied_breaks      = supplied_breaks;
+        creq.ladder_training             = training_on ? &training : nullptr;
+        creq.ladder_training_spread_factor       = training_spread_factor;
+        creq.ladder_training_min_cells_per_class = training_min_cells;
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
         creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
@@ -2979,8 +3137,110 @@ int main(int argc, char* argv[])
                                   terrace_field.get_meta(), p, out_format);
             }
 
+            // Training: a HAND bound per reach window (the ladder's windows,
+            // pooled k-1..k+1), else the fit over all training cells, else
+            // the data-chosen bound.
+            std::vector<float> trained_bound;
+            if (training_on)
+            {
+                lsdtt::training_set tset = training;
+                const double ev = ev_slope_dependent
+                    ? static_cast<double>(ff["vertical_accuracy_gentle_metres"])
+                    : static_cast<double>(ff["vertical_accuracy_metres"]);
+                const double gap =
+                    static_cast<double>(ff["ladder_resolvability_kappa"]) * ev;
+                lsdtt::compute_training_polygon_stats(
+                    tset, reference_field, training_spread_factor * gap);
+                training_polygon_stats = tset.polygons;
+
+                const std::vector<float>&   rf  = reference_field.get_data();
+                const std::vector<uint8_t>& rfm = reference_field.get_mask();
+                auto cell_ok = [&](std::size_t i)
+                { return rfm[i] && std::isfinite(rf[i]); };
+                std::vector<std::pair<std::int32_t, double>> all_cells;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (tset.polygon_of_pixel[i] >= 0 && cell_ok(i))
+                        all_cells.emplace_back(tset.polygon_of_pixel[i],
+                                               static_cast<double>(rf[i]));
+                const lsdtt::training_window_fit gfit = lsdtt::fit_training_window(
+                    all_cells, tset, gap, training_min_cells);
+                add_training_fit_rows("global", -1, 0.0,
+                                      gfit.has_bound ? "fallback" : "no", gfit);
+                const float gbound = gfit.has_bound
+                    ? static_cast<float>(gfit.bound.threshold)
+                    : std::numeric_limits<float>::quiet_NaN();
+
+                trained_bound.assign(n_pixels, gbound);
+                std::int64_t n_window = 0, n_global = 0;
+                const double reach_w =
+                    static_cast<double>(ff["ladder_reach_window_metres"]);
+                if (have_donors && scope_resolved && reach_w >= 0.0)
+                {
+                    const lsdtt::donor_reach_coordinate rc =
+                        lsdtt::donor_reach_coordinates(donor_flat, flow_distance,
+                                                       src_ids);
+                    std::vector<std::uint8_t> defined(n_pixels, 0);
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                        defined[i] = cell_ok(i) ? 1 : 0;
+                    const lsdtt::reach_window_set rw = lsdtt::assign_reach_windows(
+                        rc.source_of_pixel, rc.distance, defined, reach_w);
+                    std::vector<std::vector<std::pair<std::int32_t, double>>>
+                        wcells(rw.windows.size());
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        const std::int32_t w = rw.window_of_pixel[i];
+                        if (w >= 0 && tset.polygon_of_pixel[i] >= 0)
+                            wcells[static_cast<std::size_t>(w)].emplace_back(
+                                tset.polygon_of_pixel[i], static_cast<double>(rf[i]));
+                    }
+                    std::vector<float> wbound(rw.windows.size(), gbound);
+                    for (std::size_t w = 0; w < rw.windows.size(); ++w)
+                    {
+                        std::vector<std::pair<std::int32_t, double>> pooled;
+                        for (const std::int32_t k : rw.windows[w].neighbours)
+                            pooled.insert(pooled.end(),
+                                          wcells[static_cast<std::size_t>(k)].begin(),
+                                          wcells[static_cast<std::size_t>(k)].end());
+                        if (pooled.empty()) continue;
+                        const lsdtt::training_window_fit fit =
+                            lsdtt::fit_training_window(pooled, tset, gap,
+                                                       training_min_cells);
+                        if (fit.has_bound)
+                            wbound[w] = static_cast<float>(fit.bound.threshold);
+                        add_training_fit_rows(
+                            "window", rw.windows[w].source, rw.windows[w].centre_m,
+                            fit.has_bound ? "window"
+                                          : (gfit.has_bound ? "global" : "no"),
+                            fit);
+                        fit.has_bound ? ++n_window : ++n_global;
+                    }
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        const std::int32_t w = rw.window_of_pixel[i];
+                        if (w >= 0) trained_bound[i] = wbound[static_cast<std::size_t>(w)];
+                    }
+                }
+                std::cout << "  training: floodplain / terrace HAND bound ";
+                if (gfit.has_bound)
+                    std::cout << gfit.bound.threshold << " m over all training "
+                                 "(J " << gfit.bound.youden_j << ")";
+                else
+                    std::cout << "not fitted over all training ("
+                              << gfit.note << ")";
+                std::cout << "; " << n_window << " window(s) with their own "
+                          << "bound, " << n_global << " with training but "
+                             "too little of it\n";
+                if (!gfit.has_bound && n_window == 0)
+                {
+                    std::cout << "  NOTE: the training sets no bound; the "
+                                 "data-chosen bound is used.\n";
+                    trained_bound.clear();
+                }
+            }
+
             lsdtt::floodplain_threshold_request freq;
             freq.max_floodplain_hand_metres = floodplain_hand_bound;
+            if (!trained_bound.empty()) freq.hand_bound_per_cell = &trained_bound;
             freq.max_floodplain_gradient    = 0.0;   // applied in admission
             freq.seed_channel_pixels        = true;
             freq.require_channel_contact    = true;
@@ -3016,7 +3276,10 @@ int main(int argc, char* argv[])
                              "qq_upper_departure.\n";
                 return 1;
             }
-            if (second_pass == "qq_upper_departure")
+            if (second_pass == "qq_upper_departure" && !trained_bound.empty())
+                std::cout << "  NOTE: the training sets the HAND bound; the "
+                             "second pass is skipped.\n";
+            else if (second_pass == "qq_upper_departure")
             {
                 std::cout << "  first pass: " << fres.n_floodplain_pixels
                           << " floodplain cell(s) at HAND <= "
@@ -3279,6 +3542,29 @@ int main(int argc, char* argv[])
 
         ladder.windows       = cres.ladder_windows;
         ladder.max_band_index = 0;
+        if (training_on && !level_supplied)
+        {
+            training_polygon_stats = cres.ladder_training_polygons;
+            const lsdtt::training_window_fit& g = cres.ladder_training_global_fit;
+            add_training_fit_rows("global", -1, 0.0,
+                                  g.breaks.empty() ? "no" : "fallback", g);
+            for (const lsdtt::ladder_window& w : cres.ladder_windows)
+                if (w.source_id >= 0)
+                    add_training_fit_rows(
+                        "window", w.source_id, w.window_centre_m,
+                        w.training_source.empty() ? "no" : w.training_source,
+                        w.training_fit);
+            std::cout << "  training: " << cres.ladder_n_windows_trained
+                      << " of " << cres.ladder_windows.size()
+                      << " window(s) banded with trained breaks";
+            if (!g.breaks.empty())
+            {
+                std::cout << "; over all training:";
+                for (const double b : g.breaks) std::cout << " " << b;
+                std::cout << " m";
+            }
+            std::cout << "\n";
+        }
         banded.labels        = cres.banded_labels_raster;
         banded.patches       = cres.patches;
         classes              = cres.labels;
@@ -3786,6 +4072,37 @@ int main(int argc, char* argv[])
         loader.write_full(floodplain_first_pass_mask.get_data(),
                           floodplain_first_pass_mask.get_meta(), p, out_format,
                           lsdtt::lsdtt_pixel_type::uint8);
+    }
+
+    if (training_on)
+    {
+        const std::string pf = stem + "_training_fit.csv";
+        std::cout << "Writing training fit: " << pf << "\n";
+        loader.write_csv(pf, {"scope", "source_id", "window_centre_m", "used",
+                              "threshold", "threshold_m", "youden_j",
+                              "n_lower", "n_upper", "n_lower_below",
+                              "n_upper_above", "note"},
+                         training_fit_rows);
+        std::vector<std::vector<std::string>> prow;
+        for (std::size_t k = 0; k < training_polygon_stats.size(); ++k)
+        {
+            const lsdtt::training_polygon& tp = training_polygon_stats[k];
+            const bool has = tp.n_with_field > 0;
+            prow.push_back({std::to_string(k), tp.label,
+                            tp.cls == 0 ? "floodplain" : "terrace",
+                            std::to_string(tp.number), std::to_string(tp.n_cells),
+                            std::to_string(tp.n_with_field),
+                            has ? num9(tp.median) : "", has ? num9(tp.p10) : "",
+                            has ? num9(tp.p90) : "",
+                            has ? num9(tp.p90 - tp.p10) : "",
+                            tp.flagged ? "1" : "0"});
+        }
+        const std::string pp2 = stem + "_training_polygons.csv";
+        std::cout << "Writing training polygons: " << pp2 << "\n";
+        loader.write_csv(pp2, {"polygon_id", "label", "class", "terrace_number",
+                               "n_cells", "n_with_field", "median_m", "p10_m",
+                               "p90_m", "spread_m", "flagged"},
+                         prow);
     }
 
     if (bf["write_floodplain_threshold_csv"] && !floodplain_threshold_rows.empty())
