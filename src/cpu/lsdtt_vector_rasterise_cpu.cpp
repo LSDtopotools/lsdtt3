@@ -239,7 +239,11 @@ void burn_geometries(
     for (auto* g : geoms) handles.push_back(to_handle(g));
 
     int    band_no  = 1;
-    double burn_val = 1.0;
+    // GDALRasterizeGeometries reads one burn value per geometry per band: a
+    // single value here left every geometry after the first burning whatever
+    // followed it in memory (fixed 2026-10-27; multi-feature files burned only
+    // their first polygon).
+    std::vector<double> burn_vals(handles.size(), 1.0);
 
     char** opts = nullptr;
     if (all_touched)
@@ -250,7 +254,7 @@ void burn_geometries(
         1, &band_no,
         static_cast<int>(handles.size()), handles.data(),
         nullptr, nullptr,
-        &burn_val,
+        burn_vals.data(),
         opts,
         nullptr, nullptr
     );

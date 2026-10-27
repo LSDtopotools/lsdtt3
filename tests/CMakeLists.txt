@@ -9849,6 +9849,8 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "trn_ladder_patch_level_clusters.csv:all,-1,0,32,1.5,4,0.906580494,0.430937805,0.001,7.94000244 16.2199936 24.2399979 32.2499962,8 8 8 8"
     --stdout-contains "per window (>= 5 patches): 2 of 2 window(s) at p <= 0.05"
     --expect-file-contains "trn_ladder_training_polygons.csv:2,T5,terrace,5,1600,1600,24.1999969"
+    --expect-file-contains "trn_ladder_training_polygons.csv:0.559997559,0,0,500,2,0"
+    --expect-file-contains "trn_clubb2017_training_polygons.csv:0.519996643,0,0,500,1,0"
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -9913,6 +9915,17 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_extent PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_extent_multi
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_extent_multi.param.in
+    mapextm_mapped_surface_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "47600 cell(s) scored"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_extent_multi PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
     failure_fluvial_surfaces_mapped_bad_class
     lsdtt-fluvial-surfaces
     fluvial_surfaces_mapped_bad_class.param.in
@@ -9922,6 +9935,19 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'bench'"
 )
 lsdtt_set_tests_properties(failure_fluvial_surfaces_mapped_bad_class PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_training_bad_class
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training_bad_class.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "training polygons: surface polygons: class field 'class' has values that are neither"
+    --stderr-contains "'bench'"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_training_bad_class PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(

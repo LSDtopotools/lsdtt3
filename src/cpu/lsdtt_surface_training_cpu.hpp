@@ -112,6 +112,13 @@ struct training_window_fit
     std::vector<training_split> break_fits;
     // Polygon ids per level (level 0 = floodplain when present).
     std::vector<std::vector<std::int32_t>> levels;
+    bool has_floodplain_level = false;  // levels[0] is the floodplain
+    // (polygon id, core cells in this window) for every polygon present.
+    std::vector<std::pair<std::int32_t, std::int64_t>> polygon_core_cells;
+    // Terrace polygons whose median lies below the median of a floodplain
+    // polygon present in the same window (a mislabel, or a floodplain drawn on
+    // a terrace); also named in the note.
+    std::vector<std::int32_t> terrace_below_floodplain;
     std::string note;                   // what was dropped and why
 };
 

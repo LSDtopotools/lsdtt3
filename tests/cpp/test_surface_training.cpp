@@ -58,6 +58,8 @@ int main()
         check(lsdtt::parse_training_class("t1", n) == 1 && n == 1, "'t1' is terrace 1");
         check(lsdtt::parse_training_class("Terrace 2", n) == 1 && n == 2, "'Terrace 2' is terrace 2");
         check(lsdtt::parse_training_class("terrace", n) == 1 && n == 0, "'terrace' is terrace");
+        check(lsdtt::parse_training_class("terrace0", n) == 1 && n == 0,
+              "'terrace0' is terrace (numbers are ignored)");
         check(lsdtt::parse_training_class("T12", n) == 1 && n == 12, "'T12' is terrace 12");
         check(lsdtt::parse_training_class("fan", n) < 0 &&
               lsdtt::parse_training_class("tx", n) < 0 &&
@@ -151,6 +153,34 @@ int main()
                   std::fabs(fit.breaks[1] - 0.5 * (f57 + f96)) < 1e-6 &&
                   std::fabs(fit.breaks[2] - 0.5 * (f1025 + f1025b)) < 1e-4,
               "breaks: floodplain / 1, 1 / 2, 2 / 3 at the core midpoints");
+    }
+    {
+        const lsdtt::training_window_fit fit =
+            lsdtt::fit_training_window(cells, set, gap, 10);
+        check(fit.has_floodplain_level && fit.polygon_core_cells.size() == 6 &&
+                  fit.polygon_core_cells[0].second == 11,
+              "every polygon present is counted with its 11 core cells");
+        check(fit.terrace_below_floodplain.empty(),
+              "no terrace below the floodplain here");
+    }
+    {
+        // A "t9" drawn on floodplain ground: 0.5 .. 1.5 m, median 1.0 m,
+        // below the floodplain polygon's median 1.5 m.
+        lsdtt::training_set s2 = set;
+        lsdtt::training_polygon low;
+        low.label = "t9";
+        low.cls = lsdtt::parse_training_class(low.label, low.number);
+        low.n_with_field = 21;
+        low.median = 1.0; low.p25 = 0.75; low.p75 = 1.25;
+        s2.polygons.push_back(low);
+        std::vector<std::pair<std::int32_t, double>> c2 = cells;
+        for (int k = 0; k <= 20; ++k) c2.emplace_back(6, 0.5 + k / 20.0);
+        const lsdtt::training_window_fit fit =
+            lsdtt::fit_training_window(c2, s2, gap, 10);
+        check(fit.terrace_below_floodplain.size() == 1 &&
+                  fit.terrace_below_floodplain[0] == 6 &&
+                  fit.note.find("terrace polygon 6") != std::string::npos,
+              "a terrace polygon below the floodplain polygon is reported");
     }
     {
         const lsdtt::training_window_fit fit =

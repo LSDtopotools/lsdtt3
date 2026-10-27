@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -200,6 +201,9 @@ training_window_fit fit_training_window(
         core[f].push_back(v);
     }
 
+    for (const auto& [f, v] : core)
+        fit.polygon_core_cells.emplace_back(f, static_cast<std::int64_t>(v.size()));
+
     std::vector<double> fp_cells, terrace_cells;
     std::vector<std::int32_t> fp_ids;
     std::vector<std::int32_t> level_ids;   // single-level terrace polygons
@@ -223,6 +227,31 @@ training_window_fit fit_training_window(
         if (!fit.note.empty()) fit.note += "; ";
         fit.note += s;
     };
+
+    // A terrace polygon below a floodplain polygon in this window.
+    {
+        std::int32_t top_fp = -1;
+        for (const std::int32_t f : fp_ids)
+            if (top_fp < 0 || set.polygons[static_cast<std::size_t>(f)].median >
+                                  set.polygons[static_cast<std::size_t>(top_fp)].median)
+                top_fp = f;
+        if (top_fp >= 0)
+        {
+            const double fpm = set.polygons[static_cast<std::size_t>(top_fp)].median;
+            for (const auto& [f, v] : core)
+            {
+                const training_polygon& p = set.polygons[static_cast<std::size_t>(f)];
+                if (p.cls != 1 || !(p.median < fpm)) continue;
+                fit.terrace_below_floodplain.push_back(f);
+                std::ostringstream os;
+                os.precision(4);
+                os << "terrace polygon " << f << " (median " << p.median
+                   << " m) is below floodplain polygon " << top_fp << " ("
+                   << fpm << " m)";
+                add_note(os.str());
+            }
+        }
+    }
 
     const bool fp_ok = fp_cells.size() >= min_n;
     if (fp_ok && terrace_cells.size() >= min_n)
@@ -273,6 +302,7 @@ training_window_fit fit_training_window(
     std::vector<double> lower = groups.empty() ? std::vector<double>{}
                                                : group_cells(groups[0]);
     if (!groups.empty()) fit.levels.push_back(groups[0]);
+    fit.has_floodplain_level = fp_ok && !fit.levels.empty();
     for (std::size_t g = 1; g < groups.size(); ++g)
     {
         const std::vector<double> upper = group_cells(groups[g]);

@@ -3022,11 +3022,43 @@ int main(int argc, char* argv[])
                   << p << "\n\n";
         loader.write_full(tl, tmeta, p, out_format);
     }
+    // Per training polygon: the window holding most of its core cells, its
+    // level there, and whether any window found it below a floodplain polygon.
+    struct polygon_window_record
+    {
+        std::int64_t cells = -1;
+        std::int32_t source = -1;
+        double centre = 0.0;
+        int level = -1;
+        bool from_window = false;
+        bool below_floodplain = false;
+    };
+    std::map<std::int32_t, polygon_window_record> polygon_window;
     auto add_training_fit_rows = [&](const std::string& scope,
                                      std::int32_t source, double centre,
                                      const std::string& used,
                                      const lsdtt::training_window_fit& fit)
     {
+        const bool is_window = (scope == "window");
+        for (const auto& [pid, n] : fit.polygon_core_cells)
+        {
+            polygon_window_record& r = polygon_window[pid];
+            for (const std::int32_t b : fit.terrace_below_floodplain)
+                if (b == pid) r.below_floodplain = true;
+            // A window beats the global fit; among windows, more cells win.
+            if (r.cells >= 0 && (r.from_window && !is_window)) continue;
+            if (r.cells >= 0 && r.from_window == is_window && n <= r.cells) continue;
+            r.cells = n;
+            r.source = source;
+            r.centre = centre;
+            r.from_window = is_window;
+            r.level = -1;
+            for (std::size_t l = 0; l < fit.levels.size(); ++l)
+                for (const std::int32_t q : fit.levels[l])
+                    if (q == pid)
+                        r.level = static_cast<int>(l) +
+                                  (fit.has_floodplain_level ? 0 : 1);
+        }
         auto row = [&](const std::string& name, const lsdtt::training_split& sp)
         {
             training_fit_rows.push_back({
@@ -4353,6 +4385,8 @@ int main(int argc, char* argv[])
         {
             const lsdtt::training_polygon& tp = training_polygon_stats[k];
             const bool has = tp.n_with_field > 0;
+            const auto pw = polygon_window.find(static_cast<std::int32_t>(k));
+            const bool placed = pw != polygon_window.end();
             prow.push_back({std::to_string(k), tp.label,
                             tp.cls == 0 ? "floodplain" : "terrace",
                             std::to_string(tp.number), std::to_string(tp.n_cells),
@@ -4361,13 +4395,28 @@ int main(int argc, char* argv[])
                             has ? num9(tp.p25) : "", has ? num9(tp.p75) : "",
                             has ? num9(tp.p90) : "",
                             has ? num9(tp.p75 - tp.p25) : "",
-                            tp.flagged ? "1" : "0"});
+                            tp.flagged ? "1" : "0",
+                            placed ? std::to_string(pw->second.source) : "",
+                            placed ? num9(pw->second.centre) : "",
+                            placed ? std::to_string(pw->second.level) : "",
+                            placed && pw->second.below_floodplain ? "1" : "0"});
+        }
+        {
+            std::string below;
+            for (const auto& [pid, r] : polygon_window)
+                if (r.below_floodplain) below += " " + std::to_string(pid);
+            if (!below.empty())
+                std::cout << "  NOTE: terrace polygon(s)" << below
+                          << " lie below a floodplain polygon in the same window "
+                             "(see the note column of _training_fit.csv)\n";
         }
         const std::string pp2 = stem + "_training_polygons.csv";
         std::cout << "Writing training polygons: " << pp2 << "\n";
         loader.write_csv(pp2, {"polygon_id", "label", "class", "terrace_number",
                                "n_cells", "n_with_field", "median_m", "p10_m",
-                               "p25_m", "p75_m", "p90_m", "iqr_m", "flagged"},
+                               "p25_m", "p75_m", "p90_m", "iqr_m", "flagged",
+                               "main_window_source_id", "main_window_centre_m",
+                               "level_in_main_window", "below_floodplain"},
                          prow);
     }
 

@@ -1,0 +1,25 @@
+# The mapped tread polygons (8 features) as their own surveyed extent: every
+# mapped cell is scored, 11600 floodplain + 36000 terrace = 47600. Regression
+# for rasterise_polygons burning only the first feature of a multi-feature file
+# (one GDAL burn value passed for many geometries; fixed 2026-10-27).
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: mapextm
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder
+mapped_surfaces_fname: staircase_mapped.fgb
+
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
+ladder_break_algorithm_choice: jenks
+vertical_accuracy_metres: 0.5
+threshold_contributing_pixels: 50
+source_points_fname: staircase_sources.fgb
+channel_adjacency_radius_metres: 100
+
+mapped_surfaces_extent_fname: staircase_mapped.fgb
