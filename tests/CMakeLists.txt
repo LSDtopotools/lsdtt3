@@ -1996,6 +1996,8 @@ add_lsdtt_cli_smoke_test(
     --expect marsh_marsh_platform_labels.tif
     --expect marsh_marsh_scarp_mask.tif
     --expect marsh_marsh_platforms.fgb
+    --expect-vector-feature-min marsh_marsh_platforms.fgb:1
+    --expect-vector-feature-min marsh_tidal_channel_polygons.fgb:1
     --expect marsh_tidal_channel_mask.tif
     --expect marsh_tidal_channel_skeleton.tif
     --expect marsh_tidal_upl.tif
@@ -5109,6 +5111,14 @@ lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
     LABELS "unit;gdal")
 
 # Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
+# trace_labelled_polygons: written polygons read back and compared with their
+# pixels (area, bounding box). Every file it wrote was empty until 2026-10-27.
+add_executable(lsdtt-test-raster-vectorise cpp/test_raster_vectorise.cpp)
+target_link_libraries(lsdtt-test-raster-vectorise PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_vectorise_polygons COMMAND lsdtt-test-raster-vectorise)
+lsdtt_set_tests_properties(unit_raster_vectorise_polygons PROPERTIES
+    LABELS "unit;raster")
+
 add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
 target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
 add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
@@ -9634,6 +9644,9 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_legacy_keys PROPERTIES
 # draining rough mountains onto a flat piedmont. Pins recorded 2026-10-26,
 # identical at n_threads 1 and 8. The run log's stage table is asserted so a
 # preset that silently stopped applying would fail here.
+# Re-blessed 2026-10-27: fill_floodplain_holes became true under the preset;
+# 10 enclosed cells join the floodplain (mask 8344 -> 8354, the valley mask's
+# value). The QQ tables, HAND and the terrace field did not move.
 add_lsdtt_cli_smoke_test(
     rigorous_fluvial_surfaces_clubb2017
     lsdtt-fluvial-surfaces
@@ -9642,26 +9655,67 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
     --stdout-contains "floodplain_thresholds   (preset clubb2017)"
     --stdout-contains "fixed_thresholds   (preset clubb2017)"
+    --stdout-contains "true   (preset clubb2017)"
+    --expect-file-contains "clubb_ingested_params.param:fill_floodplain_holes: true"
     --stdout-contains "channel = Strahler order >= 3: 669 channel pixel(s)"
     --stdout-contains "HAND: quantile 2379 of 10000"
     --stdout-contains "gradient: quantile 2396 of 10000"
     --stdout-contains "kept 3 component(s), dropped 1 small and 0 not touching the channel"
     --expect-raster-values "clubb_band_index.tif:0,1"
-    --expect-raster-checksum clubb_band_index.tif:34244
-    --expect-raster-checksum clubb_banded_labels.tif:18344
-    --expect-raster-checksum clubb_surface_class.tif:8708
-    --expect-raster-checksum clubb_floodplain_mask.tif:8344
+    --expect-raster-checksum clubb_band_index.tif:34254
+    --expect-raster-checksum clubb_banded_labels.tif:18367
+    --expect-raster-checksum clubb_surface_class.tif:8718
+    --expect-raster-checksum clubb_floodplain_mask.tif:8354
     --expect-raster-checksum clubb_valley_mask.tif:8354
     --expect-raster-checksum clubb_terrace_field.tif:45462
     --expect-raster-checksum clubb_reference_field.tif:14348
-    --expect-sha256 clubb_surface_patches.csv:df743efb2c1401b84c6ee25345927b45b31d602ff978b1b997e716ef4bd4a678
-    --expect-sha256 clubb_surface_class.csv:e6444130a9916eb4ce896c60290a3f7c655447aa3fbf0223f257a81faf4980d1
+    --expect-sha256 clubb_surface_patches.csv:66ea47fdfaa5eecb8853e65ebd0ff7e485ff248c7c661c9e1050ce8dcf626bea
+    --expect-sha256 clubb_surface_class.csv:207af4fac576515f48c55a72590f0cecf05ac2290661272ffaf3fbffe438bc91
     --expect-sha256 clubb_floodplain_hand_qq.csv:a67f79bbbc740d057f0f8021d3db835fa29154deb6b62051d2980c219084939d
     --expect-sha256 clubb_floodplain_gradient_qq.csv:58535ca9625e09c762d14a9af6aa693ea1c37dab381e295426901c5bdffc498c
     --expect-file-contains "clubb_ingested_params.param:max_floodplain_hand_metres: 0.667831123"
     --expect-file-contains "clubb_ingested_params.param:max_floodplain_gradient: 0.0158595201"
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017 PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# run_terrace_classification false: the floodplain alone. Same run otherwise,
+# so the floodplain mask and the QQ tables carry the pins above; no terrace
+# field is built or written and no cell is classed terrace.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_floodplain_only
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_floodplain_only.param.in
+    clubbfp_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "run_terrace_classification false: floodplain only"
+    --expect-raster-checksum clubbfp_floodplain_mask.tif:8354
+    --expect-raster-values "clubbfp_band_index.tif:0"
+    --expect-absent clubbfp_terrace_field.tif
+    --expect-sha256 clubbfp_floodplain_hand_qq.csv:a67f79bbbc740d057f0f8021d3db835fa29154deb6b62051d2980c219084939d
+    --expect-sha256 clubbfp_floodplain_gradient_qq.csv:58535ca9625e09c762d14a9af6aa693ea1c37dab381e295426901c5bdffc498c
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_floodplain_only PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# floodplain_second_pass_algorithm_choice qq_upper_departure: a second HAND
+# bound from the upper departure of the QQ over the first-pass floodplain, the
+# floodplain rebuilt at it and filled. The first-pass mask keeps the clubb2017
+# floodplain pin (8354); the pass and polygon counts were recorded 2026-10-27.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_second_pass
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_second_pass.param.in
+    clubbsp_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "second pass (qq_upper_departure): HAND bound 0.310797 m (quantile 7710 of 10000 over 8354 first-pass floodplain cell(s))"
+    --expect-raster-checksum clubbsp_floodplain_first_pass_mask.tif:8354
+    --expect-raster-checksum clubbsp_floodplain_mask.tif:6472
+    --expect-sha256 clubbsp_floodplain_hand_qq_second_pass.csv:f21f44785d1893a4a4df38845a88833ee2e39fc4b435daf2a8e657e0eb7b2475
+    --expect-vector-feature-min clubbsp_floodplain_polygons.fgb:4
+    --expect-vector-feature-min clubbsp_floodplain_first_pass_polygons.fgb:3
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_second_pass PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The same, counting every channel pixel: the Strahler definition must reach

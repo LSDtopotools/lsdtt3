@@ -223,6 +223,49 @@ void test_fixed_cdf_and_names()
 
 } // namespace
 
+void test_upper_departure()
+{
+    std::cout << "\n--- upper-tail departure (floodplain second pass) ---\n";
+    const std::size_t P = 200;
+    const std::vector<double> ref(1000, 0.0);
+    // QQ6's table (range set at index 0; disagreements at 201, 402, 604, 805,
+    // 999): the only run of 201 agreeing quantiles is 403 .. 603, so the
+    // upper rule returns its END, 603, where the lower rule returned 403.
+    {
+        std::vector<double> dq(1000, 0.0);
+        dq[0] = 100.0;
+        for (std::size_t i : {201u, 402u, 604u, 805u, 999u}) dq[i] = 50.0;
+        check(lsdtt::qq_last_persistent_agreement(dq, ref, 0.01, P) == 603,
+              "QU1: the run of 201 qualifies, at its end");
+        dq[603] = 50.0;   // shorten it to 200
+        check(lsdtt::qq_last_persistent_agreement(dq, ref, 0.01, P) == -1,
+              "QU2: runs of 200 never qualify");
+    }
+    // A Gaussian core (HAND on the valley floor) with a detached high
+    // population (flats standing above it): the upper departure falls between
+    // the core's top and the high population.
+    {
+        std::vector<double> v = exact_gaussian(8000, 3.0, 1.0);
+        for (std::size_t k = 0; k < 2000; ++k)
+            v.push_back(20.0 + 10.0 * static_cast<double>(k) / 2000.0);
+        const lsdtt::threshold_selection_result r =
+            lsdtt::select_qq_upper_departure(v, qq_request());
+        check(r.found && r.threshold > 3.0 && r.threshold < 20.0,
+              "QU3: Gaussian core + high flats: the departure lies between "
+              "them (threshold " + std::to_string(r.threshold) + ")");
+        const lsdtt::threshold_selection_result lo =
+            lsdtt::select_threshold(v, qq_request());
+        check(lo.found && lo.threshold < r.threshold,
+              "QU4: the lower-tail (Clubb) threshold is below the upper one");
+    }
+    // A constant sample: not found.
+    {
+        const std::vector<double> flat(5000, 3.0);
+        check(!lsdtt::select_qq_upper_departure(flat, qq_request()).found,
+              "QU5: a constant sample reports found = false");
+    }
+}
+
 int main()
 {
     test_compressed_tail();
@@ -230,6 +273,7 @@ int main()
     test_persistence_rule();
     test_compute_qq_percentiles();
     test_fixed_cdf_and_names();
+    test_upper_departure();
 
     std::cout << "\n" << (n_checks - n_failed) << " / " << n_checks
               << " checks passed\n";

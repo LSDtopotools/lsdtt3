@@ -128,4 +128,28 @@ struct threshold_selection_result
     double                     threshold_fraction,
     std::size_t                persistence_points);
 
+// The mirror of the qq_gaussian rule, for the UPPER tail: the last index i
+// such that |data_quantile[j] - normal_reference[j]| is below
+// threshold_fraction * range for j = i - persistence_points .. i, all inside
+// the arrays. Above it the data depart upward from the Gaussian core. -1 when
+// there is none or the range is not positive.
+//
+// Not part of Clubb et al. (2017). lsdtt-fluvial-surfaces uses it for the
+// floodplain second pass (floodplain_second_pass_algorithm_choice
+// qq_upper_departure): on the HAND of the first-pass floodplain cells, the
+// upper departure separates the valley floor from wide flats standing above
+// it - fans at tributary mouths, upland basins.
+[[nodiscard]] long qq_last_persistent_agreement(
+    const std::vector<double>& data_quantile,
+    const std::vector<double>& normal_reference,
+    double                     threshold_fraction,
+    std::size_t                persistence_points);
+
+// compute_qq on values, then qq_last_persistent_agreement; the threshold is
+// the data quantile there. Uses the request's qq_* fields; found = false when
+// there is no qualifying run.
+[[nodiscard]] threshold_selection_result select_qq_upper_departure(
+    const std::vector<double>&         values,
+    const threshold_selection_request& request);
+
 } // namespace lsdtt

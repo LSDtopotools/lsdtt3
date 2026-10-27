@@ -71,6 +71,60 @@ long qq_first_persistent_agreement(
     return -1;
 }
 
+long qq_last_persistent_agreement(
+    const std::vector<double>& data_quantile,
+    const std::vector<double>& normal_reference,
+    double                     threshold_fraction,
+    std::size_t                persistence_points)
+{
+    const std::size_t n = std::min(data_quantile.size(), normal_reference.size());
+    if (n == 0) return -1;
+
+    const auto [lo, hi] = std::minmax_element(data_quantile.begin(),
+                                              data_quantile.begin() + n);
+    const double range = *hi - *lo;
+    if (!(range > 0.0) || !std::isfinite(range)) return -1;
+
+    // run[k + 1] = number of consecutive agreeing quantiles ending at k.
+    std::vector<std::size_t> run(n + 1, 0);
+    for (std::size_t k = 0; k < n; ++k)
+    {
+        const double diff = std::fabs(data_quantile[k] - normal_reference[k]);
+        const bool agrees = std::isfinite(diff) &&
+                            diff / range < threshold_fraction;
+        run[k + 1] = agrees ? run[k] + 1 : 0;
+    }
+    for (std::size_t k = n; k-- > 0;)
+        if (run[k + 1] >= persistence_points + 1)
+            return static_cast<long>(k);
+    return -1;
+}
+
+threshold_selection_result select_qq_upper_departure(
+    const std::vector<double>&         values,
+    const threshold_selection_request& request)
+{
+    threshold_selection_result out;
+    out.qq = compute_qq(values, request.qq_n_points,
+                        request.qq_lower_percentile,
+                        request.qq_upper_percentile);
+    if (out.qq.data_quantile.empty()) return out;
+
+    const auto [lo, hi] = std::minmax_element(out.qq.data_quantile.begin(),
+                                              out.qq.data_quantile.end());
+    out.qq_range = *hi - *lo;
+
+    const long i = qq_last_persistent_agreement(
+        out.qq.data_quantile, out.qq.normal_reference,
+        request.qq_threshold_fraction, request.qq_persistence_points);
+    if (i < 0) return out;
+
+    out.found     = true;
+    out.qq_index  = static_cast<std::size_t>(i);
+    out.threshold = out.qq.data_quantile[out.qq_index];
+    return out;
+}
+
 namespace {
 
 threshold_selection_result select_qq_gaussian(

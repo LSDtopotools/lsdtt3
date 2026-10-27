@@ -82,6 +82,7 @@
 #include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
+#include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -689,6 +690,16 @@ int main(int argc, char* argv[])
         "on 10 m data).",
         "Floodplain","param","admission_algorithm_choice"};
 
+    bool_default_map["run_terrace_classification"] = true;
+    help_map["run_terrace_classification"] = {"bool","true",
+        "Find terraces as well as the floodplain (fixed_thresholds).",
+        "false = the floodplain alone, as LSDTopoTools2 allowed: the terrace "
+        "field (and its swath baseline, the most memory- and time-hungry "
+        "stage on a large DEM) is never built and no terrace class is "
+        "assigned. The floodplain mask is identical either way: it is decided "
+        "before the terraces and independently of them.",
+        "Floodplain","switch","level_algorithm_choice"};
+
     float_default_map["min_terrace_height_above_floodplain_metres"] = 0.0f;
     help_map["min_terrace_height_above_floodplain_metres"] = {"float","0",
         "How far above the floodplain bound a terrace starts [m] "
@@ -710,8 +721,39 @@ int main(int argc, char* argv[])
     bool_default_map["fill_floodplain_holes"] = false;
     help_map["fill_floodplain_holes"] = {"bool","false",
         "Fill enclosed holes in the floodplain (fixed_thresholds).",
-        "LSDTopoTools2's fill_floodplain.",
+        "LSDTopoTools2's fill_floodplain (lsdtt-valley-metrics), done with "
+        "binary_fill_holes rather than OpenCV: a background region not "
+        "connected to the outside of the valid DEM is a hole. Default false, "
+        "but TRUE under the clubb2017 preset unless the parameter file names "
+        "it; the value used is in the run log's stage table.",
         "Floodplain","param","level_algorithm_choice"};
+
+    string_default_map["floodplain_second_pass_algorithm_choice"] = "none";
+    help_map["floodplain_second_pass_algorithm_choice"] = {"string","none",
+        "A second HAND bound read off the floodplain itself: none or "
+        "qq_upper_departure (fixed_thresholds).",
+        "qq_upper_departure: the QQ plot of HAND over the first-pass "
+        "floodplain cells, against the same Gaussian line, and the HIGHEST "
+        "quantile at which the data still agree with it (the mirror of the "
+        "Clubb rule, same floodplain_qq_* settings). Above it HAND departs "
+        "upward: wide flats standing above the valley floor - fans at "
+        "tributary mouths, upland basins. The floodplain is then rebuilt "
+        "with that HAND bound (same gradient bound, channel contact and size "
+        "filter) and its holes are always filled; terraces are measured from "
+        "the second-pass bound. Not part of Clubb et al. (2017). The first "
+        "pass is still written (_floodplain_first_pass_mask.tif, "
+        "_floodplain_first_pass_polygons) and the second QQ table is "
+        "<stem>_floodplain_hand_qq_second_pass.csv.",
+        "Floodplain","param","level_algorithm_choice"};
+
+    bool_default_map["write_floodplain_polygons"] = false;
+    help_map["write_floodplain_polygons"] = {"bool","false",
+        "Write the floodplain as polygons (fixed_thresholds).",
+        "Output file: <stem>_floodplain_polygons.<fgb|gpkg> (write_vector_format; "
+        "one polygon per connected floodplain component, 8-connected), and "
+        "<stem>_floodplain_first_pass_polygons.<fgb|gpkg> when a second pass "
+        "ran.",
+        "Outputs","output","level_algorithm_choice"};
 
     bool_default_map["write_floodplain_threshold_csv"] = true;
     help_map["write_floodplain_threshold_csv"] = {"bool","true",
@@ -1474,6 +1516,22 @@ int main(int argc, char* argv[])
         return 1;
     const bool segment_whole_mask = (segmentation_choice == "whole_mask");
 
+    // fill_floodplain_holes: false by default, true under clubb2017 unless
+    // the file names it (a bool cannot carry the "preset" sentinel).
+    bool fill_floodplain_holes = bf["fill_floodplain_holes"];
+    if (pp.parameter_supplied("fill_floodplain_holes"))
+    {
+        stages.push_back({"fill_floodplain_holes",
+                          fill_floodplain_holes ? "true" : "false",
+                          "parameter file"});
+    }
+    else if (clubb_preset)
+    {
+        fill_floodplain_holes = true;
+        stages.push_back({"fill_floodplain_holes", "true", "preset " + method});
+        pp.record_resolved_parameter("fill_floodplain_holes", "true");
+    }
+
     const bool level_fixed     = (level_choice == "fixed_thresholds");
     const bool level_supplied  = (level_choice == "supplied_levels");
 
@@ -1530,6 +1588,9 @@ int main(int argc, char* argv[])
             {"max_terrace_height_metres", !level_fixed},
             {"fill_floodplain_holes", !level_fixed},
             {"supplied_levels_fname", !level_supplied},
+            {"run_terrace_classification", !level_fixed},
+            {"floodplain_second_pass_algorithm_choice", !level_fixed},
+            {"write_floodplain_polygons", !level_fixed},
             {"riser_mask_fname", !segment_whole_mask},
             {"max_floodplain_gradient", !admit_by_bounds},
             {"floodplain_gradient_window_radius_metres", !admit_by_bounds},
@@ -2270,6 +2331,17 @@ int main(int argc, char* argv[])
     // with a defined HAND (a pixel that reaches no in-scope channel has no
     // height above one), and for the gradient a defined gradient.
     // -------------------------------------------------------------------------
+    // One row per data-chosen floodplain bound, written as
+    // <stem>_floodplain_thresholds.csv: the numbers a plot of the QQ tables
+    // needs, so nothing downstream has to recompute them.
+    std::vector<std::vector<std::string>> floodplain_threshold_rows;
+    auto num9 = [](double v)
+    {
+        std::ostringstream os;
+        os.precision(9);
+        os << v;
+        return os.str();
+    };
     float floodplain_hand_bound     = ff["max_floodplain_hand_metres"];
     float floodplain_gradient_bound = ff["max_floodplain_gradient"];
     lsdtt::lsdtt_raster_cpu floodplain_gradient;
@@ -2361,6 +2433,13 @@ int main(int argc, char* argv[])
                     return false;
                 }
                 bound = static_cast<float>(sel.threshold);
+                floodplain_threshold_rows.push_back({
+                    "1", out_name, floodplain_threshold_choice,
+                    num9(sel.threshold),
+                    floodplain_threshold_choice == "qq_gaussian"
+                        ? std::to_string(sel.qq_index) : "",
+                    std::to_string(values.size()),
+                    pp.get_write_fname() + "_floodplain_" + out_name + table_suffix});
                 if (bf["write_floodplain_threshold_csv"])
                 {
                     const std::string p = stem + "_floodplain_" + out_name +
@@ -2444,6 +2523,7 @@ int main(int argc, char* argv[])
     std::vector<lsdtt::flat_surface_label_class>  classes;
     lsdtt::lsdtt_raster_cpu                       class_raster;
     lsdtt::lsdtt_raster_cpu                       floodplain_mask;
+    lsdtt::lsdtt_raster_cpu                       floodplain_first_pass_mask;
 
     std::cout << (level_fixed ? "--- Floodplain and terraces (fixed thresholds) ---\n"
                               : "--- Ladder and band-then-label ---\n");
@@ -2634,9 +2714,17 @@ int main(int argc, char* argv[])
                              "floodplain, as Clubb et al. do; "
                              "break_flats_with_channels only affected admission.\n";
 
-            lsdtt::lsdtt_raster_cpu terrace_field = reference_field;
+            // run_terrace_classification false: floodplain only. No terrace
+            // field is built (not even a copy of HAND), and the engine never
+            // reads one.
+            const bool run_terraces = bf["run_terrace_classification"];
+            if (!run_terraces)
+                std::cout << "  run_terrace_classification false: floodplain "
+                             "only, no terrace field.\n";
+            lsdtt::lsdtt_raster_cpu terrace_field;
+            if (run_terraces) terrace_field = reference_field;
             std::vector<std::int64_t> swath_nearest;
-            if (terrace_field_choice == "swath_baseline")
+            if (run_terraces && terrace_field_choice == "swath_baseline")
             {
                 std::vector<std::int64_t> baseline;
                 for (std::size_t i = 0; i < n_pixels; ++i)
@@ -2661,7 +2749,7 @@ int main(int argc, char* argv[])
                           << baseline.size() << " channel pixel(s) within "
                           << ff["swath_half_width_metres"] << " m\n";
             }
-            if (bf["write_terrace_field_raster"])
+            if (run_terraces && bf["write_terrace_field_raster"])
             {
                 const std::string p = stem + "_terrace_field.tif";
                 std::cout << "Writing terrace field: " << p << "\n";
@@ -2675,9 +2763,9 @@ int main(int argc, char* argv[])
             freq.seed_channel_pixels        = true;
             freq.require_channel_contact    = true;
             freq.min_component_pixels       = ip["min_band_component_pixels"];
-            freq.fill_holes                 = bf["fill_floodplain_holes"];
+            freq.fill_holes                 = fill_floodplain_holes;
             freq.connectivity               = lsdtt::pixel_connectivity::d8;
-            freq.find_terraces              = true;
+            freq.find_terraces              = run_terraces;
             freq.min_terrace_height_above_floodplain_metres = static_cast<double>(
                 ff["min_terrace_height_above_floodplain_metres"]);
             freq.max_terrace_height_metres =
@@ -2688,7 +2776,7 @@ int main(int argc, char* argv[])
             {
                 fres = lsdtt::classify_floodplain_terraces_by_thresholds(
                     admitted, reference_field, reference_field, cmask,
-                    &terrace_field, freq);
+                    run_terraces ? &terrace_field : nullptr, freq);
             }
             catch (const std::exception& e)
             {
@@ -2696,6 +2784,88 @@ int main(int argc, char* argv[])
                           << e.what() << "\n";
                 return 1;
             }
+            // ---- optional second pass on the first-pass floodplain's HAND ----
+            const std::string& second_pass =
+                sf["floodplain_second_pass_algorithm_choice"];
+            if (second_pass != "none" && second_pass != "qq_upper_departure")
+            {
+                std::cerr << "FATAL: unknown floodplain_second_pass_algorithm_"
+                             "choice '" << second_pass << "'. Valid: none, "
+                             "qq_upper_departure.\n";
+                return 1;
+            }
+            if (second_pass == "qq_upper_departure")
+            {
+                std::cout << "  first pass: " << fres.n_floodplain_pixels
+                          << " floodplain cell(s) at HAND <= "
+                          << floodplain_hand_bound << " m\n";
+                const std::vector<float>& fpd = fres.floodplain_mask.get_data();
+                const std::vector<float>& rf  = reference_field.get_data();
+                const std::vector<uint8_t>& rfm = reference_field.get_mask();
+                std::vector<double> fp_hand;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (fpd[i] > 0.5f && rfm[i] && std::isfinite(rf[i]))
+                        fp_hand.push_back(static_cast<double>(rf[i]));
+                lsdtt::threshold_selection_result sel2;
+                try
+                {
+                    sel2 = lsdtt::select_qq_upper_departure(fp_hand,
+                        lsdtt::threshold_request_from_parameters(
+                            "qq_gaussian", "floodplain_second_pass_algorithm_choice",
+                            0.0, ff, "floodplain"));
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: floodplain second pass: " << e.what()
+                              << "\n";
+                    return 1;
+                }
+                if (bf["write_floodplain_threshold_csv"] && !sel2.qq.data_quantile.empty())
+                {
+                    const std::string p = stem + "_floodplain_hand_qq_second_pass.csv";
+                    lsdtt::write_qq_csv(loader, p, sel2.qq);
+                    std::cout << "  Writing " << p << "\n";
+                }
+                if (!sel2.found || !(sel2.threshold < floodplain_hand_bound))
+                {
+                    std::cout << "  second pass: "
+                              << (sel2.found ? "the upper departure is not below "
+                                               "the first-pass bound"
+                                             : "no upper departure found")
+                              << "; the first-pass floodplain is kept.\n";
+                }
+                else
+                {
+                    std::cout << "  second pass (qq_upper_departure): HAND bound "
+                              << sel2.threshold << " m (quantile " << sel2.qq_index
+                              << " of " << sel2.qq.data_quantile.size()
+                              << " over " << fp_hand.size()
+                              << " first-pass floodplain cell(s))\n";
+                    floodplain_threshold_rows.push_back({
+                        "2", "hand", "qq_upper_departure",
+                        num9(sel2.threshold), std::to_string(sel2.qq_index),
+                        std::to_string(fp_hand.size()),
+                        pp.get_write_fname() +
+                            "_floodplain_hand_qq_second_pass.csv"});
+                    floodplain_first_pass_mask = fres.floodplain_mask;
+                    floodplain_hand_bound = static_cast<float>(sel2.threshold);
+                    freq.max_floodplain_hand_metres = floodplain_hand_bound;
+                    freq.fill_holes = true;   // the second pass is always filled
+                    try
+                    {
+                        fres = lsdtt::classify_floodplain_terraces_by_thresholds(
+                            admitted, reference_field, reference_field, cmask,
+                            run_terraces ? &terrace_field : nullptr, freq);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "FATAL: floodplain second pass: "
+                                  << e.what() << "\n";
+                        return 1;
+                    }
+                }
+            }
+
             std::cout << "  floodplain: " << fres.n_floodplain_candidates
                       << " candidate cell(s) (channel included); kept "
                       << fres.n_floodplain_components_kept
@@ -3316,6 +3486,73 @@ int main(int argc, char* argv[])
         std::cout << "Writing floodplain mask: " << p << "\n";
         loader.write_full(floodplain_mask.get_data(),
                           floodplain_mask.get_meta(), p, out_format, lsdtt::lsdtt_pixel_type::uint8);
+    }
+
+    if (use_hand && bf["write_floodplain_mask_raster"] &&
+        !floodplain_first_pass_mask.get_data().empty())
+    {
+        const std::string p = stem + "_floodplain_first_pass_mask.tif";
+        std::cout << "Writing first-pass floodplain mask: " << p << "\n";
+        loader.write_full(floodplain_first_pass_mask.get_data(),
+                          floodplain_first_pass_mask.get_meta(), p, out_format,
+                          lsdtt::lsdtt_pixel_type::uint8);
+    }
+
+    if (bf["write_floodplain_threshold_csv"] && !floodplain_threshold_rows.empty())
+    {
+        const std::string p = stem + "_floodplain_thresholds.csv";
+        std::cout << "Writing floodplain thresholds: " << p << "\n";
+        loader.write_csv(p, {"pass", "quantity", "algorithm", "threshold",
+                             "qq_index", "n_values", "table_fname"},
+                         floodplain_threshold_rows);
+    }
+
+    if (level_fixed && bf["write_floodplain_polygons"] &&
+        !floodplain_mask.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_floodplain_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        auto write_polygons = [&](const lsdtt::lsdtt_raster_cpu& mask,
+                                  const std::string& suffix,
+                                  const std::string& layer)
+        {
+            const lsdtt::lsdtt_raster_cpu labels =
+                lsdtt::label_binary_components_by_size(
+                    mask, 1, lsdtt::pixel_connectivity::d8);
+            lsdtt::lsdtt_vectorise_options vopt;
+            vopt.layer_name = layer;
+            vopt.format     = pfmt;
+            vopt.background = 0.0f;
+            vopt.spatial_index = true;   // as lsdtt-marsh-topography
+            const std::string p = stem + suffix + lsdtt::output_extension(pfmt);
+            std::cout << "Writing " << layer << ": " << p << "\n";
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(labels, vec_loader, p, vopt);
+        };
+        try
+        {
+            write_polygons(floodplain_mask, "_floodplain_polygons",
+                           "floodplain");
+            if (!floodplain_first_pass_mask.get_data().empty())
+                write_polygons(floodplain_first_pass_mask,
+                               "_floodplain_first_pass_polygons",
+                               "floodplain_first_pass");
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: floodplain polygons: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     if (bf["write_surface_patches_csv"])
