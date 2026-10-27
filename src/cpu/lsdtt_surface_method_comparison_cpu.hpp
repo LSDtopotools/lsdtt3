@@ -57,6 +57,27 @@ struct method_pair_comparison
     const std::vector<method_class_map>& methods,
     const std::vector<std::uint8_t>&     valid);
 
+// Scoring one method against mapped floodplains and terraces (plan 7c).
+// mapped: per cell 0 none (surveyed, neither class), 1 floodplain, 2 terrace.
+// Only cells with `scored` nonzero count (the surveyed extent, valid in both).
+// confusion[mapped][method]. Per class k (1, 2):
+//   precision = confusion[k][k] / (cells the method put in k),
+//   recall    = confusion[k][k] / (cells mapped as k),
+//   iou       = confusion[k][k] / (cells in k in either);
+// NaN when the denominator is 0. Index 0 of the arrays is unused.
+struct mapped_surface_score
+{
+    std::array<std::array<std::int64_t, 3>, 3> confusion{};
+    std::array<double, 3> precision{}, recall{}, iou{};
+    std::int64_t n_scored = 0;
+};
+
+// Throws std::invalid_argument on size mismatches or a class above 2.
+[[nodiscard]] mapped_surface_score score_against_mapped(
+    const method_class_map&          method,
+    const std::vector<std::uint8_t>& mapped,
+    const std::vector<std::uint8_t>& scored);
+
 // Bit k (method k, list order) set where that method gave class `cls`; 0
 // elsewhere. At most 8 methods.
 [[nodiscard]] std::vector<std::uint8_t> surface_class_agreement_bits(

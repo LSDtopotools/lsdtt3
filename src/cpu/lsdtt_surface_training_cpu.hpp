@@ -74,7 +74,8 @@ struct training_set
 };
 
 // Burn the polygons of `vector_path` (cell-centre rule, no gap fill) onto the
-// grid of `reference` and parse their classes. Throws std::invalid_argument
+// grid of `reference` and parse their classes. Also the reader for mapped
+// surfaces (plan 7c), which accept the same class values. Throws std::invalid_argument
 // naming any label that is neither floodplain nor terrace.
 [[nodiscard]] training_set read_training_surfaces(
     const lsdtt_raster_cpu& reference,

@@ -82,7 +82,7 @@ training_set read_training_surfaces(const lsdtt_raster_cpu& reference,
     }
     if (!bad.empty())
     {
-        std::string msg = "training polygons: class field '" + class_field +
+        std::string msg = "surface polygons: class field '" + class_field +
                           "' has values that are neither floodplain (floodplain, "
                           "fp) nor terrace (terraceN, tN):";
         for (const std::string& b : bad) msg += " '" + b + "'";

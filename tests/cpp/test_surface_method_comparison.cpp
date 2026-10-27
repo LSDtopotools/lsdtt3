@@ -10,7 +10,8 @@
 // compare_surface_classes / surface_class_agreement_bits
 // (lsdtt_surface_method_comparison_cpu), fluvial-surface methods plan 7b/7d.
 // Hand-checkable class maps: a method compared with itself, two methods that
-// disagree on known cells, invalid cells, and the bit layout.
+// disagree on known cells, invalid cells, the bit layout, and scoring against
+// mapped classes (plan 7c).
 // -----------------------------------------------------------------------------
 
 #include <cmath>
@@ -95,6 +96,32 @@ int main()
         try { (void)lsdtt::compare_surface_classes({method_class_map{"d", std::vector<std::uint8_t>(10, 3)}}, valid); }
         catch (const std::invalid_argument&) { threw = true; }
         check(threw, "a class above 2 is refused");
+    }
+    {
+        // Scored against a "mapped" class map: a as the method, b as the map.
+        // mapped fp {0,1,4,8}, method fp {0,1,2,8}: tp 3, precision 3/4,
+        // recall 3/4, IoU 3/5. mapped terrace {3,7,9}, method {3,4,9}: tp 2.
+        const lsdtt::mapped_surface_score sc =
+            lsdtt::score_against_mapped(a, b.cls, valid);
+        check(sc.n_scored == 10 && sc.confusion[1][1] == 3 &&
+                  sc.confusion[2][2] == 2,
+              "mapped score: confusion is [mapped][method]");
+        check(std::fabs(sc.precision[1] - 0.75) < 1e-12 &&
+                  std::fabs(sc.recall[1] - 0.75) < 1e-12 &&
+                  std::fabs(sc.iou[1] - 0.6) < 1e-12,
+              "floodplain precision 3/4, recall 3/4, IoU 3/5");
+        check(std::fabs(sc.precision[2] - 2.0 / 3.0) < 1e-12 &&
+                  std::fabs(sc.recall[2] - 2.0 / 3.0) < 1e-12 &&
+                  std::fabs(sc.iou[2] - 0.5) < 1e-12,
+              "terrace precision 2/3, recall 2/3, IoU 2/4");
+        std::vector<std::uint8_t> half(10, 0);
+        for (int i = 0; i < 5; ++i) half[static_cast<std::size_t>(i)] = 1;
+        check(lsdtt::score_against_mapped(a, b.cls, half).n_scored == 5,
+              "only scored cells count");
+        const lsdtt::mapped_surface_score none = lsdtt::score_against_mapped(
+            method_class_map{"z", std::vector<std::uint8_t>(10, 0)}, b.cls, valid);
+        check(std::isnan(none.precision[1]) && none.recall[1] == 0.0,
+              "a method with no floodplain: precision NaN, recall 0");
     }
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;

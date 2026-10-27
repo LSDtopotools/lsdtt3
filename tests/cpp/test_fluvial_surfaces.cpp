@@ -74,6 +74,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <ogr_spatialref.h>
+
 #include "lsdtt_data_loader.hpp"
 #include "lsdtt_flow_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
@@ -838,6 +840,103 @@ void write_phase0b_fixtures(const std::string& output_dir)
                                  {std::string(labels[j - 1])});
         }
         loader.finish_vector_write();
+    }
+
+    // Mapped surfaces (mapped_surfaces_fname, plan 7c): the staircase's own
+    // tread map as polygons - tread 1 "floodplain", treads 2-4 "terrace" - on
+    // both flanks, edges half a cell off the cell centres so no centre sits on
+    // an edge. The polygons run the full valley length, across the three
+    // riser gaps (ramps, tread id 0 in the generator) as a mapper would. The same polygons as FlatGeobuf, GeoPackage and GeoPackage in
+    // EPSG:4326 (densified every 10 m before transforming, so the reprojected
+    // edges stay within millimetres); a file with an unknown class ("bench");
+    // and a surveyed extent covering the northern half of the grid.
+    {
+        const lsdtt::lsdtt_raster_meta& m = st.dem.get_meta();
+        const double cs = k_st_cell_size;
+        // The generator's channel is column (n_cols - 1) / 2.
+        const double xc = m.x_min + ((k_st_n_cols - 1) / 2 + 0.5) * cs;
+        const double y0 = m.y_min, y1 = m.y_max();
+        const int per_tread = static_cast<int>(k_st_tread_width / cs);
+        struct rect { double x0, x1, ya, yb; std::string cls; };
+        std::vector<rect> rects;
+        for (int j = 1; j <= k_st_n_terraces; ++j)
+        {
+            const int k0 = std::max(1, per_tread * (j - 1));
+            const int k1 = per_tread * j - 1;
+            const std::string c = (j == 1) ? "floodplain" : "terrace";
+            rects.push_back({xc + (k0 - 0.5) * cs, xc + (k1 + 0.5) * cs, y0, y1, c});
+            rects.push_back({xc - (k1 + 0.5) * cs, xc - (k0 - 0.5) * cs, y0, y1, c});
+        }
+        auto ring = [](const rect& r)
+        {
+            std::vector<lsdtt::lsdtt_xy> pts;
+            auto edge = [&](double xa, double ya, double xb, double yb)
+            {
+                const int n = std::max(1, static_cast<int>(
+                    std::hypot(xb - xa, yb - ya) / 10.0));
+                for (int i = 0; i < n; ++i)
+                    pts.push_back({xa + (xb - xa) * i / n, ya + (yb - ya) * i / n});
+            };
+            edge(r.x0, r.ya, r.x1, r.ya);
+            edge(r.x1, r.ya, r.x1, r.yb);
+            edge(r.x1, r.yb, r.x0, r.yb);
+            edge(r.x0, r.yb, r.x0, r.ya);
+            pts.push_back(pts.front());
+            return pts;
+        };
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"class"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+        auto write_set = [&](const std::string& path, const std::string& layer,
+                             lsdtt::vector_output_format fmt,
+                             const std::string& wkt, const std::vector<rect>& rs,
+                             OGRCoordinateTransformation* ct)
+        {
+            loader.begin_vector_write(path, layer, schema, wkt, fmt, false);
+            for (const rect& r : rs)
+            {
+                std::vector<lsdtt::lsdtt_xy> pts = ring(r);
+                if (ct != nullptr)
+                    for (lsdtt::lsdtt_xy& p : pts)
+                        if (!ct->Transform(1, &p.x, &p.y))
+                            throw std::runtime_error("mapped fixture: transform failed");
+                loader.write_polygon(pts, {r.cls});
+            }
+            loader.finish_vector_write();
+        };
+        write_set(output_dir + "/staircase_mapped.fgb", "staircase_mapped",
+                  lsdtt::vector_output_format::flatgeobuf, m.crs_wkt, rects, nullptr);
+        write_set(output_dir + "/staircase_mapped.gpkg", "staircase_mapped",
+                  lsdtt::vector_output_format::gpkg, m.crs_wkt, rects, nullptr);
+        {
+            OGRSpatialReference src, dst;
+            src.importFromWkt(m.crs_wkt.c_str());
+            dst.importFromEPSG(4326);
+            src.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            dst.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            std::unique_ptr<OGRCoordinateTransformation> ct(
+                OGRCreateCoordinateTransformation(&src, &dst));
+            if (!ct) throw std::runtime_error("mapped fixture: no transform to 4326");
+            char* wkt = nullptr;
+            dst.exportToWkt(&wkt);
+            const std::string dst_wkt(wkt);
+            CPLFree(wkt);
+            write_set(output_dir + "/staircase_mapped_4326.gpkg", "staircase_mapped",
+                      lsdtt::vector_output_format::gpkg, dst_wkt, rects, ct.get());
+        }
+        {
+            std::vector<rect> bad = {rects.front()};
+            bad.front().cls = "bench";
+            write_set(output_dir + "/staircase_mapped_bad_class.fgb",
+                      "staircase_mapped", lsdtt::vector_output_format::flatgeobuf,
+                      m.crs_wkt, bad, nullptr);
+        }
+        {
+            const double ymid = m.y_min + 0.5 * k_st_n_rows * cs;
+            write_set(output_dir + "/staircase_mapped_extent_north.fgb", "extent",
+                      lsdtt::vector_output_format::flatgeobuf, m.crs_wkt,
+                      {{m.x_min, m.x_max(), ymid, m.y_max(), "extent"}}, nullptr);
+        }
     }
 
     // Levels files for level_algorithm_choice supplied_levels, written by hand

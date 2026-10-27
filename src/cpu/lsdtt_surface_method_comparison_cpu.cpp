@@ -79,6 +79,40 @@ std::vector<method_pair_comparison> compare_surface_classes(
     return out;
 }
 
+mapped_surface_score score_against_mapped(const method_class_map&          method,
+                                          const std::vector<std::uint8_t>& mapped,
+                                          const std::vector<std::uint8_t>& scored)
+{
+    check_inputs({method}, scored, "score_against_mapped");
+    if (mapped.size() != scored.size())
+        throw std::invalid_argument(
+            "score_against_mapped: the mapped classes are not on the grid");
+    mapped_surface_score sc;
+    for (std::size_t i = 0; i < scored.size(); ++i)
+    {
+        if (!scored[i]) continue;
+        if (mapped[i] > 2)
+            throw std::invalid_argument(
+                "score_against_mapped: a mapped class above 2");
+        ++sc.confusion[mapped[i]][method.cls[i]];
+        ++sc.n_scored;
+    }
+    for (int k = 1; k <= 2; ++k)
+    {
+        std::int64_t by_method = 0, by_map = 0;
+        for (int j = 0; j < 3; ++j)
+        {
+            by_method += sc.confusion[j][k];
+            by_map    += sc.confusion[k][j];
+        }
+        const std::int64_t tp = sc.confusion[k][k];
+        sc.precision[k] = ratio(tp, by_method);
+        sc.recall[k]    = ratio(tp, by_map);
+        sc.iou[k]       = ratio(tp, by_method + by_map - tp);
+    }
+    return sc;
+}
+
 std::vector<std::uint8_t> surface_class_agreement_bits(
     const std::vector<method_class_map>& methods,
     const std::vector<std::uint8_t>&     valid,

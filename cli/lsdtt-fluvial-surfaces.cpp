@@ -85,6 +85,7 @@
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_method_comparison_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_training_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_level_clustering_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
@@ -398,6 +399,38 @@ int main(int argc, char* argv[])
         "Below it the window falls back to the fit over all training cells, "
         "and below it there the threshold is the data-chosen one.",
         "Training","param",""};
+
+    // Mapped floodplains and terraces (fluvial-surface methods plan 7c).
+    string_default_map["mapped_surfaces_fname"] = "";
+    help_map["mapped_surfaces_fname"] = {"string","",
+        "Mapped floodplain and terrace polygons (gpkg, fgb, shp) to score every "
+        "method against.",
+        "Class values as for training_surfaces_fname: floodplain or fp; "
+        "terrace, terraceN, tN or 'terrace N' (levels are not scored yet). Any "
+        "other value stops the run before any work. Burned by cell centre only "
+        "(no edge growth), reprojected to the DEM CRS. Writes "
+        "<write_fname>_mapped_surface_class.tif (0 surveyed but neither, 1 "
+        "floodplain, 2 terrace) and <write_fname>_mapped_surface_scores.csv: "
+        "per method the 3 x 3 confusion (mapped x method) in cells, and "
+        "floodplain and terrace precision, recall and intersection-over-union. "
+        "Scored only where the DEM is valid, the method ran on HAND and the "
+        "cell is inside mapped_surfaces_extent_fname.",
+        "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_layer_name"] = "";
+    help_map["mapped_surfaces_layer_name"] = {"string","",
+        "Layer of mapped_surfaces_fname; empty = the first layer.",
+        "", "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_class_field_name"] = "class";
+    help_map["mapped_surfaces_class_field_name"] = {"string","class",
+        "Field of mapped_surfaces_fname holding each polygon's class.",
+        "", "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_extent_fname"] = "";
+    help_map["mapped_surfaces_extent_fname"] = {"string","",
+        "Polygon(s) of the area the mapper actually surveyed.",
+        "No terrace polygon is evidence of no terrace only where someone "
+        "looked. Cells whose centre is outside these polygons are not scored. "
+        "Empty: the whole DEM counts as surveyed (the log says so).",
+        "Mapped surfaces","param",""};
 
     int_default_map["min_band_component_pixels"] = 50;
     help_map["min_band_component_pixels"] = {"int","50",
@@ -1618,6 +1651,84 @@ int main(int argc, char* argv[])
         }
     }
 
+    // ---- mapped surfaces (plan 7c): burned before any work, so a bad file
+    // fails fast. On the DEM grid, scored after the methods have run.
+    const bool mapped_on = !sf["mapped_surfaces_fname"].empty();
+    std::vector<std::uint8_t> mapped_cls, mapped_scored;
+    lsdtt::lsdtt_raster_meta  mapped_meta;
+    if (mapped_on)
+    {
+        std::cout << "--- Mapped surfaces ---\n";
+        lsdtt::lsdtt_data_loader mloader;
+        lsdtt::lsdtt_raster_cpu  grid;
+        try
+        {
+            mloader.open_raster(pp.get_full_read_path());
+            grid = lsdtt::lsdtt_raster_cpu(mloader);
+        }
+        catch (const std::exception& e)
+        { std::cerr << "FATAL: loading DEM: " << e.what() << "\n"; return 1; }
+        mapped_meta = grid.get_meta();
+        const std::size_t n = grid.get_data().size();
+        const std::string mp =
+            pp.add_read_path_if_needed(sf["mapped_surfaces_fname"]);
+        lsdtt::training_set ms;
+        try
+        {
+            ms = lsdtt::read_training_surfaces(
+                grid, mp, sf["mapped_surfaces_layer_name"],
+                sf["mapped_surfaces_class_field_name"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: mapped surfaces: " << e.what() << "\n";
+            return 1;
+        }
+        mapped_cls.assign(n, 0);
+        mapped_scored.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            mapped_scored[i] = grid.get_mask()[i] ? 1 : 0;
+            const std::int32_t f = ms.polygon_of_pixel[i];
+            if (f >= 0)
+                mapped_cls[i] = static_cast<std::uint8_t>(
+                    ms.polygons[static_cast<std::size_t>(f)].cls + 1);
+        }
+        std::int64_t n_poly[2] = {0, 0};
+        for (const auto& mpoly : ms.polygons) ++n_poly[mpoly.cls];
+        std::cout << "  " << mp << ": " << n_poly[0] << " floodplain, "
+                  << n_poly[1] << " terrace polygon(s)\n";
+        if (!sf["mapped_surfaces_extent_fname"].empty())
+        {
+            const std::string ep =
+                pp.add_read_path_if_needed(sf["mapped_surfaces_extent_fname"]);
+            lsdtt::lsdtt_raster_cpu ext;
+            try
+            {
+                ext = lsdtt::rasterise_polygons(
+                    grid, ep, lsdtt::polygon_rasterise_rule::majority_coverage);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: mapped_surfaces_extent_fname: " << e.what()
+                          << "\n";
+                return 1;
+            }
+            std::int64_t n_in = 0;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                if (!(ext.get_data()[i] > 0.5f)) mapped_scored[i] = 0;
+                if (mapped_scored[i]) ++n_in;
+            }
+            std::cout << "  surveyed extent " << ep << ": " << n_in
+                      << " cell(s) scored\n";
+        }
+        else
+            std::cout << "  no mapped_surfaces_extent_fname: the whole DEM "
+                         "counts as surveyed\n";
+        std::cout << "\n";
+    }
+
     // What each method's run hands back for the comparison and the summary.
     struct method_run_output
     {
@@ -1832,6 +1943,9 @@ int main(int argc, char* argv[])
             {"training_spread_factor", sf["training_surfaces_fname"].empty()},
             {"training_max_relative_spread", sf["training_surfaces_fname"].empty()},
             {"min_training_cells_per_class", sf["training_surfaces_fname"].empty()},
+            {"mapped_surfaces_layer_name", sf["mapped_surfaces_fname"].empty()},
+            {"mapped_surfaces_class_field_name", sf["mapped_surfaces_fname"].empty()},
+            {"mapped_surfaces_extent_fname", sf["mapped_surfaces_fname"].empty()},
             {"run_terrace_classification", !level_fixed},
             {"floodplain_second_pass_algorithm_choice", !level_fixed},
             {"write_floodplain_polygons", !level_fixed},
@@ -4715,6 +4829,70 @@ int main(int argc, char* argv[])
                                       lsdtt::lsdtt_pixel_type::uint8);
             }
         }
+    }
+
+    // ---- scores against the mapped surfaces (plan 7c) ---------------------------
+    if (mapped_on)
+    {
+        const std::string base = pp.get_full_write_path();
+        lsdtt::lsdtt_data_loader out_loader;
+        {
+            std::vector<float> f(mapped_cls.size(), -1.0f);
+            for (std::size_t i = 0; i < f.size(); ++i)
+                if (mapped_scored[i]) f[i] = mapped_cls[i];
+            lsdtt::lsdtt_raster_meta m = mapped_meta;
+            m.no_data_value = -1.0;
+            const std::string rp = base + "_mapped_surface_class.tif";
+            std::cout << "Writing mapped surface classes: " << rp << "\n";
+            out_loader.write_full(f, m, rp, out_format);
+        }
+        auto num = [](double v)
+        { std::ostringstream os; os.precision(9); os << v; return os.str(); };
+        const char* cname[3] = {"none", "floodplain", "terrace"};
+        const double cell_area = mapped_meta.cell_size * mapped_meta.cell_size;
+        std::vector<std::vector<std::string>> rows;
+        for (std::size_t k = 0; k < runs.size(); ++k)
+        {
+            if (runs[k].cls.size() != mapped_cls.size())
+            {
+                std::cout << "  " << method_list[k] << ": no floodplain / "
+                             "terrace classes (not a HAND run); not scored\n";
+                continue;
+            }
+            std::vector<std::uint8_t> sc = mapped_scored;
+            for (std::size_t i = 0; i < sc.size(); ++i)
+                if (!runs[k].valid[i]) sc[i] = 0;
+            const lsdtt::mapped_surface_score r = lsdtt::score_against_mapped(
+                lsdtt::method_class_map{method_list[k], runs[k].cls},
+                mapped_cls, sc);
+            std::vector<std::string> row = {method_list[k],
+                std::to_string(r.n_scored), num(cell_area)};
+            for (int c = 1; c <= 2; ++c)
+            {
+                row.push_back(num(r.precision[c]));
+                row.push_back(num(r.recall[c]));
+                row.push_back(num(r.iou[c]));
+            }
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    row.push_back(std::to_string(r.confusion[i][j]));
+            rows.push_back(row);
+            std::cout << "  " << method_list[k] << " vs mapped (" << r.n_scored
+                      << " cells): floodplain precision " << r.precision[1]
+                      << " recall " << r.recall[1] << " IoU " << r.iou[1]
+                      << "; terrace precision " << r.precision[2] << " recall "
+                      << r.recall[2] << " IoU " << r.iou[2] << "\n";
+        }
+        std::vector<std::string> head = {"method", "n_scored_cells", "cell_area_m2",
+            "floodplain_precision", "floodplain_recall", "floodplain_iou",
+            "terrace_precision", "terrace_recall", "terrace_iou"};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                head.push_back(std::string("mapped_") + cname[i] + "_method_" +
+                               cname[j] + "_cells");
+        const std::string p = base + "_mapped_surface_scores.csv";
+        std::cout << "Writing mapped surface scores: " << p << "\n";
+        out_loader.write_csv(p, head, rows);
     }
 
     std::cout << "\n";

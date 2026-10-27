@@ -477,6 +477,15 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `training_max_relative_spread` | `float` | `0.25` | `param` | - | Relative limit on a training polygon's HAND interquartile range, as a fraction of its median HAND. | See training_spread_factor: a polygon is flagged only when it exceeds both. High terraces vary more in metres; this keeps them single levels. 0 = the absolute limit alone. |
 | `min_training_cells_per_class` | `int` | `20` | `param` | - | Core cells a training population needs in a window to take part. | Below it the window falls back to the fit over all training cells, and below it there the threshold is the data-chosen one. |
 
+### Mapped surfaces
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `mapped_surfaces_fname` | `string` | - | `param` | - | Mapped floodplain and terrace polygons (gpkg, fgb, shp) to score every method against. | Class values as for training_surfaces_fname: floodplain or fp; terrace, terraceN, tN or 'terrace N' (levels are not scored yet). Any other value stops the run before any work. Burned by cell centre only (no edge growth), reprojected to the DEM CRS. Writes &lt;write_fname&gt;_mapped_surface_class.tif (0 surveyed but neither, 1 floodplain, 2 terrace) and &lt;write_fname&gt;_mapped_surface_scores.csv: per method the 3 x 3 confusion (mapped x method) in cells, and floodplain and terrace precision, recall and intersection-over-union. Scored only where the DEM is valid, the method ran on HAND and the cell is inside mapped_surfaces_extent_fname. |
+| `mapped_surfaces_layer_name` | `string` | - | `param` | - | Layer of mapped_surfaces_fname; empty = the first layer. | - |
+| `mapped_surfaces_class_field_name` | `string` | `class` | `param` | - | Field of mapped_surfaces_fname holding each polygon's class. | - |
+| `mapped_surfaces_extent_fname` | `string` | - | `param` | - | Polygon(s) of the area the mapper actually surveyed. | No terrace polygon is evidence of no terrace only where someone looked. Cells whose centre is outside these polygons are not scored. Empty: the whole DEM counts as surveyed (the log says so). |
+
 ### Reference field
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

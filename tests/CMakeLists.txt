@@ -9853,6 +9853,77 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Mapped surfaces (plan 7c) on the staircase, scored against its own tread map
+# (tread 1 floodplain, treads 2-4 terrace, full valley length on both flanks).
+# The burn equals the generator's tread map outside the three riser-gap ramps;
+# FlatGeobuf, GeoPackage and EPSG:4326 copies burn byte-identically (one sha);
+# a surveyed extent over the northern half scores 30000 of 60000 cells; an
+# unknown class stops the run before any method. Scores are pinned as
+# measured: the ladder's floodplain precision 1, recall 0.364 (the relief
+# admission leaves the tread margins and gaps out); clubb2017 scores 0 here
+# (its gradient bound admits almost none of the treads).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped.param.in
+    map_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect map_mapped_surface_scores.csv
+    --expect-sha256 map_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+    --stdout-contains "2 floodplain, 6 terrace polygon(s)"
+    --stdout-contains "the whole DEM counts as surveyed"
+    --expect-file-contains "map_mapped_surface_scores.csv:ladder,60000,100,1,0.36362069,0.36362069,0.949250958,0.454111111,0.443347616,12400,0,0,6508,4218,874,19652,0,16348"
+    --expect-file-contains "map_mapped_surface_scores.csv:clubb2017,60000,100,0,0,0,nan,0,0,12243,157,0,11600,0,0,36000,0,0"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_gpkg
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_gpkg.param.in
+    mapgp_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-sha256 mapgp_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_gpkg PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_4326
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_4326.param.in
+    map4326_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-sha256 map4326_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_4326 PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_extent
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_extent.param.in
+    mapext_mapped_surface_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "30000 cell(s) scored"
+    --stdout-contains "ladder vs mapped (30000 cells)"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_extent PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_mapped_bad_class
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_bad_class.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "'bench'"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_mapped_bad_class PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     failure_fluvial_surfaces_training_bad_field
     lsdtt-fluvial-surfaces
