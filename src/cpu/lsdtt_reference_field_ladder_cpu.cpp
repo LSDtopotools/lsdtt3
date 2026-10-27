@@ -1040,7 +1040,8 @@ ladder_result build_reference_field_ladder(
                 std::string(fn) + ": training polygons are not on the field's grid");
         tset = *request.training;
         compute_training_polygon_stats(
-            tset, reference_field, request.training_spread_factor * required_gap);
+            tset, reference_field, request.training_spread_factor * required_gap,
+            request.training_relative_spread);
         result.training_polygons = tset.polygons;
     }
     auto training_cell = [&](std::size_t i) -> std::int32_t
@@ -1484,11 +1485,61 @@ ladder_result build_reference_field_ladder(
             result.windows.push_back(std::move(rec));
         }
 
+        // ladder_request::unresolved_borrow_breaks: an unresolved one-band window takes
+        // the breaks of the nearest window on the same source that found
+        // levels (resolved, forced, or supplied / trained with k >= 2). Status
+        // stays unresolved - the DEM did not resolve levels HERE - and the
+        // window the breaks came from is recorded. Decided on the original
+        // statuses, before the sparse windows below inherit.
+        if (request.unresolved_borrow_breaks)
+        {
+            std::vector<char> found(static_cast<std::size_t>(sb.n_windows), 0);
+            for (int k = 0; k < sb.n_windows; ++k)
+            {
+                const selection& sk = selected[static_cast<std::size_t>(k)];
+                found[static_cast<std::size_t>(k)] =
+                    has_own[static_cast<std::size_t>(k)] && sk.k >= 2 &&
+                    sk.status != ladder_status::unresolved;
+            }
+            const std::vector<selection> original = selected;
+            for (int w = 0; w < sb.n_windows; ++w)
+            {
+                // Only a one-band window: an unresolved window under an
+                // explicit level_count already carries its own k bands.
+                if (!has_own[static_cast<std::size_t>(w)] ||
+                    original[static_cast<std::size_t>(w)].status !=
+                        ladder_status::unresolved ||
+                    original[static_cast<std::size_t>(w)].k >= 2)
+                    continue;
+                int best = -1;
+                for (int k = 0; k < sb.n_windows; ++k)
+                    if (found[static_cast<std::size_t>(k)] &&
+                        (best < 0 || std::abs(k - w) < std::abs(best - w)))
+                        best = k;
+                if (best < 0) continue;
+                const selection& from = original[static_cast<std::size_t>(best)];
+                selection borrowed = from;
+                borrowed.status = ladder_status::unresolved;
+                selected[static_cast<std::size_t>(w)] = borrowed;
+                ladder_window& rec =
+                    result.windows[first_rec + static_cast<std::size_t>(w)];
+                rec.k_selected            = from.k;
+                rec.breaks_m              = from.breaks;
+                rec.band_centres_m        = from.band_centres;
+                rec.min_band_centre_gap_m = from.min_centre_gap;
+                rec.breaks_from_window_m  =
+                    result.windows[first_rec + static_cast<std::size_t>(best)]
+                        .window_centre_m;
+                wb[static_cast<std::size_t>(w)] = from.breaks;
+            }
+        }
+
         // A sparse window inherits the complete selection from the nearest
         // adequately populated window on the same source, or the complete
-        // global selection when that source has none. An adequately populated
-        // unresolved window owns its one-band selection and is never replaced
-        // by unrelated multi-band breaks.
+        // global selection when that source has none. Without
+        // unresolved_borrow_breaks an adequately populated unresolved window
+        // owns its one-band selection and is never replaced by unrelated
+        // multi-band breaks.
         for (int w = 0; w < sb.n_windows; ++w)
         {
             if (has_own[static_cast<std::size_t>(w)]) continue;

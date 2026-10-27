@@ -24,6 +24,11 @@ min_band_component_pixels: 50
 ladder_break_algorithm_choice: jenks
 vertical_accuracy_metres: 0.5
 threshold_contributing_pixels: 50
+# Relief admission leaves the ground beside the channel notch out, so the
+# nearest tread-1 patches are 60 m from the channel; 100 m lets them count as
+# touching it, and the ladder's floodplain is the lowest level touching the
+# channel in each reach window.
+channel_adjacency_radius_metres: 100
 source_points_fname: staircase_sources.fgb
 
 write_surface_class_raster: true

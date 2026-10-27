@@ -313,7 +313,9 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             request.vertical_accuracy_break_gradient;
         lr.supplied_breaks = request.ladder_supplied_breaks;
         lr.training                     = request.ladder_training;
+        lr.unresolved_borrow_breaks     = request.ladder_unresolved_borrow_breaks;
         lr.training_spread_factor       = request.ladder_training_spread_factor;
+        lr.training_relative_spread     = request.ladder_training_relative_spread;
         lr.training_min_cells_per_class = request.ladder_training_min_cells_per_class;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
@@ -741,6 +743,14 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
 
     std::unordered_map<std::int64_t, char> band_split_counted;
 
+    // Ladder: floodplain is the lowest level touching the channel (Simon,
+    // 2026-10-27), not a HAND cap. Units touching an in-scope channel are
+    // classified as if they were not floodplain, remembered here, and after
+    // the loop those on the lowest band among the channel-touching units of
+    // their reach window (source, window centre) become floodplain.
+    struct fp_candidate { std::size_t rec_index; std::int64_t key; };
+    std::vector<fp_candidate> ladder_fp_candidates;
+
     for (auto& [key, a] : acc)
     {
         const std::int64_t parent = key / 512;
@@ -858,7 +868,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             if (d.fp_ok)   ++result.n_floodplain_labels;
             if (d.terr_ok) ++result.n_terrace_labels;
         }
-        else if (rec.adjacent_to_channel && rec.has_height &&
+        else if (!used_ladder && rec.adjacent_to_channel && rec.has_height &&
                  rec.median_height <= request.floodplain_max_height_metres)
         {
             rec.cls = surface_class::floodplain;
@@ -882,8 +892,35 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
                 rec.median_height >= request.terrace_min_height_metres;
         }
 
+        if (used_ladder && !leak.is_leak && rec.adjacent_to_channel &&
+            rec.has_height && rec.hand_band >= 0)
+            ladder_fp_candidates.push_back({result.labels.size(), key});
+
         decision[key] = d;
         result.labels.push_back(rec);
+    }
+
+    if (!ladder_fp_candidates.empty())
+    {
+        std::map<std::pair<std::int32_t, double>, int> lowest;
+        for (const fp_candidate& c : ladder_fp_candidates)
+        {
+            const flat_surface_label_class& r = result.labels[c.rec_index];
+            const auto k = std::make_pair(r.source_id, r.ladder_window_centre_metres);
+            auto it = lowest.find(k);
+            if (it == lowest.end() || r.hand_band < it->second) lowest[k] = r.hand_band;
+        }
+        for (const fp_candidate& c : ladder_fp_candidates)
+        {
+            flat_surface_label_class& r = result.labels[c.rec_index];
+            if (r.hand_band != lowest.at({r.source_id, r.ladder_window_centre_metres}))
+                continue;
+            if (r.cls == surface_class::terrace) --result.n_terrace_labels;
+            r.cls = surface_class::floodplain;
+            r.spread_guard_failed = false;
+            decision[c.key].cls = surface_class::floodplain;
+            ++result.n_floodplain_labels;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1054,7 +1091,9 @@ void write_ladder_windows_csv(
             std::isfinite(w.median_gradient)
                 ? std::to_string(w.median_gradient) : std::string(),
             std::to_string(w.goodness_of_variance_fit),
-            join_doubles(w.separation_ratio) });
+            join_doubles(w.separation_ratio),
+            w.breaks_from_window_m >= 0.0
+                ? std::to_string(w.breaks_from_window_m) : std::string() });
     }
     loader.write_csv(out_path,
         {"source_id","window_centre_m","n_pixels","k_selected",
@@ -1063,7 +1102,7 @@ void write_ladder_windows_csv(
          "k_bootstrap_mode","k_stability","k_ci_lo","k_ci_hi","n_bootstrap",
          "vertical_accuracy_m",
          "median_gradient","goodness_of_variance_fit",
-         "separation_ratio"},
+         "separation_ratio","breaks_from_window_m"},
         rows);
 }
 

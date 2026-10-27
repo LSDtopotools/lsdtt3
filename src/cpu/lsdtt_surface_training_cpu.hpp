@@ -20,12 +20,15 @@
 //   - classes: "floodplain"/"fp" and "terraceN"/"tN" ("terrace 2" too; case
 //     and spaces ignored). The terrace NUMBER is ignored: every terrace
 //     polygon is just "terrace".
-//   - each polygon is summarised by its median field value and its trimmed
-//     core, the cells between its own 10th and 90th percentile, so cells
-//     spilling over a riser at the edge carry little weight;
-//   - a polygon whose p10-p90 spread exceeds spread_limit is "not a single
-//     level" (a sloping surface): it still counts as terrace for the
-//     floodplain / terrace bound, but takes no part in the level breaks;
+//   - each polygon is summarised by its median field value and its core, the
+//     cells between its own 25th and 75th percentile, so a few cells off the
+//     surface (a gully crossed while drawing, a riser at the edge) do not
+//     move it;
+//   - a polygon whose interquartile range exceeds BOTH an absolute limit and
+//     a fraction of its median is "not a single level" (a sloping surface):
+//     it still counts as terrace for the floodplain / terrace bound, but takes
+//     no part in the level breaks. The relative test keeps high terraces,
+//     whose HAND varies more in metres, as single levels;
 //   - levels, within a window: floodplain polygons are level 0; terrace
 //     polygons are sorted by median and grouped wherever consecutive medians
 //     differ by at least the resolvability floor (required gap);
@@ -59,8 +62,9 @@ struct training_polygon
     int         number  = 0;    // N of terraceN (report only)
     std::int64_t n_cells        = 0;   // cells whose centre it holds
     std::int64_t n_with_field   = 0;   // of those, with a defined field
-    double median = 0.0, p10 = 0.0, p90 = 0.0;
-    bool   flagged = false;     // spread > limit: not a single level
+    // p25..p75 is the core; p10 / p90 are reported for the distribution.
+    double median = 0.0, p10 = 0.0, p25 = 0.0, p75 = 0.0, p90 = 0.0;
+    bool   flagged = false;     // IQR over both limits: not a single level
 };
 
 struct training_set
@@ -79,10 +83,13 @@ struct training_set
     const std::string&      class_field);
 
 // Fill each polygon's statistics from `field` (cells with a finite, unmasked
-// value) and flag those whose p90 - p10 exceeds spread_limit.
+// value) and flag those whose p75 - p25 exceeds spread_limit AND
+// relative_spread_limit x |median|. A limit <= 0 is not applied (both <= 0:
+// nothing is flagged).
 void compute_training_polygon_stats(training_set&           set,
                                     const lsdtt_raster_cpu& field,
-                                    double                  spread_limit);
+                                    double                  spread_limit,
+                                    double                  relative_spread_limit);
 
 struct training_split
 {
@@ -109,7 +116,7 @@ struct training_window_fit
 
 // One window. `cells` are (polygon id, field value) for every training cell
 // in the window (pooled as the caller pools). A population needs at least
-// min_cells_per_class trimmed-core cells to take part.
+// min_cells_per_class core cells to take part.
 [[nodiscard]] training_window_fit fit_training_window(
     const std::vector<std::pair<std::int32_t, double>>& cells,
     const training_set&                                 set,

@@ -25,7 +25,10 @@
 //
 //   floodplain : adjacent to an in-scope channel AND median HAND <=
 //                floodplain_max_height_metres (the lowest surface next to the
-//                channel).
+//                channel). Under the ladder (band-then-label) no HAND cap:
+//                adjacent to an in-scope channel AND on the lowest band among
+//                the channel-adjacent units of its reach window (source id,
+//                window centre) - the lowest level touching the channel.
 //   terrace    : not floodplain, has a defined HAND, linked to an in-scope
 //                channel source, AND median HAND >= terrace_min_height_metres.
 //   none       : everything else (e.g. flats not linked to an in-scope channel,
@@ -87,7 +90,8 @@ enum class surface_class : std::uint8_t
 // flat_surface_classify_request
 //
 // floodplain_max_height_metres
-//   Upper bound on a label's median HAND for it to be a floodplain. Defaults to
+//   Upper bound on a label's median HAND for it to be a floodplain when the
+//   ladder is not used (ignored under band-then-label). Defaults to
 //   the flat-mask relief threshold at the call site (consistent with "lowest
 //   surface next to the channel").
 //
@@ -217,7 +221,9 @@ struct flat_surface_classify_request
     std::map<std::int32_t, std::vector<double>> ladder_supplied_breaks;
     // Passed through to ladder_request::training (and its two settings).
     const training_set* ladder_training                     = nullptr;
+    bool                ladder_unresolved_borrow_breaks     = false;
     double              ladder_training_spread_factor       = 3.0;
+    double              ladder_training_relative_spread     = 0.25;
     int                 ladder_training_min_cells_per_class = 20;
     int    band_min_component_pixels     = 1;
     // segmentation_algorithm_choice whole_mask: label the admitted mask minus

@@ -95,7 +95,8 @@ training_set read_training_surfaces(const lsdtt_raster_cpu& reference,
 
 void compute_training_polygon_stats(training_set&           set,
                                     const lsdtt_raster_cpu& field,
-                                    double                  spread_limit)
+                                    double                  spread_limit,
+                                    double                  relative_spread_limit)
 {
     const std::vector<float>&   fd = field.get_data();
     const std::vector<uint8_t>& fm = field.get_mask();
@@ -118,8 +119,17 @@ void compute_training_polygon_stats(training_set&           set,
         std::sort(v.begin(), v.end());
         p.median  = quantile_sorted(v, 0.5);
         p.p10     = quantile_sorted(v, 0.1);
+        p.p25     = quantile_sorted(v, 0.25);
+        p.p75     = quantile_sorted(v, 0.75);
         p.p90     = quantile_sorted(v, 0.9);
-        p.flagged = spread_limit > 0.0 && (p.p90 - p.p10) > spread_limit;
+        const double iqr = p.p75 - p.p25;
+        const bool over_abs = spread_limit > 0.0 && iqr > spread_limit;
+        const bool over_rel = relative_spread_limit > 0.0 &&
+                              iqr > relative_spread_limit * std::fabs(p.median);
+        if (spread_limit > 0.0 && relative_spread_limit > 0.0)
+            p.flagged = over_abs && over_rel;
+        else
+            p.flagged = over_abs || over_rel;
     }
 }
 
@@ -180,13 +190,13 @@ training_window_fit fit_training_window(
     const std::size_t min_n =
         static_cast<std::size_t>(std::max(1, min_cells_per_class));
 
-    // Trimmed cores, per polygon, of the cells in this window.
+    // Cores (p25..p75), per polygon, of the cells in this window.
     std::map<std::int32_t, std::vector<double>> core;
     for (const auto& [f, v] : cells)
     {
         if (f < 0) continue;
         const training_polygon& p = set.polygons[static_cast<std::size_t>(f)];
-        if (p.n_with_field == 0 || v < p.p10 || v > p.p90) continue;
+        if (p.n_with_field == 0 || v < p.p25 || v > p.p75) continue;
         core[f].push_back(v);
     }
 

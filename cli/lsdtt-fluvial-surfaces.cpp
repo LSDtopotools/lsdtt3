@@ -85,6 +85,7 @@
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_method_comparison_cpu.hpp"
 #include "../src/cpu/lsdtt_surface_training_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_level_clustering_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -373,12 +374,23 @@ int main(int argc, char* argv[])
         "", "Training","param",""};
     float_default_map["training_spread_factor"] = 3.0f;
     help_map["training_spread_factor"] = {"float","3.0",
-        "A training polygon whose HAND p90 - p10 exceeds this many required "
-        "gaps (kappa x E_v) is not a single level.",
-        "Such a polygon (a sloping surface, or one drawn across a riser) still "
+        "Absolute limit on a training polygon's HAND interquartile range, in "
+        "required gaps (kappa x E_v).",
+        "A polygon is summarised by its 25-75th percentile core, so a gully "
+        "crossed while drawing does not move it. It is 'not a single level' "
+        "(a sloping surface, or one drawn across a riser) when its "
+        "interquartile range exceeds both this limit and "
+        "training_max_relative_spread x its median HAND. Such a polygon still "
         "counts as terrace for the floodplain / terrace bound but takes no part "
-        "in the terrace level breaks. Flagged in <stem>_training_polygons.csv. "
-        "With E_v 0 nothing is flagged.",
+        "in the terrace level breaks. Flagged in <stem>_training_polygons.csv.",
+        "Training","param",""};
+    float_default_map["training_max_relative_spread"] = 0.25f;
+    help_map["training_max_relative_spread"] = {"float","0.25",
+        "Relative limit on a training polygon's HAND interquartile range, as a "
+        "fraction of its median HAND.",
+        "See training_spread_factor: a polygon is flagged only when it exceeds "
+        "both. High terraces vary more in metres; this keeps them single "
+        "levels. 0 = the absolute limit alone.",
         "Training","param",""};
     int_default_map["min_training_cells_per_class"] = 20;
     help_map["min_training_cells_per_class"] = {"int","20",
@@ -616,6 +628,21 @@ int main(int argc, char* argv[])
         "changed. The generator is specified in the source rather than taken "
         "from the standard library, so the number reproduces across platforms.",
         "Ladder", "param", "ladder_k_bootstrap"};
+
+    string_default_map["ladder_unresolved_window_algorithm_choice"] =
+        "nearest_resolved";
+    help_map["ladder_unresolved_window_algorithm_choice"] = {"string",
+        "nearest_resolved",
+        "What an unresolved ladder window bands with: nearest_resolved or "
+        "single_band.",
+        "An unresolved window found no admissible levels. single_band bands "
+        "all of it as one level, so band 0 (and the floodplain, the lowest "
+        "level touching the channel) can span hundreds of metres of HAND "
+        "there. nearest_resolved borrows the breaks of the nearest window on "
+        "the same channel that found levels, so band 0 means a comparable "
+        "HAND range along the channel; the window stays 'unresolved' in "
+        "_ladder_windows.csv and breaks_from_window_m names the lender.",
+        "Ladder", "param", ""};
 
     bool_default_map["write_patch_terrain_aspect"] = false;
     help_map["write_patch_terrain_aspect"] = {"bool","false",
@@ -875,11 +902,11 @@ int main(int argc, char* argv[])
     lsdtt::declare_max_floodplain_hand_parameter(float_default_map, help_map,
                                                  1.0f);
     help_map["max_floodplain_hand_metres"][3] =
-        "Here an optional absolute override on the lowest band's upper bound. "
-        "Under band-then-label the ladder already decides where one level ends "
-        "and the next begins; this is a hard cap for cases where you know the "
-        "floodplain height independently. Only meaningful for the hand field. "
-        "Replaces floodplain_max_height_metres.";
+        "Under level_algorithm_choice fixed_thresholds (clubb2017) the "
+        "floodplain HAND bound when it is not chosen from the data. Under the "
+        "ladder it is not used: the floodplain is the lowest level touching an "
+        "in-scope channel in each reach window. Only meaningful for the hand "
+        "field. Replaces floodplain_max_height_metres.";
 
     float_default_map["min_terrace_hand_metres"] = 0.0f;
     help_map["min_terrace_hand_metres"] = {"float","0.0",
@@ -1301,6 +1328,20 @@ int main(int argc, char* argv[])
         "Output file: <stem>_surface_patches.csv with label, band, class, "
         "source_id, n_pixels, area_m2, median_field_m, aspect_degrees and "
         "window_centre_m. The join key for everything downstream.",
+        "Outputs","switch",""};
+
+    bool_default_map["write_patch_level_clusters_csv"] = true;
+    help_map["write_patch_level_clusters_csv"] = {"bool","true",
+        "Test whether the ladder's floodplain and terrace patches cluster in "
+        "HAND.",
+        "Each classified patch is one value, its median HAND. Sorted, they "
+        "split into clusters wherever neighbours are at least the required gap "
+        "(kappa x E_v) apart. The statistic is the empty fraction - the share "
+        "of the HAND range taken by such gaps - compared with the same number "
+        "of patches at uniformly random heights over the same range (999 "
+        "draws, fixed seed): p = (1 + #null >= observed) / 1000. Per ladder "
+        "window with at least 5 patches, and over all patches. Ladder only (the "
+        "hand field). Output file: <stem>_patch_level_clusters.csv.",
         "Outputs","switch",""};
 
     bool_default_map["write_surface_class_csv"] = true;
@@ -1789,6 +1830,7 @@ int main(int argc, char* argv[])
             {"training_surfaces_layer_name", sf["training_surfaces_fname"].empty()},
             {"training_surfaces_class_field_name", sf["training_surfaces_fname"].empty()},
             {"training_spread_factor", sf["training_surfaces_fname"].empty()},
+            {"training_max_relative_spread", sf["training_surfaces_fname"].empty()},
             {"min_training_cells_per_class", sf["training_surfaces_fname"].empty()},
             {"run_terrace_classification", !level_fixed},
             {"floodplain_second_pass_algorithm_choice", !level_fixed},
@@ -2812,6 +2854,8 @@ int main(int argc, char* argv[])
     std::vector<std::vector<std::string>> training_fit_rows;
     const double training_spread_factor =
         static_cast<double>(ff["training_spread_factor"]);
+    const double training_relative_spread =
+        static_cast<double>(ff["training_max_relative_spread"]);
     const int training_min_cells = ip["min_training_cells_per_class"];
     if (training_on)
     {
@@ -2990,8 +3034,20 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_max_break_metres"]);
         creq.band_min_component_pixels   = ip["min_band_component_pixels"];
         creq.ladder_supplied_breaks      = supplied_breaks;
+        {
+            const std::string& uw = sf["ladder_unresolved_window_algorithm_choice"];
+            if (uw != "nearest_resolved" && uw != "single_band")
+            {
+                std::cerr << "FATAL: unknown ladder_unresolved_window_algorithm_"
+                             "choice '" << uw << "'. Valid: nearest_resolved, "
+                             "single_band.\n";
+                return 1;
+            }
+            creq.ladder_unresolved_borrow_breaks = (uw == "nearest_resolved");
+        }
         creq.ladder_training             = training_on ? &training : nullptr;
         creq.ladder_training_spread_factor       = training_spread_factor;
+        creq.ladder_training_relative_spread     = training_relative_spread;
         creq.ladder_training_min_cells_per_class = training_min_cells;
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
@@ -3150,7 +3206,8 @@ int main(int argc, char* argv[])
                 const double gap =
                     static_cast<double>(ff["ladder_resolvability_kappa"]) * ev;
                 lsdtt::compute_training_polygon_stats(
-                    tset, reference_field, training_spread_factor * gap);
+                    tset, reference_field, training_spread_factor * gap,
+                    training_relative_spread);
                 training_polygon_stats = tset.polygons;
 
                 const std::vector<float>&   rf  = reference_field.get_data();
@@ -3683,8 +3740,10 @@ int main(int argc, char* argv[])
     else
     {
         std::int64_t n_res = 0, n_unres = 0, n_deg = 0, n_sup = 0, n_sup_low = 0;
+        std::int64_t n_borrowed = 0;
         for (const lsdtt::ladder_window& w : ladder.windows)
         {
+            if (w.breaks_from_window_m >= 0.0) ++n_borrowed;
             if (w.status == lsdtt::ladder_status::resolved ||
                 w.status == lsdtt::ladder_status::forced) ++n_res;
             else if (w.status == lsdtt::ladder_status::unresolved) ++n_unres;
@@ -3703,6 +3762,9 @@ int main(int argc, char* argv[])
         if (n_sup > 0)
             std::cout << ", " << n_sup << " with supplied levels ("
                       << n_sup_low << " below the resolvability floor)";
+        if (n_borrowed > 0)
+            std::cout << ", " << n_borrowed << " unresolved banded with the "
+                         "nearest resolved window's breaks";
         if (!ladder.windows.empty())
         {
             // Under slope_dependent the floor is per window, so reporting one
@@ -4074,6 +4136,95 @@ int main(int argc, char* argv[])
                           lsdtt::lsdtt_pixel_type::uint8);
     }
 
+    // ---- do the ladder's patches cluster in HAND? ---------------------------
+    if (use_hand && !level_fixed && bf["write_patch_level_clusters_csv"] &&
+        !classes.empty())
+    {
+        std::map<std::pair<std::int32_t, double>, std::vector<double>> by_window;
+        std::vector<double> all_medians;
+        for (const lsdtt::flat_surface_label_class& c : classes)
+        {
+            if (c.cls == lsdtt::surface_class::none || !c.has_height) continue;
+            all_medians.push_back(c.median_height);
+            by_window[{c.source_id, c.ladder_window_centre_metres}]
+                .push_back(c.median_height);
+        }
+        std::map<std::pair<std::int32_t, double>, double> window_gap;
+        std::vector<double> gaps;
+        for (const lsdtt::ladder_window& w : ladder.windows)
+        {
+            window_gap[{w.source_id, w.window_centre_m}] = w.required_gap_m;
+            if (w.required_gap_m > 0.0) gaps.push_back(w.required_gap_m);
+        }
+        double global_gap = 0.0;
+        if (!gaps.empty())
+        {
+            std::sort(gaps.begin(), gaps.end());
+            global_gap = gaps[gaps.size() / 2];
+        }
+        std::vector<std::vector<std::string>> rows;
+        auto add_row = [&](const std::string& scope, std::int32_t src,
+                           double centre, const std::vector<double>& v,
+                           double gap) -> lsdtt::level_clustering_result
+        {
+            const lsdtt::level_clustering_result r =
+                lsdtt::test_level_clustering(v, gap);
+            std::string centres, counts;
+            for (std::size_t k = 0; k < r.clusters.size(); ++k)
+            {
+                if (k) { centres += " "; counts += " "; }
+                centres += num9(r.clusters[k].centre);
+                counts  += std::to_string(r.clusters[k].n);
+            }
+            rows.push_back({scope, std::to_string(src), num9(centre),
+                            std::to_string(r.n_values), num9(gap),
+                            std::to_string(r.clusters.size()),
+                            num9(r.empty_fraction),
+                            num9(r.null_mean_empty_fraction),
+                            num9(r.p_value), centres, counts});
+            return r;
+        };
+        if (global_gap > 0.0 && all_medians.size() >= 3)
+        {
+            const lsdtt::level_clustering_result g =
+                add_row("all", -1, 0.0, all_medians, global_gap);
+            std::cout << "Patch level clustering: " << g.n_values
+                      << " patch(es), " << g.clusters.size()
+                      << " cluster(s) at a " << global_gap
+                      << " m gap; empty fraction " << g.empty_fraction
+                      << " (random heights " << g.null_mean_empty_fraction
+                      << "), p = " << g.p_value << "\n";
+            int n_win = 0, n_sig = 0;
+            for (const auto& [key, v] : by_window)
+            {
+                const auto it = window_gap.find(key);
+                if (v.size() < 5 || it == window_gap.end() || !(it->second > 0.0))
+                    continue;
+                const lsdtt::level_clustering_result r =
+                    add_row("window", key.first, key.second, v, it->second);
+                ++n_win;
+                if (r.p_value <= 0.05) ++n_sig;
+            }
+            std::cout << "  per window (>= 5 patches): " << n_sig << " of "
+                      << n_win << " window(s) at p <= 0.05\n";
+        }
+        else
+            std::cout << "Patch level clustering: skipped (fewer than 3 "
+                         "classified patches, or no resolvability floor - "
+                         "E_v 0)\n";
+        if (!rows.empty())
+        {
+            const std::string p = stem + "_patch_level_clusters.csv";
+            std::cout << "Writing patch level clusters: " << p << "\n";
+            loader.write_csv(p, {"scope", "source_id", "window_centre_m",
+                                 "n_patches", "required_gap_m", "n_clusters",
+                                 "empty_fraction", "null_mean_empty_fraction",
+                                 "p_value", "cluster_centres_m",
+                                 "cluster_n_patches"},
+                             rows);
+        }
+    }
+
     if (training_on)
     {
         const std::string pf = stem + "_training_fit.csv";
@@ -4093,15 +4244,16 @@ int main(int argc, char* argv[])
                             std::to_string(tp.number), std::to_string(tp.n_cells),
                             std::to_string(tp.n_with_field),
                             has ? num9(tp.median) : "", has ? num9(tp.p10) : "",
+                            has ? num9(tp.p25) : "", has ? num9(tp.p75) : "",
                             has ? num9(tp.p90) : "",
-                            has ? num9(tp.p90 - tp.p10) : "",
+                            has ? num9(tp.p75 - tp.p25) : "",
                             tp.flagged ? "1" : "0"});
         }
         const std::string pp2 = stem + "_training_polygons.csv";
         std::cout << "Writing training polygons: " << pp2 << "\n";
         loader.write_csv(pp2, {"polygon_id", "label", "class", "terrace_number",
                                "n_cells", "n_with_field", "median_m", "p10_m",
-                               "p90_m", "spread_m", "flagged"},
+                               "p25_m", "p75_m", "p90_m", "iqr_m", "flagged"},
                          prow);
     }
 

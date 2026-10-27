@@ -164,7 +164,7 @@ LADDER_HEADERS = [
     "min_band_centre_gap_m", "required_gap_m",
     "k_bootstrap_mode", "k_stability", "k_ci_lo", "k_ci_hi", "n_bootstrap",
     "vertical_accuracy_m", "median_gradient", "goodness_of_variance_fit",
-    "separation_ratio"]
+    "separation_ratio", "breaks_from_window_m"]
 
 
 def check_empty_tables(out_dir: pathlib.Path, stem: str) -> int:

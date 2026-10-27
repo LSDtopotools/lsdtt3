@@ -9559,7 +9559,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsurf_valley_mask.tif:972
     --expect-raster-checksum fsurf_hand.tif:57881
     --expect-raster-checksum fsurf_reference_field.tif:57881
-    --expect-sha256 fsurf_ladder_windows.csv:fb3a5878d6e6551bbd0160a15cd20318f97cc7d005398ae24749ad249982207f
+    --expect-sha256 fsurf_ladder_windows.csv:b8113840463e5647c5b3b289de66fad93fa267c33e04ba47b042289bfff92cf1
     --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
     --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
 )
@@ -9578,7 +9578,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsfan_banded_labels.tif:26071
     --expect-raster-checksum fsfan_valley_mask.tif:24826
     --expect-raster-checksum fsfan_reference_field.tif:2938
-    --expect-sha256 fsfan_ladder_windows.csv:dc25767b08748452aa37bc804263bf3f4fcbe6ac1379214151a02a4e42dce5da
+    --expect-sha256 fsfan_ladder_windows.csv:e98845c4c205158dc633b3f7f067a3295736abff2b3c18b20bc13027eba4e120
     --expect-sha256 fsfan_surface_patches.csv:ec68e8291333913c801c26b7ec251decaa0c374e1478857c58f9dced03ceb0c3
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fitted_surface_checksums PROPERTIES
@@ -9612,7 +9612,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsfm_surface_class.tif:37252
     --expect-raster-checksum fsfm_valley_mask.tif:1128
     --expect-raster-checksum fsfm_reference_field.tif:57881
-    --expect-sha256 fsfm_ladder_windows.csv:7d2ea486a0d3f4d88815aa1bb09b7965f28684ad42084b33afbda25970bf638d
+    --expect-sha256 fsfm_ladder_windows.csv:e8986691f8cbbd2c50f3cff34009f57c603d8a6fd30d510cc9129120da304b96
     --expect-sha256 fsfm_surface_patches.csv:20dae3570717df72dfb17d6b40086a6df84d5afff05b470fc1f2323d4a600e3b
     --expect-sha256 fsfm_surface_class.csv:dbf403d3098b67472eefb257cfd05bf9937ad39688d584c57978eabc86a7b9bb
 )
@@ -9634,7 +9634,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsurf_surface_class.tif:37966
     --expect-raster-checksum fsurf_valley_mask.tif:972
     --expect-raster-checksum fsurf_hand.tif:57881
-    --expect-sha256 fsurf_ladder_windows.csv:fb3a5878d6e6551bbd0160a15cd20318f97cc7d005398ae24749ad249982207f
+    --expect-sha256 fsurf_ladder_windows.csv:b8113840463e5647c5b3b289de66fad93fa267c33e04ba47b042289bfff92cf1
     --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
     --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
     --stderr-contains "'fallback_admission_algorithm_choice' is deprecated"
@@ -9822,11 +9822,13 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fill_admitted_holes PROPERT
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # Training polygons (plan 7i) on the staircase: fp / t1 / T5 drawn on treads
-# 1-3. The trained breaks fall midway between the polygon cores (8.3 | 13.3 m
-# and 16.6 | 21.3 m); the ladder's own search adds the break above them (k 4,
+# 1-3. The trained breaks fall midway between the polygon cores, p25..p75
+# (8.14 | 15.88 m and 16.40 | 23.88 m); the ladder's own search adds the break above them (k 4,
 # the third break 24.88 m in the ladder windows CSV); under
 # clubb2017 the trained bound replaces the QQ bound and the second pass is
-# skipped.
+# skipped. Ladder floodplain = the lowest level touching the channel: the six
+# band-0 patches within 100 m of it; two band-0 patches 286 m away stay terrace.
+# Patch level clustering finds the four treads (p at its 0.001 floor).
 add_lsdtt_cli_smoke_test(
     rigorous_fluvial_surfaces_training
     lsdtt-fluvial-surfaces
@@ -9838,11 +9840,14 @@ add_lsdtt_cli_smoke_test(
     --expect trn_clubb2017_training_fit.csv
     --expect trn_clubb2017_training_levels.tif
     --stdout-contains "training: 2 of 2 window(s) banded with trained breaks"
-    --stdout-contains "over all training: 10.8167 18.9667 m"
-    --stdout-contains "floodplain / terrace HAND bound 10.8167 m over all training (J 1)"
+    --stdout-contains "over all training: 12.01 20.14 m"
+    --stdout-contains "floodplain / terrace HAND bound 12.01 m over all training (J 1)"
     --stdout-contains "the second pass is skipped"
-    --expect-file-contains "trn_ladder_ladder_windows.csv:0,500.000000,21458,4,resolved,0,10.816666"
-    --expect-file-contains "trn_ladder_training_fit.csv:window,0,500,window,break_2,18.9666634,1,1297,1291,1297,1291,"
+    --stdout-contains "6 floodplain, 26 terrace surface(s)"
+    --expect-file-contains "trn_ladder_ladder_windows.csv:0,500.000000,21458,4,resolved,0,12.009998"
+    --expect-file-contains "trn_ladder_training_fit.csv:window,0,500,window,break_2,20.1399956,1,809,820,809,820,"
+    --expect-file-contains "trn_ladder_patch_level_clusters.csv:all,-1,0,32,1.5,4,0.906580494,0.430937805,0.001,7.94000244 16.2199936 24.2399979 32.2499962,8 8 8 8"
+    --stdout-contains "per window (>= 5 patches): 2 of 2 window(s) at p <= 0.05"
     --expect-file-contains "trn_ladder_training_polygons.csv:2,T5,terrace,5,1600,1600,24.1999969"
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES

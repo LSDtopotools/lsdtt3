@@ -364,11 +364,20 @@ struct ladder_request
     // above it. A window whose training has no floodplain level or no break
     // takes the fit over all training cells; when that has none either, the
     // ladder searches as usual. Polygon statistics are measured here, on the
-    // field banded; a polygon whose p90 - p10 exceeds
-    // training_spread_factor x the global required gap is flagged (not a
-    // single level). Ignored with supplied_breaks set. Not owned.
+    // field banded; a polygon whose p75 - p25 exceeds both
+    // training_spread_factor x the global required gap and
+    // training_relative_spread x its median is flagged (not a single level).
+    // Ignored with supplied_breaks set. Not owned.
     const training_set* training = nullptr;
+
+    // An unresolved window (no admissible k >= 2, no explicit level_count)
+    // bands everything as one level. true: it borrows the breaks of the nearest window on the same
+    // channel source that found levels, so band 0 means a comparable HAND
+    // range along the channel. Status stays unresolved; the window lent from
+    // is in ladder_window::breaks_from_window_m.
+    bool unresolved_borrow_breaks = false;
     double training_spread_factor       = 3.0;
+    double training_relative_spread     = 0.25;
     int    training_min_cells_per_class = 20;
 
     // Resolvability floor. Admissible iff
@@ -520,6 +529,9 @@ struct ladder_window
     // Training: how many of the lowest breaks came from it, and from where
     // ("window", "global", or "" when not trained). training_fit is this
     // window's own fit, whether or not it was used.
+    // Centre of the window whose breaks an unresolved window borrowed
+    // (ladder_request::unresolved_borrow_breaks); -1 = its own.
+    double              breaks_from_window_m = -1.0;
     int                 n_trained_breaks = 0;
     std::string         training_source;
     training_window_fit training_fit;
