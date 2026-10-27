@@ -1,0 +1,16 @@
+# A method listed twice is refused before any work.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: mld
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder,clubb2017,ladder
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+write_surface_class_raster: true
+write_surface_patches_csv: true
+write_surface_class_polygons: true
+write_vector_format: flatgeobuf

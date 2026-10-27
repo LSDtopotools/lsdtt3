@@ -83,6 +83,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
 #include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_method_comparison_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
@@ -189,7 +190,10 @@ int main(int argc, char* argv[])
         "fixed_thresholds / supplied_levels; "
         "terrace_reference_field_algorithm_choice same / swath_baseline / "
         "same; segmentation_algorithm_choice within_bands / whole_mask / "
-        "within_bands.",
+        "within_bands. Several presets in one run: list them comma-separated "
+        "with no spaces (ladder,clubb2017); each writes under "
+        "<write_fname>_<preset>, then the comparison outputs "
+        "(write_method_record_csv).",
         "Method","switch",""};
 
     string_default_map["level_algorithm_choice"] = "preset";
@@ -682,6 +686,39 @@ int main(int argc, char* argv[])
         " The gradient bound of admission floodplain_thresholds, used as given "
         "under floodplain_threshold_algorithm_choice fixed.";
 
+    string_default_map["floodplain_bound_algorithm_choice"] = "auto";
+    help_map["floodplain_bound_algorithm_choice"] = {"string","auto",
+        "Which bounds the floodplain admission uses: auto, hand_and_gradient "
+        "or hand_only (admission floodplain_thresholds).",
+        "hand_and_gradient: HAND below its bound AND gradient below its bound, "
+        "as Clubb et al. (2017). hand_only: HAND alone - for low-relief "
+        "landscapes, where the floodplain is cut into a surface that is "
+        "itself nearly flat, and field-, road- and levee-scale relief puts "
+        "much of the true floodplain above a data-chosen gradient bound. "
+        "auto (default): hand_only when more than low_relief_min_area_fraction "
+        "of the DEM's floodplain gradient is below low_relief_max_gradient, "
+        "else hand_and_gradient. The fraction and the branch are in the run "
+        "log, and the branch is recorded in _ingested_params.param so a rerun "
+        "repeats it. Measured 2026-10-27 on four tiles (fraction below 0.1): "
+        "Royalton 0.97 (gradient bound removed the floodplain), Mayoco 0.53, "
+        "Salinas 0.27, Freiburg 0.17.",
+        "Floodplain","param","admission_algorithm_choice"};
+
+    float_default_map["low_relief_max_gradient"] = 0.1f;
+    help_map["low_relief_max_gradient"] = {"float","0.1",
+        "Gradient [m/m] below which a cell counts as low relief "
+        "(floodplain_bound_algorithm_choice auto).",
+        "Read on the floodplain gradient (floodplain_gradient_window_radius_"
+        "metres). Gradient depends on resolution and window, so the fraction "
+        "is too.",
+        "Floodplain","param","floodplain_bound_algorithm_choice"};
+
+    float_default_map["low_relief_min_area_fraction"] = 0.8f;
+    help_map["low_relief_min_area_fraction"] = {"float","0.8",
+        "Fraction of the DEM below low_relief_max_gradient above which auto "
+        "drops the gradient bound.", "",
+        "Floodplain","param","floodplain_bound_algorithm_choice"};
+
     float_default_map["floodplain_gradient_window_radius_metres"] = 0.0f;
     help_map["floodplain_gradient_window_radius_metres"] = {"float","0",
         "Window radius [m] of the polynomial fit the floodplain gradient is "
@@ -1167,6 +1204,41 @@ int main(int argc, char* argv[])
         "Output file: <stem>_floodplain_mask.tif. hand field only.",
         "Outputs","switch",""};
 
+    bool_default_map["write_method_record_csv"] = true;
+    help_map["write_method_record_csv"] = {"bool","true",
+        "Write the method record: every stage, every data-chosen bound, and "
+        "the measured counts.",
+        "Output file: <stem>_method_record.csv (method, item, value, source). "
+        "source says whether a stage came from the preset or the parameter "
+        "file, or that a value was measured. With several methods in "
+        "fluvial_surface_algorithm_choice (comma-separated, no spaces) each "
+        "has its own, and <write_fname>_method_summary.csv, "
+        "_method_comparison.csv (per pair: floodplain and terrace "
+        "intersection-over-union, agreement on classified cells, the 3 x 3 "
+        "confusion in cells and m^2) and _method_agreement_floodplain.tif / "
+        "_terrace.tif (UInt8, bit k = method k in list order) are written.",
+        "Outputs","output",""};
+
+    bool_default_map["write_surface_class_polygons"] = false;
+    help_map["write_surface_class_polygons"] = {"bool","false",
+        "Write the floodplain and terrace classes as polygons (hand field).",
+        "Output file: <stem>_surface_class_polygons.<fgb|gpkg> "
+        "(write_vector_format): one polygon per connected area of one class "
+        "(8-connected), field class (1 floodplain, 2 terrace), label_id, "
+        "pixel_count, area_m2. Outer boundaries only.",
+        "Outputs","output",""};
+
+    bool_default_map["write_surface_patch_polygons"] = false;
+    help_map["write_surface_patch_polygons"] = {"bool","false",
+        "Write every labelled patch as a polygon, with its level.",
+        "Output file: <stem>_surface_patch_polygons.<fgb|gpkg> "
+        "(write_vector_format). Fields: label_id (joins "
+        "_surface_patches.csv and _banded_labels.tif), pixel_count, area_m2, "
+        "band (the ladder level, or 0 floodplain / 1 terrace under "
+        "fixed_thresholds). Outer boundaries only: a patch enclosing another "
+        "level's patch is drawn without the hole.",
+        "Outputs","output",""};
+
     bool_default_map["write_surface_patches_csv"] = true;
     help_map["write_surface_patches_csv"] = {"bool","true",
         "Write one row per labelled patch.",
@@ -1400,7 +1472,68 @@ int main(int argc, char* argv[])
     // unless the parameter file named it. The table printed below says which,
     // so a run can be read back without the parameter file.
     // -------------------------------------------------------------------------
-    const std::string method = sf["fluvial_surface_algorithm_choice"];
+    // Methods to run (plan 7b): one preset, or several, comma-separated with
+    // no spaces (ladder,clubb2017). Each runs the whole pipeline below under
+    // its own stem, <write_fname>_<method>; stage parameters named in the file
+    // apply to every one. One method keeps the plain <write_fname> stem.
+    std::vector<std::string> method_list;
+    {
+        const std::string& ml = sf["fluvial_surface_algorithm_choice"];
+        std::size_t start = 0;
+        while (start <= ml.size())
+        {
+            const std::size_t comma = ml.find(',', start);
+            const std::string m = ml.substr(start, comma == std::string::npos
+                                                       ? std::string::npos
+                                                       : comma - start);
+            if (m.empty())
+            {
+                std::cerr << "FATAL: fluvial_surface_algorithm_choice '" << ml
+                          << "' has an empty entry.\n";
+                return 1;
+            }
+            if (std::find(method_list.begin(), method_list.end(), m) !=
+                method_list.end())
+            {
+                std::cerr << "FATAL: fluvial_surface_algorithm_choice lists '"
+                          << m << "' twice.\n";
+                return 1;
+            }
+            method_list.push_back(m);
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+        if (method_list.size() > 8)
+        {
+            std::cerr << "FATAL: at most 8 methods in one run (the agreement "
+                         "rasters hold one bit per method).\n";
+            return 1;
+        }
+        if (std::find(method_list.begin(), method_list.end(),
+                      "cross_section_levels") != method_list.end() &&
+            sf["supplied_levels_fname"].empty() &&
+            (sf["level_algorithm_choice"] == "preset" ||
+             sf["level_algorithm_choice"] == "supplied_levels"))
+        {
+            std::cerr << "FATAL: cross_section_levels needs supplied_levels_fname "
+                         "(the levels CSV from lsdtt-valley-centreline).\n";
+            return 1;
+        }
+    }
+
+    // What each method's run hands back for the comparison and the summary.
+    struct method_run_output
+    {
+        std::vector<std::uint8_t> cls;     // surface_class per cell (hand only)
+        std::vector<std::uint8_t> valid;
+        lsdtt::lsdtt_raster_meta  meta;
+        std::vector<std::pair<std::string, std::string>> summary;
+    };
+
+    auto run_method = [&](const std::string& method, const std::string& stem,
+                          const std::string& fname_stem,
+                          method_run_output& run_out) -> int
+    {
     if (method != "ladder" && method != "clubb2017" &&
         method != "cross_section_levels")
     {
@@ -1466,11 +1599,20 @@ int main(int argc, char* argv[])
         }
         if (have_mask && admission_choice != "flat_mask")
         {
-            std::cerr << "FATAL: admission_algorithm_choice is "
-                      << admission_choice << " but flat_mask_fname is set. "
-                         "Use flat_mask to read the mask, or clear "
-                         "flat_mask_fname.\n";
-            return 1;
+            // Named in the file: a contradiction, refuse it. From a preset
+            // (clubb2017 in a list run beside ladder): that preset's admission
+            // wins for this method and the mask is for the others.
+            if (named)
+            {
+                std::cerr << "FATAL: admission_algorithm_choice is "
+                          << admission_choice << " but flat_mask_fname is set. "
+                             "Use flat_mask to read the mask, or clear "
+                             "flat_mask_fname.\n";
+                return 1;
+            }
+            std::cout << "NOTE: the " << method << " preset admits by "
+                      << admission_choice << "; flat_mask_fname is not used "
+                         "by this method.\n";
         }
         if (admission_choice == "flat_mask" && !have_mask)
             admission_choice = "relief";   // no mask: the built-in fallback
@@ -1594,6 +1736,9 @@ int main(int argc, char* argv[])
             {"riser_mask_fname", !segment_whole_mask},
             {"max_floodplain_gradient", !admit_by_bounds},
             {"floodplain_gradient_window_radius_metres", !admit_by_bounds},
+            {"floodplain_bound_algorithm_choice", !admit_by_bounds},
+            {"low_relief_max_gradient", !admit_by_bounds},
+            {"low_relief_min_area_fraction", !admit_by_bounds},
             {"floodplain_qq_lower_percentile",
              !(use_floodplain_bounds && floodplain_threshold_choice == "qq_gaussian")},
             {"floodplain_qq_upper_percentile",
@@ -1844,7 +1989,6 @@ int main(int argc, char* argv[])
     const std::size_t n_pixels =
         static_cast<std::size_t>(meta.n_rows) *
         static_cast<std::size_t>(meta.n_cols);
-    const std::string stem = pp.get_full_write_path();
 
     auto load_companion_raster = [&](const std::string& fname,
                                      const char* what,
@@ -2345,6 +2489,9 @@ int main(int argc, char* argv[])
     float floodplain_hand_bound     = ff["max_floodplain_hand_metres"];
     float floodplain_gradient_bound = ff["max_floodplain_gradient"];
     lsdtt::lsdtt_raster_cpu floodplain_gradient;
+    // floodplain_bound_algorithm_choice: false = HAND alone (hand_only).
+    bool use_floodplain_gradient_bound = true;
+    double low_relief_fraction = -1.0;   // auto only; -1 = not measured
     if (use_floodplain_bounds)
     {
         std::cout << "--- Floodplain bounds (" << floodplain_threshold_choice
@@ -2374,6 +2521,51 @@ int main(int argc, char* argv[])
                 std::cerr << "FATAL: floodplain gradient failed: " << e.what()
                           << "\n";
                 return 1;
+            }
+            // floodplain_bound_algorithm_choice: is the gradient bound used?
+            {
+                const std::string& bc = sf["floodplain_bound_algorithm_choice"];
+                if (bc != "auto" && bc != "hand_and_gradient" && bc != "hand_only")
+                {
+                    std::cerr << "FATAL: unknown floodplain_bound_algorithm_choice '"
+                              << bc << "'. Valid: auto, hand_and_gradient, "
+                                 "hand_only.\n";
+                    return 1;
+                }
+                if (bc == "auto")
+                {
+                    const float g_low = ff["low_relief_max_gradient"];
+                    std::int64_t n_def = 0, n_low = 0;
+                    const std::vector<float>&   gd = floodplain_gradient.get_data();
+                    const std::vector<uint8_t>& gm = floodplain_gradient.get_mask();
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        if (!gm[i] || !std::isfinite(gd[i]) ||
+                            floodplain_gradient.get_meta().is_nodata(gd[i]))
+                            continue;
+                        ++n_def;
+                        if (gd[i] < g_low) ++n_low;
+                    }
+                    const double frac = n_def > 0 ? double(n_low) / double(n_def) : 0.0;
+                    low_relief_fraction = frac;
+                    use_floodplain_gradient_bound =
+                        !(frac > static_cast<double>(ff["low_relief_min_area_fraction"]));
+                    std::cout << "  low relief test: " << frac
+                              << " of the DEM's floodplain gradient is below "
+                              << g_low << " (switch above "
+                              << ff["low_relief_min_area_fraction"] << ") -> "
+                              << (use_floodplain_gradient_bound ? "hand_and_gradient"
+                                                                : "hand_only")
+                              << "\n";
+                    pp.record_resolved_parameter(
+                        "floodplain_bound_algorithm_choice",
+                        use_floodplain_gradient_bound ? "hand_and_gradient"
+                                                      : "hand_only");
+                }
+                else
+                {
+                    use_floodplain_gradient_bound = (bc == "hand_and_gradient");
+                }
             }
             if (bf["write_floodplain_gradient_raster"])
             {
@@ -2439,7 +2631,7 @@ int main(int argc, char* argv[])
                     floodplain_threshold_choice == "qq_gaussian"
                         ? std::to_string(sel.qq_index) : "",
                     std::to_string(values.size()),
-                    pp.get_write_fname() + "_floodplain_" + out_name + table_suffix});
+                    fname_stem + "_floodplain_" + out_name + table_suffix});
                 if (bf["write_floodplain_threshold_csv"])
                 {
                     const std::string p = stem + "_floodplain_" + out_name +
@@ -2473,7 +2665,7 @@ int main(int argc, char* argv[])
                 std::ostringstream os; os.precision(9); os << floodplain_hand_bound;
                 pp.record_resolved_parameter("max_floodplain_hand_metres", os.str());
             }
-            if (admit_by_bounds)
+            if (admit_by_bounds && use_floodplain_gradient_bound)
             {
                 std::vector<double> gv;
                 for (std::size_t i = 0; i < n_pixels; ++i)
@@ -2492,21 +2684,51 @@ int main(int argc, char* argv[])
                       << " m\n";
         if (admit_by_bounds)
         {
-            std::cout << "  floodplain gradient bound : "
-                      << floodplain_gradient_bound << " (m/m)\n";
+            if (use_floodplain_gradient_bound)
+                std::cout << "  floodplain gradient bound : "
+                          << floodplain_gradient_bound << " (m/m)\n";
+            else
+                std::cout << "  floodplain gradient bound : none (hand_only)\n";
             std::vector<float>& ad_w = admitted.get_data();
             std::int64_t n_in = 0;
             for (std::size_t i = 0; i < n_pixels; ++i)
             {
-                const bool keep = hand_defined(i) && grad_defined(i) &&
-                    floodplain_gradient.get_data()[i] < floodplain_gradient_bound;
+                const bool keep = hand_defined(i) &&
+                    (!use_floodplain_gradient_bound ||
+                     (grad_defined(i) &&
+                      floodplain_gradient.get_data()[i] < floodplain_gradient_bound));
                 ad_w[i] = keep ? 1.0f : 0.0f;
                 if (keep) ++n_in;
             }
-            std::cout << "  admitted below the gradient bound: " << n_in
-                      << " cell(s)\n";
+            std::cout << (use_floodplain_gradient_bound
+                              ? "  admitted below the gradient bound: "
+                              : "  admitted (HAND defined): ")
+                      << n_in << " cell(s)\n";
         }
         std::cout << "\n";
+    }
+
+    // Negative HAND -> 0 for the antimode ladder (Simon, 2026-10-27). The
+    // antimode finder bins log10 HAND and refuses a negative value, and every
+    // real DEM tried had some: cells routed to a channel cell higher than
+    // themselves (fill and flat-resolution artefacts). Below the channel is
+    // height 0 above it; the clamp count is in the log and the method record.
+    std::int64_t n_hand_clamped = 0;
+    if (use_hand && !level_fixed &&
+        break_choice == lsdtt::ladder_break_choice::antimode)
+    {
+        std::vector<float>&         rfd = reference_field.get_data();
+        const std::vector<uint8_t>& rfm = reference_field.get_mask();
+        for (std::size_t i = 0; i < rfd.size(); ++i)
+            if (rfm[i] && std::isfinite(rfd[i]) &&
+                !reference_field.get_meta().is_nodata(rfd[i]) && rfd[i] < 0.0f)
+            {
+                rfd[i] = 0.0f;
+                ++n_hand_clamped;
+            }
+        if (n_hand_clamped > 0)
+            std::cout << "  " << n_hand_clamped << " negative HAND cell(s) set "
+                         "to 0 for the antimode ladder\n";
     }
 
     // -------------------------------------------------------------------------
@@ -2845,7 +3067,7 @@ int main(int argc, char* argv[])
                         "2", "hand", "qq_upper_departure",
                         num9(sel2.threshold), std::to_string(sel2.qq_index),
                         std::to_string(fp_hand.size()),
-                        pp.get_write_fname() +
+                        fname_stem +
                             "_floodplain_hand_qq_second_pass.csv"});
                     floodplain_first_pass_mask = fres.floodplain_mask;
                     floodplain_hand_bound = static_cast<float>(sel2.threshold);
@@ -3470,6 +3692,74 @@ int main(int argc, char* argv[])
                           lsdtt::lsdtt_pixel_type::uint8);
     }
 
+    if (use_hand && bf["write_surface_class_polygons"] &&
+        !class_raster.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_surface_class_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        // One label per connected area of each class; the class travels as
+        // the polygon attribute.
+        const std::vector<float>& cv = class_raster.get_data();
+        std::vector<float>        labels(n_pixels, 0.0f);
+        std::vector<std::int32_t> class_of(1, -1);
+        std::int64_t next = 0;
+        for (const int c : {1, 2})
+        {
+            std::vector<float> m(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (static_cast<int>(cv[i] + 0.5f) == c) m[i] = 1.0f;
+            const lsdtt::lsdtt_raster_cpu lab = lsdtt::label_binary_components_by_size(
+                lsdtt::lsdtt_raster_cpu(std::move(m),
+                                        std::vector<uint8_t>(n_pixels, 1), meta),
+                1, lsdtt::pixel_connectivity::d8);
+            std::int64_t max_here = 0;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const float l = lab.get_data()[i];
+                if (l > 0.5f)
+                {
+                    const std::int64_t li = static_cast<std::int64_t>(l + 0.5f);
+                    labels[i] = static_cast<float>(next + li);
+                    max_here = std::max(max_here, li);
+                }
+            }
+            for (std::int64_t k = 0; k < max_here; ++k) class_of.push_back(c);
+            next += max_here;
+        }
+        lsdtt::lsdtt_vectorise_options vopt;
+        vopt.layer_name           = "surface_classes";
+        vopt.format               = pfmt;
+        vopt.background           = 0.0f;
+        vopt.spatial_index        = true;
+        vopt.label_attribute_name = "class";
+        const std::string p = stem + "_surface_class_polygons" +
+                              lsdtt::output_extension(pfmt);
+        std::cout << "Writing surface class polygons: " << p << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(
+                lsdtt::lsdtt_raster_cpu(std::move(labels),
+                                        std::vector<uint8_t>(n_pixels, 1), meta),
+                vec_loader, p, vopt, class_of);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: surface class polygons: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
     if (use_hand && bf["write_surface_class_raster"] &&
         !class_raster.get_data().empty())
     {
@@ -3551,6 +3841,46 @@ int main(int argc, char* argv[])
         catch (const std::exception& e)
         {
             std::cerr << "FATAL: floodplain polygons: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf["write_surface_patch_polygons"] && !banded.labels.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_surface_patch_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        std::int64_t max_label = 0;
+        for (const auto& pr : banded.patches) max_label = std::max(max_label, pr.label);
+        std::vector<std::int32_t> band_of(static_cast<std::size_t>(max_label) + 1, -1);
+        for (const auto& pr : banded.patches)
+            band_of[static_cast<std::size_t>(pr.label)] = pr.band;
+        lsdtt::lsdtt_vectorise_options vopt;
+        vopt.layer_name           = "surface_patches";
+        vopt.format               = pfmt;
+        vopt.background           = 0.0f;
+        vopt.spatial_index        = true;
+        vopt.label_attribute_name = "band";
+        const std::string p = stem + "_surface_patch_polygons" +
+                              lsdtt::output_extension(pfmt);
+        std::cout << "Writing surface patch polygons: " << p << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(banded.labels, vec_loader, p, vopt, band_of);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: surface patch polygons: " << e.what() << "\n";
             return 1;
         }
     }
@@ -3716,6 +4046,205 @@ int main(int argc, char* argv[])
         {
             std::cerr << "Warning: channel network failed: "
                       << e.what() << "\n";
+        }
+    }
+
+    // ---- method record (plan 7a) and what the comparison needs -------------
+    {
+        std::vector<std::vector<std::string>> rec;
+        auto add = [&](const std::string& item, const std::string& value,
+                       const std::string& source)
+        { rec.push_back({method, item, value, source}); };
+        for (const stage_value& sv : stages) add(sv.key, sv.value, sv.source);
+        for (const auto& r : floodplain_threshold_rows)
+            add("pass" + r[0] + "_" + r[1] + "_bound", r[3], r[2]);
+        if (low_relief_fraction >= 0.0)
+        {
+            std::ostringstream os; os.precision(6); os << low_relief_fraction;
+            add("low_relief_fraction", os.str(), "measured");
+            add("floodplain_bound_algorithm_choice",
+                use_floodplain_gradient_bound ? "hand_and_gradient" : "hand_only",
+                "auto");
+        }
+        if (n_hand_clamped > 0)
+            add("negative_hand_cells_set_to_0", std::to_string(n_hand_clamped),
+                "antimode ladder");
+        std::int64_t n_res = 0, n_unres = 0, n_deg = 0, n_sup = 0;
+        for (const lsdtt::ladder_window& w : ladder.windows)
+        {
+            if (w.status == lsdtt::ladder_status::resolved ||
+                w.status == lsdtt::ladder_status::forced) ++n_res;
+            else if (w.status == lsdtt::ladder_status::unresolved) ++n_unres;
+            else if (w.status == lsdtt::ladder_status::supplied) ++n_sup;
+            else ++n_deg;
+        }
+        if (!ladder.windows.empty())
+        {
+            add("ladder_windows_resolved", std::to_string(n_res), "measured");
+            add("ladder_windows_unresolved", std::to_string(n_unres), "measured");
+            add("ladder_windows_degenerate", std::to_string(n_deg), "measured");
+            if (n_sup > 0)
+                add("ladder_windows_supplied", std::to_string(n_sup), "measured");
+        }
+        int max_band = -1;
+        for (const auto& pr : banded.patches) max_band = std::max(max_band, pr.band);
+        add("patches", std::to_string(banded.patches.size()), "measured");
+        add("levels", std::to_string(max_band + 1), "measured");
+
+        std::int64_t n_fp = 0, n_tr = 0;
+        run_out.meta = meta;
+        run_out.valid.assign(n_pixels, 0);
+        for (std::size_t i = 0; i < n_pixels; ++i)
+            run_out.valid[i] = dem.get_mask()[i] ? 1 : 0;
+        if (use_hand && !class_raster.get_data().empty())
+        {
+            run_out.cls.assign(n_pixels, 0);
+            const std::vector<float>& cv = class_raster.get_data();
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const int c = static_cast<int>(cv[i] + 0.5f);
+                if (c == 1 || c == 2) run_out.cls[i] = static_cast<std::uint8_t>(c);
+                if (c == 1) ++n_fp;
+                if (c == 2) ++n_tr;
+            }
+        }
+        const double cell_area = meta.cell_size * meta.cell_size;
+        add("floodplain_cells", std::to_string(n_fp), "measured");
+        add("terrace_cells", std::to_string(n_tr), "measured");
+
+        if (bf["write_method_record_csv"])
+        {
+            const std::string p = stem + "_method_record.csv";
+            std::cout << "Writing method record: " << p << "\n";
+            loader.write_csv(p, {"method", "item", "value", "source"}, rec);
+        }
+        auto num = [](double v) { std::ostringstream os; os.precision(9); os << v; return os.str(); };
+        run_out.summary = {
+            {"floodplain_cells", std::to_string(n_fp)},
+            {"floodplain_area_m2", num(n_fp * cell_area)},
+            {"terrace_cells", std::to_string(n_tr)},
+            {"terrace_area_m2", num(n_tr * cell_area)},
+            {"patches", std::to_string(banded.patches.size())},
+            {"levels", std::to_string(max_band + 1)},
+            {"ladder_windows_resolved", std::to_string(n_res)},
+            {"ladder_windows_unresolved", std::to_string(n_unres)},
+            {"ladder_windows_degenerate", std::to_string(n_deg)}};
+        for (const auto& r : floodplain_threshold_rows)
+            run_out.summary.push_back({"pass" + r[0] + "_" + r[1] + "_bound", r[3]});
+    }
+    return 0;
+    };   // run_method
+
+    std::vector<method_run_output> runs(method_list.size());
+    const bool several = method_list.size() > 1;
+    for (std::size_t k = 0; k < method_list.size(); ++k)
+    {
+        const std::string& m = method_list[k];
+        const std::string run_stem  = several
+            ? pp.get_full_write_path() + "_" + m : pp.get_full_write_path();
+        const std::string run_fname = several
+            ? pp.get_write_fname() + "_" + m : pp.get_write_fname();
+        if (several)
+            std::cout << "\n================ method " << (k + 1) << " of "
+                      << method_list.size() << ": " << m
+                      << " ================\n";
+        const int rc = run_method(m, run_stem, run_fname, runs[k]);
+        if (rc != 0) return rc;
+    }
+
+    // ---- comparison of the methods (plan 7b) -----------------------------------
+    if (several)
+    {
+        const std::string base = pp.get_full_write_path();
+        lsdtt::lsdtt_data_loader out_loader;
+        {
+            std::vector<std::string> head = {"method"};
+            for (const auto& kv : runs[0].summary) head.push_back(kv.first);
+            std::vector<std::vector<std::string>> rows;
+            for (std::size_t k = 0; k < runs.size(); ++k)
+            {
+                std::vector<std::string> row = {method_list[k]};
+                for (const std::string& h : std::vector<std::string>(head.begin() + 1, head.end()))
+                {
+                    std::string v;
+                    for (const auto& kv : runs[k].summary) if (kv.first == h) v = kv.second;
+                    row.push_back(v);
+                }
+                rows.push_back(row);
+            }
+            // Bounds only some methods have go in extra columns.
+            for (std::size_t k = 0; k < runs.size(); ++k)
+                for (const auto& kv : runs[k].summary)
+                    if (std::find(head.begin(), head.end(), kv.first) == head.end())
+                    {
+                        head.push_back(kv.first);
+                        for (auto& r : rows) r.push_back("");
+                    }
+            for (std::size_t k = 0; k < runs.size(); ++k)
+                for (const auto& kv : runs[k].summary)
+                {
+                    const auto it = std::find(head.begin(), head.end(), kv.first);
+                    rows[k][static_cast<std::size_t>(it - head.begin())] = kv.second;
+                }
+            const std::string p = base + "_method_summary.csv";
+            std::cout << "\nWriting method summary: " << p << "\n";
+            out_loader.write_csv(p, head, rows);
+        }
+
+        std::vector<lsdtt::method_class_map> maps;
+        for (std::size_t k = 0; k < runs.size(); ++k)
+            if (!runs[k].cls.empty()) maps.push_back({method_list[k], runs[k].cls});
+        if (maps.size() < 2)
+        {
+            std::cout << "Fewer than two methods produced floodplain / terrace "
+                         "classes (hand field only); no comparison.\n";
+        }
+        else
+        {
+            const auto pairs = lsdtt::compare_surface_classes(maps, runs[0].valid);
+            const double ca = runs[0].meta.cell_size * runs[0].meta.cell_size;
+            auto num = [](double v) { std::ostringstream os; os.precision(6); os << v; return os.str(); };
+            std::vector<std::vector<std::string>> rows;
+            const char* cname[3] = {"none", "floodplain", "terrace"};
+            for (const auto& pc : pairs)
+            {
+                std::vector<std::string> row = {maps[pc.a].name, maps[pc.b].name,
+                    num(pc.floodplain_iou), num(pc.terrace_iou),
+                    num(pc.classified_agreement)};
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        row.push_back(std::to_string(pc.confusion[i][j]));
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        row.push_back(num(pc.confusion[i][j] * ca));
+                rows.push_back(row);
+            }
+            std::vector<std::string> head = {"method_a", "method_b",
+                "floodplain_iou", "terrace_iou", "classified_agreement"};
+            for (const char* suffix : {"_cells", "_m2"})
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        head.push_back(std::string("a_") + cname[i] + "_b_" +
+                                       cname[j] + suffix);
+            const std::string p = base + "_method_comparison.csv";
+            std::cout << "Writing method comparison: " << p << "\n";
+            out_loader.write_csv(p, head, rows);
+
+            std::cout << "Agreement rasters: bit k = method k in this order:";
+            for (std::size_t k = 0; k < maps.size(); ++k)
+                std::cout << " " << k << "=" << maps[k].name;
+            std::cout << "\n";
+            for (const auto& [cls, name] : std::vector<std::pair<std::uint8_t, std::string>>{
+                     {1, "floodplain"}, {2, "terrace"}})
+            {
+                const std::vector<std::uint8_t> bits =
+                    lsdtt::surface_class_agreement_bits(maps, runs[0].valid, cls);
+                std::vector<float> f(bits.begin(), bits.end());
+                const std::string rp = base + "_method_agreement_" + name + ".tif";
+                std::cout << "Writing " << rp << "\n";
+                out_loader.write_full(f, runs[0].meta, rp, out_format,
+                                      lsdtt::lsdtt_pixel_type::uint8);
+            }
         }
     }
 

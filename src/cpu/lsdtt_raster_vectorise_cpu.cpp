@@ -153,7 +153,7 @@ void trace_labelled_polygons(
     };
     if (has_source_id)
     {
-        schema.field_names.push_back("source_id");
+        schema.field_names.push_back(options.label_attribute_name);
         schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
     }
 

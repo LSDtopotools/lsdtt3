@@ -1,0 +1,21 @@
+# write_surface_patch_polygons on the staircase: every labelled patch as a
+# polygon with its ladder level (band). Four levels by jenks, the relief
+# admission and scope of the cross-section levels workflow's first stage.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fspp
+
+n_threads: 1
+write_output_format: gtiff
+write_vector_format: flatgeobuf
+
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+threshold_contributing_pixels: 500
+source_points_fname: staircase_sources.fgb
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+write_surface_patch_polygons: true

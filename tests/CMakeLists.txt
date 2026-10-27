@@ -8983,6 +8983,15 @@ add_test(NAME unit_feature_finder_risers COMMAND lsdtt-test-riser-finder)
 lsdtt_set_tests_properties(unit_feature_finder_risers PROPERTIES
     LABELS "unit;surface_metrics")
 
+# compare_surface_classes / agreement bits: the comparison behind running
+# several methods in one lsdtt-fluvial-surfaces call (plan 7b), on class maps
+# small enough to check by hand.
+add_executable(lsdtt-test-surface-method-comparison cpp/test_surface_method_comparison.cpp)
+target_link_libraries(lsdtt-test-surface-method-comparison PRIVATE lsdtt3_cpu)
+add_test(NAME unit_fluvial_surface_method_comparison COMMAND lsdtt-test-surface-method-comparison)
+lsdtt_set_tests_properties(unit_fluvial_surface_method_comparison PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
 target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
 
@@ -9656,6 +9665,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "floodplain_thresholds   (preset clubb2017)"
     --stdout-contains "fixed_thresholds   (preset clubb2017)"
     --stdout-contains "true   (preset clubb2017)"
+    --stdout-contains "low relief test: 0.383436 of the DEM's floodplain gradient is below 0.1 (switch above 0.8) -> hand_and_gradient"
     --expect-file-contains "clubb_ingested_params.param:fill_floodplain_holes: true"
     --stdout-contains "channel = Strahler order >= 3: 669 channel pixel(s)"
     --stdout-contains "HAND: quantile 2379 of 10000"
@@ -9716,6 +9726,88 @@ add_lsdtt_cli_smoke_test(
     --expect-vector-feature-min clubbsp_floodplain_first_pass_polygons.fgb:3
 )
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_second_pass PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# floodplain_bound_algorithm_choice: the staircase has 0.709 of its floodplain
+# gradient below 0.1; with the switch at 0.7 auto takes hand_only, records it
+# for a rerun, and gives exactly the explicit hand_only mask (4068 cells).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_low_relief_auto
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_low_relief_auto.param.in
+    lr_auto_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "low relief test: 0.709447 of the DEM's floodplain gradient is below 0.1 (switch above 0.7) -> hand_only"
+    --stdout-contains "floodplain gradient bound : none (hand_only)"
+    --expect-raster-checksum lr_auto_floodplain_mask.tif:4068
+    --expect-file-contains "lr_auto_ingested_params.param:floodplain_bound_algorithm_choice: hand_only"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_low_relief_auto PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_low_relief_hand_only
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_low_relief_hand_only.param.in
+    lr_hand_only_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "floodplain gradient bound : none (hand_only)"
+    --expect-raster-checksum lr_hand_only_floodplain_mask.tif:4068
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_low_relief_hand_only PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# write_surface_patch_polygons: one polygon per labelled patch with its band.
+# Four jenks levels on the staircase give 32 patches (8 per level), as many
+# polygons as rows in _surface_patches.csv.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_patch_polygons
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_patch_polygons.param.in
+    fspp_surface_patch_polygons.fgb
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-vector-feature-min fspp_surface_patch_polygons.fgb:32
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_patch_polygons PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Several methods in one run (plan 7b/7d): ladder,clubb2017 with the settings
+# of rigorous_fluvial_surfaces_clubb2017. The clubb2017 class raster carries
+# that test's pin (8718), i.e. running inside a list changes nothing; verified
+# 2026-10-27 that every per-method raster and CSV is byte-identical to its
+# single-method run. Comparison outputs pinned; class polygons 3 floodplain +
+# 4 terrace areas.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_methods_list
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_methods_list.param.in
+    ml_method_comparison.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "method 2 of 2: clubb2017"
+    --stdout-contains "bit k = method k in this order: 0=ladder 1=clubb2017"
+    --expect ml_ladder_method_record.csv
+    --expect ml_clubb2017_method_record.csv
+    --expect-raster-checksum ml_clubb2017_surface_class.tif:8718
+    --expect-raster-checksum ml_ladder_surface_class.tif:8735
+    --expect-raster-checksum ml_method_agreement_floodplain.tif:25443
+    --expect-raster-checksum ml_method_agreement_terrace.tif:364
+    --expect-sha256 ml_method_comparison.csv:80188349e53db8c72137a0dfb895607809ef3f0e39a1d0ad4d4159bca5dbaa7a
+    --expect-sha256 ml_method_summary.csv:1c5f0a5c749491d8da02c796adb3f3f620516a50133cbbc4265aed44c2458937
+    --expect-vector-feature-min ml_clubb2017_surface_class_polygons.fgb:7
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_methods_list PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_methods_list_duplicate
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_methods_list_duplicate.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lists 'ladder' twice"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_methods_list_duplicate PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The same, counting every channel pixel: the Strahler definition must reach

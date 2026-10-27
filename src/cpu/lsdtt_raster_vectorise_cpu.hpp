@@ -74,6 +74,9 @@ struct lsdtt_vectorise_options
     vector_output_format format        = vector_output_format::flatgeobuf;
     bool                 spatial_index = false;
     float                background    = 0.0f;  // label value to treat as no-label
+    // Field name for the optional per-label attribute (label_source_id below):
+    // "band" for ladder-level patches, for instance.
+    std::string          label_attribute_name = "source_id";
 };
 
 // -----------------------------------------------------------------------------
@@ -95,9 +98,10 @@ struct lsdtt_vectorise_options
 // Throws:
 //   std::runtime_error if the raster metadata is invalid or not projected.
 // -----------------------------------------------------------------------------
-// label_source_id (optional) - if non-empty, element [L] is the channel source
-// ID for flat-surface label L.  Size must be >= max_label + 1.  Pass an empty
-// vector (default) to omit the source_id attribute.
+// label_source_id (optional) - if non-empty, element [L] is an integer
+// attribute of label L (a channel source id, a ladder band, ...), written as
+// options.label_attribute_name; -1 for a label beyond the vector. Pass an
+// empty vector (default) to omit the attribute.
 void trace_labelled_polygons(
     const lsdtt_raster_cpu&              labelled,
     lsdtt_data_loader&                   loader,
