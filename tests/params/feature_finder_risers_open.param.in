@@ -1,0 +1,15 @@
+# find_risers on the dissected staircase with no gap closing: the riser
+# centreline stops at each graded gap, so whole_mask segmentation in
+# check_whole_mask_segmentation.py can show the treads joining through them.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: wmr
+
+n_threads: 1
+write_output_format: gtiff
+
+feature_type: find_risers
+riser_gap_closing_algorithm_choice: none
+write_riser_centreline_raster: true
+write_riser_segments: false

@@ -25,13 +25,12 @@
 //      Removes thin connections between blobs that should be separate.
 //      Order of steps 2 and 3 is controlled by open_then_close.
 //   4. Remove components < min_component_pixels -> working flat mask
-//   5. Slope break detection: adaptive thresholding of
-//      vertical_excess_curvature -> closing -> Zhang-Suen skeleton -> spur and
-//      terminal-loop pruning -> optional elevation-based endpoint bridging.
+//   5. (Slope-break / riser detection moved to lsdtt-feature-finder
+//      feature_type find_risers, 2026-10-26.)
 //   6. Optional channel breaks (break_flats_with_channels): D8 drainage-area
 //      threshold, with optional drainage-area injection.
-//   7. Combined labelling: flat mask minus slope-break and channel-break
-//      pixels -> labelled flat mask.
+//   7. Combined labelling: flat mask minus channel-break pixels -> labelled
+//      flat mask.
 //   8. Optional plane analysis (run_plane_analysis): per-label plane fits with
 //      split/merge detection, then a residual-relief second pass that
 //      re-breaks, re-labels, and merges the flat surfaces.
@@ -43,14 +42,9 @@
 //   <stem>_labelled_flat_mask.tif
 //   <stem>_relief_cdf.csv
 //   <stem>_relief_dist_fits.csv
-//   <stem>_flat_vertical_excess_curvature.tif
-//   <stem>_slope_break_adaptive_binary.tif
 //
 // Frequently used optional outputs (see help for the full list):
 //   <stem>_combined_flat_mask.tif                (write_combined_flat_mask)
-//   <stem>_slope_break_centreline.tif            (write_slope_break_centreline)
-//   <stem>_slope_break_centreline_connected.tif  (write_slope_break_centreline_connected)
-//   <stem>_slope_break_bridge_mask.tif           (write_slope_break_bridge_mask)
 //   <stem>_plane_fits.csv, _plane_residual.tif, _residual_relief*.tif,
 //   <stem>_merged_residual_relief_labelled_flat_mask.tif  (run_plane_analysis)
 //   <stem>_flat_surface_polygons.fgb, _label_source_connections.csv
@@ -70,7 +64,6 @@
 #include <map>
 #include <sstream>
 #include <memory>
-#include <queue>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -93,7 +86,6 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
-#include "../src/cpu/lsdtt_slope_break_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_contours_cpu.hpp"
 #include "../src/utils/lsdtt_distributions.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
@@ -245,133 +237,6 @@ int main(int argc, char* argv[])
         "true: opening first, then closing. "
         "Has no effect when either radius is 0.",
         "Morphological post-processing of relief mask", "param", ""};
-
-    // --- Slope break finder (VEC adaptive threshold skeleton) ---
-    float_default_map["polyfit_lambda_metres"] = 100.0f;
-    help_map["polyfit_lambda_metres"] = {"float","100",
-        "Window half-wavelength (m) for the direct polyfit curvature computation.",
-        "Controls the scale of the fitted surface.  Larger values smooth more.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    string_default_map["vec_adaptive_method"] = "gaussian";
-    help_map["vec_adaptive_method"] = {"string","gaussian",
-        "Adaptive thresholding method applied to vertical_excess_curvature.",
-        "gaussian: Gaussian-weighted local mean (smoother threshold surface). "
-        "mean: unweighted local mean.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    int_default_map["vec_adaptive_block_size_pixels"] = 51;
-    help_map["vec_adaptive_block_size_pixels"] = {"int","51",
-        "Neighbourhood block size (pixels) for adaptive VEC thresholding.",
-        "Must be odd and >= 3.  Should be larger than a typical slope-break "
-        "feature width but smaller than the between-feature spacing.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["vec_adaptive_C"] = 0.0f;
-    help_map["vec_adaptive_C"] = {"float","0.0",
-        "Constant subtracted from the local neighbourhood mean before thresholding.",
-        "Threshold = local_mean - C.  "
-        "0 = foreground where VEC is above the local mean.  "
-        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;
-    help_map["vec_adaptive_gaussian_sigma"] = {"float","0.0",
-        "Sigma for an optional Gaussian pre-blur before adaptive thresholding.",
-        "0 = no blur.  A small value (e.g. 1.0) suppresses pixel-scale noise.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["slope_break_closing_radius_metres"] = 0.0f;
-    help_map["slope_break_closing_radius_metres"] = {"float","0",
-        "Closing radius (m) applied to the adaptive binary mask before skeletonisation.",
-        "Seals small gaps in the detected slope-break regions.  0 = disabled.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    int_default_map["slope_break_binary_min_component_pixels"] = 1;
-    help_map["slope_break_binary_min_component_pixels"] = {"int","1",
-        "Minimum connected-component size (pixels) retained in the adaptive binary mask.",
-        "Applied before skeletonisation.  1 = keep all components.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    // The demotion, made explicit. The VEC skeleton stays as a morphometric
-    // product; what changes is that it no longer breaks the mask before
-    // labelling by default. That job was only ever a repair for two surfaces at
-    // different heights merging through a gap in the riser between them, and
-    // lsdtt-fluvial-surfaces now makes that merge impossible by labelling
-    // within height bands rather than detecting it afterwards.
-    bool_default_map["apply_slope_breaks_to_labels"] = false;
-    help_map["apply_slope_breaks_to_labels"] = {"bool","false",
-        "Break the flat mask with the slope-break skeleton before labelling.",
-        "Default false. The skeleton is still detected and still written; this "
-        "only controls whether it cuts the mask before connected-component "
-        "labelling. Separating surfaces at different heights is now done by "
-        "lsdtt-fluvial-surfaces, which labels within height bands, so a break "
-        "here is no longer needed to keep two treads apart.",
-        "Slope break finder","switch",""};
-
-    bool_default_map["write_slope_break_centreline_raster"] = true;
-    help_map["write_slope_break_centreline_raster"] = {"bool","true",
-        "Write the 1-pixel slope-break skeleton.",
-        "Output suffix: _slope_break_centreline.tif",
-        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
-
-    int_default_map["slope_break_centreline_max_spur_pixels"] = 10;
-    help_map["slope_break_centreline_max_spur_pixels"] = {"int","10",
-        "Maximum endpoint-rooted spur length (pixels) removed from the skeleton.",
-        "0 = skip spur pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    int_default_map["slope_break_centreline_max_terminal_loop_pixels"] = 10;
-    help_map["slope_break_centreline_max_terminal_loop_pixels"] = {"int","10",
-        "Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton.",
-        "0 = skip terminal loop pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    int_default_map["slope_break_centreline_min_component_pixels"] = 1;
-    help_map["slope_break_centreline_min_component_pixels"] = {"int","1",
-        "Minimum component size (pixels) retained in the skeleton.",
-        "Applied after thinning and spur pruning.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["slope_break_connect_search_radius_metres"] = 0.0f;
-    help_map["slope_break_connect_search_radius_metres"] = {"float","0",
-        "Search radius (m) for elevation-based skeleton endpoint connection.",
-        "Bridges nearby endpoints on the same contour.  0 = disabled.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["slope_break_connect_elevation_tolerance_metres"] = 2.0f;
-    help_map["slope_break_connect_elevation_tolerance_metres"] = {"float","2",
-        "Maximum elevation difference (m) allowed between two bridged endpoints.","",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    float_default_map["slope_break_connect_corridor_half_width_pixels"] = 12.0f;
-    help_map["slope_break_connect_corridor_half_width_pixels"] = {"float","12",
-        "Half-width (pixels) of the A* corridor for contour-routed bridges.","",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    bool_default_map["slope_break_connect_same_component"] = false;
-    help_map["slope_break_connect_same_component"] = {"bool","false",
-        "Allow bridging between endpoints on the same skeleton component.",
-        "Default false: only bridge endpoints from different components.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "param", ""};
-
-    bool_default_map["write_slope_break_endpoints"] = false;
-    help_map["write_slope_break_endpoints"] = {"bool","false",
-        "Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer.",
-        "Output suffix: _slope_break_endpoints.fgb  Fields: row, col, elev_m, comp_size.",
-        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
-
-    bool_default_map["write_slope_break_bridge_mask_raster"] = true;
-    help_map["write_slope_break_bridge_mask_raster"] = {"bool","true",
-        "Write the raster of newly inserted bridge pixels from skeleton reconnection.",
-        "Output suffix: _slope_break_bridge_mask.tif",
-        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
-
-    bool_default_map["write_slope_break_centreline_connected_raster"] = true;
-    help_map["write_slope_break_centreline_connected_raster"] = {"bool","true",
-        "Write the connected skeleton after accepted bridge routing.",
-        "Output suffix: _slope_break_centreline_connected.tif",
-        "Slope break finder (VEC adaptive threshold skeleton)", "switch", ""};
 
     // --- Component filtering ---
     int_default_map["min_component_pixels"] = 100;
@@ -645,12 +510,46 @@ int main(int argc, char* argv[])
         {"find_floodplain",
          "find_floodplain has moved to lsdtt-fluvial-surfaces"},
         {"apply_plane_merges",
-         "apply_plane_merges never had any effect and has been removed"} });
+         "apply_plane_merges never had any effect and has been removed"},
+        // 2026-10-26: the slope-break (riser) finder moved to
+        // lsdtt-feature-finder. These keys turned an output or a mask cut on,
+        // so ignoring them would leave a run looking as if it had done so.
+        {"apply_slope_breaks_to_labels",
+         "apply_slope_breaks_to_labels has been removed: risers are found by "
+         "lsdtt-feature-finder (feature_type: find_risers), and its riser "
+         "centreline splits surfaces in lsdtt-fluvial-surfaces "
+         "(segmentation_algorithm_choice: whole_mask, riser_mask_fname)"},
+        {"write_slope_break_centreline_raster",
+         "write_slope_break_centreline_raster has moved: use "
+         "lsdtt-feature-finder (feature_type: find_risers) with "
+         "write_riser_centreline_raster"},
+        {"write_slope_break_centreline",
+         "write_slope_break_centreline has moved: use lsdtt-feature-finder "
+         "(feature_type: find_risers) with write_riser_centreline_raster"},
+        {"write_slope_break_centreline_connected_raster",
+         "write_slope_break_centreline_connected_raster has moved: use "
+         "lsdtt-feature-finder (feature_type: find_risers, "
+         "riser_gap_closing_algorithm_choice: astar) with "
+         "write_riser_centreline_raster"},
+        {"write_slope_break_centreline_connected",
+         "write_slope_break_centreline_connected has moved: use "
+         "lsdtt-feature-finder (feature_type: find_risers, "
+         "riser_gap_closing_algorithm_choice: astar) with "
+         "write_riser_centreline_raster"},
+        {"write_slope_break_bridge_mask_raster",
+         "write_slope_break_bridge_mask_raster has moved: use "
+         "lsdtt-feature-finder (feature_type: find_risers, "
+         "riser_gap_closing_algorithm_choice: astar) with "
+         "write_riser_diagnostic_rasters (_riser_gap_closing)"},
+        {"write_slope_break_bridge_mask",
+         "write_slope_break_bridge_mask has moved: use lsdtt-feature-finder "
+         "(feature_type: find_risers, riser_gap_closing_algorithm_choice: "
+         "astar) with write_riser_diagnostic_rasters (_riser_gap_closing)"},
+        {"write_slope_break_endpoints",
+         "write_slope_break_endpoints has moved: use lsdtt-feature-finder "
+         "(feature_type: find_risers) with write_riser_endpoints"} });
 
     pp.set_deprecated_aliases({
-        {"write_slope_break_centreline", "write_slope_break_centreline_raster"},
-        {"write_slope_break_bridge_mask", "write_slope_break_bridge_mask_raster"},
-        {"write_slope_break_centreline_connected", "write_slope_break_centreline_connected_raster"},
         {"write_combined_flat_mask",      "write_combined_flat_mask_raster"},
         {"write_metric_flat_masks",       "write_metric_flat_mask_rasters"},
         {"test_surface_vector_file",      "test_surface_polygon_fname"},
@@ -726,6 +625,28 @@ int main(int argc, char* argv[])
         {
             ignored[k] = std::string(k) +
                 " has moved to lsdtt-fluvial-surfaces and is ignored here";
+        }
+
+        // The slope-break (riser) finder's tuning keys, now riser_* keys of
+        // lsdtt-feature-finder feature_type find_risers.
+        for (const auto& [from, to] : std::vector<std::pair<std::string, std::string>>{
+            {"polyfit_lambda_metres", "riser_polyfit_lambda_metres"},
+            {"vec_adaptive_method", "riser_vec_adaptive_method"},
+            {"vec_adaptive_block_size_pixels", "riser_vec_adaptive_block_size_pixels"},
+            {"vec_adaptive_C", "riser_vec_adaptive_C"},
+            {"vec_adaptive_gaussian_sigma", "riser_vec_adaptive_gaussian_sigma"},
+            {"slope_break_closing_radius_metres", "riser_closing_radius_metres"},
+            {"slope_break_binary_min_component_pixels", "riser_binary_min_component_pixels"},
+            {"slope_break_centreline_max_spur_pixels", "riser_max_spur_pixels"},
+            {"slope_break_centreline_max_terminal_loop_pixels", "riser_max_terminal_loop_pixels"},
+            {"slope_break_centreline_min_component_pixels", "riser_min_component_pixels"},
+            {"slope_break_connect_search_radius_metres", "riser_connect_search_radius_metres"},
+            {"slope_break_connect_elevation_tolerance_metres", "riser_connect_elevation_tolerance_metres"},
+            {"slope_break_connect_corridor_half_width_pixels", "riser_connect_corridor_half_width_pixels"},
+            {"slope_break_connect_same_component", "riser_connect_same_component"} })
+        {
+            ignored[from] = from + " is ignored: the slope-break finder moved to "
+                "lsdtt-feature-finder (feature_type: find_risers), where it is " + to;
         }
 
         // Group (b) proper: the mechanism is gone, not relocated.
@@ -1240,216 +1161,18 @@ int main(int argc, char* argv[])
 
 
     // -------------------------------------------------------------------------
-    // Slope break detection (VEC adaptive threshold skeleton)
+    // Labelling: flat_mask, 4-connected
     //
-    // Runs on the original flat_mask. The connected centreline is hoisted out
-    // so the labelling step below can optionally break the mask with it -- see
-    // apply_slope_breaks_to_labels, which defaults to false.
-    // -------------------------------------------------------------------------
-    lsdtt::lsdtt_raster_cpu slope_break_pixels;   // populated on success
-    const bool apply_slope_breaks = bf["apply_slope_breaks_to_labels"];
-
-    {
-        lsdtt::vec_skeleton_request vsr;
-        vsr.polyfit_lambda_metres           = static_cast<double>(ff["polyfit_lambda_metres"]);
-        vsr.adaptive_method                 = sf["vec_adaptive_method"];
-        vsr.adaptive_block_size             = ip["vec_adaptive_block_size_pixels"];
-        vsr.adaptive_C                      = static_cast<double>(ff["vec_adaptive_C"]);
-        vsr.adaptive_gaussian_sigma         = static_cast<double>(ff["vec_adaptive_gaussian_sigma"]);
-        vsr.closing_radius_metres           = static_cast<double>(ff["slope_break_closing_radius_metres"]);
-        vsr.binary_min_component_pixels     = ip["slope_break_binary_min_component_pixels"];
-        vsr.spur_max_pixels                 = ip["slope_break_centreline_max_spur_pixels"];
-        vsr.terminal_loop_max_pixels        = ip["slope_break_centreline_max_terminal_loop_pixels"];
-        vsr.min_component_pixels            = ip["slope_break_centreline_min_component_pixels"];
-        vsr.elevation_connect.search_radius_metres       =
-            static_cast<double>(ff["slope_break_connect_search_radius_metres"]);
-        vsr.elevation_connect.elevation_tolerance_metres =
-            static_cast<double>(ff["slope_break_connect_elevation_tolerance_metres"]);
-        vsr.elevation_connect.corridor_half_width_pixels =
-            static_cast<double>(ff["slope_break_connect_corridor_half_width_pixels"]);
-        vsr.elevation_connect.connect_same_component     =
-            bf["slope_break_connect_same_component"];
-        vsr.n_threads = ip["n_threads"];
-
-        try
-        {
-            lsdtt::vec_skeleton_result vsres =
-                lsdtt::find_vec_skeleton(dem, flat_mask, vsr);
-
-            auto write_r = [&](const lsdtt::lsdtt_raster_cpu& r,
-                               const std::string& p)
-            {
-                if (r.get_data().empty()) return;
-                std::cout << "Writing: " << p << "\n";
-                loader.write_full(r.get_data(), r.get_meta(), p, out_format);
-            };
-
-            write_r(vsres.vertical_excess_curvature,
-                    stem + "_flat_vertical_excess_curvature.tif");
-            write_r(vsres.adaptive_binary,
-                    stem + "_slope_break_adaptive_binary.tif");
-
-        if (bf["write_slope_break_centreline_raster"])
-                write_r(vsres.skeleton,
-                        stem + "_slope_break_centreline.tif");
-
-            // -----------------------------------------------------------------
-            // Write skeleton endpoints as a FlatGeobuf point layer
-            // -----------------------------------------------------------------
-            if (bf["write_slope_break_endpoints"] &&
-                !vsres.skeleton.get_data().empty())
-            {
-                const lsdtt::lsdtt_raster_meta& smeta = vsres.skeleton.get_meta();
-                const int snrows = smeta.n_rows;
-                const int sncols = smeta.n_cols;
-                const std::vector<float>& dem_d  = dem.get_data();
-                const float dem_nd = static_cast<float>(dem.get_meta().no_data_value);
-
-                // Use crossing-number classifier (CN=1) - finds corner endpoints
-                // that the raw degree==1 test misses.
-                lsdtt::skeleton_node_result snr =
-                    lsdtt::classify_skeleton_nodes(vsres.skeleton);
-
-                // BFS component labelling to get comp_size per endpoint
-                const std::vector<float>& skel_d = vsres.skeleton.get_data();
-                std::vector<int> clabels(snrows * sncols, 0);
-                std::unordered_map<int,int> csizes;
-                {
-                    int next = 1;
-                    for (int r = 0; r < snrows; ++r)
-                    for (int c = 0; c < sncols; ++c)
-                    {
-                        int idx = r * sncols + c;
-                        if (skel_d[idx] <= 0.5f || clabels[idx]) continue;
-                        std::queue<std::pair<int,int>> q;
-                        q.push({r, c});
-                        clabels[idx] = next;
-                        while (!q.empty())
-                        {
-                            auto [cr, cc] = q.front(); q.pop();
-                            ++csizes[next];
-                            for (int dr = -1; dr <= 1; ++dr)
-                            for (int dc = -1; dc <= 1; ++dc)
-                            {
-                                if (!dr && !dc) continue;
-                                int nr = cr+dr, nc = cc+dc;
-                                if (nr<0||nr>=snrows||nc<0||nc>=sncols) continue;
-                                int ni = nr*sncols+nc;
-                                if (skel_d[ni]<=0.5f||clabels[ni]) continue;
-                                clabels[ni] = next;
-                                q.push({nr,nc});
-                            }
-                        }
-                        ++next;
-                    }
-                }
-
-                struct EP { int r, c; float elev; int comp_size; };
-                std::vector<EP> ep_list;
-                for (const lsdtt::skeleton_node& nd : snr.endpoints)
-                {
-                    float elev = dem_d[nd.row * sncols + nd.col];
-                    if (elev == dem_nd) continue;
-                    int lbl = clabels[nd.row * sncols + nd.col];
-                    ep_list.push_back({nd.row, nd.col, elev, csizes[lbl]});
-                }
-
-                const std::string ep_path = stem + "_slope_break_endpoints.fgb";
-                std::cout << "Writing " << ep_list.size()
-                          << " skeleton endpoints: " << ep_path << "\n";
-
-                lsdtt::lsdtt_vector_schema ep_schema;
-                ep_schema.field_names = {"row","col","elev_m","comp_size"};
-                ep_schema.field_types = {
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::double_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type };
-
-                loader.begin_vector_write(
-                    ep_path, "slope_break_endpoints",
-                    ep_schema, smeta.crs_wkt,
-                    lsdtt::vector_output_format::flatgeobuf, false);
-
-                for (const EP& ep : ep_list)
-                {
-                    lsdtt::lsdtt_xy xy =
-                        lsdtt::cell_center_from_row_col(smeta, ep.r, ep.c);
-                    loader.write_point(xy.x, xy.y, {
-                        static_cast<std::int64_t>(ep.r),
-                        static_cast<std::int64_t>(ep.c),
-                        static_cast<double>(ep.elev),
-                        static_cast<std::int64_t>(ep.comp_size) });
-                }
-                loader.finish_vector_write();
-            }
-
-            if (bf["write_slope_break_bridge_mask_raster"])
-                write_r(vsres.break_bridge_mask,
-                        stem + "_slope_break_bridge_mask.tif");
-
-            if (bf["write_slope_break_centreline_connected_raster"])
-                write_r(vsres.skeleton_connected,
-                        stem + "_slope_break_centreline_connected.tif");
-
-            // Hoist the skeleton for the labelling step below.
-            //
-            // NOTE, measured 2026-09-03: this is skeleton_connected, the
-            // BRIDGED skeleton, and find_vec_skeleton only populates it when
-            // slope_break_connect_search_radius_metres > 0 -- which is not the
-            // default. So under default settings this raster is EMPTY and the
-            // slope-break break has never actually cut the flat mask, with or
-            // without apply_slope_breaks_to_labels. Verified on the staircase
-            // fixture: the labelled-mask checksum is identical with the gate on
-            // and off (20987 either way), while the unbridged skeleton has 430
-            // pixels all lying inside the flat mask.
-            //
-            // Left as it is, deliberately. Pointing this at the unbridged
-            // `skeleton` would silently switch ON a mask-breaking mechanism
-            // that this phase is deprecating, which is the opposite of the
-            // intent. It also strengthens the case for retiring the bridging:
-            // the only route by which the skeleton ever broke the mask was the
-            // bridged variant, and bridging exists solely to re-close riser
-            // gaps -- the job band-then-label removes the need for.
-            slope_break_pixels = vsres.skeleton_connected;
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: slope break finder failed: " << e.what() << "\n";
-        }
-    }
-
-
-    // -------------------------------------------------------------------------
-    // Labelling: flat_mask, optionally broken by the slope-break skeleton
-    //
-    // apply_slope_breaks_to_labels gates the break. It defaults to FALSE: the
-    // skeleton exists to keep two surfaces at different heights from merging
-    // through a gap in the riser between them, and that job now belongs to
-    // band-then-label in lsdtt-fluvial-surfaces, which makes the merge
-    // impossible rather than repairs it afterwards. The skeleton remains a
-    // genuine morphometric product in its own right.
+    // The slope-break (riser) skeleton that could once cut the mask before
+    // labelling is now lsdtt-feature-finder feature_type find_risers; its
+    // centreline can split surfaces in lsdtt-fluvial-surfaces
+    // (segmentation_algorithm_choice whole_mask, riser_mask_fname).
     // -------------------------------------------------------------------------
     {
         std::cout << "\nLabelling flat surfaces...\n";
 
-        lsdtt::lsdtt_raster_cpu broken_flat_mask = flat_mask;
-        std::vector<float>& bfm = broken_flat_mask.get_data();
-
-
-        // Apply the slope-break centreline, if the user asked for it.
-        if (apply_slope_breaks && !slope_break_pixels.get_data().empty())
-        {
-            const std::vector<float>& sc = slope_break_pixels.get_data();
-            for (std::size_t i = 0; i < bfm.size(); ++i)
-            {
-                if (i < sc.size() && sc[i] > 0.5f)
-                    bfm[i] = 0.0f;
-            }
-        }
-
         labelled_flat_mask = lsdtt::label_binary_components_by_size(
-            broken_flat_mask, 1, lsdtt::pixel_connectivity::d4);
+            flat_mask, 1, lsdtt::pixel_connectivity::d4);
 
         {
             const std::string p = stem + "_labelled_flat_mask.tif";
@@ -1645,19 +1368,11 @@ int main(int argc, char* argv[])
                                           resid_skeleton.get_meta(), p, out_format);
                     }
 
-                    // Second-pass labelling: flat_mask minus slope-break
-                    // pixels minus the residual skeleton.
+                    // Second-pass labelling: flat_mask minus the residual
+                    // skeleton.
                     lsdtt::lsdtt_raster_cpu refined_broken = flat_mask;
                     {
                         std::vector<float>& rbd = refined_broken.get_data();
-
-                        if (apply_slope_breaks &&
-                            !slope_break_pixels.get_data().empty())
-                        {
-                            const std::vector<float>& sc = slope_break_pixels.get_data();
-                            for (std::size_t i = 0; i < rbd.size() && i < sc.size(); ++i)
-                                if (sc[i] > 0.5f) rbd[i] = 0.0f;
-                        }
 
                         const std::vector<float>&   rsk = resid_skeleton.get_data();
                         const std::vector<uint8_t>& rsm = resid_skeleton.get_mask();

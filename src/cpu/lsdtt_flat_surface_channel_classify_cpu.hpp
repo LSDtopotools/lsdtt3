@@ -216,6 +216,12 @@ struct flat_surface_classify_request
     // id, breaks to band with instead of finding them. Empty = find them.
     std::map<std::int32_t, std::vector<double>> ladder_supplied_breaks;
     int    band_min_component_pixels     = 1;
+    // segmentation_algorithm_choice whole_mask: label the admitted mask minus
+    // whole_mask_barrier once, each component taking its majority band
+    // (segment_whole_mask), instead of labelling within each band. The
+    // barrier may be null. Not owned.
+    bool                    segment_whole_mask  = false;
+    const lsdtt_raster_cpu* whole_mask_barrier  = nullptr;
     // Record each ladder window's linear field histogram, so a caller can plot
     // the density the breaks were chosen from. The separation ratio is always
     // computed; only the histogram is optional.
@@ -342,6 +348,10 @@ struct flat_surface_classify_result
     std::vector<ladder_window> ladder_windows;
     lsdtt_raster_cpu           ladder_window_index;
     bool                       used_band_then_label = false;
+    // segment_whole_mask only: admitted cells removed by the barrier, and
+    // cells whose band changed to their component's majority band.
+    std::int64_t               n_whole_mask_barrier_pixels    = 0;
+    std::int64_t               n_whole_mask_reassigned_pixels = 0;
 };
 
 // -----------------------------------------------------------------------------

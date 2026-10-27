@@ -449,6 +449,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_burn_streams_cpu.cpp
     src/cpu/lsdtt_least_cost_path.cpp
     src/cpu/lsdtt_terrace_edge_tracer_cpu.cpp
+    src/cpu/lsdtt_riser_finder_cpu.cpp
     src/cpu/lsdtt_raster_contours_cpu.cpp
     src/cpu/lsdtt_labelled_raster_stats_cpu.cpp
     src/cpu/lsdtt_cross_sections_cpu.cpp

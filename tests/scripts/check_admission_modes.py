@@ -171,9 +171,6 @@ def run_mode(exe: str, work: Path, dem: Path, mode: str, gradient: float,
         "min_component_pixels: 1\n"
         "flat_closing_radius_metres: 0\n"
         "write_combined_flat_mask_raster: true\n"
-        "write_slope_break_centreline_raster: false\n"
-        "write_slope_break_centreline_connected_raster: false\n"
-        "write_slope_break_bridge_mask_raster: false\n"
         "write_healed_flat_mask: false\n"
         f"{keys}"
         f"{window_setting}\n",

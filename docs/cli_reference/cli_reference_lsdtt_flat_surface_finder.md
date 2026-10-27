@@ -40,7 +40,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | 5 | Combine the two tests | `admission_algorithm_choice` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
-| 8 | Optional VEC break-of-slope skeleton | `vec_adaptive_*`, `slope_break_*` |
+| 8 | (Riser / break-of-slope search moved to `lsdtt-feature-finder`, `feature_type: find_risers`) | — |
 | 9 | Component filtering and labelling | `min_component_pixels` |
 | 10 | Optional plane fitting per label | `run_plane_analysis` |
 | 11 | Write masks, rasters and CSVs | the `write_*` switches |
@@ -128,49 +128,20 @@ Note that `min_component_pixels` filters components of the **whole mask** here.
 
 ---
 
-## Slope-break skeleton (VEC) — diagnostic
+## Slope-break skeleton — moved to `lsdtt-feature-finder`
 
-A break-of-slope skeleton derived by adaptive thresholding of vertical excess
-curvature. It is a morphometric product worth having in its own right; it is
-**not** part of the flat-surface admission and does not break the mask unless you
-ask it to.
+The break-of-slope (VEC) skeleton and its endpoint bridging are now
+`lsdtt-feature-finder` `feature_type: find_risers`, which writes open riser
+segments with a step height. Its centreline can split surfaces in
+`lsdtt-fluvial-surfaces` (`segmentation_algorithm_choice: whole_mask`,
+`riser_mask_fname`).
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `apply_slope_breaks_to_labels` | bool | `false` | Break the flat mask with the skeleton before labelling. |
-| `polyfit_lambda_metres` | float | `100` | Window half-wavelength (m) for the direct polyfit curvature computation. |
-| `vec_adaptive_method` | string | `gaussian` | Adaptive thresholding method applied to vertical excess curvature. |
-| `vec_adaptive_block_size_pixels` | int | `51` | Neighbourhood block size (pixels) for adaptive thresholding. |
-| `vec_adaptive_C` | float | `0.0` | Constant subtracted from the local neighbourhood mean before thresholding. |
-| `vec_adaptive_gaussian_sigma` | float | `0.0` | Sigma for an optional Gaussian pre-blur. |
-| `slope_break_closing_radius_metres` | float | `0` | Closing radius (m) on the adaptive binary mask before skeletonisation. |
-| `slope_break_binary_min_component_pixels` | int | `1` | Minimum component size retained in the adaptive binary mask. |
-| `slope_break_centreline_max_spur_pixels` | int | `10` | Maximum endpoint-rooted spur length pruned from the skeleton. |
-| `slope_break_centreline_max_terminal_loop_pixels` | int | `10` | Maximum endpoint-rooted terminal loop length pruned. |
-| `slope_break_centreline_min_component_pixels` | int | `1` | Minimum component size retained in the skeleton. |
-| `write_slope_break_centreline_raster` | bool | `true` | Write the 1-pixel skeleton. |
+Old keys in a parameter file here:
 
-### Endpoint bridging — deprecated
-
-Bridging existed to re-close gaps in the riser network so that two treads at
-different heights could not merge into one label. `lsdtt-fluvial-surfaces` labels
-**within** height bands, which makes that merge impossible rather than
-detectable, so the job is gone. Bridging is also the only route by which the
-skeleton ever broke the flat mask, and it is off by default
-(`slope_break_connect_search_radius_metres: 0`). **These five are scheduled for
-deletion one release after the release that first ships them as deprecated.**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `slope_break_connect_search_radius_metres` | float | `0` | Search radius (m) for elevation-based endpoint connection. `0` = off. |
-| `slope_break_connect_elevation_tolerance_metres` | float | `2` | Maximum elevation difference (m) between two bridged endpoints. |
-| `slope_break_connect_corridor_half_width_pixels` | float | `12` | Half-width (pixels) of the A\* corridor for contour-routed bridges. |
-| `slope_break_connect_same_component` | bool | `false` | Allow bridging between endpoints on the same skeleton component. |
-| `write_slope_break_endpoints` | bool | `false` | Write skeleton endpoints and their elevations to FlatGeobuf. |
-| `write_slope_break_bridge_mask_raster` | bool | `true` | Write the raster of newly inserted bridge pixels. |
-| `write_slope_break_centreline_connected_raster` | bool | `true` | Write the connected skeleton after accepted bridge routing. |
-
----
+| Old key | Now |
+|---|---|
+| `write_slope_break_centreline_raster`, `write_slope_break_centreline_connected_raster`, `write_slope_break_bridge_mask_raster`, `write_slope_break_endpoints` (and their older spellings), `apply_slope_breaks_to_labels` | **Stop the run**, naming the replacement: they turned an output or a mask cut on. |
+| `polyfit_lambda_metres`, `vec_adaptive_method`, `vec_adaptive_block_size_pixels`, `vec_adaptive_C`, `vec_adaptive_gaussian_sigma`, `slope_break_closing_radius_metres`, `slope_break_binary_min_component_pixels`, `slope_break_centreline_max_spur_pixels`, `slope_break_centreline_max_terminal_loop_pixels`, `slope_break_centreline_min_component_pixels`, `slope_break_connect_search_radius_metres`, `slope_break_connect_elevation_tolerance_metres`, `slope_break_connect_corridor_half_width_pixels`, `slope_break_connect_same_component` | Warn and are ignored; each message names its `riser_*` key in `lsdtt-feature-finder`. |
 
 ## Plane analysis
 
@@ -324,35 +295,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `flat_closing_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological closing of the relief flat mask. | Closing (dilation then erosion) seals small holes and narrow gaps inside flat blobs without expanding their outer boundary. 0 = disabled. |
 | `flat_opening_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological opening of the relief flat mask. | Opening (erosion then dilation) removes thin connections between blobs that should be separate flat surfaces, while restoring the size of the surviving blobs. 0 or negative = disabled. |
 | `open_then_close` | `bool` | `false` | `param` | - | Apply opening before closing instead of closing before opening. | false (default): closing first, then opening. true: opening first, then closing. Has no effect when either radius is 0. |
-
-### Slope break finder (VEC adaptive threshold skeleton)
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `polyfit_lambda_metres` | `float` | `100` | `param` | - | Window half-wavelength (m) for the direct polyfit curvature computation. | Controls the scale of the fitted surface. Larger values smooth more. |
-| `vec_adaptive_method` | `string` | `gaussian` | `param` | - | Adaptive thresholding method applied to vertical_excess_curvature. | gaussian: Gaussian-weighted local mean (smoother threshold surface). mean: unweighted local mean. |
-| `vec_adaptive_block_size_pixels` | `int` | `51` | `param` | - | Neighbourhood block size (pixels) for adaptive VEC thresholding. | Must be odd and &gt;= 3. Should be larger than a typical slope-break feature width but smaller than the between-feature spacing. |
-| `vec_adaptive_C` | `float` | `0.0` | `param` | - | Constant subtracted from the local neighbourhood mean before thresholding. | Threshold = local_mean - C. 0 = foreground where VEC is above the local mean. Negative (e.g. -5) = stricter, retains only pixels well above the local mean. |
-| `vec_adaptive_gaussian_sigma` | `float` | `0.0` | `param` | - | Sigma for an optional Gaussian pre-blur before adaptive thresholding. | 0 = no blur. A small value (e.g. 1.0) suppresses pixel-scale noise. |
-| `slope_break_closing_radius_metres` | `float` | `0` | `param` | - | Closing radius (m) applied to the adaptive binary mask before skeletonisation. | Seals small gaps in the detected slope-break regions. 0 = disabled. |
-| `slope_break_binary_min_component_pixels` | `int` | `1` | `param` | - | Minimum connected-component size (pixels) retained in the adaptive binary mask. | Applied before skeletonisation. 1 = keep all components. |
-| `write_slope_break_centreline_raster` | `bool` | `true` | `switch` | - | Write the 1-pixel slope-break skeleton. | Output suffix: _slope_break_centreline.tif |
-| `slope_break_centreline_max_spur_pixels` | `int` | `10` | `param` | - | Maximum endpoint-rooted spur length (pixels) removed from the skeleton. | 0 = skip spur pruning. |
-| `slope_break_centreline_max_terminal_loop_pixels` | `int` | `10` | `param` | - | Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton. | 0 = skip terminal loop pruning. |
-| `slope_break_centreline_min_component_pixels` | `int` | `1` | `param` | - | Minimum component size (pixels) retained in the skeleton. | Applied after thinning and spur pruning. |
-| `slope_break_connect_search_radius_metres` | `float` | `0` | `param` | - | Search radius (m) for elevation-based skeleton endpoint connection. | Bridges nearby endpoints on the same contour. 0 = disabled. |
-| `slope_break_connect_elevation_tolerance_metres` | `float` | `2` | `param` | - | Maximum elevation difference (m) allowed between two bridged endpoints. | - |
-| `slope_break_connect_corridor_half_width_pixels` | `float` | `12` | `param` | - | Half-width (pixels) of the A* corridor for contour-routed bridges. | - |
-| `slope_break_connect_same_component` | `bool` | `false` | `param` | - | Allow bridging between endpoints on the same skeleton component. | Default false: only bridge endpoints from different components. |
-| `write_slope_break_endpoints` | `bool` | `false` | `switch` | - | Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer. | Output suffix: _slope_break_endpoints.fgb Fields: row, col, elev_m, comp_size. |
-| `write_slope_break_bridge_mask_raster` | `bool` | `true` | `switch` | - | Write the raster of newly inserted bridge pixels from skeleton reconnection. | Output suffix: _slope_break_bridge_mask.tif |
-| `write_slope_break_centreline_connected_raster` | `bool` | `true` | `switch` | - | Write the connected skeleton after accepted bridge routing. | Output suffix: _slope_break_centreline_connected.tif |
-
-### Slope break finder
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `apply_slope_breaks_to_labels` | `bool` | `false` | `switch` | - | Break the flat mask with the slope-break skeleton before labelling. | Default false. The skeleton is still detected and still written; this only controls whether it cuts the mask before connected-component labelling. Separating surfaces at different heights is now done by lsdtt-fluvial-surfaces, which labels within height bands, so a break here is no longer needed to keep two treads apart. |
 
 ### Component filtering
 

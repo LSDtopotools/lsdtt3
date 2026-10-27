@@ -187,7 +187,8 @@ int main(int argc, char* argv[])
         "stream_order / contributing_pixels; level_algorithm_choice ladder / "
         "fixed_thresholds / supplied_levels; "
         "terrace_reference_field_algorithm_choice same / swath_baseline / "
-        "same.",
+        "same; segmentation_algorithm_choice within_bands / whole_mask / "
+        "within_bands.",
         "Method","switch",""};
 
     string_default_map["level_algorithm_choice"] = "preset";
@@ -218,6 +219,33 @@ int main(int argc, char* argv[])
         "threshold_contributing_pixels as the run that wrote it - and a "
         "channel with no levels stops the run, naming it.",
         "Method","io","level_algorithm_choice"};
+
+    string_default_map["segmentation_algorithm_choice"] = "preset";
+    help_map["segmentation_algorithm_choice"] = {"string","preset",
+        "How admitted ground becomes patches: preset, within_bands or "
+        "whole_mask.",
+        "within_bands (ladder and cross_section_levels presets): connected "
+        "components inside each level, so two treads at different heights can "
+        "never share a patch. whole_mask (clubb2017 preset): components of the "
+        "admitted ground minus the risers in riser_mask_fname, each taking its "
+        "majority level. whole_mask is the riser segmentation, kept so it can "
+        "be compared: where a riser is broken (a road, a gully) the two treads "
+        "either side join into one patch on one level. Under fixed_thresholds "
+        "there is one terrace level, so whole_mask only removes the riser "
+        "pixels.",
+        "Method","param","fluvial_surface_algorithm_choice"};
+
+    string_default_map["riser_mask_fname"] = "";
+    help_map["riser_mask_fname"] = {"string","",
+        "Riser raster for segmentation_algorithm_choice whole_mask, in "
+        "read_path.",
+        "Cells > 0.5 are risers and split the admitted ground. Normally "
+        "<stem>_riser_centreline.tif from lsdtt-feature-finder (feature_type: "
+        "find_risers), on the DEM grid; gap closing there "
+        "(riser_gap_closing_algorithm_choice: astar) decides whether broken "
+        "risers still separate treads. Empty = no risers: whole_mask then "
+        "labels the admitted ground as it stands.",
+        "Method","io","segmentation_algorithm_choice"};
 
     string_default_map["channel_definition_algorithm_choice"] = "preset";
     help_map["channel_definition_algorithm_choice"] = {"string","preset",
@@ -1419,6 +1447,9 @@ int main(int argc, char* argv[])
     const std::string terrace_field_choice =
         resolve_stage("terrace_reference_field_algorithm_choice",
                       "same", "swath_baseline", "same");
+    const std::string segmentation_choice =
+        resolve_stage("segmentation_algorithm_choice",
+                      "within_bands", "whole_mask", "within_bands");
 
     auto check_values = [&](const std::string& key, const std::string& v,
                             std::initializer_list<const char*> valid) -> bool
@@ -1437,8 +1468,11 @@ int main(int argc, char* argv[])
         !check_values("channel_definition_algorithm_choice", channel_definition,
                       {"contributing_pixels", "stream_order"}) ||
         !check_values("terrace_reference_field_algorithm_choice",
-                      terrace_field_choice, {"same", "swath_baseline"}))
+                      terrace_field_choice, {"same", "swath_baseline"}) ||
+        !check_values("segmentation_algorithm_choice", segmentation_choice,
+                      {"within_bands", "whole_mask"}))
         return 1;
+    const bool segment_whole_mask = (segmentation_choice == "whole_mask");
 
     const bool level_fixed     = (level_choice == "fixed_thresholds");
     const bool level_supplied  = (level_choice == "supplied_levels");
@@ -1496,6 +1530,7 @@ int main(int argc, char* argv[])
             {"max_terrace_height_metres", !level_fixed},
             {"fill_floodplain_holes", !level_fixed},
             {"supplied_levels_fname", !level_supplied},
+            {"riser_mask_fname", !segment_whole_mask},
             {"max_floodplain_gradient", !admit_by_bounds},
             {"floodplain_gradient_window_radius_metres", !admit_by_bounds},
             {"floodplain_qq_lower_percentile",
@@ -1769,6 +1804,37 @@ int main(int argc, char* argv[])
         }
         return true;
     };
+
+    // Risers for segmentation_algorithm_choice whole_mask (1/0 on the DEM grid).
+    lsdtt::lsdtt_raster_cpu riser_mask;
+    const lsdtt::lsdtt_raster_cpu* riser_barrier = nullptr;
+    if (segment_whole_mask && !sf["riser_mask_fname"].empty())
+    {
+        lsdtt::lsdtt_raster_cpu in;
+        try
+        {
+            if (!load_companion_raster(sf["riser_mask_fname"], "riser mask", in))
+                return 1;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: loading riser mask: " << e.what() << "\n";
+            return 1;
+        }
+        std::vector<float> rd(n_pixels, 0.0f);
+        std::int64_t n_riser = 0;
+        for (std::size_t i = 0; i < n_pixels; ++i)
+            if (in.get_mask()[i] && in.get_data()[i] > 0.5f) { rd[i] = 1.0f; ++n_riser; }
+        riser_mask = lsdtt::lsdtt_raster_cpu(std::move(rd),
+                                             std::vector<uint8_t>(n_pixels, 1), meta);
+        riser_barrier = &riser_mask;
+        std::cout << "  " << n_riser << " riser cell(s)\n";
+    }
+    else if (segment_whole_mask)
+    {
+        std::cout << "segmentation whole_mask with no riser_mask_fname: the "
+                     "admitted ground is labelled as it stands.\n";
+    }
 
     // -------------------------------------------------------------------------
     // Admission: which ground may take part
@@ -2398,6 +2464,8 @@ int main(int argc, char* argv[])
         creq.n_threads                   = ip["n_threads"];
 
         creq.label_within_bands          = true;
+        creq.segment_whole_mask          = segment_whole_mask;
+        creq.whole_mask_barrier          = riser_barrier;
         creq.ladder_break_algorithm      = break_choice;
         creq.ladder_level_count          = ip["ladder_level_count"];
         creq.ladder_max_level_count      = ip["ladder_max_level_count"];
@@ -2648,9 +2716,16 @@ int main(int argc, char* argv[])
             std::vector<float>   pf(n_pixels, 0.0f);
             std::vector<uint8_t> pfm(n_pixels, 0);
             std::vector<float>   on(n_pixels, 0.0f);
+            std::int64_t n_riser_removed = 0;
             for (std::size_t i = 0; i < n_pixels; ++i)
             {
                 if (bi[i] < -0.5f) continue;
+                // whole_mask: one terrace level, so the risers only split it.
+                if (riser_barrier != nullptr && riser_mask.get_data()[i] > 0.5f)
+                {
+                    ++n_riser_removed;
+                    continue;
+                }
                 on[i] = 1.0f;
                 const lsdtt::lsdtt_raster_cpu& f =
                     (bi[i] < 0.5f) ? reference_field : terrace_field;
@@ -2660,6 +2735,9 @@ int main(int argc, char* argv[])
                     pfm[i] = 1;
                 }
             }
+            if (riser_barrier != nullptr)
+                std::cout << "  whole_mask: " << n_riser_removed
+                          << " floodplain / terrace cell(s) removed as riser\n";
             const lsdtt::lsdtt_raster_cpu patch_field(
                 std::move(pf), std::move(pfm), meta);
             const lsdtt::lsdtt_raster_cpu on_level(
@@ -2817,6 +2895,11 @@ int main(int argc, char* argv[])
         ladder.band_index    = cres.hand_band_raster;
         ladder.window_index  = cres.ladder_window_index;
 
+        if (segment_whole_mask)
+            std::cout << "  whole_mask: " << cres.n_whole_mask_barrier_pixels
+                      << " admitted cell(s) removed as riser, "
+                      << cres.n_whole_mask_reassigned_pixels
+                      << " cell(s) moved to their patch's majority band\n";
         std::cout << "  " << cres.n_floodplain_labels << " floodplain, "
                   << cres.n_terrace_labels << " terrace surface(s)\n";
         }
@@ -2884,8 +2967,21 @@ int main(int argc, char* argv[])
         {
             ladder = lsdtt::build_reference_field_ladder(
                 reference_field, admitted, lreq);
+            lsdtt::lsdtt_raster_cpu label_admitted = admitted;
+            if (segment_whole_mask)
+            {
+                lsdtt::whole_mask_segmentation seg = lsdtt::segment_whole_mask(
+                    ladder.band_index, admitted, riser_barrier,
+                    lsdtt::pixel_connectivity::d4);
+                std::cout << "  whole_mask: " << seg.n_barrier_pixels
+                          << " admitted cell(s) removed as riser, "
+                          << seg.n_reassigned_pixels
+                          << " cell(s) moved to their patch's majority band\n";
+                ladder.band_index = std::move(seg.band_index);
+                label_admitted    = std::move(seg.admitted);
+            }
             banded = lsdtt::label_components_within_bands(
-                ladder.band_index, admitted, reference_field,
+                ladder.band_index, label_admitted, reference_field,
                 std::max(1, ip["min_band_component_pixels"]),
                 lsdtt::pixel_connectivity::d4, nullptr, true_north.get());
         }

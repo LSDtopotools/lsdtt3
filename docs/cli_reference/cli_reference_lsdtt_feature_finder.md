@@ -52,6 +52,7 @@ parameters for each are in the matching group under [Parameters](#parameters).
 | `extract_roads_smooth` | Roads as smooth, low-roughness ribbons | Smoothness road extractor |
 | `roughness` | Roughness (standard deviation, or 1 − R for circular data such as an orientation raster) of an input raster | Generic roughness / consistency |
 | `thin_lines` | Separates thin lines from blobs and speckle | Thin-line extractor |
+| `find_risers` | Short steep steps between gentler surfaces (terrace risers, shorelines, scarps) as open line segments, each with a step height and face gradient; optional A\* gap closing | Riser finder (find_risers) |
 
 `flow_road_discrimination` builds a D8 channel network from
 `threshold_contributing_pixels` (default 1000).
@@ -92,7 +93,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `feature_type` | `string` | `channel_candidates` | `param` | - | Feature mode to run. | Supported values: channel_candidates, find_drains, relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, flow_road_discrimination, path_opening, structure_tensor, diffusion, ridge_lines, track_spacing, extract_roads, extract_roads_smooth, roughness, thin_lines. |
+| `feature_type` | `string` | `channel_candidates` | `param` | - | Feature mode to run. | Supported values: channel_candidates, find_drains, relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, flow_road_discrimination, path_opening, structure_tensor, diffusion, ridge_lines, track_spacing, extract_roads, extract_roads_smooth, roughness, thin_lines, find_risers. |
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 = use all hardware threads. Applies to wavelet fitting and polyfit metric computation. |
 | `write_output_format` | `string` | `cog` | `io` | - | Output raster format. | Allowed values: cog, gtiff, same_as_input, png. cog: Cloud Optimised GeoTIFF (default). gtiff: plain compressed GeoTIFF. same_as_input: match the input raster format. png: 8-bit scaled image with a worldfile and PAM sidecar for georeferencing - for quick visualisation only, not for analysis reuse. Output files take the extension of the chosen format. |
 | `channel_lambda_min_metres` | `float` | `3.0` | `param` | - | Minimum wavelength for multiscale channel-candidate curvature analysis, in metres. | Use a value near the narrowest expected natural channel width or bottom width. |
@@ -362,6 +363,34 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `ced_min_diffusivity` | `float` | `0.001` | `param` | `write_diffused_raster` | Floor (across-feature) diffusivity for the diffusion tensor. | Small value in (0,1); controls the tiny amount of smoothing allowed across the feature. |
 | `write_diffused_raster` | `bool` | `true` | `switch` | - | Write the coherence-enhanced (diffused) raster. | Output: &lt;write_fname&gt;_diffused.&lt;ext&gt;. |
 
+### Riser finder (find_risers)
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `riser_search_mask_fname` | `string` | - | `param` | - | Raster restricting where risers are looked for (cells &gt; 0.5). | Empty (default) = every valid DEM cell. Typically the flat mask from lsdtt-flat-surface-finder, so risers are only sought between surfaces. Must be on the DEM grid. Gap-closing bridges may cross ground outside the mask - a road cut out of it is exactly the gap a riser needs closing across. |
+| `riser_polyfit_lambda_metres` | `float` | `100` | `param` | - | Polyfit half-wavelength (m) for the vertical excess curvature. | Larger values smooth more and move the detected line further off the step itself; the step window follows it (riser_step_window_radius_metres). |
+| `riser_vec_adaptive_method` | `string` | `gaussian` | `param` | - | Adaptive thresholding method applied to vertical excess curvature. | gaussian: Gaussian-weighted local mean (smoother threshold surface). mean: unweighted local mean. |
+| `riser_vec_adaptive_block_size_pixels` | `int` | `51` | `param` | - | Neighbourhood block size (pixels) for adaptive thresholding. | Must be odd and &gt;= 3. Larger than a riser's width, smaller than the spacing between risers. |
+| `riser_vec_adaptive_C` | `float` | `0.0` | `param` | - | Constant subtracted from the local mean before thresholding. | Threshold = local_mean - C. 0 = foreground where the curvature is above the local mean. Negative = stricter. |
+| `riser_vec_adaptive_gaussian_sigma` | `float` | `0.0` | `param` | - | Sigma (pixels) of an optional Gaussian pre-blur before thresholding. | 0 = no blur. A small value (e.g. 1.0) suppresses pixel-scale noise. |
+| `riser_closing_radius_metres` | `float` | `0` | `param` | - | Closing radius (m) applied to the thresholded mask before thinning. | Seals small gaps in the detected regions. 0 = disabled. |
+| `riser_binary_min_component_pixels` | `int` | `1` | `param` | - | Minimum component size (pixels) kept in the thresholded mask. | Applied before thinning. 1 = keep all. |
+| `riser_max_spur_pixels` | `int` | `10` | `param` | - | Longest endpoint-rooted spur (pixels) pruned from the skeleton. | 0 = no spur pruning. Pruning also trims this much off every free end, so gaps open by about twice this before gap closing sees them. |
+| `riser_max_terminal_loop_pixels` | `int` | `10` | `param` | - | Longest terminal loop (pixels) pruned from the skeleton. | 0 = no loop pruning. |
+| `riser_min_component_pixels` | `int` | `1` | `param` | - | Minimum skeleton component size (pixels) kept after pruning. | - |
+| `riser_gap_closing_algorithm_choice` | `string` | `none` | `param` | - | How broken risers are joined: none or astar. | astar routes a least-cost bridge along the contour between two skeleton endpoints within riser_connect_search_radius_metres whose elevations differ by at most riser_connect_elevation_tolerance_metres. |
+| `riser_connect_search_radius_metres` | `float` | `200` | `param` | `riser_gap_closing_algorithm_choice` | Longest straight-line gap (m) an astar bridge may close. | - |
+| `riser_connect_elevation_tolerance_metres` | `float` | `2` | `param` | `riser_gap_closing_algorithm_choice` | Largest elevation difference (m) between two bridged endpoints. | Also the contour band the bridge is routed in. Keep it below the smallest riser height, or a bridge can join risers at different heights. |
+| `riser_connect_corridor_half_width_pixels` | `float` | `12` | `param` | `riser_gap_closing_algorithm_choice` | Half-width (pixels) of the corridor an astar bridge is routed in. | - |
+| `riser_connect_same_component` | `bool` | `false` | `param` | `riser_gap_closing_algorithm_choice` | Allow bridges between two endpoints of the same skeleton component. | Default false: only between different components. |
+| `riser_step_window_radius_metres` | `float` | `0` | `param` | - | Step window d (m) for the step height across each segment. | step = \|2 dz(d) - dz(2d)\|, dz(r) the elevation difference between r either side along the normal: 0 on any planar slope, the step H across a riser between two treads of the same tilt. 0 (default) = half riser_polyfit_lambda_metres, at least three cells: the line sits on the curvature maximum, which the polyfit moves off the step, and d must reach past it to both treads. |
+| `riser_min_step_height_metres` | `float` | `1` | `param` | - | Segments with a smaller median step height (m) are dropped. | Without a height floor an adaptive threshold finds a line in any noise. |
+| `riser_min_segment_pixels` | `int` | `5` | `param` | - | Segments with fewer pixels are dropped. | - |
+| `write_riser_centreline_raster` | `bool` | `true` | `switch` | - | Write the kept riser segments as a 1/0 raster. | Output: &lt;write_fname&gt;_riser_centreline.&lt;ext&gt;. Feed it to lsdtt-fluvial-surfaces riser_mask_fname. |
+| `write_riser_segments` | `bool` | `true` | `switch` | - | Write the kept riser segments as a line layer. | Output: &lt;write_fname&gt;_riser_segments.&lt;fgb\|gpkg&gt;. Fields: segment_id, n_pixels, length_m, step_height_m (median step), face_gradient (median steepest gradient across the riser, m/m, as the grid resolves it), mean_elevation_m, is_loop. Risers rarely close: these are open lines, not polygons. |
+| `write_riser_endpoints` | `bool` | `false` | `switch` | - | Write the free ends of the kept riser segments as a point layer. | Output: &lt;write_fname&gt;_riser_endpoints.&lt;fgb\|gpkg&gt;. Fields: row, col, elevation_m. |
+| `write_riser_diagnostic_rasters` | `bool` | `false` | `switch` | - | Write the riser finder's intermediate rasters. | Outputs: &lt;write_fname&gt;_riser_vertical_excess_curvature, _riser_adaptive_binary, _riser_skeleton and, under astar, _riser_gap_closing (pixels added by bridges). |
+
 ### Interior nodata
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
@@ -375,5 +404,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `bearings_relative_to_true_north` | `bool` | `false` | `param` | - | Write bearings, aspects and orientations clockwise from true north. | Off (default): they are clockwise from grid north (grid up), so in an oblique frame with the feature along +x, 90 degrees means along the feature. On: each value is converted with the grid convergence at its own location (each cell of a raster, each row of a table), which also removes the up to about 3 degree difference between UTM grid north and true north. Angles between two directions (junction angles, deflections, contrasts) are unchanged, and hillshade illumination always stays relative to grid up. Needs a raster with a CRS. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
 
 <!-- END GENERATED CLI PARAMETERS -->

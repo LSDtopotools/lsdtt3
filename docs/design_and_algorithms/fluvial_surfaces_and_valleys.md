@@ -192,18 +192,17 @@ source.
 
 Morphological opening and closing (`flat_opening_radius_metres`,
 `flat_closing_radius_metres`, `open_then_close`) clean the mask; components below
-`min_component_pixels` are dropped; the survivors are labelled. Optional and
-diagnostic on top of that: a break-of-slope (VEC) skeleton, and plane fitting to
-each labelled surface.
+`min_component_pixels` are dropped; the survivors are labelled. Plane fitting to
+each labelled surface is optional on top of that.
 
-Two things that were once mechanisms here are now off by default, and it is worth
-knowing why. The VEC skeleton could be used to *break* the flat mask before
-labelling (`apply_slope_breaks_to_labels`, default false), and endpoint bridging
-existed to re-close gaps in that skeleton. Both existed to stop two terrace treads
-merging into one component through a dissected riser. The band-then-label ordering
-in the next tool makes that merge impossible, so the skeleton survives as what it
-always genuinely was — a morphometric product worth having on its own — rather than
-as a repair.
+The break-of-slope (VEC) skeleton that once lived here could *break* the flat mask
+before labelling, with endpoint bridging to re-close gaps in it. Both existed to
+stop two terrace treads merging into one component through a dissected riser. The
+band-then-label ordering in the next tool makes that merge impossible, so riser
+search is now a morphometric product of its own: `lsdtt-feature-finder`
+`feature_type: find_risers`, which writes open riser segments with a step height.
+Its old keys stop the run (output switches) or warn (tuning keys) with the new
+`riser_*` name.
 
 The headline output is `<stem>_combined_flat_mask.tif`, which is
 `lsdtt-fluvial-surfaces`' `flat_mask_fname`.

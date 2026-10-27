@@ -2555,6 +2555,28 @@ add_lsdtt_cli_smoke_test(
     ff_channel_candidate_score.tif
 )
 
+# feature_type find_risers on the dissected staircase (fluvial-surface methods
+# plan, phase 6). With astar the six risers come back bridged across the graded
+# gaps, plus twelve short segments on the gaps' up- and down-valley edges,
+# which are real across-valley scarps in this fixture (step 8.7-8.9 m).
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_staircase
+    lsdtt-feature-finder
+    feature_finder_risers_staircase.param.in
+    ffr_riser_centreline.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect ffr_riser_segments.fgb
+    --expect ffr_riser_endpoints.fgb
+    --expect ffr_riser_gap_closing.tif
+    --expect ffr_riser_vertical_excess_curvature.tif
+    --expect-raster-values ffr_riser_centreline.tif:0,1
+    --expect-vector-feature-min ffr_riser_segments.fgb:18
+    --stdout-contains "Risers kept          : 18"
+    --expect-file-contains "ffr_ingested_params.param:riser_gap_closing_algorithm_choice: astar"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_staircase PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_feature_finder_flow_discrimination_canonical
     lsdtt-feature-finder
@@ -8941,6 +8963,16 @@ endif()
 # and both CLIs refuse it via check_projected_metres()).
 # =============================================================================
 
+# find_risers (lsdtt_riser_finder_cpu), behind lsdtt-feature-finder
+# feature_type find_risers: staircase risers recovered at their true 7.4 m
+# step, astar gap closing across a road cut out of the search mask, no
+# segments on a ramp or a noisy flat (fluvial-surface methods plan, phase 6).
+add_executable(lsdtt-test-riser-finder cpp/test_riser_finder.cpp)
+target_link_libraries(lsdtt-test-riser-finder PRIVATE lsdtt3_cpu)
+add_test(NAME unit_feature_finder_risers COMMAND lsdtt-test-riser-finder)
+lsdtt_set_tests_properties(unit_feature_finder_risers PROPERTIES
+    LABELS "unit;surface_metrics")
+
 add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
 target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
 
@@ -9090,20 +9122,21 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Slope-break skeleton connection: the only test that runs the slope-break
-# finder's component labelling. See the parameter file.
+# Riser bridging over many endpoints at once: moved from
+# smoke_flat_surface_finder_slope_break_connect with the riser finder
+# (2026-10-26). See the parameter file.
 add_lsdtt_cli_smoke_test(
-    smoke_flat_surface_finder_slope_break_connect
-    lsdtt-flat-surface-finder
-    flat_surface_finder_slope_break_connect.param.in
-    fsfsb_slope_break_centreline_connected.tif
+    smoke_feature_finder_risers_connect
+    lsdtt-feature-finder
+    feature_finder_risers_connect.param.in
+    ffrc_riser_centreline.tif
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
-    --expect fsfsb_slope_break_bridge_mask.tif
-    --stdout-contains "endpoints found : 7"
-    --stdout-contains "candidates      : 6"
-    --stdout-contains "bridges accepted: 2"
+    --expect ffrc_riser_gap_closing.tif
+    --stdout-contains "endpoints found : 39"
+    --stdout-contains "candidates      : 27"
+    --stdout-contains "bridges accepted: 12"
 )
-lsdtt_set_tests_properties(smoke_flat_surface_finder_slope_break_connect PROPERTIES
+lsdtt_set_tests_properties(smoke_feature_finder_risers_connect PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # Phase 1. The reordering through the CLI: the ladder must resolve the flight,
@@ -9251,6 +9284,34 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "find_floodplain has moved to lsdtt-fluvial-surfaces"
 )
 lsdtt_set_tests_properties(failure_flat_surface_finder_removed_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The riser finder's keys after its move to lsdtt-feature-finder: an output
+# switch stops the run naming the new home, a tuning key warns and continues.
+add_lsdtt_cli_smoke_test(
+    failure_flat_surface_finder_removed_riser_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_removed_riser_parameter.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "write_slope_break_centreline_raster has moved"
+    --stderr-contains "lsdtt-feature-finder (feature_type: find_risers)"
+)
+lsdtt_set_tests_properties(failure_flat_surface_finder_removed_riser_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_ignored_riser_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_ignored_riser_parameter.param.in
+    ignr_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stderr-contains "vec_adaptive_C is ignored"
+    --stderr-contains "where it is riser_vec_adaptive_C"
+    --stderr-contains "where it is riser_connect_search_radius_metres"
+)
+lsdtt_set_tests_properties(smoke_flat_surface_finder_ignored_riser_parameter PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -9685,6 +9746,27 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_cross_section_levels_workflow)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_cross_section_levels_workflow PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# segmentation_algorithm_choice whole_mask against within_bands on the staircase
+# (fluvial-surface methods plan, phase 6): with closed risers whole_mask keeps
+# every patch on one tread; with the find_risers centreline, open at the graded
+# gaps, treads join into one patch - the documented failure, asserted.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    add_test(NAME rigorous_fluvial_surfaces_whole_mask_segmentation
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_whole_mask_segmentation.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --feature-finder-exe "$<TARGET_FILE:lsdtt-feature-finder>"
+            --param-dir "${LSDTT_TEST_PARAM_DIR}"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_whole_mask_segmentation")
+    lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_whole_mask_segmentation)
+else()
+    lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_whole_mask_segmentation)
+endif()
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_whole_mask_segmentation PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
@@ -10461,6 +10543,9 @@ set(LSDTT_PYTHON_GEO_TESTS
     rigorous_fluvial_surfaces_label_band_identity   # osgeo
     rigorous_fluvial_surfaces_empty_result          # osgeo
     rigorous_flat_surface_finder_admission_modes    # osgeo, in build_dem()
+    rigorous_fluvial_surfaces_clubb2017_joins       # osgeo
+    rigorous_fluvial_surfaces_cross_section_levels_workflow  # osgeo
+    rigorous_fluvial_surfaces_whole_mask_segmentation        # osgeo
 )
 
 # Scripts other than run_cli_smoke.py that run GDAL's command-line programs.

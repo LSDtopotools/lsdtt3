@@ -335,7 +335,10 @@ static terrace_edge_trace_record trace_from_endpoint_(
                 return rec;
             }
 
-            if (extension_work[nidx] != 0 && nidx != curr)
+            // Another trace's extension; this trace's own pixels (its
+            // previous step is always a neighbour) do not count.
+            if (extension_work[nidx] != 0 &&
+                local_visited.find(nidx) == local_visited.end())
             {
                 rec.stop_reason = "hit_extension";
                 return rec;

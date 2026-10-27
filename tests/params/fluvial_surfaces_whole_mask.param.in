@@ -1,0 +1,34 @@
+# segmentation_algorithm_choice on the dissected staircase (fluvial-surface
+# methods plan, phase 6). check_whole_mask_segmentation.py renders this once per
+# case, replacing __SEGMENTATION__, __RISER_MASK__ and __STEM__: within_bands,
+# whole_mask with a closed riser mask (the tread map's boundaries), and
+# whole_mask with the find_risers centreline, which is open at the graded gaps.
+# Gradient admission, so the riser faces (gradient ~0.37) are out but the
+# graded gaps (0.027) are in and the treads really do connect through them. A
+# relief admission would exclude a strip around every riser and the gaps too,
+# separating the treads before any riser mask is applied. Scope as the
+# cross-section levels workflow.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: __STEM__
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder
+# The levels are supplied (the generator's 8, 16, 24, 32 m), so every case is
+# banded identically and only the segmentation differs. With the ramps
+# admitted the ladder cannot resolve the flight on its own: their continuous
+# HAND fills the gaps between the levels.
+level_algorithm_choice: supplied_levels
+supplied_levels_fname: staircase_levels_hand.csv
+segmentation_algorithm_choice: __SEGMENTATION__
+__RISER_MASK__
+admission_algorithm_choice: gradient
+max_admission_gradient: 0.05
+threshold_contributing_pixels: 500
+source_points_fname: staircase_sources.fgb
+vertical_accuracy_metres: 0.5
+write_band_index_raster: true
+write_banded_labels_raster: true

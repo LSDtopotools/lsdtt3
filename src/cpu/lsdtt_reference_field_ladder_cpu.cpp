@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -1709,6 +1710,80 @@ banded_label_result label_components_within_bands(
     std::vector<uint8_t> label_mask(n, 1);
     out.labels = lsdtt_raster_cpu(
         std::move(label_data), std::move(label_mask), meta);
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// segment_whole_mask
+// -----------------------------------------------------------------------------
+whole_mask_segmentation segment_whole_mask(
+    const lsdtt_raster_cpu& band_index,
+    const lsdtt_raster_cpu& admitted_mask,
+    const lsdtt_raster_cpu* barrier,
+    pixel_connectivity      connectivity)
+{
+    static const char* fn = "lsdtt::segment_whole_mask";
+    const lsdtt_raster_meta& meta = band_index.get_meta();
+    const std::size_t n = band_index.get_data().size();
+    if (admitted_mask.get_data().size() != n ||
+        (barrier != nullptr && barrier->get_data().size() != n))
+        throw std::invalid_argument(
+            std::string(fn) + ": input rasters are not co-registered");
+
+    const std::vector<float>&   bi = band_index.get_data();
+    const std::vector<float>&   am = admitted_mask.get_data();
+    const std::vector<uint8_t>& amm = admitted_mask.get_mask();
+
+    whole_mask_segmentation out;
+    std::vector<float> adm(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!amm[i] || !(am[i] > 0.5f)) continue;
+        if (barrier != nullptr && barrier->get_mask()[i] &&
+            barrier->get_data()[i] > 0.5f)
+        {
+            ++out.n_barrier_pixels;
+            continue;
+        }
+        adm[i] = 1.0f;
+    }
+    out.admitted = lsdtt_raster_cpu(std::vector<float>(adm),
+                                    std::vector<uint8_t>(n, 1), meta);
+
+    const lsdtt_raster_cpu lab = label_binary_components_by_size(
+        out.admitted, 1, connectivity);
+    const std::vector<float>&   ld = lab.get_data();
+    const std::vector<uint8_t>& lm = lab.get_mask();
+
+    // Band votes per component.
+    std::unordered_map<std::int64_t, std::map<int, std::int64_t>> votes;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!lm[i] || !(ld[i] > 0.5f)) continue;
+        auto& v = votes[static_cast<std::int64_t>(ld[i])];
+        if (bi[i] >= 0.0f) ++v[static_cast<int>(bi[i])];
+    }
+    std::unordered_map<std::int64_t, int> majority;
+    for (const auto& [l, v] : votes)
+    {
+        int best = -1;
+        std::int64_t best_n = 0;
+        for (const auto& [b, c] : v)   // ascending band: ties to the lower
+            if (c > best_n) { best = b; best_n = c; }
+        majority[l] = best;
+    }
+    out.n_components = static_cast<std::int64_t>(votes.size());
+
+    std::vector<float> nb(n, -1.0f);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!lm[i] || !(ld[i] > 0.5f)) continue;
+        nb[i] = static_cast<float>(majority[static_cast<std::int64_t>(ld[i])]);
+        if (bi[i] >= 0.0f && nb[i] != bi[i]) ++out.n_reassigned_pixels;
+    }
+    out.band_index = lsdtt_raster_cpu(std::move(nb),
+                                      std::vector<uint8_t>(band_index.get_mask()),
+                                      meta);
     return out;
 }
 

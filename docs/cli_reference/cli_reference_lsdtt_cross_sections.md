@@ -205,7 +205,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `source_points_path` | `string` | - | `param` | - | Path to the source-point input file. | CSV input is interpreted as latitude/longitude in EPSG:4326 using the configured latitude/longitude field names. Georeferenced vector input such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR and transformed into the raster CRS before mapping to pixels. |
+| `source_points_fname` | `string` | - | `param` | - | Source-point input file, in read_path (an absolute path is used as given). | CSV input is interpreted as latitude/longitude in EPSG:4326 using the configured latitude/longitude field names. Georeferenced vector input such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR and transformed into the raster CRS before mapping to pixels. |
 | `source_points_layer_name` | `string` | - | `param` | - | Optional layer name for source-point vector input. | Used only for georeferenced vector inputs. If empty, the point-input loader uses the only layer if present, otherwise the first layer. |
 | `source_points_input_format` | `string` | `auto_detect` | `param` | - | Format hint for the source-point input. | Allowed values: auto_detect, csv_latitude_longitude_epsg4326, ogr_vector_layer. |
 | `source_points_latitude_field_name` | `string` | `latitude` | `param` | - | Latitude field name for CSV source-point input. | Used only when the source-point input is CSV. |

@@ -275,6 +275,8 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     ladder_result        lad;
     banded_label_result  banded;
     bool                 used_ladder = false;
+    std::int64_t         n_whole_mask_barrier_pixels    = 0;
+    std::int64_t         n_whole_mask_reassigned_pixels = 0;
 
     if (request.label_within_bands)
     {
@@ -367,10 +369,26 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             height_above_channel, admitted, lr, src_ptr, dist_ptr,
             gradient);
 
-        banded = label_components_within_bands(
-            lad.band_index, admitted, height_above_channel,
-            std::max(1, request.band_min_component_pixels),
-            pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        if (request.segment_whole_mask)
+        {
+            whole_mask_segmentation seg = segment_whole_mask(
+                lad.band_index, admitted, request.whole_mask_barrier,
+                pixel_connectivity::d4);
+            n_whole_mask_barrier_pixels    = seg.n_barrier_pixels;
+            n_whole_mask_reassigned_pixels = seg.n_reassigned_pixels;
+            lad.band_index = std::move(seg.band_index);
+            banded = label_components_within_bands(
+                lad.band_index, seg.admitted, height_above_channel,
+                std::max(1, request.band_min_component_pixels),
+                pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        }
+        else
+        {
+            banded = label_components_within_bands(
+                lad.band_index, admitted, height_above_channel,
+                std::max(1, request.band_min_component_pixels),
+                pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        }
 
         banded_labels = banded.labels;
         used_ladder   = true;
@@ -955,6 +973,8 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     if (used_ladder)
     {
         result.used_band_then_label = true;
+        result.n_whole_mask_barrier_pixels    = n_whole_mask_barrier_pixels;
+        result.n_whole_mask_reassigned_pixels = n_whole_mask_reassigned_pixels;
         result.banded_labels_raster = std::move(banded.labels);
         result.patches              = std::move(banded.patches);
         result.ladder_windows       = lad.windows;

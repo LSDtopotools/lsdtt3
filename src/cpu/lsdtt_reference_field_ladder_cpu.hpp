@@ -747,4 +747,38 @@ struct banded_label_result
     const lsdtt_grid_convergence* true_north = nullptr
 );
 
+// -----------------------------------------------------------------------------
+// segment_whole_mask
+//
+// segmentation_algorithm_choice whole_mask (fluvial-surface methods plan,
+// phase 6): the riser segmentation, kept selectable so it can be compared
+// with band-then-label rather than argued about.
+//
+// The admitted mask minus the barrier (normally a riser centreline from
+// lsdtt-feature-finder find_risers) is labelled ONCE over the whole raster,
+// and every pixel of a component is given that component's majority band
+// (ties to the lower band; -1 if none of its pixels has a band). Feed the
+// result to label_components_within_bands: two components of one labelling
+// are never adjacent, so labelling within the reassigned bands returns
+// exactly these components, with the usual patch records.
+//
+// The failure this exposes is deliberate: where a riser is broken, two treads
+// at different heights join into one component and take one band.
+// -----------------------------------------------------------------------------
+struct whole_mask_segmentation
+{
+    lsdtt_raster_cpu band_index;   // per pixel: its component's majority band
+    lsdtt_raster_cpu admitted;     // admitted minus barrier (1/0)
+    std::int64_t n_components      = 0;
+    std::int64_t n_barrier_pixels  = 0;   // admitted cells removed
+    std::int64_t n_reassigned_pixels = 0; // cells whose band changed
+};
+
+// barrier may be null (no barrier: components of the whole admitted mask).
+[[nodiscard]] whole_mask_segmentation segment_whole_mask(
+    const lsdtt_raster_cpu& band_index,
+    const lsdtt_raster_cpu& admitted_mask,
+    const lsdtt_raster_cpu* barrier,
+    pixel_connectivity      connectivity = pixel_connectivity::d4);
+
 } // namespace lsdtt
