@@ -73,6 +73,7 @@
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_width_network_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_status    = "experimental";
@@ -167,6 +168,111 @@ int main(int argc, char* argv[])
         "Maximum distance between a raw outlet point and its traced-path "
         "node.","0 = unlimited.",
         "Channel scope (mirrors lsdtt-flat-surface-finder)", "param", ""};
+
+    // --- Valley width network (every channel; lsdtt_valley_width_network_cpu) ---
+    bool_default_map["run_valley_width_network"] = false;
+    help_map["run_valley_width_network"] = {"bool","false",
+        "Measure valley widths on every channel from the channel threshold "
+        "instead of on supplied source points.",
+        "The network mode of LSDTopoTools2's lsdtt-valley-metrics "
+        "(extract_all_channels). Channel heads are traced downstream "
+        "longest-first and each stops where it meets an earlier trace, so the "
+        "trunk of each basin is its longest flow path and every tributary "
+        "segment ends at its parent's channel: each valley is measured once. "
+        "source_points_fname must be empty. Writes _valley_segments.csv and "
+        "adds segment_id, parent_segment_id, nesting_depth and excluded_reason "
+        "to the cross-section outputs.",
+        "Valley width network", "switch", ""};
+
+    string_default_map["network_centreline_algorithm_choice"] = "medial_path";
+    help_map["network_centreline_algorithm_choice"] = {"string","medial_path",
+        "Line each segment's sections hang from: medial_path or "
+        "smoothed_channel.",
+        "Not the raw D8 channel: sections cast from a meandering channel swing "
+        "with every bend and cross one another. medial_path: the least-cost "
+        "walk along the valley's medial axis (cost = largest distance-to-wall "
+        "minus distance-to-wall), head to confluence, confined to the valley "
+        "mask plus the segment's own channel pixels. smoothed_channel: the D8 "
+        "channel smoothed by a Gaussian-smoothed cubic spline whose sigma "
+        "scales with the valley width; it may not leave the valley mask, so "
+        "where it would, it runs along the mask edge until it comes back in.",
+        "Valley width network", "param", "run_valley_width_network"};
+
+    float_default_map["network_centreline_window_margin_multiple"] = 3.0f;
+    help_map["network_centreline_window_margin_multiple"] = {"float","3",
+        "medial_path: each walk runs in the segment's bounding box padded by "
+        "this multiple of its largest distance-to-wall (plus 10 cells).",
+        "Bounds the work per segment. The medial axis lies within a valley "
+        "width of the channel, so 3 leaves room on both sides.",
+        "Valley width network", "param", "network_centreline_algorithm_choice"};
+
+    float_default_map["network_centreline_smoothing_width_multiple"] = 1.0f;
+    help_map["network_centreline_smoothing_width_multiple"] = {"float","1",
+        "smoothed_channel: Gaussian sigma (along-channel metres) as a multiple "
+        "of the segment's valley width.",
+        "Valley width = 2 x the 90th percentile of distance-to-wall over the "
+        "segment's channel pixels; sigma is never below two cells. Larger "
+        "values remove longer meanders but cut more corners.",
+        "Valley width network", "param", "network_centreline_algorithm_choice"};
+
+    bool_default_map["run_tributary_stop_at_parent"] = true;
+    help_map["run_tributary_stop_at_parent"] = {"bool","true",
+        "Stop each tributary's sections where they reach the parent valley.",
+        "Going downstream, a tributary's stations stop at the first one whose "
+        "centre is within tributary_stop_width_fraction x the parent's local "
+        "half-width of the parent's centreline. The local half-width is judged "
+        "per tributary station: the median of the parent's kept sections' "
+        "offset on the side that station lies, over the parent stations within "
+        "tributary_parent_width_window_multiple x the tributary's valley width "
+        "of the one nearest it. A station whose width line crosses the "
+        "parent's centreline also stops it. Stopped stations are kept with "
+        "excluded_reason near_parent_channel.",
+        "Valley width network", "switch", "run_valley_width_network"};
+
+    float_default_map["tributary_stop_width_fraction"] = 1.0f;
+    help_map["tributary_stop_width_fraction"] = {"float","1",
+        "Fraction of the parent's local half-width at which a tributary's "
+        "sections stop.","1 = at the parent's valley wall.",
+        "Valley width network", "param", "run_tributary_stop_at_parent"};
+
+    float_default_map["tributary_parent_width_window_multiple"] = 2.0f;
+    help_map["tributary_parent_width_window_multiple"] = {"float","2",
+        "Half-length of the along-parent window whose median offset is the "
+        "parent's local half-width, as a multiple of the tributary's valley "
+        "width.",
+        "The parent sections at the tributary's mouth are widened by it; the "
+        "window is kept longer than the mouth (and never fewer than the "
+        "nearest parent station and its two neighbours) so they stay a "
+        "minority of the median at any station spacing. Valley width = 2 x the "
+        "90th percentile of distance-to-wall over the tributary's channel "
+        "pixels.",
+        "Valley width network", "param", "run_tributary_stop_at_parent"};
+
+    bool_default_map["run_tributary_crossing_removal"] = true;
+    help_map["run_tributary_crossing_removal"] = {"bool","true",
+        "Exclude parent sections that cross a tributary's kept sections.",
+        "A parent section whose width line (left side to right side) crosses "
+        "the width line of a kept section of one of its direct tributaries has "
+        "run up that tributary's valley, which makes it anomalously wide. "
+        "Applied to every parent against its own tributaries, so it nests down "
+        "the tree. Excluded sections are kept with excluded_reason "
+        "tributary_crossing.",
+        "Valley width network", "switch", "run_valley_width_network"};
+
+    string_default_map["channel_definition_algorithm_choice"] = "contributing_pixels";
+    help_map["channel_definition_algorithm_choice"] = {"string","contributing_pixels",
+        "What counts as a channel: contributing_pixels or stream_order.",
+        "contributing_pixels: the whole network down from heads at "
+        "threshold_contributing_pixels. stream_order: only its pixels of "
+        "Strahler order >= min_channel_stream_order (Clubb et al. 2017 used "
+        "third order). Only used with run_valley_width_network.",
+        "Valley width network", "param", "run_valley_width_network"};
+
+    int_default_map["min_channel_stream_order"] = 3;
+    help_map["min_channel_stream_order"] = {"int","3",
+        "Lowest Strahler order counted as channel (stream_order only).",
+        "LSDTopoTools2 called this threshold_SO.",
+        "Valley width network", "param", "channel_definition_algorithm_choice"};
 
     string_default_map["boundary_conditions"] = "oooo";
     help_map["boundary_conditions"] = {"string","oooo",
@@ -636,11 +742,35 @@ int main(int argc, char* argv[])
     auto ifs = pp.get_int_parameters();
     auto sf  = pp.get_string_parameters();
 
-    if (sf["source_points_fname"].empty())
+    const bool network_mode = bf["run_valley_width_network"];
+    if (!network_mode && sf["source_points_fname"].empty())
     {
         std::cerr << "FATAL: source_points_fname is required - one valley and "
-                     "centreline is produced per source channel. The "
-                     "all-channels threshold mode is not supported here.\n";
+                     "centreline is produced per source channel. For every "
+                     "channel from the threshold, set "
+                     "run_valley_width_network: true.\n";
+        return 1;
+    }
+    if (network_mode && !sf["source_points_fname"].empty())
+    {
+        std::cerr << "FATAL: run_valley_width_network uses every channel from "
+                     "the threshold; remove source_points_fname.\n";
+        return 1;
+    }
+    lsdtt::network_centreline_choice network_centreline =
+        lsdtt::network_centreline_choice::medial_path;
+    lsdtt::channel_definition_choice channel_definition =
+        lsdtt::channel_definition_choice::contributing_pixels;
+    try
+    {
+        network_centreline = lsdtt::parse_network_centreline_choice(
+            sf["network_centreline_algorithm_choice"]);
+        channel_definition = lsdtt::parse_channel_definition_choice(
+            sf["channel_definition_algorithm_choice"]);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
         return 1;
     }
 
@@ -784,6 +914,11 @@ int main(int argc, char* argv[])
             bf["auto_detect_outlet_points"] &&
             sf["outlet_points_fname"].empty() &&
             !scope_req.source_flats.empty();
+        if (network_mode)
+        {
+            scope_req.channel_definition = channel_definition;
+            scope_req.min_stream_order   = ifs["min_channel_stream_order"];
+        }
 
         scope = lsdtt::resolve_channel_scope(*flow, scope_req);
         std::cout << "  " << scope.resolved_sources.size()
@@ -868,13 +1003,33 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::valley_centreline_result vres;
+    lsdtt::valley_width_network_result nres;
     try
     {
-        // The pit-filled DEM keeps the trough walk from terminating in
-        // interior pits (legacy also ran on filled DEMs); HAND is then
-        // referenced to filled elevations, which is consistent for both the
-        // channel and the corridor.
-        vres = lsdtt::extract_valley_centrelines(routing_dem, scope, vreq);
+        if (network_mode)
+        {
+            lsdtt::valley_width_network_request nreq;
+            nreq.centreline = network_centreline;
+            nreq.window_margin_multiple = static_cast<double>(
+                ff["network_centreline_window_margin_multiple"]);
+            nreq.smoothing_width_multiple = static_cast<double>(
+                ff["network_centreline_smoothing_width_multiple"]);
+            nreq.min_segment_pixels = ifs["min_centreline_nodes"];
+            std::cout << "Valley width network: "
+                      << sf["network_centreline_algorithm_choice"]
+                      << " centrelines\n";
+            nres = lsdtt::build_valley_width_network(
+                routing_dem, *flow, scope.channel_mask, supplied_valley, nreq);
+            vres = nres.centrelines;
+        }
+        else
+        {
+            // The pit-filled DEM keeps the trough walk from terminating in
+            // interior pits (legacy also ran on filled DEMs); HAND is then
+            // referenced to filled elevations, which is consistent for both
+            // the channel and the corridor.
+            vres = lsdtt::extract_valley_centrelines(routing_dem, scope, vreq);
+        }
     }
     catch (const std::exception& e)
     {
@@ -883,12 +1038,43 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (network_mode)
+    {
+        int max_depth = 0;
+        std::int64_t n_trunks = 0, n_failed = 0, n_short = 0, n_snapped = 0;
+        std::int64_t n_drain_edge = 0, n_catch_edge = 0;
+        for (std::size_t i = 0; i < nres.segments.size(); ++i)
+        {
+            const lsdtt::valley_network_segment& sg = nres.segments[i];
+            max_depth = std::max(max_depth, sg.nesting_depth);
+            if (sg.parent_segment_id < 0) ++n_trunks;
+            if (sg.medial_path_failed) ++n_failed;
+            if (vres.channels[i].centreline_flats.empty()) ++n_short;
+            if (sg.drains_to_edge) ++n_drain_edge;
+            if (sg.catchment_touches_edge) ++n_catch_edge;
+            n_snapped += sg.n_samples_snapped_to_mask_edge;
+        }
+        std::cout << "  " << nres.segments.size() << " segment(s), "
+                  << n_trunks << " trunk(s), deepest nesting " << max_depth
+                  << "\n  " << n_short << " segment(s) shorter than "
+                  << ifs["min_centreline_nodes"] << " pixels (no centreline)"
+                  << "\n  " << n_drain_edge << " drain to the grid edge, "
+                  << n_catch_edge << " have a catchment touching the edge\n";
+        if (network_centreline == lsdtt::network_centreline_choice::medial_path)
+            std::cout << "  " << n_failed << " medial path(s) not found "
+                         "(the channel is used instead)\n";
+        else
+            std::cout << "  " << n_snapped << " smoothed-line sample(s) moved "
+                         "onto the valley-mask edge\n";
+    }
+
     const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
     const int n_cols = meta.n_cols;
     const std::vector<float>& elev = dem.get_data();
 
     for (const lsdtt::valley_channel_centreline& ch : vres.channels)
     {
+        if (network_mode) break;   // summarised above
         double bmin = ch.valley_hand_break_metres;
         double bmax = ch.valley_hand_break_metres;
         for (const double b : ch.window_break_m)
@@ -926,7 +1112,11 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Outputs
     // -------------------------------------------------------------------------
-    if (bf["write_valley_mask_raster"])
+    if (bf["write_valley_mask_raster"] && network_mode)
+        std::cout << "Network mode: the valley mask is the supplied one, "
+                     "shared by every segment, so _valley_mask_channels.tif "
+                     "is not written.\n";
+    if (bf["write_valley_mask_raster"] && !network_mode)
     {
         // NOT "_valley_mask": lsdtt-fluvial-surfaces writes that name, and with
         // a shared write_fname the two collided and this file silently replaced
@@ -1284,6 +1474,42 @@ int main(int argc, char* argv[])
             rows);
     }
 
+    if (network_mode)
+    {
+        const std::string p = pp.make_output_path("_valley_segments", ".csv");
+        std::cout << "Writing valley segments: " << p << "\n";
+        std::vector<std::vector<std::string>> rows;
+        for (std::size_t i = 0; i < nres.segments.size(); ++i)
+        {
+            const lsdtt::valley_network_segment& sg = nres.segments[i];
+            const lsdtt::lsdtt_xy h = node_xy(sg.head_flat);
+            const std::int64_t end_flat = sg.confluence_flat >= 0
+                ? sg.confluence_flat
+                : (sg.channel_flats.empty() ? sg.head_flat
+                                            : sg.channel_flats.back());
+            const lsdtt::lsdtt_xy e = node_xy(end_flat);
+            rows.push_back({
+                std::to_string(sg.segment_id),
+                std::to_string(sg.parent_segment_id),
+                std::to_string(sg.nesting_depth),
+                std::to_string(sg.channel_flats.size()),
+                std::to_string(vres.channels[i].centreline_flats.size()),
+                std::to_string(h.x), std::to_string(h.y),
+                std::to_string(e.x), std::to_string(e.y),
+                sg.drains_to_edge ? "1" : "0",
+                sg.catchment_touches_edge ? "1" : "0",
+                std::to_string(sg.valley_width_estimate_metres),
+                sg.medial_path_failed ? "1" : "0",
+                std::to_string(sg.n_samples_snapped_to_mask_edge) });
+        }
+        loader.write_csv(p,
+            {"segment_id","parent_segment_id","nesting_depth","n_channel_pixels",
+             "n_centreline_nodes","head_x","head_y","end_x","end_y",
+             "drains_to_edge","catchment_touches_edge",
+             "valley_width_estimate_m","medial_path_failed",
+             "n_samples_snapped_to_mask_edge"}, rows);
+    }
+
     if (bf["write_valley_cross_sections"])
     {
         std::cout << "\n--- Valley cross sections ---\n";
@@ -1375,7 +1601,8 @@ int main(int argc, char* argv[])
             lsdtt::extract_valley_cross_sections(
                 dem, vres, xreq, curv_p, hs_p, chan_p);
 
-        for (std::size_t i = 0; i < xres.channel_source_ids.size(); ++i)
+        for (std::size_t i = 0;
+             !network_mode && i < xres.channel_source_ids.size(); ++i)
             std::cout << "  channel " << xres.channel_source_ids[i]
                       << ": widest valley "
                       << xres.channel_max_valley_width_metres[i]
@@ -1383,6 +1610,40 @@ int main(int argc, char* argv[])
                       << 2.0 * xres.channel_half_length_metres[i] << " m\n";
         std::cout << "  " << xres.sections.size()
                   << " cross-section station(s) total\n";
+
+        // Network mode: tributary stops and tributary-crossing exclusions.
+        std::vector<lsdtt::network_section_exclusion> excluded;
+        if (network_mode)
+        {
+            lsdtt::network_section_rules_request rreq;
+            rreq.stop_tributaries_at_parent = bf["run_tributary_stop_at_parent"];
+            rreq.tributary_stop_width_fraction =
+                static_cast<double>(ff["tributary_stop_width_fraction"]);
+            rreq.parent_width_window_multiple = static_cast<double>(
+                ff["tributary_parent_width_window_multiple"]);
+            rreq.remove_tributary_crossing_sections =
+                bf["run_tributary_crossing_removal"];
+            excluded = lsdtt::apply_network_section_rules(
+                nres, xres, meta, rreq);
+            std::map<std::string, std::int64_t> n_by;
+            for (const auto e : excluded) ++n_by[lsdtt::to_string(e)];
+            std::cout << "  sections by excluded_reason:";
+            for (const auto& kv : n_by)
+                std::cout << " " << kv.first << " " << kv.second;
+            std::cout << "\n";
+        }
+        auto segment_fields = [&](std::size_t k)
+            -> std::vector<lsdtt::lsdtt_vector_field_value>
+        {
+            const lsdtt::valley_network_segment& sg =
+                nres.segments[static_cast<std::size_t>(xres.sections[k].source_id)];
+            return { static_cast<std::int64_t>(sg.segment_id),
+                     static_cast<std::int64_t>(sg.parent_segment_id),
+                     static_cast<std::int64_t>(sg.nesting_depth),
+                     static_cast<std::int64_t>(sg.drains_to_edge ? 1 : 0),
+                     static_cast<std::int64_t>(sg.catchment_touches_edge ? 1 : 0),
+                     std::string(lsdtt::to_string(excluded[k])) };
+        };
 
         // (a) Transect lines.
         {
@@ -1402,11 +1663,26 @@ int main(int argc, char* argv[])
                 lsdtt::lsdtt_vector_field_type::double_type,
                 lsdtt::lsdtt_vector_field_type::double_type,
                 lsdtt::lsdtt_vector_field_type::double_type };
+            if (network_mode)
+            {
+                for (const char* f : {"segment_id", "parent_segment_id",
+                                      "nesting_depth", "drains_to_edge",
+                                      "catchment_touches_edge"})
+                {
+                    schema.field_names.push_back(f);
+                    schema.field_types.push_back(
+                        lsdtt::lsdtt_vector_field_type::int64_type);
+                }
+                schema.field_names.push_back("excluded_reason");
+                schema.field_types.push_back(
+                    lsdtt::lsdtt_vector_field_type::string_type);
+            }
             loader.begin_vector_write(
                 p, "valley_cross_sections", schema, meta.crs_wkt,
                 lsdtt::vector_output_format::flatgeobuf, false);
-            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            for (std::size_t k = 0; k < xres.sections.size(); ++k)
             {
+                const lsdtt::valley_cross_section& xs = xres.sections[k];
                 // Endpoints follow the sampled extent (can be asymmetric after
                 // neighbour overlap clipping).
                 lsdtt::lsdtt_xy a{xs.centre_x, xs.centre_y};
@@ -1416,12 +1692,18 @@ int main(int argc, char* argv[])
                     a = {xs.samples.front().x, xs.samples.front().y};
                     b = {xs.samples.back().x, xs.samples.back().y};
                 }
-                loader.write_line({a, b},
+                std::vector<lsdtt::lsdtt_vector_field_value> fields =
                     { static_cast<std::int64_t>(xs.source_id),
                       static_cast<std::int64_t>(xs.station_seq),
                       xs.along_distance_metres,
                       xs.valley_width_metres,
-                      xs.left_x, xs.left_y, xs.right_x, xs.right_y });
+                      xs.left_x, xs.left_y, xs.right_x, xs.right_y };
+                if (network_mode)
+                {
+                    const auto extra = segment_fields(k);
+                    fields.insert(fields.end(), extra.begin(), extra.end());
+                }
+                loader.write_line({a, b}, fields);
             }
             loader.finish_vector_write();
         }
@@ -1524,8 +1806,11 @@ int main(int argc, char* argv[])
                 "_valley_cross_section_samples", ".csv");
             std::cout << "Writing cross-section samples: " << p << "\n";
             std::vector<std::vector<std::string>> rows;
-            for (const lsdtt::valley_cross_section& xs : xres.sections)
+            for (std::size_t k = 0; k < xres.sections.size(); ++k)
+            {
+                const lsdtt::valley_cross_section& xs = xres.sections[k];
                 for (const lsdtt::valley_cross_section_sample& sp : xs.samples)
+                {
                     rows.push_back({
                         std::to_string(xs.source_id),
                         std::to_string(xs.station_seq),
@@ -1545,11 +1830,71 @@ int main(int argc, char* argv[])
                         sp.hillshade_valid
                             ? std::to_string(sp.hillshade) : std::string("nan"),
                         sp.is_channel ? "1" : "0" });
-            loader.write_csv(p,
+                    if (network_mode)
+                        rows.back().push_back(lsdtt::to_string(excluded[k]));
+                }
+            }
+            std::vector<std::string> header =
                 {"source_id","station_seq","along_distance_m","offset_m",
                  "x","y","elevation","in_valley","left_offset_m",
                  "right_offset_m","valley_width_m",
-                 "curvature","hillshade","is_channel"}, rows);
+                 "curvature","hillshade","is_channel"};
+            if (network_mode) header.push_back("excluded_reason");
+            loader.write_csv(p, header, rows);
+        }
+
+        // (c1) Network mode: one row per station, the table for width
+        // statistics (legacy <stem>_valley_width_network.csv).
+        if (network_mode)
+        {
+            const std::string p =
+                pp.make_output_path("_valley_widths", ".csv");
+            std::cout << "Writing valley widths: " << p << "\n";
+            const std::vector<float> da = flow->get_drainage_area_raster().data;
+            std::vector<std::vector<std::string>> rows;
+            for (std::size_t k = 0; k < xres.sections.size(); ++k)
+            {
+                const lsdtt::valley_cross_section& xs = xres.sections[k];
+                const lsdtt::valley_network_segment& sg =
+                    nres.segments[static_cast<std::size_t>(xs.source_id)];
+                // Drainage area and elevation at the station centre's cell.
+                std::string area = "nan", z = "nan";
+                const int col = static_cast<int>(
+                    std::floor((xs.centre_x - meta.x_min) / meta.cell_size));
+                const int row = static_cast<int>(
+                    std::floor((meta.y_max() - xs.centre_y) / meta.cell_size));
+                if (row >= 0 && col >= 0 && row < meta.n_rows && col < n_cols)
+                {
+                    const std::size_t f =
+                        static_cast<std::size_t>(row) * n_cols + col;
+                    if (dem.get_mask()[f])
+                    {
+                        area = std::to_string(da[f]);
+                        z = std::to_string(elev[f]);
+                    }
+                }
+                rows.push_back({
+                    std::to_string(sg.segment_id),
+                    std::to_string(sg.parent_segment_id),
+                    std::to_string(sg.nesting_depth),
+                    std::to_string(xs.station_seq),
+                    std::to_string(xs.along_distance_metres),
+                    std::to_string(xs.centre_x),
+                    std::to_string(xs.centre_y),
+                    z, area,
+                    std::to_string(-xs.left_offset_metres),
+                    std::to_string(xs.right_offset_metres),
+                    std::to_string(xs.valley_width_metres),
+                    sg.drains_to_edge ? "1" : "0",
+                    sg.catchment_touches_edge ? "1" : "0",
+                    lsdtt::to_string(excluded[k]) });
+            }
+            loader.write_csv(p,
+                {"segment_id","parent_segment_id","nesting_depth","station_seq",
+                 "along_distance_m","x","y","elevation","drainage_area_m2",
+                 "left_half_width_m","right_half_width_m","valley_width_m",
+                 "drains_to_edge","catchment_touches_edge","excluded_reason"},
+                rows);
         }
 
         // (c2) BankfullMapper hydraulic-depth curves (one row per stage per

@@ -330,6 +330,10 @@ struct valley_centreline_result
 {
     lsdtt_raster_cpu valley_mask;
     std::vector<valley_channel_centreline> channels;
+    // True when the channels carry no masks of their own and every channel's
+    // valley is valley_mask > 0.5 (the network mode, where one full-grid mask
+    // per segment would not fit in memory). Cross sections read it then.
+    bool channels_share_valley_mask = false;
 };
 
 // -----------------------------------------------------------------------------

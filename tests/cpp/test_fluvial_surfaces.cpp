@@ -937,6 +937,25 @@ void write_phase0b_fixtures(const std::string& output_dir)
                       lsdtt::vector_output_format::flatgeobuf, m.crs_wkt,
                       {{m.x_min, m.x_max(), ymid, m.y_max(), "extent"}}, nullptr);
         }
+        // Mapped risers (lsdtt-feature-finder mapped_risers_fname): the three
+        // tread boundaries on each flank, the edges of the mapped polygons
+        // above, as lines down the full valley length - across the riser
+        // gaps, as a mapper would draw them.
+        {
+            lsdtt::lsdtt_vector_schema ls;
+            ls.field_names = {"kind"};
+            ls.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+            loader.begin_vector_write(output_dir + "/staircase_mapped_risers.fgb",
+                                      "staircase_mapped_risers", ls, m.crs_wkt,
+                                      lsdtt::vector_output_format::flatgeobuf, false);
+            for (int j = 1; j < k_st_n_terraces; ++j)
+            {
+                const double off = (per_tread * j - 0.5) * cs;
+                for (const double x : {xc + off, xc - off})
+                    loader.write_line({{x, y0}, {x, y1}}, {std::string("terrace edge")});
+            }
+            loader.finish_vector_write();
+        }
     }
 
     // Levels files for level_algorithm_choice supplied_levels, written by hand

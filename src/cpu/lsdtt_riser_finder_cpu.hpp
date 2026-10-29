@@ -122,4 +122,36 @@ struct riser_result
 [[nodiscard]] riser_gap_closing_choice parse_riser_gap_closing_choice(
     const std::string& name);
 
+// Agreement between detected risers and mapped terrace edges, in cells.
+// A detected cell is matched when a mapped cell lies within tolerance_m of it
+// (centre to centre), and a mapped cell when a detected cell does. precision =
+// matched detected / detected, recall = matched mapped / mapped, f1 their
+// harmonic mean; NaN on an empty denominator. Counted over the scored cells
+// only, so a mapped edge outside the scored area is neither found nor missed -
+// but either set is matched against the WHOLE other set, so a riser just
+// outside the scored area still matches a mapped edge just inside it.
+struct riser_mapped_score
+{
+    double       tolerance_m        = 0.0;
+    std::int64_t n_scored_cells     = 0;
+    std::int64_t n_detected         = 0;
+    std::int64_t n_detected_matched = 0;
+    std::int64_t n_mapped           = 0;
+    std::int64_t n_mapped_matched   = 0;
+    double precision = 0.0;
+    double recall    = 0.0;
+    double f1        = 0.0;
+};
+
+// detected, mapped: co-registered 1/0 line rasters (cells > 0.5 are line,
+// cells outside either mask are not). scored: one flag per cell (non-zero =
+// counted), same size. tolerance_m >= 0. Throws std::invalid_argument on a
+// size mismatch or a negative tolerance.
+[[nodiscard]] riser_mapped_score score_risers_against_mapped(
+    const lsdtt_raster_cpu&          detected,
+    const lsdtt_raster_cpu&          mapped,
+    const std::vector<std::uint8_t>& scored,
+    double                           tolerance_m,
+    int                              n_threads = 0);
+
 } // namespace lsdtt

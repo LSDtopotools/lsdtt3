@@ -287,6 +287,85 @@ int main()
         check(threw, "astar with no search radius is refused");
     }
 
+    // ---- score_risers_against_mapped, by hand -----------------------------------
+    // 10 x 20 grid of 10 m cells. Mapped edge: column 5, all 10 rows. Detected:
+    // column 6, all rows (one cell, 10 m, off the mapped edge) and column 15,
+    // rows 0-4 (nowhere near it).
+    {
+        constexpr int nr = 10, nc = 20;
+        auto lines = [&](const std::vector<std::pair<int, int>>& cells)
+        {
+            std::vector<float> z(static_cast<std::size_t>(nr) * nc, 0.0f);
+            for (const auto& [r, c] : cells) z[static_cast<std::size_t>(r) * nc + c] = 1.0f;
+            return make_raster(std::move(z), nr, nc);
+        };
+        std::vector<std::pair<int, int>> m_cells, d_cells;
+        for (int r = 0; r < nr; ++r) { m_cells.push_back({r, 5}); d_cells.push_back({r, 6}); }
+        for (int r = 0; r < 5; ++r) d_cells.push_back({r, 15});
+        const lsdtt::lsdtt_raster_cpu mapped = lines(m_cells);
+        const lsdtt::lsdtt_raster_cpu detected = lines(d_cells);
+        const std::vector<std::uint8_t> all(static_cast<std::size_t>(nr) * nc, 1);
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-12; };
+
+        const lsdtt::riser_mapped_score s10 =
+            lsdtt::score_risers_against_mapped(detected, mapped, all, 10.0, 1);
+        check(s10.n_scored_cells == 200 && s10.n_detected == 15 &&
+              s10.n_detected_matched == 10 && s10.n_mapped == 10 &&
+              s10.n_mapped_matched == 10,
+              "mapped score at 10 m: 10/15 detected, 10/10 mapped matched");
+        check(near(s10.precision, 10.0 / 15.0) && near(s10.recall, 1.0) &&
+              near(s10.f1, 0.8),
+              "mapped score at 10 m: precision 2/3, recall 1, F1 0.8",
+              std::to_string(s10.precision) + " " + std::to_string(s10.recall) +
+              " " + std::to_string(s10.f1));
+
+        const lsdtt::riser_mapped_score s5 =
+            lsdtt::score_risers_against_mapped(detected, mapped, all, 5.0, 1);
+        check(s5.n_detected_matched == 0 && s5.n_mapped_matched == 0 &&
+              near(s5.precision, 0.0) && near(s5.recall, 0.0) && near(s5.f1, 0.0),
+              "mapped score at 5 m (half a cell): nothing matches, F1 0");
+
+        // Score rows 0-4 only: detected 5 + 5, mapped 5; the column-6 cells
+        // still match the column-5 edge.
+        std::vector<std::uint8_t> top(all.size(), 0);
+        for (int r = 0; r < 5; ++r)
+            for (int c = 0; c < nc; ++c) top[static_cast<std::size_t>(r) * nc + c] = 1;
+        const lsdtt::riser_mapped_score st =
+            lsdtt::score_risers_against_mapped(detected, mapped, top, 10.0, 1);
+        check(st.n_scored_cells == 100 && st.n_detected == 10 &&
+              st.n_detected_matched == 5 && st.n_mapped == 5 &&
+              st.n_mapped_matched == 5 && near(st.precision, 0.5) && near(st.recall, 1.0),
+              "mapped score over rows 0-4: precision 0.5, recall 1");
+
+        // Matching reaches across the scored boundary: score row 9 only, with
+        // the mapped edge cut to rows 0-8. The detected cell at (9, 6) is
+        // 10 * sqrt(2) m from mapped cell (8, 5), outside the scored row.
+        std::vector<std::pair<int, int>> m_short(m_cells.begin(), m_cells.end() - 1);
+        std::vector<std::uint8_t> row9(all.size(), 0);
+        for (int c = 0; c < nc; ++c) row9[static_cast<std::size_t>(9) * nc + c] = 1;
+        const lsdtt::riser_mapped_score sx = lsdtt::score_risers_against_mapped(
+            detected, lines(m_short), row9, 10.0 * std::sqrt(2.0), 1);
+        check(sx.n_detected == 1 && sx.n_detected_matched == 1 && sx.n_mapped == 0 &&
+              std::isnan(sx.recall) && std::isnan(sx.f1),
+              "mapped score: a detected cell matches a mapped cell outside the scored "
+              "area at exactly 10 sqrt(2) m; no mapped cells scored -> recall NaN");
+
+        const lsdtt::riser_mapped_score se = lsdtt::score_risers_against_mapped(
+            detected, lines({}), all, 50.0, 1);
+        check(se.n_mapped == 0 && near(se.precision, 0.0) && std::isnan(se.recall),
+              "mapped score with no mapped edge: precision 0, recall NaN");
+
+        bool threw = false;
+        try { (void)lsdtt::score_risers_against_mapped(
+                  detected, mapped, std::vector<std::uint8_t>(5, 1), 10.0, 1); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "mapped score: scored flags of the wrong size are refused");
+        threw = false;
+        try { (void)lsdtt::score_risers_against_mapped(detected, mapped, all, -1.0, 1); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "mapped score: a negative tolerance is refused");
+    }
+
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;
 }

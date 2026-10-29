@@ -1,0 +1,23 @@
+# lsdtt-feature-finder find_risers on the dissected staircase, scored against
+# the staircase's mapped tread boundaries (staircase_mapped_risers.fgb, six
+# full-length lines) inside the northern-half surveyed extent, at 30 m.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ffrm30
+
+n_threads: 1
+write_output_format: gtiff
+write_vector_format: flatgeobuf
+
+feature_type: find_risers
+riser_gap_closing_algorithm_choice: astar
+riser_connect_search_radius_metres: 200
+riser_min_step_height_metres: 1.0
+
+write_riser_centreline_raster: true
+write_riser_segments: false
+
+mapped_risers_fname: staircase_mapped_risers.fgb
+mapped_risers_extent_fname: staircase_mapped_extent_north.fgb
+mapped_risers_tolerance_metres: 30

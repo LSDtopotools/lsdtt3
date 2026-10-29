@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "lsdtt_proximity_cpu.hpp"
 #include "lsdtt_raster_skeleton_graph_cpu.hpp"
 
 namespace lsdtt
@@ -276,6 +277,71 @@ riser_result find_risers(const lsdtt_raster_cpu& dem,
     out.centreline = lsdtt_raster_cpu(std::move(keep),
                                       std::vector<uint8_t>(dem.get_mask()), meta);
     return out;
+}
+
+riser_mapped_score score_risers_against_mapped(
+    const lsdtt_raster_cpu&          detected,
+    const lsdtt_raster_cpu&          mapped,
+    const std::vector<std::uint8_t>& scored,
+    double                           tolerance_m,
+    int                              n_threads)
+{
+    const std::size_t n = detected.get_data().size();
+    if (mapped.get_data().size() != n || scored.size() != n)
+        throw std::invalid_argument(
+            "score_risers_against_mapped: detected, mapped and scored differ in size");
+    if (!(tolerance_m >= 0.0))
+        throw std::invalid_argument(
+            "score_risers_against_mapped: tolerance_m must be >= 0");
+
+    // Distance from every cell to the nearest line cell of the other set.
+    // An empty set gives an infinite distance everywhere: nothing matches.
+    auto distance_to = [&](const lsdtt_raster_cpu& lines)
+    {
+        std::vector<float> d(n, 0.0f);
+        std::vector<std::uint8_t> valid(n, 1);
+        for (std::size_t i = 0; i < n; ++i)
+            if (lines.get_mask()[i] && lines.get_data()[i] > 0.5f) d[i] = 1.0f;
+        const lsdtt_raster_cpu src(std::move(d), std::move(valid), lines.get_meta());
+        return euclidean_distance_transform(src, n_threads);
+    };
+    const lsdtt_raster_cpu to_mapped   = distance_to(mapped);
+    const lsdtt_raster_cpu to_detected = distance_to(detected);
+
+    riser_mapped_score s;
+    s.tolerance_m = tolerance_m;
+    // Cell-centre distances are multiples of the cell size times sqrt(k);
+    // a tolerance equal to one of them must count.
+    const double tol = tolerance_m * (1.0 + 1e-9) + 1e-9;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!scored[i]) continue;
+        ++s.n_scored_cells;
+        if (detected.get_mask()[i] && detected.get_data()[i] > 0.5f)
+        {
+            ++s.n_detected;
+            if (static_cast<double>(to_mapped.get_data()[i]) <= tol)
+                ++s.n_detected_matched;
+        }
+        if (mapped.get_mask()[i] && mapped.get_data()[i] > 0.5f)
+        {
+            ++s.n_mapped;
+            if (static_cast<double>(to_detected.get_data()[i]) <= tol)
+                ++s.n_mapped_matched;
+        }
+    }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    s.precision = s.n_detected > 0
+        ? static_cast<double>(s.n_detected_matched) / static_cast<double>(s.n_detected) : nan;
+    s.recall = s.n_mapped > 0
+        ? static_cast<double>(s.n_mapped_matched) / static_cast<double>(s.n_mapped) : nan;
+    if (std::isnan(s.precision) || std::isnan(s.recall))
+        s.f1 = nan;
+    else if (s.precision + s.recall > 0.0)
+        s.f1 = 2.0 * s.precision * s.recall / (s.precision + s.recall);
+    else
+        s.f1 = 0.0;
+    return s;
 }
 
 } // namespace lsdtt

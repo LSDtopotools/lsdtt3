@@ -2579,6 +2579,40 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_feature_finder_risers_staircase PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# mapped_risers_fname on the same staircase: the six tread boundaries as
+# mapped lines, scored in the northern half (staircase_mapped_extent_north).
+# The finder's line sits 2-3 cells (20-30 m) down onto the lower tread, at the
+# foot of the riser where the 100 m polyfit puts the curvature peak, and the
+# boundary line burns on one side of the step: the left flank is 20 m off,
+# the right flank 30 m. At 20 m only the left flank matches (recall 297/600);
+# at 30 m both do except across the three graded gaps (537/600). The
+# unmatched detections are the gaps' real up- and down-valley scarps, which
+# the map does not draw (precision 297/905, 513/905).
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_mapped
+    lsdtt-feature-finder
+    feature_finder_risers_mapped.param.in
+    ffrm_mapped_riser_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect ffrm_mapped_risers.tif
+    --expect-raster-values ffrm_mapped_risers.tif:0,1
+    --stdout-contains "Mapped risers (extent, 20 m): precision 0.328177 (297/905 cells), recall 0.495 (297/600 cells)"
+    --expect-file-contains "ffrm_mapped_riser_scores.csv:extent,20,10,30000,905,297,600,297,"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_mapped_30m
+    lsdtt-feature-finder
+    feature_finder_risers_mapped_30m.param.in
+    ffrm30_mapped_riser_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Mapped risers (extent, 30 m): precision 0.566851 (513/905 cells), recall 0.895 (537/600 cells)"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped_30m PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     rigorous_feature_finder_flow_discrimination_canonical
     lsdtt-feature-finder
@@ -8992,6 +9026,15 @@ add_test(NAME unit_fluvial_surface_method_comparison COMMAND lsdtt-test-surface-
 lsdtt_set_tests_properties(unit_fluvial_surface_method_comparison PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Valley widths for every channel (plan_valley_width_network): the channel
+# tree, both centreline choices, the tributary stop and the tributary-crossing
+# exclusion, nested, on synthetic valleys of known floor width.
+add_executable(lsdtt-test-valley-width-network cpp/test_valley_width_network.cpp)
+target_link_libraries(lsdtt-test-valley-width-network PRIVATE lsdtt3_cpu)
+add_test(NAME unit_valley_width_network COMMAND lsdtt-test-valley-width-network)
+lsdtt_set_tests_properties(unit_valley_width_network PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 # Training polygons (plan 7i): class labels, best separation, a window fit
 # with a mislabelled terrace number, a flagged polygon and a shared level, and
 # the reach windows, on populations small enough to check by hand.
@@ -10460,7 +10503,7 @@ set(LSDTT_DOMAIN_RULES
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
-    "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
+    "fluvial_surface|flat_surface|valley_centreline|valley_width" "fluvial_surfaces"
     # The shared Topographic Wetness Index,
     # pointed at "network" ON PURPOSE rather than given its own domain: the
     # existing TWI/STI tests already live in the network compartment, and

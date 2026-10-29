@@ -29,7 +29,9 @@
 // -----------------------------------------------------------------------------
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -52,6 +54,7 @@
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
 #include "../src/cpu/lsdtt_riser_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
@@ -1537,6 +1540,40 @@ int main(int argc, char* argv[])
         "_riser_adaptive_binary, _riser_skeleton and, under astar, "
         "_riser_gap_closing (pixels added by bridges).",
         "Riser finder (find_risers)", "switch", ""};
+
+    // Mapped terrace edges to score the detected risers against (the line
+    // counterpart of lsdtt-fluvial-surfaces mapped_surfaces_fname).
+    string_default_map["mapped_risers_fname"] = "";
+    help_map["mapped_risers_fname"] = {"string","",
+        "Mapped terrace edges / risers (lines; gpkg, fgb, shp) to score the "
+        "detected risers against.",
+        "Burned into the DEM grid by every cell a line touches, reprojected to "
+        "the DEM CRS. A detected riser cell counts as found when a mapped cell "
+        "lies within mapped_risers_tolerance_metres of it, and a mapped cell as "
+        "recovered when a detected cell does. Writes "
+        "<write_fname>_mapped_risers.tif (the burned lines) and "
+        "<write_fname>_mapped_riser_scores.csv: per scope the cell counts, "
+        "precision (detected cells near a mapped edge), recall (mapped cells near "
+        "a detected riser) and F1. Scope 'extent' is every valid cell inside "
+        "mapped_risers_extent_fname; scope 'search_mask' (only with "
+        "riser_search_mask_fname) is those cells inside the search mask too, "
+        "where a riser could have been found at all.",
+        "Riser finder (find_risers)", "param", ""};
+    string_default_map["mapped_risers_extent_fname"] = "";
+    help_map["mapped_risers_extent_fname"] = {"string","",
+        "Polygon(s) of the area the mapper actually surveyed.",
+        "Cells whose centre is outside are not scored, so a riser where nobody "
+        "mapped is not a false detection. Empty: the whole DEM counts as "
+        "surveyed (the log says so).",
+        "Riser finder (find_risers)", "param", "mapped_risers_fname"};
+    float_default_map["mapped_risers_tolerance_metres"] = 20.0f;
+    help_map["mapped_risers_tolerance_metres"] = {"float","20",
+        "Largest distance (m) between a detected riser cell and a mapped edge "
+        "cell for them to count as the same line.",
+        "Centre to centre. Covers the digitising error of the map and the "
+        "finder's own offset from the step (riser_polyfit_lambda_metres moves "
+        "the line off the face); two cells on a 10 m grid is a strict start.",
+        "Riser finder (find_risers)", "param", "mapped_risers_fname"};
 
     // -------------------------------------------------------------------------
     // Parse parameters
@@ -3377,6 +3414,33 @@ int main(int argc, char* argv[])
                     std::move(md), std::vector<uint8_t>(dem.get_mask()), meta);
             }
 
+            // Mapped terrace edges are burned BEFORE the finder runs, so a bad
+            // file fails fast.
+            lsdtt::lsdtt_raster_cpu mapped_risers;
+            std::vector<std::uint8_t> mapped_scored;
+            const bool score_mapped = !sf.at("mapped_risers_fname").empty();
+            if (score_mapped)
+            {
+                const std::string mp =
+                    pp.add_read_path_if_needed(sf.at("mapped_risers_fname"));
+                std::cout << "Loading mapped risers: " << mp << "\n";
+                mapped_risers = lsdtt::rasterise_polylines(dem, mp);
+                mapped_scored.assign(dem.get_mask().begin(), dem.get_mask().end());
+                if (!sf.at("mapped_risers_extent_fname").empty())
+                {
+                    const std::string ep =
+                        pp.add_read_path_if_needed(sf.at("mapped_risers_extent_fname"));
+                    const lsdtt::lsdtt_raster_cpu ext = lsdtt::rasterise_polygons(
+                        dem, ep, lsdtt::polygon_rasterise_rule::majority_coverage);
+                    for (std::size_t i = 0; i < mapped_scored.size(); ++i)
+                        if (!(ext.get_data()[i] > 0.5f)) mapped_scored[i] = 0;
+                    std::cout << "Surveyed extent      : " << ep << "\n";
+                }
+                else
+                    std::cout << "Surveyed extent      : none given, the whole DEM "
+                                 "counts as surveyed\n";
+            }
+
             std::cout << "\n--- Riser finder ---\n";
             std::cout << "Polyfit lambda       : " << vsr.polyfit_lambda_metres << " m\n";
             std::cout << "Gap closing          : "
@@ -3390,6 +3454,51 @@ int main(int argc, char* argv[])
                       << " (dropped " << result.n_dropped_short << " short, "
                       << result.n_dropped_low_step << " below the step floor)\n"
                       << "Risers kept          : " << result.segments.size() << "\n";
+
+            if (score_mapped)
+            {
+                const double tol =
+                    static_cast<double>(ff.at("mapped_risers_tolerance_metres"));
+                std::vector<std::pair<std::string, lsdtt::riser_mapped_score>> rows;
+                rows.emplace_back("extent", lsdtt::score_risers_against_mapped(
+                    result.centreline, mapped_risers, mapped_scored, tol, n_threads));
+                if (!search_mask.get_data().empty())
+                {
+                    std::vector<std::uint8_t> in_search(mapped_scored);
+                    for (std::size_t i = 0; i < in_search.size(); ++i)
+                        if (!(search_mask.get_data()[i] > 0.5f)) in_search[i] = 0;
+                    rows.emplace_back("search_mask", lsdtt::score_risers_against_mapped(
+                        result.centreline, mapped_risers, in_search, tol, n_threads));
+                }
+
+                const std::string mo = pp.make_output_path("_mapped_risers" + output_ext);
+                std::cout << "Writing: " << mo << "\n";
+                loader.write_full(mapped_risers.get_data(), mapped_risers.get_meta(),
+                                  mo, out_fmt);
+
+                const std::string co = pp.make_output_path("_mapped_riser_scores.csv");
+                std::ofstream csv(co);
+                if (!csv)
+                    throw std::runtime_error("cannot write " + co);
+                csv << "scope,tolerance_m,cell_size_m,n_scored_cells,n_detected,"
+                       "n_detected_matched,n_mapped,n_mapped_matched,precision,"
+                       "recall,f1\n";
+                for (const auto& [scope, s] : rows)
+                {
+                    csv << scope << "," << s.tolerance_m << "," << meta.cell_size << ","
+                        << s.n_scored_cells << "," << s.n_detected << ","
+                        << s.n_detected_matched << "," << s.n_mapped << ","
+                        << s.n_mapped_matched << "," << s.precision << ","
+                        << s.recall << "," << s.f1 << "\n";
+                    std::cout << "Mapped risers (" << scope << ", " << tol
+                              << " m): precision " << s.precision << " ("
+                              << s.n_detected_matched << "/" << s.n_detected
+                              << " cells), recall " << s.recall << " ("
+                              << s.n_mapped_matched << "/" << s.n_mapped
+                              << " cells), F1 " << s.f1 << "\n";
+                }
+                std::cout << "Writing: " << co << "\n";
+            }
 
             if (bf.at("write_riser_centreline_raster"))
             {

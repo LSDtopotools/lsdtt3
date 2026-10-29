@@ -786,7 +786,10 @@ valley_cross_section_result extract_curved_impl(
     for (const valley_channel_centreline& ch : centrelines.channels)
     {
         if (ch.centreline_flats.size() < 2) continue;
-        const std::vector<float>& vmask = ch.valley_mask.get_data();
+        const std::vector<float>& vmask =
+            centrelines.channels_share_valley_mask
+                ? centrelines.valley_mask.get_data()
+                : ch.valley_mask.get_data();
         if (vmask.empty()) continue;
         if (vmask.size() != elev.size())
             throw std::invalid_argument(
@@ -1230,7 +1233,10 @@ valley_cross_section_result extract_valley_cross_sections(
     for (const valley_channel_centreline& ch : centrelines.channels)
     {
         if (ch.centreline_flats.size() < 2) continue;
-        const std::vector<float>& vmask = ch.valley_mask.get_data();
+        const std::vector<float>& vmask =
+            centrelines.channels_share_valley_mask
+                ? centrelines.valley_mask.get_data()
+                : ch.valley_mask.get_data();
         if (vmask.empty()) continue;
         if (vmask.size() != elev.size())
             throw std::invalid_argument(
