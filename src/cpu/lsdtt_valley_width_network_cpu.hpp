@@ -170,6 +170,8 @@ struct valley_width_network_result
 enum class network_section_exclusion : std::uint8_t
 {
     none,
+    not_in_valley,         // the station centre is outside the valley mask
+                           // (the channel runs where there is no valley)
     side_not_found,        // a valley side was not found; no width
     near_parent_channel,   // rule (a)
     tributary_crossing     // rule (b)

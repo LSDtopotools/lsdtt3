@@ -1857,21 +1857,24 @@ int main(int argc, char* argv[])
                 const lsdtt::valley_cross_section& xs = xres.sections[k];
                 const lsdtt::valley_network_segment& sg =
                     nres.segments[static_cast<std::size_t>(xs.source_id)];
-                // Drainage area and elevation at the station centre's cell.
+                // Drainage area and elevation at the segment's channel pixel
+                // nearest the station centre: the centre is on the centreline,
+                // usually off the channel, where the area is a hillslope's.
                 std::string area = "nan", z = "nan";
-                const int col = static_cast<int>(
-                    std::floor((xs.centre_x - meta.x_min) / meta.cell_size));
-                const int row = static_cast<int>(
-                    std::floor((meta.y_max() - xs.centre_y) / meta.cell_size));
-                if (row >= 0 && col >= 0 && row < meta.n_rows && col < n_cols)
+                double best = std::numeric_limits<double>::infinity();
+                std::int64_t near = -1;
+                for (const std::int64_t f : sg.channel_flats)
                 {
-                    const std::size_t f =
-                        static_cast<std::size_t>(row) * n_cols + col;
-                    if (dem.get_mask()[f])
-                    {
-                        area = std::to_string(da[f]);
-                        z = std::to_string(elev[f]);
-                    }
+                    const lsdtt::lsdtt_xy p = node_xy(f);
+                    const double d2 = (p.x - xs.centre_x) * (p.x - xs.centre_x) +
+                                      (p.y - xs.centre_y) * (p.y - xs.centre_y);
+                    if (d2 < best) { best = d2; near = f; }
+                }
+                if (near >= 0)
+                {
+                    const std::size_t f = static_cast<std::size_t>(near);
+                    area = std::to_string(da[f]);
+                    z = std::to_string(elev[f]);
                 }
                 rows.push_back({
                     std::to_string(sg.segment_id),
@@ -1891,7 +1894,7 @@ int main(int argc, char* argv[])
             }
             loader.write_csv(p,
                 {"segment_id","parent_segment_id","nesting_depth","station_seq",
-                 "along_distance_m","x","y","elevation","drainage_area_m2",
+                 "along_distance_m","x","y","channel_elevation","drainage_area_m2",
                  "left_half_width_m","right_half_width_m","valley_width_m",
                  "drains_to_edge","catchment_touches_edge","excluded_reason"},
                 rows);

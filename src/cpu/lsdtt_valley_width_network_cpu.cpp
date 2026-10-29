@@ -162,6 +162,7 @@ const char* to_string(network_section_exclusion e) noexcept
     switch (e)
     {
         case network_section_exclusion::none:                return "none";
+        case network_section_exclusion::not_in_valley:       return "not_in_valley";
         case network_section_exclusion::side_not_found:      return "side_not_found";
         case network_section_exclusion::near_parent_channel: return "near_parent_channel";
         case network_section_exclusion::tributary_crossing:  return "tributary_crossing";
@@ -641,10 +642,27 @@ std::vector<network_section_exclusion> apply_network_section_rules(
     const std::size_t n_seg = network.segments.size();
     const int n_cols = meta.n_cols;
 
+    // A station whose centre is outside the valley mask has no valley to
+    // measure (its width is 0 or a sliver): the channel runs where the mask
+    // has nothing. Then stations with a side not found.
+    const std::vector<float>& vm = network.centrelines.valley_mask.get_data();
     std::vector<network_section_exclusion> reason(n_sec, network_section_exclusion::none);
     for (std::size_t i = 0; i < n_sec; ++i)
-        if (!(xs[i].left_found && xs[i].right_found))
+    {
+        const int col = static_cast<int>(
+            std::floor((xs[i].centre_x - meta.x_min) / meta.cell_size));
+        const int row = static_cast<int>(
+            std::floor((meta.y_max() - xs[i].centre_y) / meta.cell_size));
+        const bool in_grid = row >= 0 && col >= 0 &&
+                             row < meta.n_rows && col < meta.n_cols;
+        const bool in_valley = in_grid && vm.size() ==
+            static_cast<std::size_t>(meta.n_rows) * meta.n_cols &&
+            vm[static_cast<std::size_t>(row) * n_cols + col] > 0.5f;
+        if (!in_valley)
+            reason[i] = network_section_exclusion::not_in_valley;
+        else if (!(xs[i].left_found && xs[i].right_found))
             reason[i] = network_section_exclusion::side_not_found;
+    }
 
     // Sections of each segment, upstream -> downstream.
     std::vector<std::vector<std::size_t>> of_seg(n_seg);
@@ -754,10 +772,11 @@ std::vector<network_section_exclusion> apply_network_section_rules(
                     // measuring along the parent valley, wherever its centre is
                     // (an oblique section where the tributary's line bends
                     // into the confluence).
-                    if (!stopped && xs[i].left_found && xs[i].right_found)
+                    if (!stopped && reason[i] == network_section_exclusion::none)
                         stopped = polylines_intersect(width_line(xs[i]), ppts);
                 }
-                if (stopped) reason[i] = network_section_exclusion::near_parent_channel;
+                if (stopped && reason[i] != network_section_exclusion::not_in_valley)
+                    reason[i] = network_section_exclusion::near_parent_channel;
             }
         }
     }
@@ -782,7 +801,8 @@ std::vector<network_section_exclusion> apply_network_section_rules(
         std::vector<bbox> box(n_sec), child_box_of(n_sec);
         for (std::size_t i = 0; i < n_sec; ++i)
         {
-            if (reason[i] == network_section_exclusion::side_not_found) continue;
+            if (reason[i] == network_section_exclusion::side_not_found ||
+                reason[i] == network_section_exclusion::not_in_valley) continue;
             line[i] = width_line(xs[i]);
             for (const xy& q : line[i]) box[i].add(q);
             child_line[i] = extended(line[i], meta.cell_size);

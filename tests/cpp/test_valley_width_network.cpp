@@ -27,7 +27,8 @@
 // sections through the tributary's mouth are excluded as tributary_crossing,
 // and those through the sub-tributary's mouth on the TRIBUTARY, never on the
 // trunk (the nesting); with both rules off the mouth widths reappear (so the
-// rules are what removed them). Then a meandering channel in the trunk floor:
+// rules are what removed them); stations where the mask has no valley are
+// not_in_valley. Then a meandering channel in the trunk floor:
 // smoothed_channel stays in the valley mask and is straighter than the
 // channel; medial_path follows the valley's centre.
 // -----------------------------------------------------------------------------
@@ -337,6 +338,44 @@ int main()
             std::cout << "NOTE  " << tag << "no bounded trunk section across the "
                          "mouth (all side_not_found), so the crossing rule was not "
                          "exercised on the trunk" << std::endl;
+    }
+
+    // -------------------------------------------------------------------------
+    // A reach with no valley: the mask removed from the trunk's top 40 rows.
+    // Those stations sit where the channel runs without a valley; they must be
+    // not_in_valley, not kept with a zero width.
+    // -------------------------------------------------------------------------
+    {
+        fixture fx = make_fixture(true, false, 600);
+        const double y0 = fx.dem.get_meta().y_max() - k_rows * k_dx;
+        std::vector<float> vm = fx.valley.get_data();
+        for (int r = 0; r < 40; ++r)
+            for (int c = 0; c < k_cols; ++c) vm[r * k_cols + c] = 0.0f;
+        const lsdtt::lsdtt_raster_cpu cut(std::move(vm),
+            std::vector<std::uint8_t>(fx.valley.get_mask()), fx.valley.get_meta());
+        lsdtt::valley_width_network_request nreq;
+        nreq.centreline = lsdtt::network_centreline_choice::smoothed_channel;
+        const auto net = lsdtt::build_valley_width_network(
+            fx.dem, *fx.flow, fx.scope.channel_mask, cut, nreq);
+        const auto xres = sections_for(fx, net);
+        const auto reasons = lsdtt::apply_network_section_rules(
+            net, xres, fx.dem.get_meta(), lsdtt::network_section_rules_request{});
+        int n_north = 0, n_flagged = 0, n_kept_south = 0;
+        for (std::size_t k = 0; k < xres.sections.size(); ++k)
+        {
+            const int r = row_of(xres.sections[k].centre_y - y0);
+            if (r < 38)
+            {
+                ++n_north;
+                if (reasons[k] == network_section_exclusion::not_in_valley) ++n_flagged;
+            }
+            else if (r > 42 && reasons[k] == network_section_exclusion::none)
+                ++n_kept_south;
+        }
+        check(n_north > 0 && n_flagged == n_north,
+              "[no valley] every station above the mask is not_in_valley (" +
+                  std::to_string(n_flagged) + " of " + std::to_string(n_north) + ")");
+        check(n_kept_south > 0, "[no valley] stations in the valley below are kept");
     }
 
     // -------------------------------------------------------------------------
