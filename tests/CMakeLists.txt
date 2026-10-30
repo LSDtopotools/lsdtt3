@@ -9789,6 +9789,37 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_second_pass PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# reference_field_algorithm_choice relative_elevation on the staircase: the
+# centrelines run through staircase_floor_mask.tif (channel + lowest tread) and
+# the field reaches the treads above. HAND there is ~9 m on treads 2-4 alike
+# (they drain sideways into small channels); the relative elevation puts them at
+# 15.6 / 23.7 / 31.8 m (checked 2026-10-30). Pinned by the assignment line.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_relative_elevation
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_relative_elevation.param.in
+    fsrer_reference_field.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "--- Reference field: relative elevation ---"
+    --stdout-contains "9 channel segment(s), 8 centreline(s)"
+    --stdout-contains "8349 floor cell(s) by the larger-channel discs, 51651 by floor-width-scaled ground distance, 0 left out"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_relative_elevation PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# lsdtt-valley-centreline relative elevation over the whole DEM (1500 m cap):
+# centrelines through the staircase's valley floor, the field on the treads.
+add_lsdtt_cli_smoke_test(
+    rigorous_valley_centreline_relative_elevation_whole_dem
+    lsdtt-valley-centreline
+    valley_centreline_relative_elevation_whole_dem.param.in
+    vcrer_relative_elevation.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "domain (whole_dem): 60000 pixel(s): 8349 on the floor by the larger-channel discs, 46780 by floor-width-scaled ground distance, 4871 reaching no centreline"
+)
+lsdtt_set_tests_properties(rigorous_valley_centreline_relative_elevation_whole_dem PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # floodplain_bound_algorithm_choice: the staircase has 0.709 of its floodplain
 # gradient below 0.1; with the switch at 0.7 auto takes hand_only, records it
 # for a rerun, and gives exactly the explicit hand_only mask (4068 cells).
@@ -10168,7 +10199,7 @@ add_lsdtt_cli_smoke_test(
     unused.tif
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
     --expect-failure
-    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, fitted_surface."
+    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, relative_elevation, fitted_surface."
 )
 lsdtt_set_tests_properties(failure_fluvial_surfaces_bad_reference_field PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)

@@ -36,18 +36,38 @@
 //     between - so the baseline never rises downstream and is never above any
 //     pin.
 //
+// Two masks. The FLOOR mask is the valley floor the centrelines were traced
+// through (normally a floodplain mask); it sets each node's floor half-width,
+// the distance from the node to the edge of the floor. The DOMAIN is where the
+// relative elevation is computed: the floor itself, a wider valley mask that
+// takes in the terraces, or the whole DEM. Keeping them apart is what lets the
+// centrelines follow the valley floor while the field reaches the terraces
+// above it: traced through a mask that includes the terraces, a medial
+// centreline runs across the terrace plain instead of down the valley.
+//
 // Which centreline a pixel is measured against (compute_valley_relative_elevation):
-// the larger channel wins. Each centreline node owns the disc of radius
-// distance-to-the-valley-wall round it (+1 cell), which lies inside the valley
-// by construction, so it cannot reach across a ridge into another valley. A
-// pixel covered by discs of several centrelines goes to the centreline whose
-// nearest covering node has the largest priority (drainage area at that node's
-// channel pixel), and within it to the nearest node: approaching a larger
-// channel's valley floor, the reference switches to it. Nodes inside a larger
-// centreline's discs are dropped, so a tributary's centreline stops where it
-// enters its parent's valley. Valley pixels no disc covers take the node
-// nearest along the ground through the valley mask (geodesic) among the nodes
-// kept.
+// the larger channel wins.
+//   1. On the floor: each node owns the disc of radius its floor half-width
+//      (+1 cell), which lies inside the floor by construction. A floor pixel
+//      covered by discs of several centrelines goes to the centreline whose
+//      nearest covering node has the largest priority (drainage area at that
+//      node's channel pixel), then to its nearest node. Nodes inside a larger
+//      centreline's discs are dropped, so a tributary's reference stops where
+//      it enters its parent's floor.
+//   2. Everywhere else in the domain: the kept node nearest along the ground
+//      through the domain, with ground distance counted in units of each
+//      node's floor half-width (at least one cell). A main valley with a
+//      300 m floor therefore reaches ten times as far up its terraces as a
+//      gully stream with a 30 m floor, and a stream with no floor at all
+//      (half-width one cell) claims only the ground right beside it. Ties go
+//      to the larger priority. This is a multiplicatively weighted geodesic
+//      Voronoi partition grown by Dijkstra, where ground claimed by one
+//      node's front is not crossed by another's (so it is first arrival, not
+//      the exact weighted partition, where a faster front could pass through).
+//   relative_elevation_max_distance_metres caps the ground distance (metres,
+//   not scaled) a pixel may be from the node it belongs to; it is applied
+//   after the partition, so a pixel beyond it is left out, not handed to
+//   another node.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -97,20 +117,35 @@ struct valley_rer_centreline
 
 struct valley_rer_result
 {
-    lsdtt_raster_cpu relative_elevation;    // nodata outside the valley
+    lsdtt_raster_cpu relative_elevation;    // nodata outside the domain
     lsdtt_raster_cpu owner;                 // centreline id; nodata outside
-    std::int64_t n_valley_pixels      = 0;
-    std::int64_t n_by_disc            = 0;  // assigned by a covering disc
-    std::int64_t n_by_geodesic        = 0;  // assigned by the geodesic fallback
-    std::int64_t n_unassigned         = 0;  // valley pixels reaching no node
+    // Per grid cell: index into the centrelines vector and node index of the
+    // node the cell is measured against (-1 = none). Lets a caller map each
+    // cell to that node's channel pixel.
+    std::vector<std::int32_t> owner_centreline;
+    std::vector<std::int32_t> owner_node;
+    std::int64_t n_domain_pixels      = 0;
+    std::int64_t n_by_disc            = 0;  // floor pixels assigned by a disc
+    std::int64_t n_by_geodesic        = 0;  // assigned by the scaled ground distance
+    std::int64_t n_unassigned         = 0;  // domain pixels reaching no node
     std::int64_t n_nodes_dropped      = 0;  // inside a larger centreline's discs
 };
 
+struct valley_rer_request
+{
+    // Ground distance cap (m) from a pixel to its node; 0 or less = none.
+    double max_distance_metres = 0.0;
+};
+
 // dem         : elevations the relative elevation is taken of.
-// valley_mask : cells > 0.5 (and valid) are valley; the raster is limited to it.
+// floor_mask  : the valley floor the centrelines run through (cells > 0.5).
+// domain_mask : where the field is computed (cells > 0.5); the floor is always
+//               included. Pass the floor mask again to limit it to the floor.
 [[nodiscard]] valley_rer_result compute_valley_relative_elevation(
     const lsdtt_raster_cpu&                   dem,
-    const lsdtt_raster_cpu&                   valley_mask,
-    const std::vector<valley_rer_centreline>& centrelines);
+    const lsdtt_raster_cpu&                   floor_mask,
+    const lsdtt_raster_cpu&                   domain_mask,
+    const std::vector<valley_rer_centreline>& centrelines,
+    const valley_rer_request&                 request = {});
 
 } // namespace lsdtt

@@ -403,6 +403,72 @@ void declare_valley_mask_morphology_parameters(
         group, "switch", parent};
 }
 
+void declare_relative_elevation_parameters(
+    std::map<std::string, std::string>& string_default_map,
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  group,
+    const std::string&                  parent)
+{
+    string_default_map["network_centreline_algorithm_choice"] = "medial_path";
+    help_map["network_centreline_algorithm_choice"] = {"string","medial_path",
+        "Line each channel segment's valley centreline follows: medial_path or "
+        "smoothed_channel.",
+        "Not the raw D8 channel: sections cast from a meandering channel swing "
+        "with every bend and cross one another, and a baseline tied to its "
+        "planform imprints the meanders on the relative elevation. medial_path: "
+        "the least-cost walk along the valley's medial axis (cost = largest "
+        "distance-to-wall minus distance-to-wall), head to confluence, confined "
+        "to the valley mask plus the segment's own channel pixels. "
+        "smoothed_channel: the D8 channel smoothed by a Gaussian-smoothed cubic "
+        "spline whose sigma scales with the valley width; it may not leave the "
+        "valley mask, so where it would, it runs along the mask edge until it "
+        "comes back in.",
+        group, "param", parent};
+
+    float_default_map["network_centreline_window_margin_multiple"] = 3.0f;
+    help_map["network_centreline_window_margin_multiple"] = {"float","3",
+        "medial_path: each walk runs in the segment's bounding box padded by "
+        "this multiple of its largest distance-to-wall (plus 10 cells).",
+        "Bounds the work per segment. The medial axis lies within a valley "
+        "width of the channel, so 3 leaves room on both sides.",
+        group, "param", "network_centreline_algorithm_choice"};
+
+    float_default_map["network_centreline_smoothing_width_multiple"] = 1.0f;
+    help_map["network_centreline_smoothing_width_multiple"] = {"float","1",
+        "smoothed_channel: Gaussian sigma (along-channel metres) as a multiple "
+        "of the segment's valley width.",
+        "Valley width = 2 x the 90th percentile of distance-to-wall over the "
+        "segment's channel pixels; sigma is never below two cells. Larger "
+        "values remove longer meanders but cut more corners.",
+        group, "param", "network_centreline_algorithm_choice"};
+
+    string_default_map["centreline_baseline_algorithm_choice"] = "projected_monotonic";
+    help_map["centreline_baseline_algorithm_choice"] = {"string","projected_monotonic",
+        "How a centreline's baseline is pinned to its channel: "
+        "projected_monotonic or channel_crossings.",
+        "projected_monotonic: every channel pixel pins the centreline node "
+        "nearest it (the lowest elevation winning on a shared node), then each "
+        "pin is lowered to the lowest pin upstream of it and the baseline is "
+        "linear between pins - it never rises downstream and is never above the "
+        "channel. channel_crossings (LSDTopoTools2): pins only where the channel "
+        "crosses the centreline in plan view, at the channel elevation "
+        "interpolated at the crossing (and at centreline nodes that are channel "
+        "pixels), linear between crossings and flat beyond the first and last, "
+        "with no other constraint.",
+        group, "param", parent};
+
+    float_default_map["relative_elevation_max_distance_metres"] = 0.0f;
+    help_map["relative_elevation_max_distance_metres"] = {"float","0",
+        "Farthest a cell may be, along the ground, from the centreline node it "
+        "is measured against [m]. 0 = no limit.",
+        "Ground distance through the relative-elevation domain, in metres (not "
+        "the floor-width-scaled distance that decides which node a cell "
+        "belongs to). Cells farther away are left out. Use it to keep a "
+        "whole-DEM domain to the valley sides.",
+        group, "param", parent};
+}
+
 void declare_max_floodplain_gradient_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

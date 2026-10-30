@@ -279,6 +279,19 @@ void declare_valley_mask_morphology_parameters(
     const std::string&            parent,
     bool                          fill_holes_default);
 
+// Valley centrelines and the relative elevation measured from them, shared by
+// lsdtt-valley-centreline (run_valley_width_network, write_relative_elevation_
+// raster) and lsdtt-fluvial-surfaces (reference_field_algorithm_choice
+// relative_elevation): network_centreline_algorithm_choice and its two
+// settings, centreline_baseline_algorithm_choice and
+// relative_elevation_max_distance_metres.
+void declare_relative_elevation_parameters(
+    std::map<std::string, std::string>& string_default_map,
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  group,
+    const std::string&                  parent);
+
 void declare_max_floodplain_gradient_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

@@ -353,7 +353,7 @@ int main()
                     if (m[q] >= 0) c.priority[q] = da[static_cast<std::size_t>(chan[m[q]])];
                 rc.push_back(std::move(c));
             }
-            const auto rr = lsdtt::compute_valley_relative_elevation(fx.dem, fx.valley, rc);
+            const auto rr = lsdtt::compute_valley_relative_elevation(fx.dem, fx.valley, fx.valley, rc);
             const auto& own = rr.owner.get_data();
             const auto& rer = rr.relative_elevation.get_data();
             bool trunk_at_junction = true, trib_up = true, small_rer = true;

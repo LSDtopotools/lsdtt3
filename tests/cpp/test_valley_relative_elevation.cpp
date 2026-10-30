@@ -180,7 +180,7 @@ int main()
         big.priority.assign(big.flats.size(), 1e6);
         small.priority.assign(small.flats.size(), 1e3);
 
-        const auto rr = lsdtt::compute_valley_relative_elevation(dem, vm, {small, big});
+        const auto rr = lsdtt::compute_valley_relative_elevation(dem, vm, vm, {small, big});
         const auto& own = rr.owner.get_data();
         const auto& rer = rr.relative_elevation.get_data();
         bool big_wins = true;
@@ -197,9 +197,70 @@ int main()
               "nothing outside the valley mask");
 
         // Without the big one, the small one takes the valley.
-        const auto r2 = lsdtt::compute_valley_relative_elevation(dem, vm, {small});
+        const auto r2 = lsdtt::compute_valley_relative_elevation(dem, vm, vm, {small});
         check(r2.owner.get_data()[20 * C + 40] == 2.0f && r2.n_unassigned == 0,
               "a lone centreline takes the whole connected valley");
+    }
+
+    // -------------------------------------------------------------------------
+    // A domain wider than the floor: terraces either side of a narrow floor,
+    // a gully stream with no floor of its own crossing the terrace. The main
+    // centreline's reach is scaled by its floor half-width, the gully's by one
+    // cell, so the gully claims only the ground beside it.
+    // -------------------------------------------------------------------------
+    {
+        const int R = 31, C = 80;
+        const lsdtt::lsdtt_raster_meta meta = grid(R, C);
+        const std::size_t n = static_cast<std::size_t>(R) * C;
+        std::vector<float> z(n), fl(n, 0.0f), dm(n, 0.0f);
+        for (int r = 0; r < R; ++r)
+            for (int c = 0; c < C; ++c)
+            {
+                const std::size_t i = static_cast<std::size_t>(r) * C + c;
+                z[i] = static_cast<float>(100.0 + std::abs(r - 15) * 1.0);
+                if (r >= 11 && r <= 19) fl[i] = 1.0f;       // floor, half-width ~5
+                if (r >= 2 && r <= 28) dm[i] = 1.0f;        // terraces
+            }
+        const lsdtt::lsdtt_raster_cpu dem(std::move(z), std::vector<std::uint8_t>(n, 1), meta);
+        const lsdtt::lsdtt_raster_cpu floor(std::move(fl), std::vector<std::uint8_t>(n, 1), meta);
+        const lsdtt::lsdtt_raster_cpu dom(std::move(dm), std::vector<std::uint8_t>(n, 1), meta);
+        lsdtt::valley_rer_centreline main_c, gully;
+        main_c.id = 1;
+        gully.id = 2;
+        for (int c = 0; c < C; ++c) main_c.flats.push_back(15 * C + c);
+        for (int r = 2; r <= 10; ++r) gully.flats.push_back(r * C + 60);
+        main_c.baseline.assign(main_c.flats.size(), 100.0f);
+        gully.baseline.assign(gully.flats.size(), 105.0f);
+        main_c.priority.assign(main_c.flats.size(), 1e6);
+        gully.priority.assign(gully.flats.size(), 1e3);
+
+        const auto rr = lsdtt::compute_valley_relative_elevation(dem, floor, dom, {main_c, gully});
+        const auto& own = rr.owner.get_data();
+        std::int64_t n_gully = 0, n_dom = 0;
+        for (int r = 2; r <= 28; ++r)
+            for (int c = 0; c < C; ++c)
+            {
+                ++n_dom;
+                if (own[static_cast<std::size_t>(r) * C + c] == 2.0f) ++n_gully;
+            }
+        check(rr.n_unassigned == 0, "wide domain: every domain pixel is assigned");
+        check(own[5 * C + 30] == 1.0f && own[25 * C + 60] == 1.0f,
+              "wide domain: terrace away from the gully is measured against the main centreline");
+        check(own[5 * C + 61] == 2.0f, "wide domain: the cell beside the gully is the gully's");
+        check(n_gully < n_dom / 20,
+              "wide domain: the floorless gully claims only the ground beside it (" +
+                  std::to_string(n_gully) + " of " + std::to_string(n_dom) + ")");
+        check(std::abs(rr.relative_elevation.get_data()[5 * C + 30] - 10.0f) < 1e-4f,
+              "wide domain: terrace relative elevation is against the main baseline");
+        check(own[0] == static_cast<float>(meta.no_data_value), "wide domain: nothing outside it");
+
+        // A 4 m cap: terrace cells more than 4 m (ground) from every node are out.
+        lsdtt::valley_rer_request req;
+        req.max_distance_metres = 4.0;
+        const auto rc = lsdtt::compute_valley_relative_elevation(dem, floor, dom, {main_c, gully}, req);
+        check(rc.owner.get_data()[25 * C + 30] == static_cast<float>(meta.no_data_value) &&
+                  rc.owner.get_data()[18 * C + 30] == 1.0f,
+              "distance cap: 10 m away is left out, 3 m away is kept");
     }
 
     std::cout << (g_failures == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string(g_failures))

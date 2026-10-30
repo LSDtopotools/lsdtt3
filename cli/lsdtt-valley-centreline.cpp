@@ -189,36 +189,8 @@ int main(int argc, char* argv[])
         "excluded_reason to the cross-section outputs.",
         "Valley width network", "switch", ""};
 
-    string_default_map["network_centreline_algorithm_choice"] = "medial_path";
-    help_map["network_centreline_algorithm_choice"] = {"string","medial_path",
-        "Line each segment's sections hang from: medial_path or "
-        "smoothed_channel.",
-        "Not the raw D8 channel: sections cast from a meandering channel swing "
-        "with every bend and cross one another. medial_path: the least-cost "
-        "walk along the valley's medial axis (cost = largest distance-to-wall "
-        "minus distance-to-wall), head to confluence, confined to the valley "
-        "mask plus the segment's own channel pixels. smoothed_channel: the D8 "
-        "channel smoothed by a Gaussian-smoothed cubic spline whose sigma "
-        "scales with the valley width; it may not leave the valley mask, so "
-        "where it would, it runs along the mask edge until it comes back in.",
-        "Valley width network", "param", "run_valley_width_network"};
 
-    float_default_map["network_centreline_window_margin_multiple"] = 3.0f;
-    help_map["network_centreline_window_margin_multiple"] = {"float","3",
-        "medial_path: each walk runs in the segment's bounding box padded by "
-        "this multiple of its largest distance-to-wall (plus 10 cells).",
-        "Bounds the work per segment. The medial axis lies within a valley "
-        "width of the channel, so 3 leaves room on both sides.",
-        "Valley width network", "param", "network_centreline_algorithm_choice"};
 
-    float_default_map["network_centreline_smoothing_width_multiple"] = 1.0f;
-    help_map["network_centreline_smoothing_width_multiple"] = {"float","1",
-        "smoothed_channel: Gaussian sigma (along-channel metres) as a multiple "
-        "of the segment's valley width.",
-        "Valley width = 2 x the 90th percentile of distance-to-wall over the "
-        "segment's channel pixels; sigma is never below two cells. Larger "
-        "values remove longer meanders but cut more corners.",
-        "Valley width network", "param", "network_centreline_algorithm_choice"};
 
     bool_default_map["run_tributary_stop_at_parent"] = true;
     help_map["run_tributary_stop_at_parent"] = {"bool","true",
@@ -324,23 +296,28 @@ int main(int argc, char* argv[])
     // --- Relative elevation raster ---
     bool_default_map["write_relative_elevation_raster"] = false;
     help_map["write_relative_elevation_raster"] = {"bool","false",
-        "Write the relative elevation raster (RER): elevation above the valley "
-        "centreline's baseline, inside the valley mask.",
+        "Write the relative elevation raster (RER): elevation above a valley "
+        "centreline's baseline.",
         "Output file: <stem>_relative_elevation.tif. Like HAND, but measured "
         "against the centreline's baseline (centreline_baseline_algorithm_"
-        "choice) rather than the channel the pixel's flow reaches, so a "
+        "choice) rather than the channel the cell's flow reaches, so a "
         "meandering or wall-hugging channel does not imprint itself on the "
         "field (LSDTopoTools2 lsdtt-basic-metrics get_relative_elevation_raster). "
-        "The larger channel wins: each centreline node owns the disc of radius "
-        "distance-to-the-valley-wall round it (inside the valley by "
-        "construction); a pixel covered by several centrelines' discs takes the "
-        "one whose nearest covering node has the largest drainage area, then the "
-        "nearest node of it. Nodes inside a larger centreline's discs are "
-        "dropped, so a tributary's reference stops where it enters its parent's "
-        "valley. Pixels no disc covers take the node nearest along the ground "
-        "through the mask. Pixel elevations are the DEM's; the baseline's are "
-        "the routing (filled) DEM's channel elevations. Works with source points "
-        "and with run_valley_width_network.",
+        "The centrelines run through the valley mask, which should be the "
+        "valley FLOOR; the field covers relative_elevation_domain_algorithm_"
+        "choice. The larger channel wins: on the floor, each centreline node "
+        "owns the disc of radius its distance to the floor's edge, and a cell "
+        "covered by several centrelines' discs takes the one whose nearest "
+        "covering node has the largest drainage area, then its nearest node "
+        "(nodes inside a larger centreline's discs are dropped, so a "
+        "tributary's reference stops where it enters its parent's floor). "
+        "Elsewhere in the domain a cell takes the node nearest along the "
+        "ground, distance counted in units of each node's floor half-width (at "
+        "least a cell), so a wide main valley reaches far up its terraces and a "
+        "floorless gully stream claims only the ground beside it. Cell "
+        "elevations are the DEM's; the baseline's are the routing (filled) "
+        "DEM's channel elevations. Works with source points and with "
+        "run_valley_width_network.",
         "Relative elevation", "switch", ""};
 
     bool_default_map["write_relative_elevation_owner_raster"] = false;
@@ -352,22 +329,38 @@ int main(int argc, char* argv[])
         "channel takes over.",
         "Relative elevation", "switch", "write_relative_elevation_raster"};
 
-    string_default_map["centreline_baseline_algorithm_choice"] = "projected_monotonic";
-    help_map["centreline_baseline_algorithm_choice"] = {"string","projected_monotonic",
-        "How a centreline's baseline is pinned to its channel: "
-        "projected_monotonic or channel_crossings.",
-        "projected_monotonic: every channel pixel pins the centreline node "
-        "nearest it (the lowest elevation winning on a shared node), then each "
-        "pin is lowered to the lowest pin upstream of it and the baseline is "
-        "linear between pins - it never rises downstream and is never above the "
-        "channel. channel_crossings (LSDTopoTools2): pins only where the channel "
-        "crosses the centreline in plan view, at the channel elevation "
-        "interpolated at the crossing (and at centreline nodes that are channel "
-        "pixels), linear between crossings and flat beyond the first and last, "
-        "with no other constraint. Used by the baselines in "
-        "the centreline outputs, the baseline refinement and the relative "
-        "elevation raster.",
-        "Relative elevation", "param", ""};
+    // Centreline method, baseline method and the relative-elevation distance
+    // cap: shared with lsdtt-fluvial-surfaces (reference_field_algorithm_choice
+    // relative_elevation).
+    lsdtt::declare_relative_elevation_parameters(
+        string_default_map, float_default_map, help_map,
+        "Centreline and relative elevation", "");
+
+    string_default_map["relative_elevation_domain_algorithm_choice"] = "valley_mask";
+    help_map["relative_elevation_domain_algorithm_choice"] = {"string","valley_mask",
+        "Where the relative elevation raster is computed: valley_mask, supplied "
+        "or whole_dem.",
+        "valley_mask: the (cleaned) valley mask the centrelines run through. "
+        "supplied: relative_elevation_domain_fname, e.g. a mask that takes in "
+        "the terraces above the floor. whole_dem: every valid cell, normally "
+        "with relative_elevation_max_distance_metres. In every case the "
+        "centrelines are traced through the valley mask, which should be the "
+        "valley FLOOR (a floodplain mask): traced through a mask that includes "
+        "the terraces, a medial centreline runs across the terrace plain "
+        "instead of down the valley. Outside the floor a cell is measured "
+        "against the node nearest along the ground, with ground distance "
+        "counted in units of each node's floor half-width, so a wide main "
+        "valley reaches far up its terraces and a floorless gully stream "
+        "claims only the ground beside it.",
+        "Relative elevation", "param", "write_relative_elevation_raster"};
+
+    string_default_map["relative_elevation_domain_fname"] = "";
+    help_map["relative_elevation_domain_fname"] = {"string","",
+        "Mask of where to compute the relative elevation (cells > 0.5), for "
+        "relative_elevation_domain_algorithm_choice supplied.",
+        "Same grid as the DEM. The valley mask is always included.",
+        "Relative elevation", "io", "relative_elevation_domain_algorithm_choice"};
+
 
 
 
@@ -1704,14 +1697,54 @@ int main(int argc, char* argv[])
         }
         try
         {
+            // The domain: the valley mask, a supplied mask, or every valid cell.
+            const std::string dchoice = sf["relative_elevation_domain_algorithm_choice"];
+            lsdtt::lsdtt_raster_cpu domain = supplied_valley;
+            if (dchoice == "supplied")
+            {
+                if (sf["relative_elevation_domain_fname"].empty())
+                {
+                    std::cerr << "FATAL: relative_elevation_domain_algorithm_choice "
+                                 "supplied needs relative_elevation_domain_fname.\n";
+                    return 1;
+                }
+                lsdtt::lsdtt_data_loader dl;
+                dl.open_raster(pp.add_read_path_if_needed(
+                    sf["relative_elevation_domain_fname"]));
+                domain = lsdtt::lsdtt_raster_cpu(dl);
+                if (domain.get_data().size() != dem.get_data().size())
+                {
+                    std::cerr << "FATAL: relative_elevation_domain_fname is not on "
+                                 "the DEM's grid.\n";
+                    return 1;
+                }
+            }
+            else if (dchoice == "whole_dem")
+            {
+                domain = lsdtt::lsdtt_raster_cpu(
+                    std::vector<float>(dem.get_data().size(), 1.0f),
+                    std::vector<std::uint8_t>(dem.get_mask()), meta);
+            }
+            else if (dchoice != "valley_mask")
+            {
+                std::cerr << "FATAL: unknown relative_elevation_domain_algorithm_"
+                             "choice '" << dchoice << "'. Valid: valley_mask, "
+                             "supplied, whole_dem.\n";
+                return 1;
+            }
+            lsdtt::valley_rer_request rreq;
+            rreq.max_distance_metres =
+                static_cast<double>(ff["relative_elevation_max_distance_metres"]);
             const lsdtt::valley_rer_result rr =
-                lsdtt::compute_valley_relative_elevation(dem, supplied_valley, rc);
-            std::cout << "  " << rr.n_valley_pixels << " valley pixel(s): "
-                      << rr.n_by_disc << " by the larger-channel discs, "
-                      << rr.n_by_geodesic << " by nearest node along the ground, "
-                      << rr.n_unassigned << " reaching no centreline; "
-                      << rr.n_nodes_dropped << " node(s) inside a larger "
-                         "centreline's valley dropped\n";
+                lsdtt::compute_valley_relative_elevation(
+                    dem, supplied_valley, domain, rc, rreq);
+            std::cout << "  domain (" << dchoice << "): " << rr.n_domain_pixels
+                      << " pixel(s): " << rr.n_by_disc
+                      << " on the floor by the larger-channel discs, "
+                      << rr.n_by_geodesic << " by floor-width-scaled ground "
+                         "distance, " << rr.n_unassigned
+                      << " reaching no centreline; " << rr.n_nodes_dropped
+                      << " node(s) inside a larger centreline's floor dropped\n";
             const std::string pr = pp.make_output_path("_relative_elevation", ".tif");
             std::cout << "Writing relative elevation: " << pr << "\n";
             loader.write_full(rr.relative_elevation.get_data(), meta, pr, out_format);

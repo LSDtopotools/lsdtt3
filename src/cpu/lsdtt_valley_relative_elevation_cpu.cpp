@@ -187,16 +187,19 @@ std::vector<float> compute_centreline_baseline(
 
 valley_rer_result compute_valley_relative_elevation(
     const lsdtt_raster_cpu&                   dem,
-    const lsdtt_raster_cpu&                   valley_mask,
-    const std::vector<valley_rer_centreline>& centrelines)
+    const lsdtt_raster_cpu&                   floor_mask,
+    const lsdtt_raster_cpu&                   domain_mask,
+    const std::vector<valley_rer_centreline>& centrelines,
+    const valley_rer_request&                 request)
 {
     const lsdtt_raster_meta& meta = dem.get_meta();
     const int n_rows = meta.n_rows, n_cols = meta.n_cols;
     const double cell = meta.cell_size;
     const std::size_t n = static_cast<std::size_t>(n_rows) * n_cols;
-    if (valley_mask.get_data().size() != n)
+    if (floor_mask.get_data().size() != n || domain_mask.get_data().size() != n)
         throw std::invalid_argument(
-            "compute_valley_relative_elevation: valley mask / DEM size mismatch.");
+            "compute_valley_relative_elevation: floor / domain mask / DEM size "
+            "mismatch.");
     for (const valley_rer_centreline& c : centrelines)
         if (c.baseline.size() != c.flats.size() || c.priority.size() != c.flats.size())
             throw std::invalid_argument(
@@ -205,46 +208,54 @@ valley_rer_result compute_valley_relative_elevation(
 
     const std::vector<float>&        elev  = dem.get_data();
     const std::vector<std::uint8_t>& dmask = dem.get_mask();
-    const std::vector<float>&        vd    = valley_mask.get_data();
-    const std::vector<std::uint8_t>& vmk   = valley_mask.get_mask();
+    auto on = [](const lsdtt_raster_cpu& r, std::size_t i) {
+        return r.get_mask()[i] && r.get_data()[i] > 0.5f; };
 
-    // Compact index over valley pixels.
-    std::vector<std::int32_t> vid(n, -1);
-    std::vector<std::int64_t> vflat;
+    // Floor and domain (the floor is always in the domain).
+    std::vector<std::uint8_t> is_floor(n, 0), in_dom(n, 0);
     for (std::size_t i = 0; i < n; ++i)
-        if (dmask[i] && vmk[i] && vd[i] > 0.5f)
+    {
+        if (!dmask[i]) continue;
+        is_floor[i] = on(floor_mask, i) ? 1 : 0;
+        in_dom[i] = (is_floor[i] || on(domain_mask, i)) ? 1 : 0;
+    }
+
+    // Compact index over floor pixels (the discs only ever touch the floor).
+    std::vector<std::int32_t> fid(n, -1);
+    std::vector<std::int64_t> fflat;
+    for (std::size_t i = 0; i < n; ++i)
+        if (is_floor[i])
         {
-            vid[i] = static_cast<std::int32_t>(vflat.size());
-            vflat.push_back(static_cast<std::int64_t>(i));
+            fid[i] = static_cast<std::int32_t>(fflat.size());
+            fflat.push_back(static_cast<std::int64_t>(i));
         }
-    const std::size_t nv = vflat.size();
+    const std::size_t nf = fflat.size();
 
     valley_rer_result res;
-    res.n_valley_pixels = static_cast<std::int64_t>(nv);
+    for (std::size_t i = 0; i < n; ++i) if (in_dom[i]) ++res.n_domain_pixels;
 
-    // Distance to the valley wall (0 off the valley).
+    // Floor half-width: distance from a floor pixel to the edge of the floor
+    // (0 off the floor).
     std::vector<float> wd(n, 0.0f);
     {
         std::vector<float> src(n, 0.0f);
-        for (std::size_t i = 0; i < n; ++i) if (dmask[i] && vid[i] < 0) src[i] = 1.0f;
+        for (std::size_t i = 0; i < n; ++i) if (dmask[i] && !is_floor[i]) src[i] = 1.0f;
         const lsdtt_raster_cpu dist = euclidean_distance_transform(
             lsdtt_raster_cpu(std::move(src), std::vector<std::uint8_t>(dmask), meta));
         const std::vector<float>& dd = dist.get_data();
         const std::vector<std::uint8_t>& dm = dist.get_mask();
         for (std::size_t i = 0; i < n; ++i)
-            if (vid[i] >= 0 && dm[i] && std::isfinite(dd[i])) wd[i] = dd[i];
+            if (is_floor[i] && dm[i] && std::isfinite(dd[i])) wd[i] = dd[i];
     }
 
     // -------------------------------------------------------------------------
-    // Pass 1: discs. For each centreline, each valley pixel its discs cover gets
-    // that centreline's nearest covering node; across centrelines the pixel
-    // keeps the one whose node has the larger priority (then the nearer).
+    // 1. Floor discs: larger channel wins on the floor.
     // -------------------------------------------------------------------------
     const float no_pri = -std::numeric_limits<float>::infinity();
-    std::vector<std::int32_t> best_c(nv, -1), best_k(nv, -1);
-    std::vector<float>        best_pri(nv, no_pri), best_d2(nv, 0.0f);
-    std::vector<std::int32_t> tmp_k(nv, -1);
-    std::vector<float>        tmp_d2(nv, 0.0f);
+    std::vector<std::int32_t> best_c(nf, -1), best_k(nf, -1);
+    std::vector<float>        best_pri(nf, no_pri), best_d2(nf, 0.0f);
+    std::vector<std::int32_t> tmp_k(nf, -1);
+    std::vector<float>        tmp_d2(nf, 0.0f);
     std::vector<std::int32_t> touched;
     std::vector<int>          stride_of(centrelines.size(), 1);
 
@@ -254,8 +265,6 @@ valley_rer_result compute_valley_relative_elevation(
         const std::size_t m = c.flats.size();
         if (m == 0) continue;
         touched.clear();
-        // Stride so that consecutive disc centres stay within each other's
-        // radius: half the smallest radius in the centreline, at least one.
         double rmin = std::numeric_limits<double>::infinity();
         for (const std::int64_t f : c.flats)
             rmin = std::min(rmin, static_cast<double>(wd[static_cast<std::size_t>(f)]) + cell);
@@ -264,6 +273,7 @@ valley_rer_result compute_valley_relative_elevation(
         for (std::size_t k = 0; k < m; k += static_cast<std::size_t>(stride))
         {
             const std::int64_t f = c.flats[k];
+            if (!is_floor[static_cast<std::size_t>(f)]) continue;  // no floor, no disc
             const double r = static_cast<double>(wd[static_cast<std::size_t>(f)]) + cell;
             const int rc = static_cast<int>(std::ceil(r / cell));
             const int r0 = static_cast<int>(f / n_cols), c0 = static_cast<int>(f % n_cols);
@@ -271,7 +281,7 @@ valley_rer_result compute_valley_relative_elevation(
                 for (int cc = std::max(0, c0 - rc); cc <= std::min(n_cols - 1, c0 + rc); ++cc)
                 {
                     const std::size_t g = static_cast<std::size_t>(rr) * n_cols + cc;
-                    const std::int32_t v = vid[g];
+                    const std::int32_t v = fid[g];
                     if (v < 0) continue;
                     const double d2 = (static_cast<double>(rr - r0) * (rr - r0) +
                                        static_cast<double>(cc - c0) * (cc - c0)) * cell * cell;
@@ -297,16 +307,12 @@ valley_rer_result compute_valley_relative_elevation(
             tmp_k[v] = -1;
         }
     }
-
-    // Refine to the exact nearest node of the winning centreline (the discs
-    // were strided).
-    for (std::size_t v = 0; v < nv; ++v)
+    for (std::size_t v = 0; v < nf; ++v)
     {
         if (best_c[v] < 0) continue;
         const valley_rer_centreline& c = centrelines[static_cast<std::size_t>(best_c[v])];
         const int s = stride_of[static_cast<std::size_t>(best_c[v])];
-        const std::int64_t f = vflat[v];
-        const pt p = flat_pt(meta, f);
+        const pt p = flat_pt(meta, fflat[v]);
         const std::int64_t k0 = std::max<std::int64_t>(0, best_k[v] - s);
         const std::int64_t k1 = std::min<std::int64_t>(static_cast<std::int64_t>(c.flats.size()) - 1,
                                                        best_k[v] + s);
@@ -320,22 +326,30 @@ valley_rer_result compute_valley_relative_elevation(
     }
 
     // -------------------------------------------------------------------------
-    // Pass 2: geodesic fallback through the valley from the nodes that were not
-    // taken over by a larger centreline.
+    // 2. Scaled ground distance through the domain from the kept nodes: cost
+    //    of a step = step length / the floor half-width of the node the front
+    //    came from (at least one cell). Metres along the winning path are
+    //    tracked alongside: the distance cap is applied AFTER the partition, so
+    //    a cell too far from the node it belongs to is left out rather than
+    //    handed to some other, nearer node.
     // -------------------------------------------------------------------------
     std::vector<float> gd(n, std::numeric_limits<float>::infinity());
-    std::vector<std::int64_t> glab(n, -1);   // ci * 2^32 + k
-    std::vector<std::int64_t> sources;
+    std::vector<float> gm(n, std::numeric_limits<float>::infinity());
+    std::vector<std::int64_t> glab(n, -1);   // ci << 32 | k
     std::vector<float> src_pri(n, no_pri);
+    std::vector<std::int64_t> sources;
+    std::vector<std::vector<float>> scale(centrelines.size());
     for (std::size_t ci = 0; ci < centrelines.size(); ++ci)
     {
         const valley_rer_centreline& c = centrelines[ci];
+        scale[ci].resize(c.flats.size());
         for (std::size_t k = 0; k < c.flats.size(); ++k)
         {
             const std::size_t f = static_cast<std::size_t>(c.flats[k]);
-            const std::int32_t v = vid[f];
-            if (v < 0) continue;
-            if (best_c[v] >= 0 && best_c[v] != static_cast<std::int32_t>(ci))
+            scale[ci][k] = static_cast<float>(std::max(static_cast<double>(wd[f]), cell));
+            if (!in_dom[f]) continue;
+            const std::int32_t v = fid[f];
+            if (v >= 0 && best_c[v] >= 0 && best_c[v] != static_cast<std::int32_t>(ci))
             {
                 ++res.n_nodes_dropped;
                 continue;
@@ -347,17 +361,30 @@ valley_rer_result compute_valley_relative_elevation(
                 glab[f] = (static_cast<std::int64_t>(ci) << 32) | static_cast<std::int64_t>(k);
                 src_pri[f] = pri;
                 gd[f] = 0.0f;
+                gm[f] = 0.0f;
             }
         }
     }
+    const double cap = request.max_distance_metres > 0.0
+        ? request.max_distance_metres : std::numeric_limits<double>::infinity();
     const float diag = static_cast<float>(cell * grid::k_sqrt2_d);
     const float straight = static_cast<float>(cell);
+    auto step_of = [&](int k) {
+        return (grid::d8_rowmajor_row[k] != 0 && grid::d8_rowmajor_col[k] != 0)
+            ? diag : straight; };
     grid_dijkstra_d8(n_rows, n_cols, gd, sources,
-        [&](std::size_t to) { return vid[to] >= 0; },
-        [&](std::size_t, std::size_t, int k) {
-            return (grid::d8_rowmajor_row[k] != 0 && grid::d8_rowmajor_col[k] != 0)
-                ? diag : straight; },
-        [&](std::size_t from, std::size_t to) { glab[to] = glab[from]; },
+        [&](std::size_t to) { return in_dom[to] != 0; },
+        [&](std::size_t from, std::size_t, int k) {
+            const float st = step_of(k);
+            const std::int64_t lab = glab[from];
+            const float sc = scale[static_cast<std::size_t>(lab >> 32)]
+                                  [static_cast<std::size_t>(lab & 0xffffffffLL)];
+            return st / sc; },
+        [&](std::size_t from, std::size_t to) {
+            glab[to] = glab[from];
+            const int dr = static_cast<int>(to / n_cols) - static_cast<int>(from / n_cols);
+            const int dc = static_cast<int>(to % n_cols) - static_cast<int>(from % n_cols);
+            gm[to] = gm[from] + ((dr != 0 && dc != 0) ? diag : straight); },
         [](std::int64_t) { return false; });
 
     // -------------------------------------------------------------------------
@@ -366,18 +393,24 @@ valley_rer_result compute_valley_relative_elevation(
     const float ndv = static_cast<float>(meta.no_data_value);
     std::vector<float> rer(n, ndv), own(n, ndv);
     std::vector<std::uint8_t> rm(n, 0), om(n, 0);
-    for (std::size_t v = 0; v < nv; ++v)
+    res.owner_centreline.assign(n, -1);
+    res.owner_node.assign(n, -1);
+    for (std::size_t f = 0; f < n; ++f)
     {
-        const std::size_t f = static_cast<std::size_t>(vflat[v]);
+        if (!in_dom[f]) continue;
         std::int64_t ci = -1, k = -1;
-        if (best_c[v] >= 0) { ci = best_c[v]; k = best_k[v]; ++res.n_by_disc; }
+        const std::int32_t v = fid[f];
+        if (v >= 0 && best_c[v] >= 0) { ci = best_c[v]; k = best_k[v]; ++res.n_by_disc; }
         else if (glab[f] >= 0)
         {
+            if (static_cast<double>(gm[f]) > cap) { ++res.n_unassigned; continue; }
             ci = glab[f] >> 32;
             k = glab[f] & 0xffffffffLL;
             ++res.n_by_geodesic;
         }
         if (ci < 0) { ++res.n_unassigned; continue; }
+        res.owner_centreline[f] = static_cast<std::int32_t>(ci);
+        res.owner_node[f] = static_cast<std::int32_t>(k);
         const valley_rer_centreline& c = centrelines[static_cast<std::size_t>(ci)];
         own[f] = static_cast<float>(c.id);
         om[f] = 1;

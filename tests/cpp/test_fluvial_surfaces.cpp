@@ -786,6 +786,19 @@ void write_phase0b_fixtures(const std::string& output_dir)
     loader.write_full(st.channel_mask.get_data(), st.channel_mask.get_meta(),
                       output_dir + "/staircase_channel_mask.tif",
                       lsdtt::raster_output_format::gtiff);
+    // The valley floor (channel + the lowest tread), for the relative
+    // elevation's centrelines (relative_elevation_floor_mask_fname,
+    // lsdtt-valley-centreline valley_mask_fname).
+    {
+        const std::vector<float>& tid = st.tread_id.get_data();
+        const std::vector<float>& cm = st.channel_mask.get_data();
+        std::vector<float> floor(tid.size(), 0.0f);
+        for (std::size_t i = 0; i < tid.size(); ++i)
+            if (cm[i] > 0.5f || std::lround(tid[i]) == 1) floor[i] = 1.0f;
+        loader.write_full(floor, st.dem.get_meta(),
+                          output_dir + "/staircase_floor_mask.tif",
+                          lsdtt::raster_output_format::gtiff);
+    }
 
     // A channel cell a quarter of the way down the valley as a source point,
     // so lsdtt-valley-centreline can trace the staircase's valley (the cross-

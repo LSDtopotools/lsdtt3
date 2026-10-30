@@ -100,6 +100,8 @@
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_width_network_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_relative_elevation_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_status    = "experimental";
@@ -444,13 +446,38 @@ int main(int argc, char* argv[])
     // --- Reference field ---
     string_default_map["reference_field_algorithm_choice"] = "hand";
     help_map["reference_field_algorithm_choice"] = {"string","hand",
-        "Field to band: hand or fitted_surface.",
+        "Field to band: hand, relative_elevation or fitted_surface.",
         "hand = height above the in-scope channel network; the right field for "
         "a terrace flight, where treads sit at a constant height above the "
-        "channel. fitted_surface = the signed residual to a surface fitted to "
-        "the flat ground; the right field for a fan, which climbs continuously "
-        "in HAND and would be cut into meaningless arcs by a HAND ladder.",
+        "channel. relative_elevation = height above a valley centreline's "
+        "baseline instead of above the channel the cell's flow reaches "
+        "(lsdtt-valley-centreline write_relative_elevation_raster): the "
+        "centrelines run through relative_elevation_floor_mask_fname, the "
+        "field reaches out over the whole DEM (relative_elevation_max_distance_"
+        "metres), and a terrace drained by a small local stream is still "
+        "measured from the main valley rather than from that stream. Used "
+        "wherever HAND is (bounds, ladder, training), with reach windows from "
+        "the channel pixel of each cell's centreline node. fitted_surface = "
+        "the signed residual to a surface fitted to the flat ground; the right "
+        "field for a fan, which climbs continuously in HAND and would be cut "
+        "into meaningless arcs by a HAND ladder.",
         "Reference field","switch",""};
+
+    string_default_map["relative_elevation_floor_mask_fname"] = "";
+    help_map["relative_elevation_floor_mask_fname"] = {"string","",
+        "Valley-floor mask the relative elevation's centrelines run through "
+        "(cells > 0.5), for reference_field_algorithm_choice relative_elevation.",
+        "Normally <stem>_floodplain_mask.tif from a clubb2017 run of this tool. "
+        "It must be the valley FLOOR: traced through a mask that includes the "
+        "terraces, a medial centreline runs across the terrace plain instead of "
+        "down the valley. One centreline per channel segment of the in-scope "
+        "network (longest first, tributaries ending at their parent), with the "
+        "floor half-width deciding how far each reaches up the valley sides.",
+        "Reference field","io","reference_field_algorithm_choice"};
+
+    lsdtt::declare_relative_elevation_parameters(
+        string_default_map, float_default_map, help_map,
+        "Reference field", "reference_field_algorithm_choice");
 
     string_default_map["hand_fname"] = "";
     help_map["hand_fname"] = {"string","",
@@ -1991,19 +2018,32 @@ int main(int argc, char* argv[])
         lsdtt::reference_field_choice::hand;
     {
         const std::string& rf = sf["reference_field_algorithm_choice"];
-        if (rf == "hand")
+        if (rf == "hand" || rf == "relative_elevation")
             field_choice = lsdtt::reference_field_choice::hand;
         else if (rf == "fitted_surface")
             field_choice = lsdtt::reference_field_choice::fitted_surface;
         else
         {
             std::cerr << "FATAL: unknown reference_field_algorithm_choice '"
-                      << rf << "'. Valid: hand, fitted_surface.\n";
+                      << rf << "'. Valid: hand, relative_elevation, "
+                         "fitted_surface.\n";
             return 1;
         }
     }
+    // relative_elevation is a height above a channel reference like HAND and
+    // is used wherever HAND is; only where the reference comes from differs.
     const bool use_hand =
         field_choice == lsdtt::reference_field_choice::hand;
+    const bool use_rer =
+        sf["reference_field_algorithm_choice"] == "relative_elevation";
+    if (use_rer && sf["relative_elevation_floor_mask_fname"].empty())
+    {
+        std::cerr << "FATAL: reference_field_algorithm_choice relative_elevation "
+                     "needs relative_elevation_floor_mask_fname (the valley "
+                     "floor, e.g. <stem>_floodplain_mask.tif from a clubb2017 "
+                     "run).\n";
+        return 1;
+    }
     if (use_floodplain_bounds && !use_hand)
     {
         std::cerr << "FATAL: " << (level_fixed ? "level_algorithm_choice "
@@ -2555,7 +2595,127 @@ int main(int argc, char* argv[])
     std::vector<std::int64_t> donor_flat;
     bool have_donors = false;
 
-    if (use_hand)
+    if (use_rer)
+    {
+        std::cout << "--- Reference field: relative elevation ---\n";
+        if (!scope_resolved)
+        {
+            std::cerr << "FATAL: no channel scope, so the relative elevation's "
+                         "centrelines cannot be built.\n";
+            return 1;
+        }
+        if (!sf["hand_fname"].empty())
+            std::cout << "  hand_fname is ignored: the field is the relative "
+                         "elevation.\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu floor_in;
+            if (!load_companion_raster(sf["relative_elevation_floor_mask_fname"],
+                                       "valley-floor mask", floor_in))
+                return 1;
+            std::vector<float> fb(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (floor_in.get_mask()[i] && floor_in.get_data()[i] > 0.5f)
+                    fb[i] = 1.0f;
+            const lsdtt::lsdtt_raster_cpu floor(
+                std::move(fb), std::vector<uint8_t>(dem.get_mask()), meta);
+
+            lsdtt::valley_width_network_request nreq;
+            nreq.centreline = lsdtt::parse_network_centreline_choice(
+                sf["network_centreline_algorithm_choice"]);
+            nreq.window_margin_multiple = static_cast<double>(
+                ff["network_centreline_window_margin_multiple"]);
+            nreq.smoothing_width_multiple = static_cast<double>(
+                ff["network_centreline_smoothing_width_multiple"]);
+            nreq.baseline = lsdtt::parse_centreline_baseline_choice(
+                sf["centreline_baseline_algorithm_choice"]);
+            const lsdtt::valley_width_network_result net =
+                lsdtt::build_valley_width_network(routing_dem, *flow,
+                                                  scope.channel_mask, floor, nreq);
+
+            // Centrelines with baselines; priority = drainage area of each
+            // node's channel pixel, matched in downstream order. The matched
+            // channel pixels are kept: they become each cell's donor.
+            const std::vector<float> da = flow->get_drainage_area_raster().data;
+            std::vector<lsdtt::valley_rer_centreline> rc;
+            std::vector<std::vector<std::int64_t>> node_channel;
+            for (std::size_t s = 0; s < net.centrelines.channels.size(); ++s)
+            {
+                const auto& ch = net.centrelines.channels[s];
+                if (ch.centreline_flats.empty()) continue;
+                const auto& chan = net.segments[s].channel_flats;
+                lsdtt::valley_rer_centreline c;
+                c.id = ch.source_id;
+                c.flats = ch.centreline_flats;
+                c.baseline = ch.centreline_baseline_elevation;
+                std::vector<lsdtt::lsdtt_xy> pts;
+                std::vector<double> along;
+                double len = 0.0;
+                for (const std::int64_t f : c.flats)
+                {
+                    const lsdtt::lsdtt_xy q = lsdtt::cell_center_from_row_col(
+                        meta, static_cast<int>(f / meta.n_cols),
+                        static_cast<int>(f % meta.n_cols));
+                    if (!pts.empty())
+                        len += std::hypot(q.x - pts.back().x, q.y - pts.back().y);
+                    pts.push_back(q);
+                    along.push_back(len);
+                }
+                const std::vector<std::int64_t> m =
+                    lsdtt::match_points_to_channel(pts, along, len, chan, meta);
+                c.priority.assign(c.flats.size(), 0.0);
+                std::vector<std::int64_t> nc(c.flats.size(), -1);
+                for (std::size_t k = 0; k < m.size(); ++k)
+                    if (m[k] >= 0)
+                    {
+                        nc[k] = chan[static_cast<std::size_t>(m[k])];
+                        c.priority[k] = da[static_cast<std::size_t>(nc[k])];
+                    }
+                rc.push_back(std::move(c));
+                node_channel.push_back(std::move(nc));
+            }
+
+            const lsdtt::lsdtt_raster_cpu whole(
+                std::vector<float>(n_pixels, 1.0f),
+                std::vector<uint8_t>(dem.get_mask()), meta);
+            lsdtt::valley_rer_request rreq;
+            rreq.max_distance_metres =
+                static_cast<double>(ff["relative_elevation_max_distance_metres"]);
+            lsdtt::valley_rer_result rr = lsdtt::compute_valley_relative_elevation(
+                dem, floor, whole, rc, rreq);
+            std::cout << "  " << net.segments.size() << " channel segment(s), "
+                      << rc.size() << " centreline(s); " << rr.n_by_disc
+                      << " floor cell(s) by the larger-channel discs, "
+                      << rr.n_by_geodesic << " by floor-width-scaled ground "
+                         "distance, " << rr.n_unassigned << " left out\n";
+
+            // Donor = the channel pixel of the cell's centreline node, so the
+            // reach windows (and everything else keyed by a donor) work as
+            // they do for HAND.
+            donor_flat.assign(n_pixels, -1);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const std::int32_t ci = rr.owner_centreline[i];
+                if (ci < 0) continue;
+                donor_flat[i] = node_channel[static_cast<std::size_t>(ci)]
+                                            [static_cast<std::size_t>(rr.owner_node[i])];
+            }
+            reference_field = std::move(rr.relative_elevation);
+            flow_distance   = lsdtt::lsdtt_raster_cpu(
+                flow->get_distance_from_outlet_raster());
+            have_donors     = true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: relative elevation: " << e.what() << "\n";
+            return 1;
+        }
+        if (bf["write_hand_raster"])
+            std::cout << "  write_hand_raster: not written, the field is the "
+                         "relative elevation (write_reference_field_raster "
+                         "writes it).\n";
+    }
+    else if (use_hand)
     {
         std::cout << "--- Reference field: height above channel ---\n";
         if (!sf["hand_fname"].empty())
