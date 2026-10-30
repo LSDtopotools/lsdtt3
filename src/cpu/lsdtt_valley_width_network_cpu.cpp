@@ -631,6 +631,79 @@ valley_width_network_result build_valley_width_network(
     return result;
 }
 
+std::vector<std::int64_t> match_sections_to_channel(
+    const valley_width_network_result& network,
+    const valley_cross_section_result& sections,
+    const lsdtt_raster_meta&           meta)
+{
+    const std::vector<valley_cross_section>& xs = sections.sections;
+    const std::size_t n_seg = network.segments.size();
+    const int n_cols = meta.n_cols;
+    std::vector<std::int64_t> match(xs.size(), -1);
+
+    std::vector<std::vector<std::size_t>> of_seg(n_seg);
+    for (std::size_t i = 0; i < xs.size(); ++i)
+    {
+        const std::int32_t s = xs[i].source_id;
+        if (s >= 0 && static_cast<std::size_t>(s) < n_seg)
+            of_seg[static_cast<std::size_t>(s)].push_back(i);
+    }
+
+    auto flat_xy = [&](std::int64_t f) -> xy
+    {
+        const lsdtt_xy p = cell_center_from_row_col(
+            meta, static_cast<int>(f / n_cols), static_cast<int>(f % n_cols));
+        return {p.x, p.y};
+    };
+
+    for (std::size_t s = 0; s < n_seg; ++s)
+    {
+        std::vector<std::size_t>& st = of_seg[s];
+        const std::vector<std::int64_t>& ch = network.segments[s].channel_flats;
+        if (st.empty() || ch.empty()) continue;
+        std::sort(st.begin(), st.end(), [&](std::size_t a, std::size_t b) {
+            return xs[a].along_distance_metres < xs[b].along_distance_metres; });
+
+        // Centreline length, for each station's fractional position.
+        const std::vector<std::int64_t>& cl = network.centrelines.channels[s].centreline_flats;
+        double cl_len = 0.0;
+        for (std::size_t k = 1; k < cl.size(); ++k)
+        {
+            const xy a = flat_xy(cl[k - 1]), b = flat_xy(cl[k]);
+            cl_len += std::hypot(b.x - a.x, b.y - a.y);
+        }
+        std::vector<xy> cxy(ch.size());
+        for (std::size_t k = 0; k < ch.size(); ++k) cxy[k] = flat_xy(ch[k]);
+
+        const std::int64_t n = static_cast<std::int64_t>(ch.size());
+        const std::int64_t half = std::max<std::int64_t>(
+            10, static_cast<std::int64_t>(std::ceil(
+                    3.0 * static_cast<double>(n) / static_cast<double>(st.size()))));
+        std::int64_t prev = 0;
+        for (const std::size_t i : st)
+        {
+            const double f = cl_len > 0.0
+                ? std::clamp(xs[i].along_distance_metres / cl_len, 0.0, 1.0) : 0.0;
+            const std::int64_t expect =
+                static_cast<std::int64_t>(std::llround(f * static_cast<double>(n - 1)));
+            const std::int64_t lo = std::max(prev, expect - half);
+            const std::int64_t hi = std::min(n - 1, std::max(lo, expect + half));
+            std::int64_t best_k = lo;
+            double best = std::numeric_limits<double>::infinity();
+            for (std::int64_t k = lo; k <= hi; ++k)
+            {
+                const double d2 =
+                    (cxy[k].x - xs[i].centre_x) * (cxy[k].x - xs[i].centre_x) +
+                    (cxy[k].y - xs[i].centre_y) * (cxy[k].y - xs[i].centre_y);
+                if (d2 < best) { best = d2; best_k = k; }
+            }
+            match[i] = best_k;
+            prev = best_k;
+        }
+    }
+    return match;
+}
+
 std::vector<network_section_exclusion> apply_network_section_rules(
     const valley_width_network_result&   network,
     const valley_cross_section_result&   sections,

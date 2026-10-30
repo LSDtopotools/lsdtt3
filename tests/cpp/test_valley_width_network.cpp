@@ -438,6 +438,46 @@ int main()
             check(mean_offset(medial) < 3.0,
                   "[meander] medial path follows the valley centre (mean offset " +
                       std::to_string(mean_offset(medial)) + " cells)");
+
+            // Station -> channel pixel matching: downstream order, so the index
+            // and the drainage area never decrease; and the match stays near
+            // the station (within the valley's width).
+            const std::vector<float> da = fx.flow->get_drainage_area_raster().data;
+            for (const auto* net : {&sm, &md})
+            {
+                const auto xres = sections_for(fx, *net);
+                const auto match = lsdtt::match_sections_to_channel(
+                    *net, xres, fx.dem.get_meta());
+                std::vector<std::size_t> order(xres.sections.size());
+                for (std::size_t k = 0; k < order.size(); ++k) order[k] = k;
+                std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                    return xres.sections[a].along_distance_metres <
+                           xres.sections[b].along_distance_metres; });
+                bool idx_mono = true, area_mono = true, near = true;
+                std::int64_t prev_idx = -1;
+                float prev_area = -1.0f;
+                const auto& ch = net->segments[0].channel_flats;
+                const double xmin = fx.dem.get_meta().x_min;
+                const double ymax = fx.dem.get_meta().y_max();
+                for (const std::size_t k : order)
+                {
+                    if (match[k] < 0) { near = false; continue; }
+                    const std::int64_t f = ch[static_cast<std::size_t>(match[k])];
+                    if (match[k] < prev_idx) idx_mono = false;
+                    if (da[static_cast<std::size_t>(f)] < prev_area) area_mono = false;
+                    prev_idx = match[k];
+                    prev_area = da[static_cast<std::size_t>(f)];
+                    const double cx = xmin + (f % k_cols + 0.5) * k_dx;
+                    const double cy = ymax - (f / k_cols + 0.5) * k_dx;
+                    if (std::hypot(cx - xres.sections[k].centre_x,
+                                   cy - xres.sections[k].centre_y) > k_trunk_width)
+                        near = false;
+                }
+                const std::string t = net == &sm ? "[match smoothed] " : "[match medial] ";
+                check(idx_mono, t + "matched channel index never decreases downstream");
+                check(area_mono, t + "drainage area at the matched pixel never decreases");
+                check(near, t + "every station matches a channel pixel within a valley width");
+            }
         }
     }
 

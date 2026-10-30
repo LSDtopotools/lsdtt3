@@ -187,6 +187,22 @@ struct network_section_rules_request
     bool   remove_tributary_crossing_sections = true;
 };
 
+// The channel pixel each station belongs to: an index into its segment's
+// channel_flats, parallel to sections.sections (-1: the segment has no channel
+// pixels). Matched in downstream order, so the index never decreases along a
+// segment and neither does anything accumulated down the channel (drainage
+// area). Each station takes the channel pixel nearest its centre among those
+// no further upstream than the previous station's, within a window round its
+// proportional position along the channel (its along-centreline distance as a
+// fraction of the centreline's length, mapped onto the channel's pixels). The
+// window is three stations' worth of channel pixels (at least 10) either side:
+// without it, a meander loop passing close to a station could pull the match
+// far downstream and pin every later station there.
+[[nodiscard]] std::vector<std::int64_t> match_sections_to_channel(
+    const valley_width_network_result& network,
+    const valley_cross_section_result& sections,
+    const lsdtt_raster_meta&           meta);
+
 // One reason per section, parallel to sections.sections.
 [[nodiscard]] std::vector<network_section_exclusion> apply_network_section_rules(
     const valley_width_network_result&   network,

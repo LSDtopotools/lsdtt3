@@ -179,9 +179,12 @@ int main(int argc, char* argv[])
         "longest-first and each stops where it meets an earlier trace, so the "
         "trunk of each basin is its longest flow path and every tributary "
         "segment ends at its parent's channel: each valley is measured once. "
-        "source_points_fname must be empty. Writes _valley_segments.csv and "
-        "adds segment_id, parent_segment_id, nesting_depth and excluded_reason "
-        "to the cross-section outputs.",
+        "source_points_fname must be empty. Writes _valley_segments.csv, "
+        "_valley_segment_channels.fgb (each segment's D8 channel), "
+        "_valley_widths.csv (one row per station, with drainage area at the "
+        "station's channel pixel, matched in downstream order so it never "
+        "decreases), and adds segment_id, parent_segment_id, nesting_depth and "
+        "excluded_reason to the cross-section outputs.",
         "Valley width network", "switch", ""};
 
     string_default_map["network_centreline_algorithm_choice"] = "medial_path";
@@ -1502,6 +1505,33 @@ int main(int argc, char* argv[])
                 sg.medial_path_failed ? "1" : "0",
                 std::to_string(sg.n_samples_snapped_to_mask_edge) });
         }
+        // The extracted (D8) channel of each segment, to set beside its
+        // centreline: own pixels then the confluence pixel on the parent.
+        {
+            const std::string pl =
+                pp.make_output_path("_valley_segment_channels", ".fgb");
+            std::cout << "Writing segment channels: " << pl << "\n";
+            lsdtt::lsdtt_vector_schema schema;
+            schema.field_names = {"segment_id", "parent_segment_id",
+                                  "nesting_depth", "n_channel_pixels"};
+            schema.field_types.assign(4, lsdtt::lsdtt_vector_field_type::int64_type);
+            loader.begin_vector_write(
+                pl, "valley_segment_channels", schema, meta.crs_wkt,
+                lsdtt::vector_output_format::flatgeobuf, false);
+            for (const lsdtt::valley_network_segment& sg : nres.segments)
+            {
+                std::vector<lsdtt::lsdtt_xy> pts;
+                for (const std::int64_t f : sg.channel_flats) pts.push_back(node_xy(f));
+                if (sg.confluence_flat >= 0) pts.push_back(node_xy(sg.confluence_flat));
+                if (pts.size() < 2) continue;
+                loader.write_line(pts,
+                    { static_cast<std::int64_t>(sg.segment_id),
+                      static_cast<std::int64_t>(sg.parent_segment_id),
+                      static_cast<std::int64_t>(sg.nesting_depth),
+                      static_cast<std::int64_t>(sg.channel_flats.size()) });
+            }
+            loader.finish_vector_write();
+        }
         loader.write_csv(p,
             {"segment_id","parent_segment_id","nesting_depth","n_channel_pixels",
              "n_centreline_nodes","head_x","head_y","end_x","end_y",
@@ -1851,30 +1881,40 @@ int main(int argc, char* argv[])
                 pp.make_output_path("_valley_widths", ".csv");
             std::cout << "Writing valley widths: " << p << "\n";
             const std::vector<float> da = flow->get_drainage_area_raster().data;
+            // Drainage area, elevation and along-channel distance at the
+            // station's channel pixel, matched in downstream order (the centre
+            // is on the centreline, usually off the channel, where the area is
+            // a hillslope's), so drainage area never decreases down a segment.
+            const std::vector<std::int64_t> match =
+                lsdtt::match_sections_to_channel(nres, xres, meta);
+            std::vector<std::vector<double>> channel_dist(nres.segments.size());
+            for (std::size_t s = 0; s < nres.segments.size(); ++s)
+            {
+                const auto& ch = nres.segments[s].channel_flats;
+                channel_dist[s].assign(ch.size(), 0.0);
+                for (std::size_t q = 1; q < ch.size(); ++q)
+                {
+                    const lsdtt::lsdtt_xy a = node_xy(ch[q - 1]), b = node_xy(ch[q]);
+                    channel_dist[s][q] = channel_dist[s][q - 1] +
+                                         std::hypot(b.x - a.x, b.y - a.y);
+                }
+            }
             std::vector<std::vector<std::string>> rows;
             for (std::size_t k = 0; k < xres.sections.size(); ++k)
             {
                 const lsdtt::valley_cross_section& xs = xres.sections[k];
                 const lsdtt::valley_network_segment& sg =
                     nres.segments[static_cast<std::size_t>(xs.source_id)];
-                // Drainage area and elevation at the segment's channel pixel
-                // nearest the station centre: the centre is on the centreline,
-                // usually off the channel, where the area is a hillslope's.
-                std::string area = "nan", z = "nan";
-                double best = std::numeric_limits<double>::infinity();
-                std::int64_t near = -1;
-                for (const std::int64_t f : sg.channel_flats)
+                std::string area = "nan", z = "nan", cdist = "nan";
+                if (match[k] >= 0)
                 {
-                    const lsdtt::lsdtt_xy p = node_xy(f);
-                    const double d2 = (p.x - xs.centre_x) * (p.x - xs.centre_x) +
-                                      (p.y - xs.centre_y) * (p.y - xs.centre_y);
-                    if (d2 < best) { best = d2; near = f; }
-                }
-                if (near >= 0)
-                {
-                    const std::size_t f = static_cast<std::size_t>(near);
+                    const std::size_t f = static_cast<std::size_t>(
+                        sg.channel_flats[static_cast<std::size_t>(match[k])]);
                     area = std::to_string(da[f]);
                     z = std::to_string(elev[f]);
+                    cdist = std::to_string(
+                        channel_dist[static_cast<std::size_t>(xs.source_id)]
+                                    [static_cast<std::size_t>(match[k])]);
                 }
                 rows.push_back({
                     std::to_string(sg.segment_id),
@@ -1884,7 +1924,7 @@ int main(int argc, char* argv[])
                     std::to_string(xs.along_distance_metres),
                     std::to_string(xs.centre_x),
                     std::to_string(xs.centre_y),
-                    z, area,
+                    cdist, z, area,
                     std::to_string(-xs.left_offset_metres),
                     std::to_string(xs.right_offset_metres),
                     std::to_string(xs.valley_width_metres),
@@ -1894,7 +1934,8 @@ int main(int argc, char* argv[])
             }
             loader.write_csv(p,
                 {"segment_id","parent_segment_id","nesting_depth","station_seq",
-                 "along_distance_m","x","y","channel_elevation","drainage_area_m2",
+                 "along_distance_m","x","y","channel_distance_m",
+                 "channel_elevation","drainage_area_m2",
                  "left_half_width_m","right_half_width_m","valley_width_m",
                  "drains_to_edge","catchment_touches_edge","excluded_reason"},
                 rows);
