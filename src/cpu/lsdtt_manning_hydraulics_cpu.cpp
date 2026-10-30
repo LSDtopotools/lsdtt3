@@ -1426,7 +1426,7 @@ void write_reference_xs_candidates_points(
     lsdtt_vector_schema schema;
     schema.field_names = {
         "reach_index", "reach_start_m", "reach_end_m",
-        "cross_id", "distance_m", "drainage_area_m2",
+        "cross_id", "distance_from_source_m", "drainage_area_m2",
         "slope_m_per_m", "slope_valid"};
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,

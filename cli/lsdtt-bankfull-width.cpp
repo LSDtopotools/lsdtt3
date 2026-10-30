@@ -985,15 +985,19 @@ int main(int argc, char* argv[])
             lsdtt::vector_output_format vec_fmt =
                 lsdtt::resolve_vector_output_format(sf["reach_template_vector_format"]);
             
+            const bool spatial_index = bf["calculate_spatial_index"];
+            
             lsdtt::write_reaches_template_lines(
-                reaches, reaches_vec_path, dem.get_meta().crs_wkt, vec_fmt, false);
+                reaches, reaches_vec_path, dem.get_meta().crs_wkt, vec_fmt, spatial_index);
             lsdtt::write_reference_xs_candidates_points(
-                candidates, candidates_vec_path, dem.get_meta().crs_wkt, vec_fmt, false);
+                candidates, candidates_vec_path, dem.get_meta().crs_wkt, vec_fmt, spatial_index);
             
             const std::string reaches_ext = lsdtt::output_extension(vec_fmt);
             const std::string candidates_ext = lsdtt::output_extension(vec_fmt);
-            std::cout << "Wrote: " << reaches_vec_path << reaches_ext << " (line geometries for QGIS)\n";
-            std::cout << "Wrote: " << candidates_vec_path << candidates_ext << " (point geometries for QGIS)\n";
+            std::cout << "Wrote: " << reaches_vec_path << reaches_ext
+                      << " (" << sf["reach_template_vector_format"] << ", line geometries for QGIS)\n";
+            std::cout << "Wrote: " << candidates_vec_path << candidates_ext
+                      << " (" << sf["reach_template_vector_format"] << ", point geometries for QGIS)\n";
         }
         catch (const std::exception& e)
         {
