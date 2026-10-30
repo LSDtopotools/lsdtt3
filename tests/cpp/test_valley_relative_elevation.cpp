@@ -20,7 +20,9 @@
 // "larger" (higher priority) one must take every pixel its discs cover.
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -28,6 +30,10 @@
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_valley_relative_elevation_cpu.hpp"
+#include "lsdtt_valley_terrace_profile_cpu.hpp"
+#include "../../src/utils/lsdtt_point_bucket_index.hpp"
+
+#include <random>
 
 namespace
 {
@@ -261,6 +267,97 @@ int main()
         check(rc.owner.get_data()[25 * C + 30] == static_cast<float>(meta.no_data_value) &&
                   rc.owner.get_data()[18 * C + 30] == 1.0f,
               "distance cap: 10 m away is left out, 3 m away is kept");
+
+        // ---------------------------------------------------------------------
+        // Terrace profile: patch 1 north (rows 3-6, cols 10-29), patch 2 south
+        // (rows 24-27, cols 40-69), patch 3 straddling the gully (rows 3-6,
+        // cols 50-69: the gully claims the few cells beside it, the main
+        // centreline the rest). Relative elevation = |row - 15| against the main
+        // centreline; 5 m bins along it (cell = 1 m).
+        // ---------------------------------------------------------------------
+        std::vector<float> lab(n, 0.0f);
+        for (int r = 3; r <= 6; ++r)
+            for (int c = 10; c <= 29; ++c) lab[static_cast<std::size_t>(r) * C + c] = 1.0f;
+        for (int r = 24; r <= 27; ++r)
+            for (int c = 40; c <= 69; ++c) lab[static_cast<std::size_t>(r) * C + c] = 2.0f;
+        for (int r = 3; r <= 6; ++r)
+            for (int c = 50; c <= 69; ++c) lab[static_cast<std::size_t>(r) * C + c] = 3.0f;
+        const lsdtt::lsdtt_raster_cpu labels(std::move(lab), std::vector<std::uint8_t>(n, 1), meta);
+        lsdtt::terrace_profile_request treq;
+        treq.bin_metres = 5.0;
+        const auto tp = lsdtt::compute_terrace_profile(dem, labels, {main_c, gully}, rr, treq);
+        check(tp.patches.size() == 3, "terrace profile: three patches");
+        int n1 = 0, n2 = 0;
+        bool sizes = true, med1 = true;
+        for (const auto& b : tp.bins)
+        {
+            if (b.patch_label == 1)
+            {
+                ++n1;
+                if (b.n_pixels != 20) sizes = false;
+                if (std::abs(b.relative_elevation[2] - 10.5f) > 1e-4f ||
+                    std::abs(b.elevation[2] - 110.5f) > 1e-4f ||
+                    std::abs(b.relative_elevation[0] - 9.0f) > 1e-4f ||
+                    std::abs(b.relative_elevation[4] - 12.0f) > 1e-4f) med1 = false;
+            }
+            if (b.patch_label == 2) ++n2;
+        }
+        check(n1 == 4 && n2 == 6, "terrace profile: patches cut into 5 m bins along the centreline (" +
+                                      std::to_string(n1) + ", " + std::to_string(n2) + ")");
+        check(sizes, "terrace profile: 20 pixels in each of patch 1's bins");
+        check(med1, "terrace profile: patch 1 bins span relative elevation 9-12 m, median 10.5 m");
+        bool p3 = false;
+        for (const auto& q : tp.patches)
+            if (q.patch_label == 3)
+                p3 = q.centreline_id == 1 && q.n_pixels_reassigned > 0 &&
+                     q.n_pixels_reassigned < q.n_pixels / 2;
+        check(p3, "terrace profile: a patch straddling the gully goes to the centreline owning "
+                  "most of it, its gully pixels tied to that centreline");
+        bool along = true;
+        for (const auto& q : tp.patches)
+            if (q.patch_label == 1 && (q.along_min_metres != 10.0 || q.along_max_metres != 29.0))
+                along = false;
+        check(along, "terrace profile: along-centreline extent of patch 1 is 10-29 m");
+    }
+
+    // -------------------------------------------------------------------------
+    // point_bucket_index against brute force: nearest (including queries far
+    // outside the points' extent) and within-radius, on a random cloud and on
+    // a polyline-like run of points.
+    // -------------------------------------------------------------------------
+    {
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<double> u(0.0, 1000.0), q(-500.0, 1500.0);
+        std::vector<double> px, py;
+        for (int i = 0; i < 2000; ++i) { px.push_back(u(rng)); py.push_back(u(rng)); }
+        for (int i = 0; i < 300; ++i) { px.push_back(200.0 + i * 1.5); py.push_back(500.0); }
+        const lsdtt::point_bucket_index idx(px, py, 20.0);
+        bool nearest_ok = true, within_ok = true;
+        for (int t = 0; t < 3000; ++t)
+        {
+            const double x = q(rng), y = q(rng);
+            std::size_t bb = 0;
+            double bd = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < px.size(); ++i)
+            {
+                const double d = (px[i] - x) * (px[i] - x) + (py[i] - y) * (py[i] - y);
+                if (d < bd) { bd = d; bb = i; }
+            }
+            if (idx.nearest(x, y) != bb) nearest_ok = false;
+            if (t < 300)
+            {
+                std::vector<std::size_t> got;
+                idx.within(x, y, 37.0, got);
+                std::sort(got.begin(), got.end());
+                std::vector<std::size_t> want;
+                for (std::size_t i = 0; i < px.size(); ++i)
+                    if ((px[i] - x) * (px[i] - x) + (py[i] - y) * (py[i] - y) <= 37.0 * 37.0)
+                        want.push_back(i);
+                if (got != want) within_ok = false;
+            }
+        }
+        check(nearest_ok, "point_bucket_index nearest matches brute force (3000 queries)");
+        check(within_ok, "point_bucket_index within matches brute force (300 queries)");
     }
 
     std::cout << (g_failures == 0 ? "ALL PASSED" : "FAILURES: " + std::to_string(g_failures))

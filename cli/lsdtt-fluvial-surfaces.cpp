@@ -2036,6 +2036,8 @@ int main(int argc, char* argv[])
         field_choice == lsdtt::reference_field_choice::hand;
     const bool use_rer =
         sf["reference_field_algorithm_choice"] == "relative_elevation";
+    // The height the bounds are read on, for the log.
+    const char* const height_word = use_rer ? "relative elevation" : "HAND";
     if (use_rer && sf["relative_elevation_floor_mask_fname"].empty())
     {
         std::cerr << "FATAL: reference_field_algorithm_choice relative_elevation "
@@ -3059,8 +3061,8 @@ int main(int argc, char* argv[])
         }
 
         if (level_fixed)
-            std::cout << "  floodplain HAND bound     : " << floodplain_hand_bound
-                      << " m\n";
+            std::cout << "  floodplain " << height_word << " bound     : "
+                      << floodplain_hand_bound << " m\n";
         if (admit_by_bounds)
         {
             if (use_floodplain_gradient_bound)
@@ -3572,7 +3574,7 @@ int main(int argc, char* argv[])
                         if (w >= 0) trained_bound[i] = wbound[static_cast<std::size_t>(w)];
                     }
                 }
-                std::cout << "  training: floodplain / terrace HAND bound ";
+                std::cout << "  training: floodplain / terrace " << height_word << " bound ";
                 if (gfit.has_bound)
                     std::cout << gfit.bound.threshold << " m over all training "
                                  "(J " << gfit.bound.youden_j << ")";
@@ -3673,7 +3675,8 @@ int main(int argc, char* argv[])
                 }
                 else
                 {
-                    std::cout << "  second pass (qq_upper_departure): HAND bound "
+                    std::cout << "  second pass (qq_upper_departure): " << height_word
+                              << " bound "
                               << sel2.threshold << " m (quantile " << sel2.qq_index
                               << " of " << sel2.qq.data_quantile.size()
                               << " over " << fp_hand.size()

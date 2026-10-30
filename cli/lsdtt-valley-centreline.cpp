@@ -75,6 +75,8 @@
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_width_network_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_relative_elevation_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_terrace_profile_cpu.hpp"
+#include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
@@ -353,6 +355,52 @@ int main(int argc, char* argv[])
         "valley reaches far up its terraces and a floorless gully stream "
         "claims only the ground beside it.",
         "Relative elevation", "param", "write_relative_elevation_raster"};
+
+    // --- Terrace profile ---
+    bool_default_map["write_terrace_profile_csv"] = false;
+    help_map["write_terrace_profile_csv"] = {"bool","false",
+        "Write labelled surface patches binned along the valley centreline "
+        "they belong to.",
+        "Output files: <stem>_terrace_profile.csv (one row per patch per bin: "
+        "centreline_id, patch_label, band, class, bin_centre_m, n_pixels, and "
+        "the minimum / 25th percentile / median / 75th percentile / maximum of "
+        "the elevation and of the relative elevation) and "
+        "<stem>_terrace_patches.csv (one row per patch). Every pixel of every "
+        "patch in surface_patch_labels_fname is tied to a centreline node by "
+        "the relative-elevation ownership (the larger channel wins on the "
+        "floor, floor-width-scaled ground distance elsewhere); each patch is "
+        "profiled against the centreline owning most of its pixels, its other "
+        "pixels tied to that centreline's nearest node; pixels beyond "
+        "relative_elevation_max_distance_metres are left out (set it to keep "
+        "flats far up the valley sides off the profile). Bins are "
+        "terrace_profile_bin_metres along the centreline from its head. Port "
+        "of LSDTopoTools2 make_swaths_from_categorised (lsdtt-valley-metrics "
+        "get_terraces). The ownership is then computed over the whole DEM, so a "
+        "patch that does not touch the valley mask still reaches a node; the "
+        "relative elevation raster stays clipped to its domain.",
+        "Terrace profile", "switch", ""};
+
+    string_default_map["surface_patch_labels_fname"] = "";
+    help_map["surface_patch_labels_fname"] = {"string","",
+        "Patch label raster for write_terrace_profile_csv (0 = no patch).",
+        "Normally <stem>_banded_labels.tif from lsdtt-fluvial-surfaces (or "
+        "<stem>_<method>_banded_labels.tif from a several-method run). Same "
+        "grid as the DEM.",
+        "Terrace profile", "io", "write_terrace_profile_csv"};
+
+    string_default_map["surface_patches_fname"] = "";
+    help_map["surface_patches_fname"] = {"string","",
+        "Patch table giving each label's band and class, for "
+        "write_terrace_profile_csv.",
+        "Normally <stem>_surface_patches.csv from lsdtt-fluvial-surfaces "
+        "(columns label, band, class). Optional: without it band and class are "
+        "left blank.",
+        "Terrace profile", "io", "write_terrace_profile_csv"};
+
+    float_default_map["terrace_profile_bin_metres"] = 100.0f;
+    help_map["terrace_profile_bin_metres"] = {"float","100",
+        "Bin width along the centreline for write_terrace_profile_csv [m].","",
+        "Terrace profile", "param", "write_terrace_profile_csv"};
 
     string_default_map["relative_elevation_domain_fname"] = "";
     help_map["relative_elevation_domain_fname"] = {"string","",
@@ -1655,9 +1703,38 @@ int main(int argc, char* argv[])
              "n_samples_snapped_to_mask_edge"}, rows);
     }
 
-    if (bf["write_relative_elevation_raster"])
+    const bool want_rer_output = bf["write_relative_elevation_raster"];
+    const bool want_terrace_profile = bf["write_terrace_profile_csv"];
+    if (want_rer_output || want_terrace_profile)
     {
-        std::cout << "\n--- Relative elevation raster ---\n";
+        std::cout << "\n--- Relative elevation ---\n";
+        // Patch labels for the terrace profile.
+        lsdtt::lsdtt_raster_cpu patch_labels;
+        if (want_terrace_profile)
+        {
+            if (sf["surface_patch_labels_fname"].empty())
+            {
+                std::cerr << "FATAL: write_terrace_profile_csv needs "
+                             "surface_patch_labels_fname.\n";
+                return 1;
+            }
+            try
+            {
+                lsdtt::lsdtt_data_loader ll;
+                ll.open_raster(pp.add_read_path_if_needed(sf["surface_patch_labels_fname"]));
+                patch_labels = lsdtt::lsdtt_raster_cpu(ll);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: loading surface_patch_labels_fname: " << e.what() << "\n";
+                return 1;
+            }
+            if (patch_labels.get_data().size() != dem.get_data().size())
+            {
+                std::cerr << "FATAL: surface_patch_labels_fname is not on the DEM's grid.\n";
+                return 1;
+            }
+        }
         // Each centreline with its baseline, and per node the drainage area of
         // its channel pixel (matched in downstream order) as the priority that
         // lets the larger channel win.
@@ -1732,29 +1809,131 @@ int main(int argc, char* argv[])
                              "supplied, whole_dem.\n";
                 return 1;
             }
+            // The terrace profile needs every patch pixel tied to a node, and a
+            // patch that does not touch the domain has no ground to reach one
+            // across, so ownership is then computed over the whole DEM; the
+            // relative elevation raster is still clipped to the chosen domain.
+            const lsdtt::lsdtt_raster_cpu chosen_domain = domain;
+            if (want_terrace_profile)
+                domain = lsdtt::lsdtt_raster_cpu(
+                    std::vector<float>(dem.get_data().size(), 1.0f),
+                    std::vector<std::uint8_t>(dem.get_mask()), meta);
             lsdtt::valley_rer_request rreq;
             rreq.max_distance_metres =
                 static_cast<double>(ff["relative_elevation_max_distance_metres"]);
             const lsdtt::valley_rer_result rr =
                 lsdtt::compute_valley_relative_elevation(
                     dem, supplied_valley, domain, rc, rreq);
-            std::cout << "  domain (" << dchoice << "): " << rr.n_domain_pixels
+            std::cout << "  domain (" << (want_terrace_profile
+                                            ? std::string("whole DEM, for the terrace profile")
+                                            : dchoice) << "): " << rr.n_domain_pixels
                       << " pixel(s): " << rr.n_by_disc
                       << " on the floor by the larger-channel discs, "
                       << rr.n_by_geodesic << " by floor-width-scaled ground "
                          "distance, " << rr.n_unassigned
                       << " reaching no centreline; " << rr.n_nodes_dropped
                       << " node(s) inside a larger centreline's floor dropped\n";
-            const std::string pr = pp.make_output_path("_relative_elevation", ".tif");
-            std::cout << "Writing relative elevation: " << pr << "\n";
-            loader.write_full(rr.relative_elevation.get_data(), meta, pr, out_format);
-            if (bf["write_relative_elevation_owner_raster"])
+            // Outputs clipped to the chosen domain (and the floor).
+            auto clipped = [&](const lsdtt::lsdtt_raster_cpu& r) {
+                std::vector<float> d = r.get_data();
+                const auto& cd = chosen_domain.get_data();
+                const auto& cm = chosen_domain.get_mask();
+                const auto& vd = supplied_valley.get_data();
+                const auto& vm = supplied_valley.get_mask();
+                const float ndv = static_cast<float>(meta.no_data_value);
+                for (std::size_t i = 0; i < d.size(); ++i)
+                    if (!((cm[i] && cd[i] > 0.5f) || (vm[i] && vd[i] > 0.5f))) d[i] = ndv;
+                return d; };
+            if (want_rer_output)
+            {
+                const std::string pr = pp.make_output_path("_relative_elevation", ".tif");
+                std::cout << "Writing relative elevation: " << pr << "\n";
+                loader.write_full(clipped(rr.relative_elevation), meta, pr, out_format);
+            }
+            if (want_rer_output && bf["write_relative_elevation_owner_raster"])
             {
                 const std::string po =
                     pp.make_output_path("_relative_elevation_owner", ".tif");
                 std::cout << "Writing relative elevation owner: " << po << "\n";
-                loader.write_full(rr.owner.get_data(), meta, po, out_format,
+                loader.write_full(clipped(rr.owner), meta, po, out_format,
                                   lsdtt::lsdtt_pixel_type::int32);
+            }
+
+            if (want_terrace_profile)
+            {
+                lsdtt::terrace_profile_request treq;
+                treq.bin_metres = static_cast<double>(ff["terrace_profile_bin_metres"]);
+                const lsdtt::terrace_profile_result tp =
+                    lsdtt::compute_terrace_profile(dem, patch_labels, rc, rr, treq);
+                // Band and class per label, if a patch table was given.
+                std::map<std::int64_t, std::pair<std::string, std::string>> bc;
+                if (!sf["surface_patches_fname"].empty())
+                {
+                    const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(
+                        pp.add_read_path_if_needed(sf["surface_patches_fname"]));
+                    for (const auto& row : t.rows)
+                    {
+                        const std::string l = lsdtt::csv_row_string(row, "label");
+                        if (l.empty()) continue;
+                        bc[std::stoll(l)] = {lsdtt::csv_row_string(row, "band"),
+                                             lsdtt::csv_row_string(row, "class")};
+                    }
+                }
+                auto band_of = [&](std::int64_t l) {
+                    const auto it = bc.find(l);
+                    return it == bc.end() ? std::string() : it->second.first; };
+                auto class_of = [&](std::int64_t l) {
+                    const auto it = bc.find(l);
+                    return it == bc.end() ? std::string() : it->second.second; };
+                auto f5 = [](const lsdtt::five_numbers& v, std::vector<std::string>& r) {
+                    for (const float x : v) r.push_back(std::to_string(x)); };
+
+                std::vector<std::vector<std::string>> rows;
+                for (const lsdtt::terrace_profile_bin& b : tp.bins)
+                {
+                    std::vector<std::string> r = {
+                        std::to_string(b.centreline_id), std::to_string(b.patch_label),
+                        band_of(b.patch_label), class_of(b.patch_label),
+                        std::to_string(b.bin_centre_metres), std::to_string(b.n_pixels)};
+                    f5(b.elevation, r);
+                    f5(b.relative_elevation, r);
+                    rows.push_back(std::move(r));
+                }
+                const std::string pt = pp.make_output_path("_terrace_profile", ".csv");
+                std::cout << "Writing terrace profile: " << pt << "\n";
+                loader.write_csv(pt,
+                    {"centreline_id","patch_label","band","class","bin_centre_m",
+                     "n_pixels","elevation_min","elevation_p25","elevation_median",
+                     "elevation_p75","elevation_max","relative_elevation_min",
+                     "relative_elevation_p25","relative_elevation_median",
+                     "relative_elevation_p75","relative_elevation_max"}, rows);
+
+                std::vector<std::vector<std::string>> prow;
+                std::int64_t n_re = 0;
+                for (const lsdtt::terrace_profile_patch& q : tp.patches)
+                {
+                    n_re += q.n_pixels_reassigned;
+                    prow.push_back({std::to_string(q.patch_label), band_of(q.patch_label),
+                                    class_of(q.patch_label), std::to_string(q.centreline_id),
+                                    std::to_string(q.n_pixels),
+                                    std::to_string(q.n_pixels_reassigned),
+                                    std::to_string(q.along_min_metres),
+                                    std::to_string(q.along_max_metres),
+                                    std::to_string(q.elevation_median),
+                                    std::to_string(q.relative_elevation_median)});
+                }
+                const std::string pq = pp.make_output_path("_terrace_patches", ".csv");
+                std::cout << "Writing terrace patches: " << pq << "\n";
+                loader.write_csv(pq,
+                    {"patch_label","band","class","centreline_id","n_pixels",
+                     "n_pixels_reassigned","along_min_m","along_max_m",
+                     "elevation_median","relative_elevation_median"}, prow);
+                std::cout << "  " << tp.patches.size() << " patch(es) in "
+                          << tp.bins.size() << " bin(s); " << n_re
+                          << " patch pixel(s) tied to their patch's centreline "
+                             "rather than the one owning them, "
+                          << tp.n_patch_pixels_unowned << " left out (no owner: beyond "
+                             "relative_elevation_max_distance_metres)\n";
             }
         }
         catch (const std::exception& e)

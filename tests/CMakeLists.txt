@@ -9820,6 +9820,21 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_valley_centreline_relative_elevation_whole_dem PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Terrace profile on the staircase: tread ids as patch labels, each tread
+# profiled against the trunk centreline (median relative elevations 7.7 / 15.8
+# / 23.8 / 31.8 m, checked 2026-10-30), binned every 200 m.
+add_lsdtt_cli_smoke_test(
+    rigorous_valley_centreline_terrace_profile
+    lsdtt-valley-centreline
+    valley_centreline_terrace_profile.param.in
+    vctp_terrace_profile.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "4 patch(es) in 41 bin(s)"
+    --expect-file-contains "vctp_terrace_patches.csv:4,,,0,9840,612,0.000000,2825.563492,129.699997,31.840004"
+)
+lsdtt_set_tests_properties(rigorous_valley_centreline_terrace_profile PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # floodplain_bound_algorithm_choice: the staircase has 0.709 of its floodplain
 # gradient below 0.1; with the switch at 0.7 auto takes hand_only, records it
 # for a rerun, and gives exactly the explicit hand_only mask (4068 cells).

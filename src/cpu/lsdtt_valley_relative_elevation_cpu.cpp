@@ -21,6 +21,7 @@
 
 #include "../utils/lsdtt_grid_geodesic.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
+#include "../utils/lsdtt_point_bucket_index.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_proximity_cpu.hpp"
 #include "lsdtt_valley_centreline_cpu.hpp"
@@ -95,20 +96,19 @@ std::vector<float> compute_centreline_baseline(
     auto z_of = [&](std::size_t i) {
         return elevation[static_cast<std::size_t>(channel_flats[i])]; };
 
+    // Bucket index over the centreline nodes: both methods ask, for each
+    // channel pixel, which centreline nodes are near it.
+    std::vector<double> clx(nc), cly(nc);
+    for (std::size_t k = 0; k < nc; ++k) { clx[k] = cl[k].x; cly[k] = cl[k].y; }
+    const point_bucket_index cl_index(clx, cly, 4.0 * meta.cell_size);
+
     if (choice == centreline_baseline_choice::projected_monotonic)
     {
         // Every channel pixel pins its nearest centreline node; lowest wins.
         std::vector<float> pins(nc, nan);
         for (std::size_t i = 0; i < ch.size(); ++i)
         {
-            std::size_t best = 0;
-            double bd = std::numeric_limits<double>::infinity();
-            for (std::size_t k = 0; k < nc; ++k)
-            {
-                const double d = (cl[k].x - ch[i].x) * (cl[k].x - ch[i].x) +
-                                 (cl[k].y - ch[i].y) * (cl[k].y - ch[i].y);
-                if (d < bd) { bd = d; best = k; }
-            }
+            const std::size_t best = cl_index.nearest(ch[i].x, ch[i].y);
             const float z = z_of(i);
             if (std::isfinite(z) && (!std::isfinite(pins[best]) || z < pins[best]))
                 pins[best] = z;
@@ -139,11 +139,30 @@ std::vector<float> compute_centreline_baseline(
                 cr.push_back({t[k], z_of(it->second)});
         }
     }
+    // A centreline segment that crosses channel segment i has both ends within
+    // (its own length + i's length) of channel node i, so only the segments
+    // touching the nodes found within that radius are tested.
+    double max_cl_seg = 0.0;
+    for (std::size_t j = 0; j + 1 < nc; ++j)
+        max_cl_seg = std::max(max_cl_seg, std::hypot(cl[j + 1].x - cl[j].x, cl[j + 1].y - cl[j].y));
+    std::vector<std::size_t> near_nodes, cand;
     for (std::size_t i = 0; i + 1 < ch.size(); ++i)
     {
         const double cx0 = std::min(ch[i].x, ch[i + 1].x), cx1 = std::max(ch[i].x, ch[i + 1].x);
         const double cy0 = std::min(ch[i].y, ch[i + 1].y), cy1 = std::max(ch[i].y, ch[i + 1].y);
-        for (std::size_t j = 0; j + 1 < nc; ++j)
+        const double reach = max_cl_seg +
+            std::hypot(ch[i + 1].x - ch[i].x, ch[i + 1].y - ch[i].y) + 1e-6;
+        near_nodes.clear();
+        cand.clear();
+        cl_index.within(ch[i].x, ch[i].y, reach, near_nodes);
+        for (const std::size_t q : near_nodes)
+        {
+            if (q > 0) cand.push_back(q - 1);
+            if (q + 1 < nc) cand.push_back(q);
+        }
+        std::sort(cand.begin(), cand.end());
+        cand.erase(std::unique(cand.begin(), cand.end()), cand.end());
+        for (const std::size_t j : cand)
         {
             if (std::max(cl[j].x, cl[j + 1].x) < cx0 || std::min(cl[j].x, cl[j + 1].x) > cx1 ||
                 std::max(cl[j].y, cl[j + 1].y) < cy0 || std::min(cl[j].y, cl[j + 1].y) > cy1)
@@ -257,7 +276,6 @@ valley_rer_result compute_valley_relative_elevation(
     std::vector<std::int32_t> tmp_k(nf, -1);
     std::vector<float>        tmp_d2(nf, 0.0f);
     std::vector<std::int32_t> touched;
-    std::vector<int>          stride_of(centrelines.size(), 1);
 
     for (std::size_t ci = 0; ci < centrelines.size(); ++ci)
     {
@@ -265,16 +283,17 @@ valley_rer_result compute_valley_relative_elevation(
         const std::size_t m = c.flats.size();
         if (m == 0) continue;
         touched.clear();
-        double rmin = std::numeric_limits<double>::infinity();
-        for (const std::int64_t f : c.flats)
-            rmin = std::min(rmin, static_cast<double>(wd[static_cast<std::size_t>(f)]) + cell);
-        const int stride = std::max(1, static_cast<int>(std::floor(0.5 * rmin / cell)));
-        stride_of[ci] = stride;
-        for (std::size_t k = 0; k < m; k += static_cast<std::size_t>(stride))
+        // A disc at every node. Spacing them out (a quarter of the local
+        // radius) was tried and halved the time on a wide floodplain, but it
+        // trims the floor's edges between centres and those cells then fall to
+        // the ground-distance rule: 3-5 % of cells changed, by up to ~8 m where
+        // they landed on another centreline (2026-10-30). Kept exact.
+        for (std::size_t k = 0; k < m; ++k)
         {
             const std::int64_t f = c.flats[k];
-            if (!is_floor[static_cast<std::size_t>(f)]) continue;  // no floor, no disc
             const double r = static_cast<double>(wd[static_cast<std::size_t>(f)]) + cell;
+            const std::size_t k_here = k;
+            if (!is_floor[static_cast<std::size_t>(f)]) continue;  // no floor, no disc
             const int rc = static_cast<int>(std::ceil(r / cell));
             const int r0 = static_cast<int>(f / n_cols), c0 = static_cast<int>(f % n_cols);
             for (int rr = std::max(0, r0 - rc); rr <= std::min(n_rows - 1, r0 + rc); ++rr)
@@ -289,7 +308,7 @@ valley_rer_result compute_valley_relative_elevation(
                     if (tmp_k[v] < 0) touched.push_back(v);
                     if (tmp_k[v] < 0 || d2 < tmp_d2[v])
                     {
-                        tmp_k[v] = static_cast<std::int32_t>(k);
+                        tmp_k[v] = static_cast<std::int32_t>(k_here);
                         tmp_d2[v] = static_cast<float>(d2);
                     }
                 }
@@ -311,7 +330,7 @@ valley_rer_result compute_valley_relative_elevation(
     {
         if (best_c[v] < 0) continue;
         const valley_rer_centreline& c = centrelines[static_cast<std::size_t>(best_c[v])];
-        const int s = stride_of[static_cast<std::size_t>(best_c[v])];
+        const int s = 1;   // tmp_k is the nearest covering node; check its neighbours
         const pt p = flat_pt(meta, fflat[v]);
         const std::int64_t k0 = std::max<std::int64_t>(0, best_k[v] - s);
         const std::int64_t k1 = std::min<std::int64_t>(static_cast<std::int64_t>(c.flats.size()) - 1,
