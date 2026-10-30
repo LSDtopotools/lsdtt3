@@ -383,6 +383,14 @@ int main(int argc, char* argv[])
         "Use these to pick a reference XS for discharge calculation.",
         "Reach template", "param", "generate_reach_template"};
 
+    string_default_map["reach_template_vector_format"] = "fgb";
+    help_map["reach_template_vector_format"] = {"string", "fgb",
+        "Vector format for reach template visualization outputs.",
+        "Options: fgb (FlatGeobuf) or gpkg (GeoPackage). CSV is always "
+        "written for editing. This governs only the optional .fgb/.gpkg "
+        "visualization layers.",
+        "Reach template", "param", "generate_reach_template"};
+
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
@@ -969,6 +977,23 @@ int main(int argc, char* argv[])
             
             std::cout << "Wrote: " << reaches_path << " (with easting/northing for QGIS)\n";
             std::cout << "Wrote: " << candidates_path << "\n";
+            
+            // Write vector visualization outputs
+            const std::string reaches_vec_path = pp.get_full_write_path() + "_reaches_template_lines";
+            const std::string candidates_vec_path = pp.get_full_write_path() + "_reference_xs";
+            
+            lsdtt::vector_output_format vec_fmt =
+                lsdtt::resolve_vector_output_format(sf["reach_template_vector_format"]);
+            
+            lsdtt::write_reaches_template_lines(
+                reaches, reaches_vec_path, dem.get_meta().crs_wkt, vec_fmt, false);
+            lsdtt::write_reference_xs_candidates_points(
+                candidates, candidates_vec_path, dem.get_meta().crs_wkt, vec_fmt, false);
+            
+            const std::string reaches_ext = lsdtt::output_extension(vec_fmt);
+            const std::string candidates_ext = lsdtt::output_extension(vec_fmt);
+            std::cout << "Wrote: " << reaches_vec_path << reaches_ext << " (line geometries for QGIS)\n";
+            std::cout << "Wrote: " << candidates_vec_path << candidates_ext << " (point geometries for QGIS)\n";
         }
         catch (const std::exception& e)
         {
