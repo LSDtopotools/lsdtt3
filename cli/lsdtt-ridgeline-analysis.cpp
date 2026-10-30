@@ -1891,6 +1891,17 @@ int main(int argc, char* argv[])
                         {
                             std::cout << tvd.size() << " nodes.\n";
 
+                            const auto& tvd_nodes = tvd.nodes();
+                            if (!tvd_nodes.empty())
+                            {
+                                const auto& start = tvd_nodes.front();
+                                const auto& end = tvd_nodes.back();
+                                std::cout << "   Transverse divide basin junction " << jid
+                                          << " starts at row/col " << start.row << "/" << start.col
+                                          << " and ends at row/col " << end.row << "/" << end.col
+                                          << " (ridgeline number " << ridgeline_counter << ").\n";
+                            }
+
                             std::int32_t adj_jid = junctions[(bsn + 1) % N_junctions];
                             const auto* adj_basin_ptr = get_basin_by_junction(adj_jid);
                             
@@ -2894,7 +2905,10 @@ int main(int argc, char* argv[])
             return 1;
         }
         for (auto& record : all_ridgelines)
-            record.ridgeline.orient_periodic_start(periodic_columns);
+        {
+            if (record.feature_type == "main_drainage_divide")
+                record.ridgeline.orient_periodic_start(periodic_columns);
+        }
     }
 
     // =========================================================================
