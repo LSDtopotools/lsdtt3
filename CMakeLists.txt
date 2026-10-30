@@ -395,6 +395,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_valley_centreline_cpu.cpp
     src/cpu/lsdtt_valley_cross_sections_cpu.cpp
     src/cpu/lsdtt_valley_width_network_cpu.cpp
+    src/cpu/lsdtt_valley_relative_elevation_cpu.cpp
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp

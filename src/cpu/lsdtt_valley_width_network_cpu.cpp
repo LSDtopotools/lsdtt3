@@ -596,39 +596,69 @@ valley_width_network_result build_valley_width_network(
                 std::isfinite(run) ? run : elev[fi]);
         }
 
-        // Pinned baseline: the segment's own channel pixels (and its
-        // confluence) where the centreline touches them.
+        // Baseline: pinned to the segment's own channel (and its confluence)
+        // by the requested method. is_pin marks centreline nodes that are
+        // themselves channel pixels.
         {
             std::vector<std::int64_t> own_sorted = nodes;
             std::sort(own_sorted.begin(), own_sorted.end());
-            const std::size_t np = path.size();
-            std::vector<double> along(np, 0.0);
-            std::vector<float>  pins(np, std::numeric_limits<float>::quiet_NaN());
-            rec.centreline_is_pin.assign(np, 0);
-            for (std::size_t p = 0; p < np; ++p)
-            {
-                if (p > 0)
-                {
-                    const xy a = flat_xy(path[p - 1]);
-                    const xy b = flat_xy(path[p]);
-                    along[p] = along[p - 1] + std::hypot(b.x - a.x, b.y - a.y);
-                }
-                const std::size_t fi = static_cast<std::size_t>(path[p]);
-                if (dmask[fi] &&
-                    std::binary_search(own_sorted.begin(), own_sorted.end(), path[p]))
-                {
-                    pins[p] = elev[fi];
-                    rec.centreline_is_pin[p] = 1;
-                }
-            }
-            rec.centreline_baseline_elevation =
-                fit_pinned_monotonic_baseline(along, pins);
+            rec.centreline_is_pin.assign(path.size(), 0);
+            for (std::size_t q = 0; q < path.size(); ++q)
+                if (std::binary_search(own_sorted.begin(), own_sorted.end(), path[q]))
+                    rec.centreline_is_pin[q] = 1;
+            rec.centreline_baseline_elevation = compute_centreline_baseline(
+                path, nodes, elev, meta, request.baseline);
         }
         rec.centreline_flats = std::move(path);
         result.centrelines.channels.push_back(std::move(rec));
     }
 
     return result;
+}
+
+std::vector<std::int64_t> match_points_to_channel(
+    const std::vector<lsdtt_xy>&     points,
+    const std::vector<double>&       along,
+    double                           total_length,
+    const std::vector<std::int64_t>& channel_flats,
+    const lsdtt_raster_meta&         meta)
+{
+    std::vector<std::int64_t> match(points.size(), -1);
+    if (points.empty() || channel_flats.empty()) return match;
+    const int n_cols = meta.n_cols;
+    std::vector<xy> cxy(channel_flats.size());
+    for (std::size_t k = 0; k < channel_flats.size(); ++k)
+    {
+        const lsdtt_xy p = cell_center_from_row_col(
+            meta, static_cast<int>(channel_flats[k] / n_cols),
+            static_cast<int>(channel_flats[k] % n_cols));
+        cxy[k] = {p.x, p.y};
+    }
+    const std::int64_t n = static_cast<std::int64_t>(channel_flats.size());
+    const std::int64_t half = std::max<std::int64_t>(
+        10, static_cast<std::int64_t>(std::ceil(
+                3.0 * static_cast<double>(n) / static_cast<double>(points.size()))));
+    std::int64_t prev = 0;
+    for (std::size_t i = 0; i < points.size(); ++i)
+    {
+        const double f = total_length > 0.0
+            ? std::clamp(along[i] / total_length, 0.0, 1.0) : 0.0;
+        const std::int64_t expect =
+            static_cast<std::int64_t>(std::llround(f * static_cast<double>(n - 1)));
+        const std::int64_t lo = std::max(prev, expect - half);
+        const std::int64_t hi = std::min(n - 1, std::max(lo, expect + half));
+        std::int64_t best_k = lo;
+        double best = std::numeric_limits<double>::infinity();
+        for (std::int64_t k = lo; k <= hi; ++k)
+        {
+            const double d2 = (cxy[k].x - points[i].x) * (cxy[k].x - points[i].x) +
+                              (cxy[k].y - points[i].y) * (cxy[k].y - points[i].y);
+            if (d2 < best) { best = d2; best_k = k; }
+        }
+        match[i] = best_k;
+        prev = best_k;
+    }
+    return match;
 }
 
 std::vector<std::int64_t> match_sections_to_channel(
@@ -649,18 +679,10 @@ std::vector<std::int64_t> match_sections_to_channel(
             of_seg[static_cast<std::size_t>(s)].push_back(i);
     }
 
-    auto flat_xy = [&](std::int64_t f) -> xy
-    {
-        const lsdtt_xy p = cell_center_from_row_col(
-            meta, static_cast<int>(f / n_cols), static_cast<int>(f % n_cols));
-        return {p.x, p.y};
-    };
-
     for (std::size_t s = 0; s < n_seg; ++s)
     {
         std::vector<std::size_t>& st = of_seg[s];
-        const std::vector<std::int64_t>& ch = network.segments[s].channel_flats;
-        if (st.empty() || ch.empty()) continue;
+        if (st.empty()) continue;
         std::sort(st.begin(), st.end(), [&](std::size_t a, std::size_t b) {
             return xs[a].along_distance_metres < xs[b].along_distance_metres; });
 
@@ -669,37 +691,22 @@ std::vector<std::int64_t> match_sections_to_channel(
         double cl_len = 0.0;
         for (std::size_t k = 1; k < cl.size(); ++k)
         {
-            const xy a = flat_xy(cl[k - 1]), b = flat_xy(cl[k]);
+            const lsdtt_xy a = cell_center_from_row_col(
+                meta, static_cast<int>(cl[k - 1] / n_cols), static_cast<int>(cl[k - 1] % n_cols));
+            const lsdtt_xy b = cell_center_from_row_col(
+                meta, static_cast<int>(cl[k] / n_cols), static_cast<int>(cl[k] % n_cols));
             cl_len += std::hypot(b.x - a.x, b.y - a.y);
         }
-        std::vector<xy> cxy(ch.size());
-        for (std::size_t k = 0; k < ch.size(); ++k) cxy[k] = flat_xy(ch[k]);
-
-        const std::int64_t n = static_cast<std::int64_t>(ch.size());
-        const std::int64_t half = std::max<std::int64_t>(
-            10, static_cast<std::int64_t>(std::ceil(
-                    3.0 * static_cast<double>(n) / static_cast<double>(st.size()))));
-        std::int64_t prev = 0;
+        std::vector<lsdtt_xy> pts;
+        std::vector<double> along;
         for (const std::size_t i : st)
         {
-            const double f = cl_len > 0.0
-                ? std::clamp(xs[i].along_distance_metres / cl_len, 0.0, 1.0) : 0.0;
-            const std::int64_t expect =
-                static_cast<std::int64_t>(std::llround(f * static_cast<double>(n - 1)));
-            const std::int64_t lo = std::max(prev, expect - half);
-            const std::int64_t hi = std::min(n - 1, std::max(lo, expect + half));
-            std::int64_t best_k = lo;
-            double best = std::numeric_limits<double>::infinity();
-            for (std::int64_t k = lo; k <= hi; ++k)
-            {
-                const double d2 =
-                    (cxy[k].x - xs[i].centre_x) * (cxy[k].x - xs[i].centre_x) +
-                    (cxy[k].y - xs[i].centre_y) * (cxy[k].y - xs[i].centre_y);
-                if (d2 < best) { best = d2; best_k = k; }
-            }
-            match[i] = best_k;
-            prev = best_k;
+            pts.push_back({xs[i].centre_x, xs[i].centre_y});
+            along.push_back(xs[i].along_distance_metres);
         }
+        const std::vector<std::int64_t> m = match_points_to_channel(
+            pts, along, cl_len, network.segments[s].channel_flats, meta);
+        for (std::size_t q = 0; q < st.size(); ++q) match[st[q]] = m[q];
     }
     return match;
 }

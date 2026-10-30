@@ -265,6 +265,20 @@ void declare_max_floodplain_hand_parameter(
     float                         default_metres,
     const std::string&            parent = "");
 
+// Morphological clean-up of a valley mask, shared by lsdtt-fluvial-surfaces
+// (on the mask it writes) and lsdtt-valley-centreline (on the mask it reads):
+// valley_mask_closing_radius_metres (dilation then erosion: closes narrow
+// non-valley intrusions and slivers), valley_mask_opening_radius_metres
+// (erosion then dilation: removes narrow valley tendrils) and
+// fill_valley_mask_holes. Applied in that order.
+void declare_valley_mask_morphology_parameters(
+    std::map<std::string, float>& float_default_map,
+    std::map<std::string, bool>&  bool_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent,
+    bool                          fill_holes_default);
+
 void declare_max_floodplain_gradient_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

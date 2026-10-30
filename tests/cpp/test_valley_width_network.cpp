@@ -320,6 +320,59 @@ int main()
         check(!trunk_excluded_at_sub,
               tag + "the sub-tributary excludes no trunk section directly");
 
+        // Relative elevation, larger channel wins: the trunk's valley at the
+        // junction is measured against the trunk, the tributary's valley well
+        // up it against the tributary, and every valley pixel is assigned.
+        {
+            const std::vector<float> da = fx.flow->get_drainage_area_raster().data;
+            const auto& meta = fx.dem.get_meta();
+            std::vector<lsdtt::valley_rer_centreline> rc;
+            for (std::size_t s2 = 0; s2 < net.centrelines.channels.size(); ++s2)
+            {
+                const auto& chl = net.centrelines.channels[s2];
+                if (chl.centreline_flats.empty()) continue;
+                lsdtt::valley_rer_centreline c;
+                c.id = chl.source_id;
+                c.flats = chl.centreline_flats;
+                c.baseline = chl.centreline_baseline_elevation;
+                std::vector<lsdtt::lsdtt_xy> pts;
+                std::vector<double> along;
+                double len = 0.0;
+                for (const std::int64_t f : c.flats)
+                {
+                    const lsdtt::lsdtt_xy q{meta.x_min + (f % k_cols + 0.5) * k_dx,
+                                            meta.y_max() - (f / k_cols + 0.5) * k_dx};
+                    if (!pts.empty()) len += std::hypot(q.x - pts.back().x, q.y - pts.back().y);
+                    pts.push_back(q);
+                    along.push_back(len);
+                }
+                const auto& chan = net.segments[s2].channel_flats;
+                const auto m = lsdtt::match_points_to_channel(pts, along, len, chan, meta);
+                c.priority.assign(c.flats.size(), 0.0);
+                for (std::size_t q = 0; q < m.size(); ++q)
+                    if (m[q] >= 0) c.priority[q] = da[static_cast<std::size_t>(chan[m[q]])];
+                rc.push_back(std::move(c));
+            }
+            const auto rr = lsdtt::compute_valley_relative_elevation(fx.dem, fx.valley, rc);
+            const auto& own = rr.owner.get_data();
+            const auto& rer = rr.relative_elevation.get_data();
+            bool trunk_at_junction = true, trib_up = true, small_rer = true;
+            for (int r = k_jr - 8; r <= k_jr + 8; ++r)
+                for (int c = 82; c <= 118; ++c)
+                    if (own[r * k_cols + c] != static_cast<float>(trunk)) trunk_at_junction = false;
+            for (int r = k_jr - 6; r <= k_jr + 6; ++r)
+                for (int c = 150; c <= 168; ++c)
+                    if (own[r * k_cols + c] != static_cast<float>(trib)) trib_up = false;
+            // Trunk floor: centre line pixels sit on the channel, so ~0.
+            for (int r = 20; r < k_rows - 20; r += 10)
+                if (std::abs(rer[r * k_cols + 100]) > 0.5f) small_rer = false;
+            check(rr.n_unassigned == 0, tag + "relative elevation: every valley pixel assigned");
+            check(trunk_at_junction,
+                  tag + "relative elevation: the trunk valley at the junction is the trunk's");
+            check(trib_up, tag + "relative elevation: the tributary valley up-valley is the tributary's");
+            check(small_rer, tag + "relative elevation: ~0 on the trunk's channel line");
+        }
+
         // Rules off: the mouth widths come back.
         lsdtt::network_section_rules_request off;
         off.stop_tributaries_at_parent = false;

@@ -83,6 +83,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_valley_centreline_cpu.hpp"
 #include "lsdtt_valley_cross_sections_cpu.hpp"
+#include "lsdtt_valley_relative_elevation_cpu.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 
 namespace lsdtt
@@ -115,6 +116,10 @@ struct valley_width_network_request
     // Segments with fewer channel pixels than this are kept in the tree (they
     // still own their pixels) but get no centreline.
     int min_segment_pixels = 10;
+
+    // How each centreline's baseline is pinned to its channel (see
+    // lsdtt_valley_relative_elevation_cpu.hpp).
+    centreline_baseline_choice baseline = centreline_baseline_choice::projected_monotonic;
 };
 
 struct valley_network_segment
@@ -186,6 +191,17 @@ struct network_section_rules_request
     double parent_width_window_multiple       = 2.0;
     bool   remove_tributary_crossing_sections = true;
 };
+
+// The channel pixel each of an ordered run of points belongs to, matched in
+// downstream order: an index into channel_flats per point (-1 when there are no
+// channel pixels). points are in downstream order with along-distances along[]
+// out of total_length; see match_sections_to_channel for the rule.
+[[nodiscard]] std::vector<std::int64_t> match_points_to_channel(
+    const std::vector<lsdtt_xy>&     points,
+    const std::vector<double>&       along,
+    double                           total_length,
+    const std::vector<std::int64_t>& channel_flats,
+    const lsdtt_raster_meta&         meta);
 
 // The channel pixel each station belongs to: an index into its segment's
 // channel_flats, parallel to sections.sections (-1: the segment has no channel

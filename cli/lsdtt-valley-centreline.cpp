@@ -74,6 +74,8 @@
 #include "../src/cpu/lsdtt_valley_centreline_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
 #include "../src/cpu/lsdtt_valley_width_network_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_relative_elevation_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 
 static const std::string k_status    = "experimental";
@@ -313,6 +315,59 @@ int main(int argc, char* argv[])
         "fabricated one. Leave empty to derive the valley here as before "
         "(deprecated: that path moves out entirely at the next step).",
         "Valley mask","io",""};
+
+    // Clean-up of the supplied mask before anything uses it (same parameters
+    // as lsdtt-fluvial-surfaces applies to the mask it writes).
+    lsdtt::declare_valley_mask_morphology_parameters(
+        float_default_map, bool_default_map, help_map, "Valley mask", "", false);
+
+    // --- Relative elevation raster ---
+    bool_default_map["write_relative_elevation_raster"] = false;
+    help_map["write_relative_elevation_raster"] = {"bool","false",
+        "Write the relative elevation raster (RER): elevation above the valley "
+        "centreline's baseline, inside the valley mask.",
+        "Output file: <stem>_relative_elevation.tif. Like HAND, but measured "
+        "against the centreline's baseline (centreline_baseline_algorithm_"
+        "choice) rather than the channel the pixel's flow reaches, so a "
+        "meandering or wall-hugging channel does not imprint itself on the "
+        "field (LSDTopoTools2 lsdtt-basic-metrics get_relative_elevation_raster). "
+        "The larger channel wins: each centreline node owns the disc of radius "
+        "distance-to-the-valley-wall round it (inside the valley by "
+        "construction); a pixel covered by several centrelines' discs takes the "
+        "one whose nearest covering node has the largest drainage area, then the "
+        "nearest node of it. Nodes inside a larger centreline's discs are "
+        "dropped, so a tributary's reference stops where it enters its parent's "
+        "valley. Pixels no disc covers take the node nearest along the ground "
+        "through the mask. Pixel elevations are the DEM's; the baseline's are "
+        "the routing (filled) DEM's channel elevations. Works with source points "
+        "and with run_valley_width_network.",
+        "Relative elevation", "switch", ""};
+
+    bool_default_map["write_relative_elevation_owner_raster"] = false;
+    help_map["write_relative_elevation_owner_raster"] = {"bool","false",
+        "Write which centreline each relative-elevation pixel is measured "
+        "against.",
+        "Output file: <stem>_relative_elevation_owner.tif (source_id / "
+        "segment_id; nodata outside the valley). For checking where the larger "
+        "channel takes over.",
+        "Relative elevation", "switch", "write_relative_elevation_raster"};
+
+    string_default_map["centreline_baseline_algorithm_choice"] = "projected_monotonic";
+    help_map["centreline_baseline_algorithm_choice"] = {"string","projected_monotonic",
+        "How a centreline's baseline is pinned to its channel: "
+        "projected_monotonic or channel_crossings.",
+        "projected_monotonic: every channel pixel pins the centreline node "
+        "nearest it (the lowest elevation winning on a shared node), then each "
+        "pin is lowered to the lowest pin upstream of it and the baseline is "
+        "linear between pins - it never rises downstream and is never above the "
+        "channel. channel_crossings (LSDTopoTools2): pins only where the channel "
+        "crosses the centreline in plan view, at the channel elevation "
+        "interpolated at the crossing (and at centreline nodes that are channel "
+        "pixels), linear between crossings and flat beyond the first and last, "
+        "with no other constraint. Used by the baselines in "
+        "the centreline outputs, the baseline refinement and the relative "
+        "elevation raster.",
+        "Relative elevation", "param", ""};
 
 
 
@@ -764,12 +819,16 @@ int main(int argc, char* argv[])
         lsdtt::network_centreline_choice::medial_path;
     lsdtt::channel_definition_choice channel_definition =
         lsdtt::channel_definition_choice::contributing_pixels;
+    lsdtt::centreline_baseline_choice baseline_choice =
+        lsdtt::centreline_baseline_choice::projected_monotonic;
     try
     {
         network_centreline = lsdtt::parse_network_centreline_choice(
             sf["network_centreline_algorithm_choice"]);
         channel_definition = lsdtt::parse_channel_definition_choice(
             sf["channel_definition_algorithm_choice"]);
+        baseline_choice = lsdtt::parse_centreline_baseline_choice(
+            sf["centreline_baseline_algorithm_choice"]);
     }
     catch (const std::invalid_argument& e)
     {
@@ -1000,6 +1059,59 @@ int main(int argc, char* argv[])
                       << dem.get_meta().n_cols << ".\n";
             return 1;
         }
+        // Clean-up: closing, opening, hole filling, in that order.
+        {
+            auto count = [](const lsdtt::lsdtt_raster_cpu& r) {
+                std::int64_t c = 0;
+                const auto& d = r.get_data();
+                const auto& m = r.get_mask();
+                for (std::size_t i = 0; i < d.size(); ++i)
+                    if (m[i] && d[i] > 0.5f) ++c;
+                return c;
+            };
+            // Binary 0/1 on the DEM's valid cells, which the morphology expects.
+            {
+                std::vector<float> b(supplied_valley.get_data().size(), 0.0f);
+                const auto& d = supplied_valley.get_data();
+                const auto& m = supplied_valley.get_mask();
+                for (std::size_t i = 0; i < b.size(); ++i)
+                    if (m[i] && d[i] > 0.5f) b[i] = 1.0f;
+                supplied_valley = lsdtt::lsdtt_raster_cpu(
+                    std::move(b), std::vector<std::uint8_t>(dem.get_mask()),
+                    dem.get_meta());
+            }
+            const std::int64_t n0 = count(supplied_valley);
+            const double cr = static_cast<double>(ff["valley_mask_closing_radius_metres"]);
+            const double orr = static_cast<double>(ff["valley_mask_opening_radius_metres"]);
+            try
+            {
+                if (cr > 0.0)
+                {
+                    supplied_valley = lsdtt::binary_morphological_closing(supplied_valley, cr);
+                    std::cout << "  valley mask closed (radius " << cr << " m): "
+                              << n0 << " -> " << count(supplied_valley) << " cell(s)\n";
+                }
+                if (orr > 0.0)
+                {
+                    const std::int64_t n1 = count(supplied_valley);
+                    supplied_valley = lsdtt::binary_morphological_opening(supplied_valley, orr);
+                    std::cout << "  valley mask opened (radius " << orr << " m): "
+                              << n1 << " -> " << count(supplied_valley) << " cell(s)\n";
+                }
+                if (bf["fill_valley_mask_holes"])
+                {
+                    const std::int64_t n2 = count(supplied_valley);
+                    supplied_valley = lsdtt::binary_fill_holes(supplied_valley);
+                    std::cout << "  valley mask holes filled: " << n2 << " -> "
+                              << count(supplied_valley) << " cell(s)\n";
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: cleaning the valley mask: " << e.what() << "\n";
+                return 1;
+            }
+        }
         vreq.supplied_valley_mask = &supplied_valley;
         std::cout << "  Valley identification is supplied, so the corridor "
                      "HAND break search is skipped.\n";
@@ -1018,6 +1130,7 @@ int main(int argc, char* argv[])
             nreq.smoothing_width_multiple = static_cast<double>(
                 ff["network_centreline_smoothing_width_multiple"]);
             nreq.min_segment_pixels = ifs["min_centreline_nodes"];
+            nreq.baseline = baseline_choice;
             std::cout << "Valley width network: "
                       << sf["network_centreline_algorithm_choice"]
                       << " centrelines\n";
@@ -1032,6 +1145,15 @@ int main(int argc, char* argv[])
             // referenced to filled elevations, which is consistent for both
             // the channel and the corridor.
             vres = lsdtt::extract_valley_centrelines(routing_dem, scope, vreq);
+            // The engine pins projected_monotonic; re-pin on request.
+            if (baseline_choice != lsdtt::centreline_baseline_choice::projected_monotonic)
+                for (std::size_t s = 0; s < vres.channels.size() &&
+                                        s < scope.channel_node_lists.size(); ++s)
+                    vres.channels[s].centreline_baseline_elevation =
+                        lsdtt::compute_centreline_baseline(
+                            vres.channels[s].centreline_flats,
+                            scope.channel_node_lists[s], routing_dem.get_data(),
+                            routing_dem.get_meta(), baseline_choice);
         }
     }
     catch (const std::exception& e)
@@ -1538,6 +1660,75 @@ int main(int argc, char* argv[])
              "drains_to_edge","catchment_touches_edge",
              "valley_width_estimate_m","medial_path_failed",
              "n_samples_snapped_to_mask_edge"}, rows);
+    }
+
+    if (bf["write_relative_elevation_raster"])
+    {
+        std::cout << "\n--- Relative elevation raster ---\n";
+        // Each centreline with its baseline, and per node the drainage area of
+        // its channel pixel (matched in downstream order) as the priority that
+        // lets the larger channel win.
+        const std::vector<float> da = flow->get_drainage_area_raster().data;
+        std::vector<lsdtt::valley_rer_centreline> rc;
+        for (std::size_t s = 0; s < vres.channels.size(); ++s)
+        {
+            const lsdtt::valley_channel_centreline& ch = vres.channels[s];
+            if (ch.centreline_flats.empty()) continue;
+            const std::vector<std::int64_t>& chan =
+                network_mode ? nres.segments[s].channel_flats
+                             : scope.channel_node_lists[s];
+            lsdtt::valley_rer_centreline c;
+            c.id = ch.source_id;
+            c.flats = ch.centreline_flats;
+            c.baseline = ch.centreline_baseline_elevation;
+            if (c.baseline.size() != c.flats.size())
+                c.baseline.assign(c.flats.size(), std::numeric_limits<float>::quiet_NaN());
+            std::vector<lsdtt::lsdtt_xy> pts;
+            std::vector<double> along;
+            double len = 0.0;
+            for (std::size_t k = 0; k < c.flats.size(); ++k)
+            {
+                const lsdtt::lsdtt_xy p = node_xy(c.flats[k]);
+                if (k > 0) len += std::hypot(p.x - pts.back().x, p.y - pts.back().y);
+                pts.push_back(p);
+                along.push_back(len);
+            }
+            const std::vector<std::int64_t> m =
+                lsdtt::match_points_to_channel(pts, along, len, chan, meta);
+            c.priority.assign(c.flats.size(), 0.0);
+            for (std::size_t k = 0; k < m.size(); ++k)
+                if (m[k] >= 0)
+                    c.priority[k] = da[static_cast<std::size_t>(
+                        chan[static_cast<std::size_t>(m[k])])];
+            rc.push_back(std::move(c));
+        }
+        try
+        {
+            const lsdtt::valley_rer_result rr =
+                lsdtt::compute_valley_relative_elevation(dem, supplied_valley, rc);
+            std::cout << "  " << rr.n_valley_pixels << " valley pixel(s): "
+                      << rr.n_by_disc << " by the larger-channel discs, "
+                      << rr.n_by_geodesic << " by nearest node along the ground, "
+                      << rr.n_unassigned << " reaching no centreline; "
+                      << rr.n_nodes_dropped << " node(s) inside a larger "
+                         "centreline's valley dropped\n";
+            const std::string pr = pp.make_output_path("_relative_elevation", ".tif");
+            std::cout << "Writing relative elevation: " << pr << "\n";
+            loader.write_full(rr.relative_elevation.get_data(), meta, pr, out_format);
+            if (bf["write_relative_elevation_owner_raster"])
+            {
+                const std::string po =
+                    pp.make_output_path("_relative_elevation_owner", ".tif");
+                std::cout << "Writing relative elevation owner: " << po << "\n";
+                loader.write_full(rr.owner.get_data(), meta, po, out_format,
+                                  lsdtt::lsdtt_pixel_type::int32);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: relative elevation raster: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     if (bf["write_valley_cross_sections"])

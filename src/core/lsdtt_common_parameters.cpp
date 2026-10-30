@@ -360,6 +360,49 @@ void declare_max_floodplain_hand_parameter(
         "Floodplain", "param", parent};
 }
 
+void declare_valley_mask_morphology_parameters(
+    std::map<std::string, float>& float_default_map,
+    std::map<std::string, bool>&  bool_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent,
+    bool                          fill_holes_default)
+{
+    float_default_map["valley_mask_closing_radius_metres"] = 0.0f;
+    help_map["valley_mask_closing_radius_metres"] = {"float","0.0",
+        "Seal narrow gaps in the valley mask with a morphological closing [m]. "
+        "0 = off.",
+        "A dilation followed by an erosion of the same radius. It removes thin "
+        "non-valley features that reach into the valley - a road, a riser, a "
+        "levee, scroll bars, a field boundary a little above the floor - which "
+        "hole filling cannot touch, because a finger open at one end is not an "
+        "enclosed hole. Because the erosion undoes the dilation, the outer "
+        "extent stays about where it was. Set it to roughly half the width of "
+        "the widest intrusion to close; too large and it bridges a genuine "
+        "terrace riser. Applied before the opening and the hole filling.",
+        group, "param", parent};
+
+    float_default_map["valley_mask_opening_radius_metres"] = 0.0f;
+    help_map["valley_mask_opening_radius_metres"] = {"float","0.0",
+        "Remove narrow tendrils of the valley mask with a morphological opening "
+        "[m]. 0 = off.",
+        "An erosion followed by a dilation of the same radius: valley that is "
+        "narrower than about twice the radius - a thread running up a gully or "
+        "along a ditch - disappears and the rest is restored to its extent. The "
+        "converse of the closing, which removes thin NON-valley features. "
+        "Applied after the closing and before the hole filling. A reach of real "
+        "valley narrower than twice the radius is removed too.",
+        group, "param", parent};
+
+    bool_default_map["fill_valley_mask_holes"] = fill_holes_default;
+    help_map["fill_valley_mask_holes"] = {"bool",
+        fill_holes_default ? "true" : "false",
+        "Fill enclosed holes in the valley mask.",
+        "A background region not connected to the outside of the valid DEM is a "
+        "hole. Applied last, so holes the closing has sealed off are filled too.",
+        group, "switch", parent};
+}
+
 void declare_max_floodplain_gradient_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

@@ -1192,21 +1192,10 @@ int main(int argc, char* argv[])
         "Set it comfortably wider than the widest valley expected.",
         "Outputs","param","valley_mask_closing_width_fraction"};
 
-    float_default_map["valley_mask_closing_radius_metres"] = 0.0f;
-    help_map["valley_mask_closing_radius_metres"] = {"float","0.0",
-        "Seal narrow gaps in the valley mask with a morphological closing [m]. "
-        "0 = off.",
-        "A dilation followed by an erosion of the same radius. It bridges thin "
-        "OPEN-ENDED gaps - the parallel slivers left by scroll bars, levees, "
-        "abandoned channels and field boundaries lying a little above the "
-        "surrounding floor - which hole filling cannot touch, because a finger "
-        "open at one end is not an enclosed hole. Because the erosion undoes "
-        "the dilation, the outer extent is left about where it was rather than "
-        "grown. Set it to roughly the width of the widest sliver you want "
-        "closed; too large and it will bridge across a genuine terrace riser.",
-        "Outputs","param","clean_valley_mask"};
+    lsdtt::declare_valley_mask_morphology_parameters(
+        float_default_map, bool_default_map, help_map,
+        "Outputs", "clean_valley_mask", true);
 
-    bool_default_map["fill_valley_mask_holes"] = true;
     help_map["fill_valley_mask_holes"] = {"bool","true",
         "Fill enclosed holes in the valley mask before writing it.",
         "A hole in the valley floor - a rise the ladder put in a higher band, a "
@@ -4157,6 +4146,29 @@ int main(int argc, char* argv[])
                     std::cerr << "Warning: closing the valley mask failed: "
                               << e.what() << "\n";
                 }
+            }
+        }
+
+        const double opening_r =
+            static_cast<double>(ff["valley_mask_opening_radius_metres"]);
+        if (opening_r > 0.0)
+        {
+            try
+            {
+                valley_raster =
+                    lsdtt::binary_morphological_opening(valley_raster, opening_r);
+                std::int64_t n_opened = 0;
+                for (const float v : valley_raster.get_data())
+                    if (v > 0.5f) ++n_opened;
+                std::cout << "  valley mask opened (radius " << opening_r
+                          << " m): " << n_valley << " -> " << n_opened
+                          << " cell(s)\n";
+                n_valley = n_opened;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: opening the valley mask failed: "
+                          << e.what() << "\n";
             }
         }
 

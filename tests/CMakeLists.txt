@@ -9035,6 +9035,15 @@ add_test(NAME unit_valley_width_network COMMAND lsdtt-test-valley-width-network)
 lsdtt_set_tests_properties(unit_valley_width_network PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Relative elevation raster (lsdtt_valley_relative_elevation_cpu): the two
+# centreline baselines on a hand-built zigzag channel, and the larger channel
+# winning the pixels its valley discs cover.
+add_executable(lsdtt-test-valley-relative-elevation cpp/test_valley_relative_elevation.cpp)
+target_link_libraries(lsdtt-test-valley-relative-elevation PRIVATE lsdtt3_cpu)
+add_test(NAME unit_valley_relative_elevation COMMAND lsdtt-test-valley-relative-elevation)
+lsdtt_set_tests_properties(unit_valley_relative_elevation PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 # Training polygons (plan 7i): class labels, best separation, a window fit
 # with a mislabelled terrace number, a flagged polygon and a shared level, and
 # the reach windows, on populations small enough to check by hand.
@@ -10503,7 +10512,7 @@ set(LSDTT_DOMAIN_RULES
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
-    "fluvial_surface|flat_surface|valley_centreline|valley_width" "fluvial_surfaces"
+    "fluvial_surface|flat_surface|valley_centreline|valley_width|valley_relative" "fluvial_surfaces"
     # The shared Topographic Wetness Index,
     # pointed at "network" ON PURPOSE rather than given its own domain: the
     # existing TWI/STI tests already live in the network compartment, and
