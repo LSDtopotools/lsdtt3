@@ -1,6 +1,6 @@
 # Floodplains, terraces and valleys in lsdtt3
 
-This page explains the design choices behind lsdtt3's fluvial-surface tooling: what
+This page explains the design choices behind lsdtt3's fluvial surface tooling: what
 `lsdtt-flat-surface-finder`, `lsdtt-fluvial-surfaces` and `lsdtt-valley-centreline`
 each do, why the work is split across three programs rather than one, which
 algorithms are used at each step, and where those algorithms come from. It is not a
@@ -62,7 +62,7 @@ elsewhere), or iterate on the expensive middle stage without recomputing the che
 first one.
 
 `lsdtt-fluvial-surfaces` will run without `flat_mask_fname`, falling back to a
-built-in relief or slope admission. That is for a first look. `lsdtt-valley-centreline`
+built-in relief or slope calculation. That is for a first look. `lsdtt-valley-centreline`
 will **not** run without `valley_mask_fname` — it exits with an error naming
 `lsdtt-fluvial-surfaces` — because a centreline traced through a valley the tool
 invented for itself is a result that cannot be audited.
@@ -71,7 +71,7 @@ invented for itself is a result that cannot be audited.
 
 ## Where this comes from
 
-### Clubb et al. (2017): two thresholds, chosen statistically
+### Clubb et al. (2017): floodplain and terrace identification
 
 The 2017 method identifies floodplain and terrace pixels from two per-pixel
 quantities:
@@ -81,10 +81,9 @@ quantities:
   range of curvature with window size (Grieve et al. 2016);
 - **relief relative to the nearest channel `R_c`**, the elevation difference between
   the pixel and the nearest channel pixel reached by steepest-descent flow routing,
-  where "channel" means a link at or above a user-set Strahler order (third order at
-  all eight of their sites).
+  where "channel" means a link at or above a user-set Strahler order (third order is a good bet). 
 
-A pixel is floodplain-or-terrace when **both** are below threshold. The paper's
+A pixel is floodplain or terrace when **both** are below threshold. The paper's
 contribution is that neither threshold is set by hand: both are read off a
 **quantile–quantile plot** against a Gaussian fitted between the 25th and 75th
 percentiles of the data, taking the threshold as the lowest value at which the
@@ -93,11 +92,11 @@ the same construction Lashermes et al. (2007) and Passalacqua et al. (2010) use 
 hillslope–valley transitions. Terraces are then separated from floodplain by a
 single user-set height above the modern channel.
 
-### Clubb et al. (2022): a synthetic trough, then routing
+### Clubb et al. (2022): valley floor width measurements
 
 The 2022 method takes the 2017 valley floor mask and measures its width
-continuously. It needs a longitudinal line to measure orthogonal to, and the
-channel itself is the wrong line where the river meanders inside its valley. So it
+continuously. It needs a longitudinal line to measure orthogonal to, and using the flow routed
+channel itself can result in errors where the river meanders inside its valley. So it
 builds an artificial V-shaped valley and lets flow routing find the axis:
 
 1. For every valley floor pixel, find the distance `d_w` to the nearest valley wall
