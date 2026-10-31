@@ -1390,19 +1390,57 @@ int main(int argc, char* argv[])
         "riser needs closing across.",
         "Riser finder (find_risers)", "param", ""};
 
+    string_default_map["riser_edge_metric"] = "vertical_excess_curvature";
+    help_map["riser_edge_metric"] = {"string","vertical_excess_curvature",
+        "Edge field the riser lines are drawn on: vertical_excess_curvature, "
+        "curvedness, maximum_curvature or multidirectional_hillshade.",
+        "All are high on a riser and low on a tread. The first three come from "
+        "the polyfit (riser_polyfit_lambda_metres): vertical_excess_curvature "
+        "is k_v - k_min, curvedness sqrt((k_max^2 + k_min^2) / 2), "
+        "maximum_curvature |k_max|. multidirectional_hillshade is the mean "
+        "hillshade over multidirectional_hillshade_n_directions azimuths, "
+        "negated so steep is high (3x3 on the DEM, no polyfit). Whichever is "
+        "chosen goes through the same threshold, skeleton and step-height "
+        "filter, so a gully wall with no tread either side is still dropped.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["multidirectional_hillshade_n_directions"] = 8;
+    help_map["multidirectional_hillshade_n_directions"] = {"int","8",
+        "Number of evenly spaced azimuths for riser_edge_metric "
+        "multidirectional_hillshade.",
+        "Same meaning as in lsdtt-raster-preprocessing.",
+        "Riser finder (find_risers)", "param", "riser_edge_metric"};
+
     float_default_map["riser_polyfit_lambda_metres"] = 100.0f;
     help_map["riser_polyfit_lambda_metres"] = {"float","100",
-        "Polyfit half-wavelength (m) for the vertical excess curvature.",
+        "Polyfit half-wavelength (m) for the polyfit edge metrics "
+        "(riser_edge_metric), and the default step window.",
         "Larger values smooth more and move the detected line further off the "
         "step itself; the step window follows it (riser_step_window_radius_metres).",
         "Riser finder (find_risers)", "param", ""};
 
-    string_default_map["riser_vec_adaptive_method"] = "gaussian";
-    help_map["riser_vec_adaptive_method"] = {"string","gaussian",
-        "Adaptive thresholding method applied to vertical excess curvature.",
-        "gaussian: Gaussian-weighted local mean (smoother threshold surface). "
-        "mean: unweighted local mean.",
+    string_default_map["riser_vec_adaptive_method"] = "mean_std";
+    help_map["riser_vec_adaptive_method"] = {"string","mean_std",
+        "Adaptive threshold applied to the edge field (riser_edge_metric): "
+        "mean_std, mean or gaussian.",
+        "mean_std: foreground where the field exceeds the local mean plus "
+        "riser_vec_adaptive_std_factor local standard deviations over the "
+        "block, in the field's own units (the standard deviation floored at "
+        "1/255 of the field's range, so a smooth tread's noise does not "
+        "pass). mean / gaussian: the field rescaled "
+        "to 0-255 grey levels between its minimum and maximum, foreground "
+        "above the local box / Gaussian mean minus riser_vec_adaptive_C "
+        "(cv::adaptiveThreshold). With a heavy upper tail the rescaling "
+        "squeezes the treads into a few grey levels and 'above the local mean' "
+        "picks up noise across them, which breaks risers into short pieces.",
         "Riser finder (find_risers)", "param", ""};
+
+    float_default_map["riser_vec_adaptive_std_factor"] = 0.5f;
+    help_map["riser_vec_adaptive_std_factor"] = {"float","0.5",
+        "Local standard deviations above the local mean for the mean_std "
+        "threshold.",
+        "Larger is stricter.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
 
     int_default_map["riser_vec_adaptive_block_size_pixels"] = 51;
     help_map["riser_vec_adaptive_block_size_pixels"] = {"int","51",
@@ -1413,16 +1451,19 @@ int main(int argc, char* argv[])
 
     float_default_map["riser_vec_adaptive_C"] = 0.0f;
     help_map["riser_vec_adaptive_C"] = {"float","0.0",
-        "Constant subtracted from the local mean before thresholding.",
-        "Threshold = local_mean - C. 0 = foreground where the curvature is "
-        "above the local mean. Negative = stricter.",
-        "Riser finder (find_risers)", "param", ""};
+        "Offset (grey levels) for the mean and gaussian thresholds.",
+        "In grey levels of the field rescaled to 0-255 between its minimum and "
+        "maximum, rounded up to an integer: foreground where grey level > "
+        "local mean - ceil(C). Negative = stricter; any C in (-1, 0] acts as "
+        "0. Not used by mean_std.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
 
     float_default_map["riser_vec_adaptive_gaussian_sigma"] = 0.0f;
     help_map["riser_vec_adaptive_gaussian_sigma"] = {"float","0.0",
-        "Sigma (pixels) of an optional Gaussian pre-blur before thresholding.",
-        "0 = no blur. A small value (e.g. 1.0) suppresses pixel-scale noise.",
-        "Riser finder (find_risers)", "param", ""};
+        "Sigma (pixels) of an optional Gaussian pre-blur before the mean and "
+        "gaussian thresholds.",
+        "0 = no blur. Applied to the 8-bit image; not used by mean_std.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
 
     float_default_map["riser_closing_radius_metres"] = 0.0f;
     help_map["riser_closing_radius_metres"] = {"float","0",
@@ -1536,7 +1577,7 @@ int main(int argc, char* argv[])
     bool_default_map["write_riser_diagnostic_rasters"] = false;
     help_map["write_riser_diagnostic_rasters"] = {"bool","false",
         "Write the riser finder's intermediate rasters.",
-        "Outputs: <write_fname>_riser_vertical_excess_curvature, "
+        "Outputs: <write_fname>_riser_edge_field (the riser_edge_metric field), "
         "_riser_adaptive_binary, _riser_skeleton and, under astar, "
         "_riser_gap_closing (pixels added by bridges).",
         "Riser finder (find_risers)", "switch", ""};
@@ -3359,8 +3400,11 @@ int main(int argc, char* argv[])
         {
             lsdtt::riser_request rq;
             lsdtt::vec_skeleton_request& vsr = rq.skeleton;
+            vsr.edge_metric = lsdtt::parse_skeleton_edge_metric(sf.at("riser_edge_metric"));
+            vsr.hillshade_n_directions      = ifs.at("multidirectional_hillshade_n_directions");
             vsr.polyfit_lambda_metres       = static_cast<double>(ff.at("riser_polyfit_lambda_metres"));
             vsr.adaptive_method             = sf.at("riser_vec_adaptive_method");
+            vsr.adaptive_std_factor         = static_cast<double>(ff.at("riser_vec_adaptive_std_factor"));
             vsr.adaptive_block_size         = ifs.at("riser_vec_adaptive_block_size_pixels");
             vsr.adaptive_C                  = static_cast<double>(ff.at("riser_vec_adaptive_C"));
             vsr.adaptive_gaussian_sigma     = static_cast<double>(ff.at("riser_vec_adaptive_gaussian_sigma"));
@@ -3573,8 +3617,7 @@ int main(int argc, char* argv[])
                     std::cout << "Writing: " << o << "\n";
                     loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
                 };
-                write(result.skeleton.vertical_excess_curvature,
-                      "_riser_vertical_excess_curvature");
+                write(result.skeleton.edge_field, "_riser_edge_field");
                 write(result.skeleton.adaptive_binary, "_riser_adaptive_binary");
                 write(result.skeleton.skeleton, "_riser_skeleton");
                 if (rq.gap_closing == lsdtt::riser_gap_closing_choice::astar)

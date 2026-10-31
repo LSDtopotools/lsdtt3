@@ -83,12 +83,50 @@ elevation_connect_result connect_skeleton_by_elevation(
 
 
 // =============================================================================
+// skeleton_edge_metric
+//
+// The field find_vec_skeleton thresholds (find_risers riser_edge_metric). All
+// are high on a riser and low on a tread:
+//   vertical_excess_curvature  k_v - k_min from the polyfit (the original)
+//   curvedness                 sqrt((k_max^2 + k_min^2) / 2) from the polyfit
+//   maximum_curvature          |k_max| from the polyfit
+//   multidirectional_hillshade the mean hillshade over hillshade_n_directions
+//                              azimuths, negated so that dark (steep) is high;
+//                              3x3 on the DEM, no polyfit
+// =============================================================================
+enum class skeleton_edge_metric
+{
+    vertical_excess_curvature,
+    curvedness,
+    maximum_curvature,
+    multidirectional_hillshade
+};
+
+// Throws std::invalid_argument on an unknown name.
+skeleton_edge_metric parse_skeleton_edge_metric(const std::string& name);
+
+
+// =============================================================================
 // vec_skeleton_request / vec_skeleton_result
 //
-// Slope break detection using adaptive thresholding of vertical_excess_curvature.
-// Replaces the progressive Canny annealing pipeline with:
-//   1. Direct polyfit -> vertical_excess_curvature masked to flat pixels
-//   2. Adaptive threshold (mean or Gaussian) -> binary mask
+// Slope break detection by adaptive thresholding of an edge field (by default
+// vertical_excess_curvature). Replaces the progressive Canny annealing
+// pipeline with:
+//   1. The edge field (skeleton_edge_metric) masked to flat pixels
+//   2. Adaptive threshold -> binary mask:
+//        mean_std  foreground where the field exceeds the local mean plus
+//                  adaptive_std_factor local standard deviations, both over
+//                  the valid cells of the adaptive_block_size square, in the
+//                  field's own units; the sd is floored at one 8-bit grey
+//                  level, (max - min) / 255, so a smooth tread's rounding
+//                  noise does not pass
+//        mean, gaussian  the field rescaled to 0-255 grey levels between its
+//                  minimum and maximum, foreground where the grey level
+//                  exceeds the local (box or Gaussian) mean minus adaptive_C,
+//                  C in grey levels rounded up to an integer
+//                  (cv::adaptiveThreshold). A heavy upper tail squeezes the
+//                  treads into a few grey levels, where "above the local mean"
+//                  is noise.
 //   3. Optional morphological closing -> seal small gaps before thinning
 //   4. Zhang-Suen thinning -> 1-pixel skeleton
 //   5. Spur pruning and component filtering
@@ -98,13 +136,16 @@ elevation_connect_result connect_skeleton_by_elevation(
 // =============================================================================
 struct vec_skeleton_request
 {
-    double      polyfit_lambda_metres    = 100.0;
+    skeleton_edge_metric edge_metric = skeleton_edge_metric::vertical_excess_curvature;
+    double      polyfit_lambda_metres    = 100.0;      // polyfit metrics only
+    int         hillshade_n_directions   = 16;         // multidirectional_hillshade
 
     // Adaptive thresholding
-    std::string adaptive_method          = "gaussian"; // "mean" or "gaussian"
+    std::string adaptive_method          = "mean_std"; // "mean_std", "mean" or "gaussian"
     int         adaptive_block_size      = 51;         // pixels, must be odd >= 3
-    double      adaptive_C               = 0.0;
-    double      adaptive_gaussian_sigma  = 0.0;        // pre-blur; 0 = none
+    double      adaptive_std_factor      = 0.5;        // mean_std only
+    double      adaptive_C               = 0.0;        // mean / gaussian only, grey levels
+    double      adaptive_gaussian_sigma  = 0.0;        // mean / gaussian pre-blur; 0 = none
 
     // Optional closing of the binary mask before skeletonisation
     double closing_radius_metres = 0.0;
@@ -128,8 +169,8 @@ struct vec_skeleton_request
 
 struct vec_skeleton_result
 {
-    lsdtt_raster_cpu vertical_excess_curvature; // VEC masked to flat pixels
-    lsdtt_raster_cpu adaptive_binary;           // thresholded VEC
+    lsdtt_raster_cpu edge_field;                // the edge metric, masked to flat pixels
+    lsdtt_raster_cpu adaptive_binary;           // thresholded edge field
     lsdtt_raster_cpu skeleton;                  // Zhang-Suen skeleton
 
     // Populated when elevation_connect.search_radius_metres > 0

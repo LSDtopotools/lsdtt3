@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <queue>
 #include <stdexcept>
 #include <unordered_map>
@@ -74,6 +76,87 @@ static int count_foreground(const lsdtt_raster_cpu& r)
     return n;
 }
 
+// -----------------------------------------------------------------------------
+// parse_skeleton_edge_metric
+// -----------------------------------------------------------------------------
+skeleton_edge_metric parse_skeleton_edge_metric(const std::string& name)
+{
+    if (name == "vertical_excess_curvature")  return skeleton_edge_metric::vertical_excess_curvature;
+    if (name == "curvedness")                 return skeleton_edge_metric::curvedness;
+    if (name == "maximum_curvature")          return skeleton_edge_metric::maximum_curvature;
+    if (name == "multidirectional_hillshade") return skeleton_edge_metric::multidirectional_hillshade;
+    throw std::invalid_argument(
+        "Unknown edge metric '" + name + "': use vertical_excess_curvature, "
+        "curvedness, maximum_curvature or multidirectional_hillshade.");
+}
+
+// -----------------------------------------------------------------------------
+// threshold_local_mean_std
+//
+// Foreground (1) where the field exceeds mean + k * max(sd, sd_floor) over the
+// valid cells of the block x block square centred on it; summed-area tables of
+// the value, its square and the valid count, so the cost does not depend on
+// the block size. Computed in double: the field's own units, no rescaling.
+//
+// sd_floor = (field max - field min) / 255, one grey level of the 8-bit
+// methods. Without it the threshold has no scale: on a smooth tread the local
+// sd is rounding noise (1e-9 on a synthetic plane) and half the tread passes.
+// -----------------------------------------------------------------------------
+static lsdtt_raster_cpu threshold_local_mean_std(const lsdtt_raster_cpu& field,
+                                                 int block, double k)
+{
+    if (block < 3 || block % 2 == 0)
+        throw std::invalid_argument("threshold_local_mean_std: block must be odd and >= 3");
+    const lsdtt_raster_meta& meta = field.get_meta();
+    const int R = meta.n_rows, C = meta.n_cols, h = block / 2;
+    const std::vector<float>&   d = field.get_data();
+    const std::vector<uint8_t>& m = field.get_mask();
+    const std::size_t W = static_cast<std::size_t>(C) + 1;
+    std::vector<double> s1((static_cast<std::size_t>(R) + 1) * W, 0.0), s2(s1.size(), 0.0);
+    std::vector<std::int64_t> sn(s1.size(), 0);
+    double vmin = std::numeric_limits<double>::infinity(), vmax = -vmin;
+    for (std::size_t i = 0; i < d.size(); ++i)
+        if (m[i] && std::isfinite(d[i])) { vmin = std::min(vmin, double(d[i])); vmax = std::max(vmax, double(d[i])); }
+    const double sd_floor = (vmax > vmin) ? (vmax - vmin) / 255.0 : 0.0;
+    for (int r = 0; r < R; ++r)
+    {
+        double a1 = 0.0, a2 = 0.0;
+        std::int64_t an = 0;
+        for (int c = 0; c < C; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * C + c;
+            if (m[i] && std::isfinite(d[i])) { a1 += d[i]; a2 += double(d[i]) * d[i]; ++an; }
+            const std::size_t o = (static_cast<std::size_t>(r) + 1) * W + c + 1;
+            s1[o] = s1[o - W] + a1;
+            s2[o] = s2[o - W] + a2;
+            sn[o] = sn[o - W] + an;
+        }
+    }
+    std::vector<float> out(d.size(), 0.0f);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (int r = 0; r < R; ++r)
+    {
+        const std::size_t r0 = static_cast<std::size_t>(std::max(0, r - h));
+        const std::size_t r1 = static_cast<std::size_t>(std::min(R, r + h + 1));
+        for (int c = 0; c < C; ++c)
+        {
+            const std::size_t i = static_cast<std::size_t>(r) * C + c;
+            if (!m[i] || !std::isfinite(d[i])) continue;
+            const std::size_t c0 = static_cast<std::size_t>(std::max(0, c - h));
+            const std::size_t c1 = static_cast<std::size_t>(std::min(C, c + h + 1));
+            auto box = [&](const auto& t) {
+                return t[r1 * W + c1] - t[r0 * W + c1] - t[r1 * W + c0] + t[r0 * W + c0]; };
+            const double n = static_cast<double>(box(sn));
+            const double mean = box(s1) / n;
+            const double var  = std::max(0.0, box(s2) / n - mean * mean);
+            if (d[i] > mean + k * std::max(std::sqrt(var), sd_floor)) out[i] = 1.0f;
+        }
+    }
+    return lsdtt_raster_cpu(std::move(out), std::vector<uint8_t>(m), meta);
+}
+
 // =============================================================================
 // find_vec_skeleton
 // =============================================================================
@@ -85,25 +168,50 @@ vec_skeleton_result find_vec_skeleton(
     vec_skeleton_result result;
 
     // ------------------------------------------------------------------
-    // 1. Direct polyfit -> VEC masked to flat pixels
+    // 1. The edge field, masked to flat pixels
     // ------------------------------------------------------------------
-    std::cout << "\n--- VEC skeleton: polyfit (lambda="
-              << request.polyfit_lambda_metres << " m) ---\n";
+    lsdtt_raster_cpu field;
+    if (request.edge_metric == skeleton_edge_metric::multidirectional_hillshade)
+    {
+        std::cout << "\n--- Edge field: multidirectional hillshade ("
+                  << request.hillshade_n_directions << " directions) ---\n";
+        lsdtt_raster_cpu hs = compute_multidirectional_hillshade(
+            dem, request.hillshade_n_directions);
+        std::vector<float> v = hs.get_data();
+        for (float& x : v) x = -x;   // dark (steep) is high
+        field = lsdtt_raster_cpu(std::move(v), std::vector<uint8_t>(hs.get_mask()),
+                                 hs.get_meta());
+    }
+    else
+    {
+        polyfit_metric metric = polyfit_metric::vertical_excess_curvature;
+        const char* label = "vertical excess curvature";
+        if (request.edge_metric == skeleton_edge_metric::curvedness)
+        { metric = polyfit_metric::curvedness; label = "curvedness"; }
+        else if (request.edge_metric == skeleton_edge_metric::maximum_curvature)
+        { metric = polyfit_metric::maximum_curvature; label = "|maximum curvature|"; }
+        std::cout << "\n--- Edge field: " << label << ", polyfit (lambda="
+                  << request.polyfit_lambda_metres << " m) ---\n";
 
-    poly_fit_coeffs coeffs = direct_polyfit(
-        dem, request.polyfit_lambda_metres, request.n_threads);
+        poly_fit_coeffs coeffs = direct_polyfit(
+            dem, request.polyfit_lambda_metres, request.n_threads);
+        polyfit_metric_request pmr;
+        pmr.metrics   = { metric };
+        pmr.n_threads = request.n_threads;
+        polyfit_metric_result pmres = compute_polyfit_metrics(coeffs, pmr);
+        field = pmres.at(metric);
+        if (request.edge_metric == skeleton_edge_metric::maximum_curvature)
+        {
+            std::vector<float> v = field.get_data();
+            for (float& x : v) x = std::fabs(x);
+            field = lsdtt_raster_cpu(std::move(v), std::vector<uint8_t>(field.get_mask()),
+                                     field.get_meta());
+        }
+    }
+    result.edge_field = mask_to_flat(field, mask);
 
-    polyfit_metric_request pmr;
-    pmr.metrics   = { polyfit_metric::vertical_excess_curvature };
-    pmr.n_threads = request.n_threads;
-
-    polyfit_metric_result pmres = compute_polyfit_metrics(coeffs, pmr);
-
-    result.vertical_excess_curvature = mask_to_flat(
-        pmres.at(polyfit_metric::vertical_excess_curvature), mask);
-
-    std::cout << "  VEC valid flat pixels: "
-              << count_foreground(result.vertical_excess_curvature) << "\n";
+    std::cout << "  edge field valid flat pixels: "
+              << count_foreground(result.edge_field) << "\n";
 
     // ------------------------------------------------------------------
     // 2. Adaptive threshold -> binary mask
@@ -111,26 +219,30 @@ vec_skeleton_result find_vec_skeleton(
     std::cout << "\n--- Adaptive thresholding ---\n";
     std::cout << "  method     : " << request.adaptive_method << "\n";
     std::cout << "  block size : " << request.adaptive_block_size << " px\n";
-    std::cout << "  C          : " << request.adaptive_C << "\n";
-    std::cout << "  pre-blur sigma : " << request.adaptive_gaussian_sigma << "\n";
 
-    if (request.adaptive_method == "mean")
+    if (request.adaptive_method == "mean_std")
     {
-        result.adaptive_binary = image_ops_cpu::threshold_adaptive_mean(
-            result.vertical_excess_curvature,
-            request.adaptive_block_size,
-            request.adaptive_C,
-            request.adaptive_gaussian_sigma,
-            request.n_threads);
+        std::cout << "  std factor : " << request.adaptive_std_factor << "\n";
+        result.adaptive_binary = threshold_local_mean_std(
+            result.edge_field, request.adaptive_block_size, request.adaptive_std_factor);
+    }
+    else if (request.adaptive_method == "mean" || request.adaptive_method == "gaussian")
+    {
+        std::cout << "  C          : " << request.adaptive_C << " grey levels\n";
+        std::cout << "  pre-blur sigma : " << request.adaptive_gaussian_sigma << "\n";
+        result.adaptive_binary = (request.adaptive_method == "mean")
+            ? image_ops_cpu::threshold_adaptive_mean(
+                  result.edge_field, request.adaptive_block_size, request.adaptive_C,
+                  request.adaptive_gaussian_sigma, request.n_threads)
+            : image_ops_cpu::threshold_adaptive_gaussian(
+                  result.edge_field, request.adaptive_block_size, request.adaptive_C,
+                  request.adaptive_gaussian_sigma, request.n_threads);
     }
     else
     {
-        result.adaptive_binary = image_ops_cpu::threshold_adaptive_gaussian(
-            result.vertical_excess_curvature,
-            request.adaptive_block_size,
-            request.adaptive_C,
-            request.adaptive_gaussian_sigma,
-            request.n_threads);
+        throw std::invalid_argument("find_vec_skeleton: adaptive_method '" +
+                                    request.adaptive_method +
+                                    "' is not mean_std, mean or gaussian.");
     }
 
     std::cout << "  adaptive_binary foreground pixels: "

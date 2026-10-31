@@ -2570,7 +2570,7 @@ add_lsdtt_cli_smoke_test(
     --expect ffr_riser_segments.fgb
     --expect ffr_riser_endpoints.fgb
     --expect ffr_riser_gap_closing.tif
-    --expect ffr_riser_vertical_excess_curvature.tif
+    --expect ffr_riser_edge_field.tif
     --expect-raster-values ffr_riser_centreline.tif:0,1
     --expect-vector-feature-min ffr_riser_segments.fgb:18
     --stdout-contains "Risers kept          : 18"
@@ -2583,11 +2583,14 @@ lsdtt_set_tests_properties(rigorous_feature_finder_risers_staircase PROPERTIES
 # mapped lines, scored in the northern half (staircase_mapped_extent_north).
 # The finder's line sits 2-3 cells (20-30 m) down onto the lower tread, at the
 # foot of the riser where the 100 m polyfit puts the curvature peak, and the
-# boundary line burns on one side of the step: the left flank is 20 m off,
-# the right flank 30 m. At 20 m only the left flank matches (recall 297/600);
-# at 30 m both do except across the three graded gaps (537/600). The
-# unmatched detections are the gaps' real up- and down-valley scarps, which
-# the map does not draw (precision 297/905, 513/905).
+# boundary line burns on one side of the step. The unmatched detections are
+# the graded gaps' real up- and down-valley scarps, which the map does not
+# draw. Pinned 2026-10-31 for the mean_std threshold (k = 0.5), the new
+# default: 788 detected cells (905 under the 8-bit gaussian threshold);
+# at 20 m precision 307/788, recall 307/600 (gaussian: 297/905, 297/600); at
+# 30 m precision 423/788, recall 444/600 (gaussian: 513/905, 537/600). The
+# narrower binary puts the skeleton nearer the curvature peak, further from
+# the mapped line on the 30 m flank.
 add_lsdtt_cli_smoke_test(
     rigorous_feature_finder_risers_mapped
     lsdtt-feature-finder
@@ -2596,8 +2599,8 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
     --expect ffrm_mapped_risers.tif
     --expect-raster-values ffrm_mapped_risers.tif:0,1
-    --stdout-contains "Mapped risers (extent, 20 m): precision 0.328177 (297/905 cells), recall 0.495 (297/600 cells)"
-    --expect-file-contains "ffrm_mapped_riser_scores.csv:extent,20,10,30000,905,297,600,297,"
+    --stdout-contains "Mapped risers (extent, 20 m): precision 0.389594 (307/788 cells), recall 0.511667 (307/600 cells)"
+    --expect-file-contains "ffrm_mapped_riser_scores.csv:extent,20,10,30000,788,307,600,307,"
 )
 lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -2608,7 +2611,7 @@ add_lsdtt_cli_smoke_test(
     feature_finder_risers_mapped_30m.param.in
     ffrm30_mapped_riser_scores.csv
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
-    --stdout-contains "Mapped risers (extent, 30 m): precision 0.566851 (513/905 cells), recall 0.895 (537/600 cells)"
+    --stdout-contains "Mapped risers (extent, 30 m): precision 0.536802 (423/788 cells), recall 0.74 (444/600 cells)"
 )
 lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped_30m PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
