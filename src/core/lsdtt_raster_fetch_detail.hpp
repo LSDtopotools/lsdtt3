@@ -92,6 +92,37 @@ bool wcs_stage_response(const lsdtt_dem_source_info& info,
                         const std::string&           out_path,
                         std::string&                 error);
 
+// ---- Grid-keyed buckets (catalogue rows with a grid_base_url) ----
+
+// The NZTopo50 sheet ("BQ31") holding an NZTM2000 point; empty outside the
+// sheet grid. Sheets are 24 km (E) x 36 km (N): column c spans
+// x = 1012000 + 24000 (c - 1), row pair r (24 letters, no I or O; AS is the
+// first row) spans y = 6234000 - 36000 (r - AS) downwards.
+std::string nztopo50_sheet(double x, double y);
+
+// The Ordnance Survey grid reference of a British National Grid point:
+// digits_per_axis 1 gives the 10 km square ("NH24"), 2 the 1 km square
+// ("NG2004"). Empty outside the grid.
+std::string os_grid_reference(double easting, double northing, int digits_per_axis);
+
+// The 5 km quadrant reference ("NS14NE").
+std::string os_grid_quadrant(double easting, double northing);
+
+// The keys of one collection's tiles that intersect an extent (grid_epsg),
+// with {model}/{MODEL} filled in, in row-major order.
+std::vector<std::string> grid_keys_for_extent(
+    const lsdtt_dem_source_info::grid_collection& collection, const fetch_extent& extent,
+    const std::string& model);
+
+// The area to look for tiles in, in grid_epsg: the output area padded by
+// two output cells. Throws std::runtime_error if a transform fails.
+fetch_extent grid_search_extent(const lsdtt_fetch_options&   options,
+                                const lsdtt_dem_source_info& info,
+                                int                          target_epsg);
+
+// True if this GDAL build can decode LERC-compressed GeoTIFFs.
+bool gdal_has_lerc();
+
 // The GDALWarp argument vector. explicit_extent (target CRS) replaces -tap
 // with -te on the snapped extent; nullptr gives the Copernicus arguments.
 std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,

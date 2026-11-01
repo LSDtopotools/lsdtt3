@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -985,23 +986,27 @@ std::string xml_text_of(const std::string& xml, const std::string& tag)
 } // namespace
 
 
+namespace {
+
+// The output area (the snapped target extent, or the bbox in frame mode) as
+// an envelope in native_epsg.
+fetch_extent output_area_in(const lsdtt_fetch_options& o, int native_epsg, int target_epsg)
+{
+    if (o.use_frame || target_epsg <= 0)
+        return densified_envelope({o.west, o.south, o.east, o.north}, 4326, native_epsg);
+    const fetch_extent target =
+        target_extent_for_bbox(o.west, o.south, o.east, o.north, target_epsg, o.grid_spacing);
+    return densified_envelope(target, target_epsg, native_epsg);
+}
+
+} // namespace
+
+
 fetch_extent wcs_native_extent(const lsdtt_fetch_options&   o,
                                const lsdtt_dem_source_info& info,
                                int                          target_epsg)
 {
-    fetch_extent area;
-    if (o.use_frame || target_epsg <= 0)
-    {
-        area = densified_envelope({o.west, o.south, o.east, o.north}, 4326,
-                                  info.wcs_native_epsg);
-    }
-    else
-    {
-        const fetch_extent target =
-            target_extent_for_bbox(o.west, o.south, o.east, o.north, target_epsg,
-                                   o.grid_spacing);
-        area = densified_envelope(target, target_epsg, info.wcs_native_epsg);
-    }
+    const fetch_extent area = output_area_in(o, info.wcs_native_epsg, target_epsg);
     // Pad by the resampling kernel: two output cells, at least two native
     // pixels, plus one.
     const double p = info.wcs_pixel_metres;
@@ -1012,6 +1017,118 @@ fetch_extent wcs_native_extent(const lsdtt_fetch_options&   o,
     out.y_max = info.wcs_origin_y - std::floor((info.wcs_origin_y - area.y_max - pad) / p) * p;
     out.y_min = info.wcs_origin_y - std::ceil((info.wcs_origin_y - area.y_min + pad) / p) * p;
     return out;
+}
+
+
+std::string nztopo50_sheet(double x, double y)
+{
+    static const std::string letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";   // no I, O
+    const double col = std::floor((x - 1012000.0) / 24000.0) + 1.0;
+    const double row = std::floor((6234000.0 - y) / 36000.0) + 16.0;   // AS = 0*24 + 16
+    if (col < 1.0 || col > 99.0 || row < 0.0 || row >= 24.0 * 24.0) return "";
+    const int r = static_cast<int>(row);
+    const int c = static_cast<int>(col);
+    std::string out;
+    out += letters[static_cast<std::size_t>(r / 24)];
+    out += letters[static_cast<std::size_t>(r % 24)];
+    out += (c < 10 ? "0" : "") + std::to_string(c);
+    return out;
+}
+
+
+std::string os_grid_reference(double easting, double northing, int digits_per_axis)
+{
+    if (easting < 0.0 || northing < 0.0 || easting >= 700000.0 || northing >= 1300000.0 ||
+        digits_per_axis < 0 || digits_per_axis > 5)
+        return "";
+    static const std::string letters = "ABCDEFGHJKLMNOPQRSTUVWXYZ";   // no I
+    const int e100k = static_cast<int>(easting / 100000.0);
+    const int n100k = static_cast<int>(northing / 100000.0);
+    const int l1 = (19 - n100k) - (19 - n100k) % 5 + (e100k + 10) / 5;
+    const int l2 = (19 - n100k) * 5 % 25 + e100k % 5;
+    std::string out;
+    out += letters[static_cast<std::size_t>(l1)];
+    out += letters[static_cast<std::size_t>(l2)];
+    if (digits_per_axis > 0)
+    {
+        const double unit = std::pow(10.0, 5 - digits_per_axis);
+        const long long e = static_cast<long long>(std::floor(std::fmod(easting, 100000.0) / unit));
+        const long long n = static_cast<long long>(std::floor(std::fmod(northing, 100000.0) / unit));
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%0*lld%0*lld", digits_per_axis, e,
+                      digits_per_axis, n);
+        out += buffer;
+    }
+    return out;
+}
+
+
+std::string os_grid_quadrant(double easting, double northing)
+{
+    const std::string square = os_grid_reference(easting, northing, 1);
+    if (square.empty()) return "";
+    const bool north = std::fmod(northing, 10000.0) >= 5000.0;
+    const bool east  = std::fmod(easting, 10000.0) >= 5000.0;
+    return square + (north ? "N" : "S") + (east ? "E" : "W");
+}
+
+
+std::vector<std::string> grid_keys_for_extent(
+    const lsdtt_dem_source_info::grid_collection& c, const fetch_extent& extent,
+    const std::string& model)
+{
+    std::vector<std::string> keys;
+    if (!(c.tile_width > 0.0 && c.tile_height > 0.0)) return keys;
+    const long long i0 = static_cast<long long>(std::floor((extent.x_min - c.origin_x) / c.tile_width));
+    const long long i1 = static_cast<long long>(std::ceil((extent.x_max - c.origin_x) / c.tile_width));
+    const long long j0 = static_cast<long long>(std::floor((extent.y_min - c.origin_y) / c.tile_height));
+    const long long j1 = static_cast<long long>(std::ceil((extent.y_max - c.origin_y) / c.tile_height));
+    std::string upper = model;
+    for (char& ch : upper) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    for (long long j = j1 - 1; j >= j0; --j)
+    {
+        for (long long i = i0; i < i1; ++i)
+        {
+            const double xc = c.origin_x + (i + 0.5) * c.tile_width;
+            const double yc = c.origin_y + (j + 0.5) * c.tile_height;
+            std::string key = c.key_template;
+            bool ok = true;
+            auto fill = [&](const std::string& token, const std::string& value) {
+                const std::size_t at = key.find(token);
+                if (at == std::string::npos) return;
+                if (value.empty()) ok = false;
+                key.replace(at, token.size(), value);
+            };
+            fill("{model}", model);
+            fill("{MODEL}", upper);
+            fill("{sheet}", nztopo50_sheet(xc, yc));
+            fill("{os10}", os_grid_reference(xc, yc, 1));
+            fill("{os5}", os_grid_quadrant(xc, yc));
+            fill("{os1}", os_grid_reference(xc, yc, 2));
+            if (ok) keys.push_back(key);
+        }
+    }
+    return keys;
+}
+
+
+fetch_extent grid_search_extent(const lsdtt_fetch_options&   o,
+                                const lsdtt_dem_source_info& info,
+                                int                          target_epsg)
+{
+    fetch_extent area = output_area_in(o, info.grid_epsg, target_epsg);
+    const double pad = 2.0 * o.grid_spacing;
+    area.x_min -= pad; area.y_min -= pad; area.x_max += pad; area.y_max += pad;
+    return area;
+}
+
+
+bool gdal_has_lerc()
+{
+    GDALDriverH gtiff = GDALGetDriverByName("GTiff");
+    const char* options = gtiff ? GDALGetMetadataItem(gtiff, GDAL_DMD_CREATIONOPTIONLIST, nullptr)
+                                : nullptr;
+    return options != nullptr && std::strstr(options, "LERC") != nullptr;
 }
 
 
@@ -1506,6 +1623,8 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::pl_nmt:             return "pl_nmt";
         case lsdtt_dem_source::ca_hrdem:           return "ca_hrdem";
         case lsdtt_dem_source::ch_swissalti3d:     return "ch_swissalti3d";
+        case lsdtt_dem_source::nz_lidar:           return "nz_lidar";
+        case lsdtt_dem_source::gb_sct_lidar:       return "gb_sct_lidar";
     }
     return "unknown";
 }
@@ -1903,6 +2022,91 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         ch.stac_asset_by_gsd = true;
         ch.stac_latest_per_tile = true;
         rows.push_back(ch);
+
+        // Grid-keyed public buckets: file names computed from coordinates.
+        lsdtt_dem_source_info nz;
+        nz.id = lsdtt_dem_source::nz_lidar;
+        nz.name = "nz_lidar";
+        nz.title = "New Zealand national lidar 1 m DEM / DSM (LINZ)";
+        nz.provider = "Toitu Te Whenua Land Information New Zealand, on the AWS Open "
+                      "Data registry (nz-elevation)";
+        nz.licence_attribution =
+            "New Zealand LiDAR 1m DEM / DSM, Toitu Te Whenua Land Information New "
+            "Zealand, CC BY 4.0.";
+        nz.coverage_text = "New Zealand where lidar has been flown (nearly all of it)";
+        nz.description =
+            "LINZ national elevation: a DIGITAL TERRAIN MODEL (dtm, the default: bare "
+            "earth from airborne lidar) or a DIGITAL SURFACE MODEL (dsm) at 1 m on "
+            "NZTM2000 (EPSG:2193), in NZTopo50 sheets. Heights in metres above "
+            "NZVD2016. The files are LERC-compressed: needs a GDAL built with LERC.";
+        nz.accessed = "2026-11-01";
+        nz.native_resolutions_metres = {1.0};
+        nz.default_resolution_metres = 1.0;
+        nz.surface_models = {"dtm", "dsm"};
+        nz.default_surface_model = "dtm";
+        nz.vertical_datum = "NZVD2016";
+        nz.coverage_envelopes = {{166.0, -47.4, 178.7, -34.3}};
+        nz.native_grid_projected = true;
+        nz.grid_base_url = "https://nz-elevation.s3.ap-southeast-2.amazonaws.com/";
+        nz.grid_epsg = 2193;
+        nz.grid_model_names = {{"dtm", "dem"}};   // the bucket's folders say dem/dsm
+        nz.grid_collections = {{"new-zealand", "new-zealand/new-zealand/{model}_1m/2193/{sheet}.tiff",
+                                24000.0, 36000.0, 1012000.0, 6234000.0}};
+        nz.grid_sentinel_key = "new-zealand/new-zealand/dem_1m/2193/collection.json";
+        nz.requires_lerc = true;
+        rows.push_back(nz);
+
+        lsdtt_dem_source_info sct;
+        sct.id = lsdtt_dem_source::gb_sct_lidar;
+        sct.name = "gb_sct_lidar";
+        sct.title = "Lidar for Scotland (Scottish Remote Sensing Portal)";
+        sct.provider = "Scottish Government and partners, Scottish Remote Sensing Portal "
+                       "(srsp-open-data on AWS)";
+        sct.licence_attribution =
+            "Lidar for Scotland, Scottish Remote Sensing Portal, Open Government "
+            "Licence. Attribution differs by phase, e.g. Phase 1: Crown copyright "
+            "Scottish Government, SEPA and Scottish Water (2012); Phase 3: Crown "
+            "copyright Scottish Government, SEPA and Fugro (2020). See each phase's "
+            "record on spatialdata.gov.scot.";
+        sct.coverage_text = "parts of Scotland (survey phases 1-6 and the national "
+                            "lidar programme; patchy)";
+        sct.description =
+            "Lidar for Scotland: a DIGITAL TERRAIN MODEL (dtm, the default) or a "
+            "DIGITAL SURFACE MODEL (dsm) on the British National Grid (EPSG:27700), "
+            "composited from the survey phases: 0.5 m (phases 3-6, national "
+            "programme) over 1 m (phases 1-2), newer phases on top where they "
+            "overlap. Surveys span 2011 onwards, so dates differ across a tile "
+            "edge. Heights in metres above ODN (Newlyn).";
+        sct.accessed = "2026-11-01";
+        sct.native_resolutions_metres = {0.5};
+        sct.default_resolution_metres = 0.5;
+        sct.surface_models = {"dtm", "dsm"};
+        sct.default_surface_model = "dtm";
+        sct.vertical_datum = "ODN";
+        sct.coverage_envelopes = {{-8.7, 54.6, -0.7, 60.9}};
+        sct.native_grid_projected = true;
+        sct.grid_base_url = "https://srsp-open-data.s3.eu-west-2.amazonaws.com/";
+        sct.grid_epsg = 27700;
+        // Oldest first (phase numbers follow release order; the national
+        // programme is the newest), so newer surveys overwrite older ones.
+        sct.grid_collections = {
+            {"phase-1", "lidar/phase-1/{model}/27700/gridded/{os10}_1M_{MODEL}_PHASE1.tif",
+             10000.0, 10000.0, 0.0, 0.0},
+            {"phase-2", "lidar/phase-2/{model}/27700/gridded/{os10}_1M_{MODEL}_PHASE2.tif",
+             10000.0, 10000.0, 0.0, 0.0},
+            {"phase-3", "lidar/phase-3/{model}/27700/gridded/{os5}_50CM_{MODEL}_PHASE3.tif",
+             5000.0, 5000.0, 0.0, 0.0},
+            {"phase-4", "lidar/phase-4/{model}/27700/gridded/{os5}_50CM_{MODEL}_PHASE4.tif",
+             5000.0, 5000.0, 0.0, 0.0},
+            {"phase-5", "lidar/phase-5/{model}/27700/gridded/{os5}_50CM_{MODEL}_PHASE5.tif",
+             5000.0, 5000.0, 0.0, 0.0},
+            {"phase-6", "lidar/phase-6/{model}/27700/gridded/{os5}_50CM_{MODEL}_PHASE6.tif",
+             5000.0, 5000.0, 0.0, 0.0},
+            {"national-lidar-programme",
+             "lidar/national-lidar-programme/{model}/27700/gridded/{os1}_50cm_{MODEL}_ScotlandNationalLiDAR.tif",
+             1000.0, 1000.0, 0.0, 0.0}};
+        sct.grid_sentinel_key = "lidar/phase-1/dtm/27700/gridded/NH24_1M_DTM_PHASE1.tif";
+        rows.push_back(sct);
 
         return rows;
     }();
@@ -2603,6 +2807,13 @@ bool preflight_source(const lsdtt_fetch_options& o, std::string& error)
                 "). No data was fetched; use cop30_aws for global 30 m coverage";
         return false;
     }
+    if (info.requires_lerc && !fetch_detail::gdal_has_lerc())
+    {
+        error = info.name + " files are LERC-compressed and this GDAL build (" +
+                std::string(GDALVersionInfo("RELEASE_NAME")) + ") cannot decode LERC; "
+                "use an lsdtt3 built against a GDAL with LERC support (e.g. conda-forge)";
+        return false;
+    }
     return true;
 }
 
@@ -3010,6 +3221,96 @@ lsdtt_fetch_result fetch_wcs_source(const lsdtt_fetch_options&   options,
     return written;
 }
 
+// Grid-keyed buckets: compute the candidate file names, keep those that
+// exist (a missing file means no data there), then the common warp.
+lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
+                                     const lsdtt_dem_source_info& info,
+                                     double                       res,
+                                     const std::string&           model,
+                                     const std::string&           out_path,
+                                     lsdtt_fetch_result           result)
+{
+    std::string bucket_model = model;
+    for (const auto& entry : info.grid_model_names)
+        if (entry.first == model) bucket_model = entry.second;
+
+    std::vector<std::pair<std::string, std::string>> candidates;   // (collection, key)
+    try
+    {
+        const fetch_detail::fetch_extent area = fetch_detail::grid_search_extent(
+            options, info, options.use_frame ? 0 : result.epsg);
+        for (const auto& collection : info.grid_collections)
+            for (const std::string& key :
+                 fetch_detail::grid_keys_for_extent(collection, area, bucket_model))
+                candidates.emplace_back(collection.label, key);
+    }
+    catch (const std::exception& e)
+    {
+        return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+    }
+    if (options.max_tiles > 0 && static_cast<int>(candidates.size()) > options.max_tiles)
+    {
+        return make_error("lsdtt::fetch_dem: this area needs " +
+                          std::to_string(candidates.size()) + " " + info.name +
+                          " tiles checked, more than max_tiles (" +
+                          std::to_string(options.max_tiles) + "); raise max_tiles or "
+                          "fetch a smaller area");
+    }
+
+    std::vector<std::string> paths;
+    std::vector<std::string> collections_used;
+    for (const auto& candidate : candidates)
+    {
+        const std::string path = "/vsicurl/" + info.grid_base_url + candidate.second;
+        VSIStatBufL stat;
+        bool exists = false;
+        {
+            quiet_gdal_errors quiet;
+            exists = VSIStatExL(path.c_str(), &stat, VSI_STAT_EXISTS_FLAG) == 0;
+        }
+        if (!exists) continue;
+        paths.push_back(path);
+        result.tiles.push_back(candidate.second.substr(candidate.second.rfind('/') + 1));
+        if (std::find(collections_used.begin(), collections_used.end(), candidate.first) ==
+            collections_used.end())
+            collections_used.push_back(candidate.first);
+    }
+    if (paths.empty())
+    {
+        VSIStatBufL stat;
+        bool reachable = false;
+        {
+            quiet_gdal_errors quiet;
+            reachable = VSIStatExL(("/vsicurl/" + info.grid_base_url + info.grid_sentinel_key).c_str(),
+                                   &stat, VSI_STAT_EXISTS_FLAG) == 0;
+        }
+        if (!reachable)
+            return make_skip("lsdtt::fetch_dem: the " + info.name + " bucket is unreachable");
+        return make_error("lsdtt::fetch_dem: no " + info.name + " " + model + " tiles exist "
+                          "in this area (" + std::to_string(candidates.size()) +
+                          " checked; coverage: " + info.coverage_text + ")");
+    }
+    std::vector<fetch_detail::stac_item> envelopes;
+    for (const auto& box : info.coverage_envelopes)
+    {
+        fetch_detail::stac_item item;
+        for (int k = 0; k < 4; ++k) item.bbox[k] = box[k];
+        envelopes.push_back(item);
+    }
+    const double coverage = footprint_coverage_percent(options, envelopes);
+    if (info.grid_collections.size() > 1)
+    {
+        std::string used;
+        for (const std::string& c : collections_used) used += (used.empty() ? "" : ", ") + c;
+        result.provenance.push_back({"LSDTT_SOURCE_COLLECTIONS", used});
+        if (collections_used.size() > 1)
+            result.warnings.push_back(info.name + " output composites " + used +
+                                      " (later ones on top): survey dates and "
+                                      "resolutions differ across tile edges");
+    }
+    return warp_catalogue_files(options, info, res, model, paths, out_path, result, coverage);
+}
+
 // The catalogue path: discover the source files, warp straight from them onto
 // the snapped target grid, check the result, stamp its provenance.
 lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
@@ -3021,6 +3322,8 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
     const std::string model = resolved_surface_model(options, info);
     if (!info.wcs_url.empty())
         return fetch_wcs_source(options, info, res, model, out_path, result);
+    if (!info.grid_base_url.empty())
+        return fetch_grid_source(options, info, res, model, out_path, result);
 
     // ---- discovery: STAC search, following rel=next ----
     std::vector<fetch_detail::stac_item> items;

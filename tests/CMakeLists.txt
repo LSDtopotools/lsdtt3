@@ -6858,6 +6858,15 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_sct_lidar_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_sct_lidar_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside gb_sct_lidar coverage"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_copernicus_surface_model
     lsdtt-fetch-raster
     fetch_raster_copernicus_surface_model.param.in
@@ -6907,6 +6916,12 @@ add_test(NAME smoke_fetch_raster_help_dem_source_hrdem_swiss
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_hrdem_swiss PROPERTIES
     LABELS "smoke;cli;fetch"
     PASS_REGULAR_EXPRESSION "ca_hrdem.*CGVD2013.*ch_swissalti3d.*latest acquisition of each tile")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_grid_keyed
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_grid_keyed PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "nz_lidar.*NZVD2016.*LERC.*gb_sct_lidar.*newer phases on top")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)

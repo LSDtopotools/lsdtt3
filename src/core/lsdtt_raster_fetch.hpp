@@ -83,7 +83,9 @@ enum class lsdtt_dem_source
     es_mdt,               // IGN MDT05 5 m (Spain), WCS. No key.
     pl_nmt,               // GUGiK NMT 1 m (Poland), WCS. No key.
     ca_hrdem,             // NRCan HRDEM mosaic 1/2 m (Canada), STAC. No key.
-    ch_swissalti3d        // swisstopo swissALTI3D 0.5/2 m (Switzerland), STAC. No key.
+    ch_swissalti3d,       // swisstopo swissALTI3D 0.5/2 m (Switzerland), STAC. No key.
+    nz_lidar,             // LINZ national 1 m DEM/DSM (New Zealand), public S3. No key.
+    gb_sct_lidar          // Scottish Remote Sensing Portal lidar, public S3. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -181,6 +183,27 @@ struct lsdtt_dem_source_info
     // The service has no nodata value and returns 0 outside the country (and
     // over sea): 0 is set as nodata, so a border is not a cliff to 0 m.
     bool   wcs_zero_is_nodata = false;
+    // Grid-keyed public bucket (no catalogue): file names are computed from
+    // coordinates in grid_epsg, and a file that does not exist means no data
+    // there. Collections are listed oldest first; where they overlap the
+    // later one wins wherever it has data.
+    struct grid_collection
+    {
+        std::string label;         // "phase-3", recorded in the provenance
+        std::string key_template;  // tokens: {model} {MODEL} {sheet} {os10} {os5} {os1}
+        double      tile_width = 0.0;    // metres, easting
+        double      tile_height = 0.0;   // metres, northing
+        double      origin_x = 0.0;      // a tile corner (west edge)
+        double      origin_y = 0.0;      // a tile corner (south edge)
+    };
+    std::string grid_base_url;               // https base; a file is base + key
+    int         grid_epsg = 0;
+    std::vector<grid_collection> grid_collections;
+    // The bucket's name for a surface model, where it differs ("dtm" -> "dem").
+    std::vector<std::pair<std::string, std::string>> grid_model_names;
+    std::string grid_sentinel_key;           // a file that exists: tells "no data
+                                             // here" from "host unreachable"
+    bool requires_lerc = false;              // files are LERC-compressed
 };
 
 // The whole catalogue, in the order shown to users.

@@ -243,6 +243,9 @@ int main(int argc, char* argv[])
         "the mapping agencies' WCS services, keyless, fetched on their native grid. "
         "ca_hrdem (Canada, 1 or 2 m, dtm or dsm, patchy) and ch_swissalti3d "
         "(Switzerland, 2 or 0.5 m): national lidar models from STAC catalogues, keyless. "
+        "nz_lidar (New Zealand, 1 m, dtm or dsm; needs a GDAL with LERC) and "
+        "gb_sct_lidar (Scotland, 0.5 m over 1 m, dtm or dsm, patchy): lidar tiles "
+        "read straight from public buckets, keyless. "
         "Run -h dem_source for every source with its surface or terrain model, "
         "datum, resolutions and coverage. "
         "Any other value is an error rather than a silent substitution.",
@@ -261,8 +264,8 @@ int main(int argc, char* argv[])
     help_map["source_resolution_metres"] = {"float","0",
         "Native resolution of the product to fetch (nominal metres).",
         "0 takes the source's default product (us_3dep, arctic_arcticdem, "
-        "antarctic_rema: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources "
-        "offer one resolution each). For "
+        "antarctic_rema: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources, "
+        "nz_lidar and gb_sct_lidar offer one resolution each). For "
         "planetary_computer, 0 uses every item the search returns and a value "
         "keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). "
         "A value the source does not offer is an error listing what it offers. "

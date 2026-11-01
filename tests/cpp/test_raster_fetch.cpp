@@ -721,6 +721,17 @@ void test_dem_source_catalogue()
         }
         check("catalogue: " + info.name + " has a datum and metres",
               !info.vertical_datum.empty() && info.vertical_units == "metre");
+        if (!info.grid_base_url.empty())
+        {
+            bool templates_ok = !info.grid_collections.empty();
+            for (const auto& c : info.grid_collections)
+                if (c.key_template.find("{model}") == std::string::npos ||
+                    !(c.tile_width > 0.0 && c.tile_height > 0.0))
+                    templates_ok = false;
+            check("catalogue: " + info.name + " has its bucket access, keyed by model",
+                  templates_ok && info.grid_epsg > 0 && !info.grid_sentinel_key.empty());
+            continue;
+        }
         if (!info.wcs_url.empty())
         {
             bool every_model_served = true;
@@ -1254,6 +1265,87 @@ void test_polar_warp_offline()
     for (const char* f : {"/vsimem/polar_3413.tif", "/vsimem/polar_out.tif",
                           "/vsimem/polar_85.tif", "/vsimem/polar_85_out.tif"})
         VSIUnlink(f);
+}
+
+// Grid-keyed buckets: NZTopo50 sheets and OS grid references (truth points
+// read from the buckets' own files), key templates, pre-flight refusals.
+void test_grid_keyed_sources()
+{
+    namespace fd = lsdtt::fetch_detail;
+    using lsdtt::lsdtt_dem_source;
+    // Sheet origins (top-left) read from the LINZ files: AS21 (1492000, 6234000),
+    // BQ31 (1732000, 5442000); CC11 and BE36 from their STAC bboxes.
+    check("grid: NZTopo50 AS21 at its top-left corner",
+          fd::nztopo50_sheet(1492000.5, 6233999.5) == "AS21", fd::nztopo50_sheet(1492000.5, 6233999.5));
+    check("grid: NZTopo50 BQ31 (Wellington)", fd::nztopo50_sheet(1744000, 5424000) == "BQ31");
+    check("grid: NZTopo50 CC11 (rows skip I and O)", fd::nztopo50_sheet(1264000, 4992000) == "CC11");
+    check("grid: NZTopo50 BE36", fd::nztopo50_sheet(1864000, 5784000) == "BE36");
+    check("grid: NZTopo50 sheet edges: west of AS21 is AS20, south is AT21",
+          fd::nztopo50_sheet(1491999.5, 6233999.5) == "AS20" &&
+          fd::nztopo50_sheet(1492000.5, 6197999.5) == "AT21");
+    // OS references, from the SRSP files' own origins.
+    check("grid: OS 10 km square NH24", fd::os_grid_reference(226500, 848500, 1) == "NH24",
+          fd::os_grid_reference(226500, 848500, 1));
+    check("grid: OS 1 km square NG2004", fd::os_grid_reference(120500, 804500, 2) == "NG2004",
+          fd::os_grid_reference(120500, 804500, 2));
+    check("grid: OS 5 km quadrant NS14NE", fd::os_grid_quadrant(217500, 647500) == "NS14NE",
+          fd::os_grid_quadrant(217500, 647500));
+    check("grid: OS 100 km squares HY, HU, NB", fd::os_grid_reference(320000, 1010000, 0) == "HY" &&
+          fd::os_grid_reference(430000, 1130000, 0) == "HU" &&
+          fd::os_grid_reference(140000, 930000, 0) == "NB");
+    check("grid: outside the National Grid is empty", fd::os_grid_reference(-10, 5, 1).empty());
+
+    const auto& sct = lsdtt::dem_source_info(lsdtt_dem_source::gb_sct_lidar);
+    const auto& phase3 = sct.grid_collections[2];
+    const auto keys = fd::grid_keys_for_extent(phase3, {214000, 644000, 221000, 651000}, "dtm");
+    const std::vector<std::string> want = {
+        "NS15SW", "NS15SE", "NS25SW", "NS14NW", "NS14NE", "NS24NW", "NS14SW", "NS14SE", "NS24SW"};
+    bool keys_ok = keys.size() == want.size();
+    for (std::size_t i = 0; keys_ok && i < want.size(); ++i)
+        keys_ok = keys[i] == "lidar/phase-3/dtm/27700/gridded/" + want[i] + "_50CM_DTM_PHASE3.tif";
+    check("grid: SRSP phase-3 keys for a 7 km box, row-major from the top left", keys_ok,
+          keys.empty() ? "" : keys.front());
+    check("grid: SRSP collections oldest first, national programme last",
+          sct.grid_collections.front().label == "phase-1" &&
+          sct.grid_collections.back().label == "national-lidar-programme");
+    const auto nlp = fd::grid_keys_for_extent(sct.grid_collections.back(),
+                                              {120200, 804100, 120900, 804900}, "dsm");
+    check("grid: SRSP national programme 1 km key, DSM",
+          nlp.size() == 1 &&
+          nlp[0] == "lidar/national-lidar-programme/dsm/27700/gridded/NG2004_50cm_DSM_ScotlandNationalLiDAR.tif",
+          nlp.empty() ? "" : nlp[0]);
+    const auto& nz = lsdtt::dem_source_info(lsdtt_dem_source::nz_lidar);
+    const auto nzk = fd::grid_keys_for_extent(nz.grid_collections[0],
+                                              {1740000, 5420000, 1750000, 5430000}, "dem");
+    check("grid: LINZ key for Wellington", nzk.size() == 1 &&
+          nzk[0] == "new-zealand/new-zealand/dem_1m/2193/BQ31.tiff", nzk.empty() ? "" : nzk[0]);
+    check("grid: LINZ dtm is the bucket's dem folder",
+          nz.grid_model_names.size() == 1 && nz.grid_model_names[0].first == "dtm" &&
+          nz.grid_model_names[0].second == "dem");
+
+    auto refused = [](const lsdtt::lsdtt_fetch_result& r, const std::string& part) {
+        return !r.ok && !r.skipped && contains(r.message, part);
+    };
+    lsdtt::lsdtt_fetch_options o;
+    o.source = lsdtt_dem_source::gb_sct_lidar;
+    o.west = 2.30; o.south = 48.80; o.east = 2.35; o.north = 48.85;
+    o.grid_spacing = 1.0;
+    auto r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("grid: Scottish lidar over Paris is refused",
+          refused(r, "outside gb_sct_lidar coverage"), r.message);
+    o.source = lsdtt_dem_source::nz_lidar;
+    o.west = 174.75; o.south = -41.30; o.east = 174.78; o.north = -41.28;
+    o.source_resolution_metres = 2.0;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("grid: LINZ offers 1 m only (checked before the codec)",
+          refused(r, "nz_lidar offers 1 m"), r.message);
+    if (!fd::gdal_has_lerc())
+    {
+        o.source_resolution_metres = 0.0;
+        r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+        check("grid: without LERC in GDAL, nz_lidar is refused before any request",
+              refused(r, "LERC"), r.message);
+    }
 }
 
 // HRDEM and swissALTI3D: asset selection, latest-per-tile, cursor paging.
@@ -1903,6 +1995,68 @@ int run_network_tests(const std::string& output_dir)
         }
     }
 
+    // ---- Grid-keyed buckets: Scotland (phase 1, inland) and New Zealand -------
+    {
+        lsdtt::lsdtt_fetch_options go;
+        go.source = lsdtt::lsdtt_dem_source::gb_sct_lidar;
+        go.west = -4.894; go.south = 57.471; go.east = -4.855; go.north = 57.494;
+        go.grid_spacing = 1.0;
+        go.size_px = 256;
+        const std::string path = output_dir + "/fetch_gb_sct_lidar_256.tif";
+        const auto g = lsdtt::fetch_dem(go, path);
+        if (g.skipped)
+        {
+            std::cout << "SKIP(gb_sct_lidar): " << g.message << "\n";
+        }
+        else
+        {
+            check("network: gb_sct_lidar fetch succeeded", g.ok, g.message);
+            const raster_content c = read_raster_content(path);
+            float lo = 1e30f, hi = -1e30f;
+            std::int64_t valid = 0;
+            for (float v : c.values)
+            {
+                if (v == -9999.0f) continue;
+                ++valid; lo = std::min(lo, v); hi = std::max(hi, v);
+            }
+            check("network: gb_sct_lidar 256 x 256 at 1 m, the phase-1 tile, plausible heights",
+                  c.ok && c.cols == 256 && c.rows == 256 && c.geotransform[1] == 1.0 &&
+                  g.tiles.size() == 1 && g.tiles[0] == "NH24_1M_DTM_PHASE1.tif" &&
+                  valid > 0 && lo > 150.0f && hi < 900.0f,
+                  join(g.tiles) + " valid " + std::to_string(valid) + " [" +
+                  std::to_string(lo) + ", " + std::to_string(hi) + "]");
+            check("network: gb_sct_lidar provenance says DTM, ODN, phase-1",
+                  metadata_item(path, "LSDTT_VERTICAL_DATUM") == "ODN" &&
+                  metadata_item(path, "LSDTT_SOURCE_COLLECTIONS") == "phase-1");
+        }
+    }
+    if (!lsdtt::fetch_detail::gdal_has_lerc())
+    {
+        std::cout << "SKIP(nz_lidar): this GDAL build has no LERC codec\n";
+    }
+    else
+    {
+        lsdtt::lsdtt_fetch_options no;
+        no.source = lsdtt::lsdtt_dem_source::nz_lidar;
+        no.west = 174.75; no.south = -41.30; no.east = 174.78; no.north = -41.28;
+        no.grid_spacing = 1.0;
+        no.size_px = 256;
+        const std::string path = output_dir + "/fetch_nz_lidar_256.tif";
+        const auto n = lsdtt::fetch_dem(no, path);
+        if (n.skipped)
+        {
+            std::cout << "SKIP(nz_lidar): " << n.message << "\n";
+        }
+        else
+        {
+            check("network: nz_lidar fetch succeeded, sheet BQ31", n.ok && n.tiles.size() == 1 &&
+                  n.tiles[0] == "BQ31.tiff", n.message + " " + join(n.tiles));
+            check("network: nz_lidar provenance says DTM, NZVD2016",
+                  metadata_item(path, "LSDTT_SURFACE_MODEL") == "DTM" &&
+                  metadata_item(path, "LSDTT_VERTICAL_DATUM") == "NZVD2016");
+        }
+    }
+
     // ---- WCS sources: one small window each ---------------------------------
     struct wcs_case
     {
@@ -2032,6 +2186,8 @@ int main(int argc, char** argv)
     test_polar_warp_offline();
     std::cout << "\n";
     test_hrdem_swiss_sources();
+    std::cout << "\n";
+    test_grid_keyed_sources();
     std::cout << "\n";
     test_wcs_sources();
     std::cout << "\n";
