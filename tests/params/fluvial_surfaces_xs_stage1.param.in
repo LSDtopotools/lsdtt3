@@ -1,0 +1,22 @@
+# Cross-section levels workflow, stage 1 of 3: lsdtt-fluvial-surfaces on the
+# staircase writes the valley mask lsdtt-valley-centreline needs. The levels
+# come from stage 2, so only the scope matters here; the valley mask is forced
+# to the whole flight (HAND <= 40 m over admitted ground).
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: xs1
+
+n_threads: 1
+write_output_format: gtiff
+
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+threshold_contributing_pixels: 500
+source_points_fname: staircase_sources.fgb
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+force_valley_hand_metres: 40
+write_valley_mask_raster: true

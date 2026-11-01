@@ -1143,7 +1143,7 @@ std::vector<lsdtt_reach_template_row> detect_reach_breaks(
     {
         throw std::runtime_error(
             "detect_reach_breaks: channel profile is empty. "
-            "Check source_points_path and cross-section extraction.");
+            "Check source_points_fname and cross-section extraction.");
     }
     
     const std::size_t n = profile.size();

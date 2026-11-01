@@ -61,12 +61,16 @@
 //   lsdtt-fluvial-surfaces -h
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
+#include <initializer_list>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -78,9 +82,16 @@
 #include "../src/core/lsdtt_true_north.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
+#include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_method_comparison_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_training_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
+#include "../src/cpu/lsdtt_surface_level_clustering_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_scope_cpu.hpp"
 #include "../src/cpu/lsdtt_flat_surface_channel_classify_cpu.hpp"
+#include "../src/core/lsdtt_stat_csv.hpp"
+#include "../src/cpu/lsdtt_floodplain_thresholds_cpu.hpp"
 #include "../src/cpu/lsdtt_proximity_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_binary_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
@@ -88,6 +99,9 @@
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_reference_field_ladder_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_cross_sections_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_width_network_cpu.hpp"
+#include "../src/cpu/lsdtt_valley_relative_elevation_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
 
 static const std::string k_status    = "experimental";
@@ -153,6 +167,131 @@ int main(int argc, char* argv[])
         "across drives (a common WSL2 situation).",
         "General","io",""};
 
+    // --- Method: a preset for the stage parameters ---
+    // Every stage parameter defaults to "preset" and takes the preset's value
+    // unless the parameter file names it; the run log says which is which.
+    string_default_map["fluvial_surface_algorithm_choice"] = "ladder";
+    help_map["fluvial_surface_algorithm_choice"] = {"string","ladder",
+        "Method preset: ladder, clubb2017 or cross_section_levels.",
+        "Fills every stage parameter left at `preset`. ladder (default): the "
+        "admitted ground (flat_mask_fname, or the built-in relief admission) "
+        "is banded by a data-driven ladder on HAND, components labelled within "
+        "each band. clubb2017: Clubb et al. (2017, Earth Surf. Dynam. "
+        "5:369-385) - floodplain where HAND above a Strahler-order channel and "
+        "gradient are both below bounds read off quantile-quantile plots, "
+        "floodplain patches must contain a channel pixel, terraces above the "
+        "floodplain bound measured from the nearest channel (swath baseline). "
+        "cross_section_levels: the ladder, but with the levels read from "
+        "supplied_levels_fname (normally <stem>_cross_section_levels.csv from "
+        "lsdtt-valley-centreline) instead of found. "
+        "Any stage named in the parameter file overrides the preset, so e.g. "
+        "clubb2017 with level_algorithm_choice: ladder bands the Clubb "
+        "admission with the ladder. Stage values (ladder / clubb2017 / "
+        "cross_section_levels): admission_algorithm_choice flat_mask / "
+        "floodplain_thresholds / flat_mask; "
+        "floodplain_threshold_algorithm_choice fixed / qq_gaussian / fixed; "
+        "channel_definition_algorithm_choice contributing_pixels / "
+        "stream_order / contributing_pixels; level_algorithm_choice ladder / "
+        "fixed_thresholds / supplied_levels; "
+        "terrace_reference_field_algorithm_choice same / swath_baseline / "
+        "same; segmentation_algorithm_choice within_bands / whole_mask / "
+        "within_bands. Several presets in one run: list them comma-separated "
+        "with no spaces (ladder,clubb2017); each writes under "
+        "<write_fname>_<preset>, then the comparison outputs "
+        "(write_method_record_csv).",
+        "Method","switch",""};
+
+    string_default_map["level_algorithm_choice"] = "preset";
+    help_map["level_algorithm_choice"] = {"string","preset",
+        "How surfaces are put on levels: preset, ladder, fixed_thresholds or "
+        "supplied_levels.",
+        "ladder: data-driven breaks in the reference field, as many levels as "
+        "the DEM can resolve (the ladder_* parameters). fixed_thresholds: two "
+        "levels from two bounds - floodplain below max_floodplain_hand_metres "
+        "(and touching the channel), terrace above it by "
+        "min_terrace_height_above_floodplain_metres - with the bounds chosen "
+        "by floodplain_threshold_algorithm_choice. fixed_thresholds needs "
+        "reference_field_algorithm_choice hand. supplied_levels: the ladder's "
+        "machinery with the levels read from supplied_levels_fname - band "
+        "breaks at the midpoints between consecutive levels, per channel - "
+        "instead of found; band centres and the resolvability floor are still "
+        "measured and reported (status supplied in _ladder_windows.csv).",
+        "Method","param","fluvial_surface_algorithm_choice"};
+
+    string_default_map["supplied_levels_fname"] = "";
+    help_map["supplied_levels_fname"] = {"string","",
+        "Levels file for level_algorithm_choice supplied_levels, in read_path.",
+        "CSV with at least source_id and level_hand_m columns (heights above "
+        "the channel, m): <stem>_cross_section_levels.csv from "
+        "lsdtt-valley-centreline, or a file written by hand from survey. A "
+        "source_id of -1 applies to every channel. Each channel's source_id "
+        "must match this run's channel scope - use the same source points and "
+        "threshold_contributing_pixels as the run that wrote it - and a "
+        "channel with no levels stops the run, naming it.",
+        "Method","io","level_algorithm_choice"};
+
+    string_default_map["segmentation_algorithm_choice"] = "preset";
+    help_map["segmentation_algorithm_choice"] = {"string","preset",
+        "How admitted ground becomes patches: preset, within_bands or "
+        "whole_mask.",
+        "within_bands (ladder and cross_section_levels presets): connected "
+        "components inside each level, so two treads at different heights can "
+        "never share a patch. whole_mask (clubb2017 preset): components of the "
+        "admitted ground minus the risers in riser_mask_fname, each taking its "
+        "majority level. whole_mask is the riser segmentation, kept so it can "
+        "be compared: where a riser is broken (a road, a gully) the two treads "
+        "either side join into one patch on one level. Under fixed_thresholds "
+        "there is one terrace level, so whole_mask only removes the riser "
+        "pixels.",
+        "Method","param","fluvial_surface_algorithm_choice"};
+
+    string_default_map["riser_mask_fname"] = "";
+    help_map["riser_mask_fname"] = {"string","",
+        "Riser raster for segmentation_algorithm_choice whole_mask, in "
+        "read_path.",
+        "Cells > 0.5 are risers and split the admitted ground. Normally "
+        "<stem>_riser_centreline.tif from lsdtt-feature-finder (feature_type: "
+        "find_risers), on the DEM grid; gap closing there "
+        "(riser_gap_closing_algorithm_choice: astar) decides whether broken "
+        "risers still separate treads. Empty = no risers: whole_mask then "
+        "labels the admitted ground as it stands.",
+        "Method","io","segmentation_algorithm_choice"};
+
+    string_default_map["channel_definition_algorithm_choice"] = "preset";
+    help_map["channel_definition_algorithm_choice"] = {"string","preset",
+        "What counts as a channel: preset, contributing_pixels or stream_order.",
+        "contributing_pixels: the whole network down from heads at "
+        "threshold_contributing_pixels. stream_order: only its pixels of "
+        "Strahler order >= min_channel_stream_order; HAND, the floodplain "
+        "contact test and the swath baseline then all use that channel. The "
+        "threshold still decides which first-order channels exist.",
+        "Method","param","fluvial_surface_algorithm_choice"};
+
+    int_default_map["min_channel_stream_order"] = 3;
+    help_map["min_channel_stream_order"] = {"int","3",
+        "Lowest Strahler order counted as channel (stream_order only).",
+        "Clubb et al. (2017) used third order at all eight of their sites. "
+        "LSDTopoTools2 called this threshold_SO.",
+        "Method","param","channel_definition_algorithm_choice"};
+
+    string_default_map["terrace_reference_field_algorithm_choice"] = "preset";
+    help_map["terrace_reference_field_algorithm_choice"] = {"string","preset",
+        "What terrace height is measured from: preset, same or swath_baseline.",
+        "same: the main reference field (HAND). swath_baseline: elevation "
+        "above the NEAREST channel pixel within swath_half_width_metres, which "
+        "does not follow drainage, so a terrace above a confluence is "
+        "referenced to the nearest channel rather than the one its flow path "
+        "reaches (Clubb et al. 2017). fixed_thresholds only.",
+        "Method","param","fluvial_surface_algorithm_choice"};
+
+    float_default_map["swath_half_width_metres"] = 500.0f;
+    help_map["swath_half_width_metres"] = {"float","500",
+        "Half-width [m] of the swath baseline: terraces further than this from "
+        "the channel are not measured.",
+        "A HALF-width, as half_width_metres in lsdtt-swath-profile. "
+        "LSDTopoTools2's swath_width (default 1000) was a full width.",
+        "Method","param","terrace_reference_field_algorithm_choice"};
+
     // --- Admission: which ground may take part ---
     string_default_map["flat_mask_fname"] = "";
     help_map["flat_mask_fname"] = {"string","",
@@ -160,61 +299,185 @@ int main(int argc, char* argv[])
         "Cells > 0.5 are admitted. This is normally "
         "<stem>_combined_flat_mask.tif from lsdtt-flat-surface-finder, which "
         "is the intended two-step workflow: detect flat ground there, sort it "
-        "into levels here. Leave empty to use the built-in fallback admission "
-        "instead, which is coarser and is meant for a quick look rather than "
+        "into levels here. Leave empty to use the built-in relief or gradient "
+        "admission (admission_algorithm_choice) instead, which is coarser and is meant for a quick look rather than "
         "for a result you intend to publish.",
         "Admission","io",""};
 
-    string_default_map["fallback_admission_algorithm_choice"] = "relief";
-    help_map["fallback_admission_algorithm_choice"] = {"string","relief",
-        "Built-in admission when flat_mask_fname is empty: relief or slope.",
-        "relief admits cells whose local relief over "
-        "fallback_relief_window_radius_pixels is below "
-        "fallback_relief_threshold_metres. slope admits cells whose gradient "
-        "magnitude is below fallback_slope_threshold.",
-        "Admission","param","flat_mask_fname"};
+    string_default_map["admission_algorithm_choice"] = "preset";
+    help_map["admission_algorithm_choice"] = {"string","preset",
+        "Which ground is admitted: preset, flat_mask, relief, gradient or "
+        "floodplain_thresholds.",
+        "floodplain_thresholds (the clubb2017 preset): cells whose gradient, "
+        "read over floodplain_gradient_window_radius_metres, is below "
+        "max_floodplain_gradient as chosen by "
+        "floodplain_threshold_algorithm_choice, among cells with a defined "
+        "HAND. flat_mask (the ladder preset) reads flat_mask_fname, normally "
+        "<stem>_combined_flat_mask.tif from lsdtt-flat-surface-finder. relief "
+        "and gradient are a coarse built-in admission for a quick look when "
+        "there is no flat mask: relief admits cells whose local relief over "
+        "relief_window_radius_metres is below max_relief_metres; gradient "
+        "admits cells whose gradient is below max_admission_gradient. "
+        "flat_mask with flat_mask_fname empty falls back to relief, as "
+        "earlier versions did. Replaces fallback_admission_algorithm_choice "
+        "(whose `slope` is now `gradient`).",
+        "Admission","param",""};
 
-    int_default_map["fallback_relief_window_radius_pixels"] = 5;
-    help_map["fallback_relief_window_radius_pixels"] = {"int","5",
-        "Moving-window RADIUS in pixels for the fallback relief admission.",
-        "This is a radius, not a window side: 5 means an 11x11 window.  Note "
-        "that lsdtt-flat-surface-finder and lsdtt-mountain-front spell their "
-        "equivalent relief_window_side_pixels, which is a full SIDE LENGTH and "
-        "so means something different for the same number.  Only used when "
-        "flat_mask_fname is empty and the fallback is relief.",
-        "Admission","param","flat_mask_fname"};
+    // Built-in admission, shared names (lsdtt_common_parameters): the same
+    // window and bound as lsdtt-flat-surface-finder and lsdtt-mountain-front.
+    // Five cells is the radius this tool has always used (an 11 x 11 window).
+    lsdtt::declare_relief_window_parameter(float_default_map, help_map, 5,
+                                           "admission_algorithm_choice");
+    lsdtt::declare_max_relief_parameter(float_default_map, help_map, 1.0f,
+                                        "admission_algorithm_choice");
+    lsdtt::declare_max_admission_gradient_parameter(
+        float_default_map, help_map, 0.05f, "admission_algorithm_choice");
+    // Hidden storage for compatibility aliases, resolved after the DEM loads.
+    string_default_map["legacy_relief_window_radius_pixels"] = "";
+    string_default_map["legacy_fallback_admission_algorithm_choice"] = "";
 
-    float_default_map["fallback_relief_threshold_metres"] = 1.0f;
-    help_map["fallback_relief_threshold_metres"] = {"float","1.0",
-        "Local relief below which a cell is admitted as flat [m].",
-        "Only used when flat_mask_fname is empty and the fallback is relief.",
-        "Admission","param","flat_mask_fname"};
+    bool_default_map["fill_admitted_holes"] = false;
+    help_map["fill_admitted_holes"] = {"bool","false",
+        "Fill enclosed holes in the admitted ground (admission flat_mask, "
+        "relief or gradient).",
+        "Roughness - DEM noise, crops, buildings - leaves enclosed gaps in a "
+        "relief- or gradient-based admission, which become holes in every "
+        "surface built on it. A gap is filled only if it is entirely "
+        "surrounded by admitted ground. Not applied to the "
+        "floodplain_thresholds admission, whose floodplain has "
+        "fill_floodplain_holes.",
+        "Admission","param",""};
 
-    float_default_map["fallback_slope_threshold"] = 0.05f;
-    help_map["fallback_slope_threshold"] = {"float","0.05",
-        "Gradient magnitude below which a cell is admitted as flat [m/m].",
-        "Only used when flat_mask_fname is empty and the fallback is slope.",
-        "Admission","param","flat_mask_fname"};
+    // Training polygons.
+    string_default_map["training_surfaces_fname"] = "";
+    help_map["training_surfaces_fname"] = {"string","",
+        "Polygons (gpkg, fgb, shp) of floodplain and terrace drawn by hand, used "
+        "to choose the HAND thresholds.",
+        "Class values: floodplain or fp; terrace, terraceN, tN or 'terrace N' "
+        "(case and spaces ignored). Terrace numbers are ignored: the levels come "
+        "from the HAND inside the polygons. Each polygon is summarised by its "
+        "median and its 10-90 percentile core; per reach window (the ladder's "
+        "windows) the floodplain / terrace bound and the breaks between "
+        "terrace levels are chosen by best separation (Youden's J) of those "
+        "cores. clubb2017: the bound replaces the data-chosen HAND bound per "
+        "window (and the second pass is skipped). ladder: the trained breaks "
+        "are the lowest breaks and the ladder's own search runs above the top "
+        "one. A window with too little training takes the fit over all "
+        "training cells. Writes <stem>_training_levels.tif, "
+        "<stem>_training_fit.csv and <stem>_training_polygons.csv. Needs "
+        "reference_field_choice hand.",
+        "Training","param",""};
+    string_default_map["training_surfaces_layer_name"] = "";
+    help_map["training_surfaces_layer_name"] = {"string","",
+        "Layer of training_surfaces_fname; empty = the first layer.",
+        "", "Training","param",""};
+    string_default_map["training_surfaces_class_field_name"] = "class";
+    help_map["training_surfaces_class_field_name"] = {"string","class",
+        "Field of training_surfaces_fname holding each polygon's class.",
+        "", "Training","param",""};
+    float_default_map["training_spread_factor"] = 3.0f;
+    help_map["training_spread_factor"] = {"float","3.0",
+        "Absolute limit on a training polygon's HAND interquartile range, in "
+        "required gaps (kappa x E_v).",
+        "A polygon is summarised by its 25-75th percentile core, so a gully "
+        "crossed while drawing does not move it. It is 'not a single level' "
+        "(a sloping surface, or one drawn across a riser) when its "
+        "interquartile range exceeds both this limit and "
+        "training_max_relative_spread x its median HAND. Such a polygon still "
+        "counts as terrace for the floodplain / terrace bound but takes no part "
+        "in the terrace level breaks. Flagged in <stem>_training_polygons.csv.",
+        "Training","param",""};
+    float_default_map["training_max_relative_spread"] = 0.25f;
+    help_map["training_max_relative_spread"] = {"float","0.25",
+        "Relative limit on a training polygon's HAND interquartile range, as a "
+        "fraction of its median HAND.",
+        "See training_spread_factor: a polygon is flagged only when it exceeds "
+        "both. High terraces vary more in metres; this keeps them single "
+        "levels. 0 = the absolute limit alone.",
+        "Training","param",""};
+    int_default_map["min_training_cells_per_class"] = 20;
+    help_map["min_training_cells_per_class"] = {"int","20",
+        "Core cells a training population needs in a window to take part.",
+        "Below it the window falls back to the fit over all training cells, "
+        "and below it there the threshold is the data-chosen one.",
+        "Training","param",""};
 
-    int_default_map["min_component_pixels"] = 50;
-    help_map["min_component_pixels"] = {"int","50",
+    // Mapped floodplains and terraces.
+    string_default_map["mapped_surfaces_fname"] = "";
+    help_map["mapped_surfaces_fname"] = {"string","",
+        "Mapped floodplain and terrace polygons (gpkg, fgb, shp) to score every "
+        "method against.",
+        "Class values as for training_surfaces_fname: floodplain or fp; "
+        "terrace, terraceN, tN or 'terrace N' (levels are not scored yet). Any "
+        "other value stops the run before any work. Burned by cell centre only "
+        "(no edge growth), reprojected to the DEM CRS. Writes "
+        "<write_fname>_mapped_surface_class.tif (0 surveyed but neither, 1 "
+        "floodplain, 2 terrace) and <write_fname>_mapped_surface_scores.csv: "
+        "per method the 3 x 3 confusion (mapped x method) in cells, and "
+        "floodplain and terrace precision, recall and intersection-over-union. "
+        "Scored only where the DEM is valid, the method ran on HAND and the "
+        "cell is inside mapped_surfaces_extent_fname.",
+        "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_layer_name"] = "";
+    help_map["mapped_surfaces_layer_name"] = {"string","",
+        "Layer of mapped_surfaces_fname; empty = the first layer.",
+        "", "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_class_field_name"] = "class";
+    help_map["mapped_surfaces_class_field_name"] = {"string","class",
+        "Field of mapped_surfaces_fname holding each polygon's class.",
+        "", "Mapped surfaces","param",""};
+    string_default_map["mapped_surfaces_extent_fname"] = "";
+    help_map["mapped_surfaces_extent_fname"] = {"string","",
+        "Polygon(s) of the area the mapper actually surveyed.",
+        "No terrace polygon is evidence of no terrace only where someone "
+        "looked. Cells whose centre is outside these polygons are not scored. "
+        "Empty: the whole DEM counts as surveyed (the log says so).",
+        "Mapped surfaces","param",""};
+
+    int_default_map["min_band_component_pixels"] = 50;
+    help_map["min_band_component_pixels"] = {"int","50",
         "Minimum patch size in pixels, applied PER BAND.",
-        "Note the change of meaning from lsdtt-flat-surface-finder, where the "
-        "same name filters components of the whole mask. Here components are "
-        "formed inside each band, so this is a floor on the size of one "
-        "surface on one level.",
+        "Components are formed inside each band, so this is a floor on the "
+        "size of one surface on one level - not the whole-mask filter that "
+        "min_component_pixels is in lsdtt-flat-surface-finder, which is why "
+        "the name differs. Replaces min_component_pixels here.",
         "Admission","param",""};
 
     // --- Reference field ---
     string_default_map["reference_field_algorithm_choice"] = "hand";
     help_map["reference_field_algorithm_choice"] = {"string","hand",
-        "Field to band: hand or fitted_surface.",
+        "Field to band: hand, relative_elevation or fitted_surface.",
         "hand = height above the in-scope channel network; the right field for "
         "a terrace flight, where treads sit at a constant height above the "
-        "channel. fitted_surface = the signed residual to a surface fitted to "
-        "the flat ground; the right field for a fan, which climbs continuously "
-        "in HAND and would be cut into meaningless arcs by a HAND ladder.",
+        "channel. relative_elevation = height above a valley centreline's "
+        "baseline instead of above the channel the cell's flow reaches "
+        "(lsdtt-valley-centreline write_relative_elevation_raster): the "
+        "centrelines run through relative_elevation_floor_mask_fname, the "
+        "field reaches out over the whole DEM (relative_elevation_max_distance_"
+        "metres), and a terrace drained by a small local stream is still "
+        "measured from the main valley rather than from that stream. Used "
+        "wherever HAND is (bounds, ladder, training), with reach windows from "
+        "the channel pixel of each cell's centreline node. fitted_surface = "
+        "the signed residual to a surface fitted to the flat ground; the right "
+        "field for a fan, which climbs continuously in HAND and would be cut "
+        "into meaningless arcs by a HAND ladder.",
         "Reference field","switch",""};
+
+    string_default_map["relative_elevation_floor_mask_fname"] = "";
+    help_map["relative_elevation_floor_mask_fname"] = {"string","",
+        "Valley-floor mask the relative elevation's centrelines run through "
+        "(cells > 0.5), for reference_field_algorithm_choice relative_elevation.",
+        "Normally <stem>_floodplain_mask.tif from a clubb2017 run of this tool. "
+        "It must be the valley FLOOR: traced through a mask that includes the "
+        "terraces, a medial centreline runs across the terrace plain instead of "
+        "down the valley. One centreline per channel segment of the in-scope "
+        "network (longest first, tributaries ending at their parent), with the "
+        "floor half-width deciding how far each reaches up the valley sides.",
+        "Reference field","io","reference_field_algorithm_choice"};
+
+    lsdtt::declare_relative_elevation_parameters(
+        string_default_map, float_default_map, help_map,
+        "Reference field", "reference_field_algorithm_choice");
 
     string_default_map["hand_fname"] = "";
     help_map["hand_fname"] = {"string","",
@@ -298,28 +561,18 @@ int main(int argc, char* argv[])
         "than silently substituting a different one.",
         "Ladder","param",""};
 
-    int_default_map["ladder_max_level_count"] = 12;
-    help_map["ladder_max_level_count"] = {"int","12",
-        "Ceiling on the level count considered under auto selection.",
-        "A ceiling on what one reach can plausibly carry, not a storage limit. "
-        "A reach resolving more than a dozen distinct fluvial levels is more "
-        "likely over-fitting noise than recording twelve terraces. Raise it "
-        "freely for a genuine long Quaternary staircase; there is no numeric "
-        "cliff behind it.",
-        "Ladder","param",""};
 
-    string_default_map["ladder_break_algorithm_choice"] = "antimode";
-    help_map["ladder_break_algorithm_choice"] = {"string","antimode",
-        "Break finder: gap, antimode or jenks.",
-        "antimode finds dips in a smoothed log10 density and is shared with "
-        "the valley engine. jenks is Fisher-Jenks on the linear field; it "
-        "takes the level count directly and is the source of the reported "
-        "goodness-of-variance fit. NOTE: antimode bins on log10 and therefore "
-        "cannot band a field with negative values, which every "
-        "fitted_surface residual has. This tool switches to jenks "
-        "automatically when you select fitted_surface without naming a break "
-        "algorithm, and rejects the combination if you ask for it explicitly.",
-        "Ladder","param",""};
+
+    // Shared with lsdtt-valley-centreline, which clusters cross-section break
+    // levels with the same rule (lsdtt_common_parameters).
+    lsdtt::declare_ladder_selection_parameters(
+        int_default_map, float_default_map, string_default_map, help_map);
+    help_map["ladder_break_algorithm_choice"][3] +=
+        " Here: antimode bins on log10 and therefore cannot band a field with "
+        "negative values, which every fitted_surface residual has. This tool "
+        "switches to jenks automatically when you select fitted_surface "
+        "without naming a break algorithm, and rejects the combination if you "
+        "ask for it explicitly.";
 
     string_default_map["ladder_gap_break_position"] = "midpoint";
     help_map["ladder_gap_break_position"] = {"string","midpoint",
@@ -436,6 +689,21 @@ int main(int argc, char* argv[])
         "from the standard library, so the number reproduces across platforms.",
         "Ladder", "param", "ladder_k_bootstrap"};
 
+    string_default_map["ladder_unresolved_window_algorithm_choice"] =
+        "nearest_resolved";
+    help_map["ladder_unresolved_window_algorithm_choice"] = {"string",
+        "nearest_resolved",
+        "What an unresolved ladder window bands with: nearest_resolved or "
+        "single_band.",
+        "An unresolved window found no admissible levels. single_band bands "
+        "all of it as one level, so band 0 (and the floodplain, the lowest "
+        "level touching the channel) can span hundreds of metres of HAND "
+        "there. nearest_resolved borrows the breaks of the nearest window on "
+        "the same channel that found levels, so band 0 means a comparable "
+        "HAND range along the channel; the window stays 'unresolved' in "
+        "_ladder_windows.csv and breaks_from_window_m names the lender.",
+        "Ladder", "param", ""};
+
     bool_default_map["write_patch_terrain_aspect"] = false;
     help_map["write_patch_terrain_aspect"] = {"bool","false",
         "Add the terrain aspect and its resultant length to the patch table.",
@@ -458,8 +726,8 @@ int main(int argc, char* argv[])
         "sub-pixel on 30 m COP30.",
         "Outputs", "output", "write_patch_terrain_aspect"};
 
-    string_default_map["vertical_accuracy_mode"] = "fixed";
-    help_map["vertical_accuracy_mode"] = {"string","fixed",
+    string_default_map["vertical_accuracy_algorithm_choice"] = "fixed";
+    help_map["vertical_accuracy_algorithm_choice"] = {"string","fixed",
         "How E_v is arrived at: fixed or slope_dependent.",
         "Photogrammetric and InSAR DEMs degrade on slopes - TanDEM-X relative "
         "LE90 is roughly 2 m on gentle ground and 4 m on steep - so a single "
@@ -488,40 +756,27 @@ int main(int argc, char* argv[])
         "is doing nothing useful.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_break_degrees"] = 11.31f;
-    help_map["vertical_accuracy_break_degrees"] = {"float","11.31",
-        "Gradient [degrees] separating the gentle and steep E_v.",
-        "11.31 degrees is a 20 percent grade, which is where the TanDEM-X "
-        "accuracy specification splits.",
+    float_default_map["vertical_accuracy_break_gradient"] = 0.20f;
+    help_map["vertical_accuracy_break_gradient"] = {"float","0.2",
+        "Gradient [m/m] separating the gentle and steep E_v.",
+        "0.2 is a 20 percent grade, which is where the TanDEM-X accuracy "
+        "specification splits. Replaces vertical_accuracy_break_degrees; an "
+        "old value is converted with gradient = tan(angle).",
         "Ladder", "param", ""};
+    string_default_map["legacy_vertical_accuracy_break_degrees"] = "";
 
-    float_default_map["vertical_accuracy_slope_window_radius_metres"] = 0.0f;
-    help_map["vertical_accuracy_slope_window_radius_metres"] = {"float","0",
+    float_default_map["vertical_accuracy_gradient_window_radius_metres"] = 0.0f;
+    help_map["vertical_accuracy_gradient_window_radius_metres"] = {"float","0",
         "Window radius [m] of the polynomial fit the window gradient is "
         "measured over. 0 = five cells. slope_dependent only.",
         "Stated in cells by default because a length tuned on lidar is "
         "sub-pixel on 30 m COP30. This is the same measurement "
-        "lsdtt-flat-surface-finder makes for admission_slope_cap_degrees, and "
+        "lsdtt-flat-surface-finder makes for max_admission_gradient, and "
         "it is worth using the same window in both so the gradient a surface "
         "was admitted on is the gradient its E_v was read from.",
         "Ladder", "param", ""};
 
-    float_default_map["vertical_accuracy_metres"] = 0.0f;
-    help_map["vertical_accuracy_metres"] = {"float","0.0",
-        "Vertical accuracy of the DEM, E_v [m]. 0 disables the floor.",
-        "Two levels are only claimed as distinct when their band centres are "
-        "at least ladder_resolvability_kappa * E_v apart. This is metadata you "
-        "must supply: it cannot be derived from the DEM. 0 disables the check "
-        "and every window then reports resolved, carrying no instrument "
-        "guarantee at all. Note that a DEM whose vertical units are feet on a "
-        "metre grid has an effective E_v 3.28 times larger than you think.",
-        "Ladder","param",""};
 
-    float_default_map["ladder_resolvability_kappa"] = 3.0f;
-    help_map["ladder_resolvability_kappa"] = {"float","3.0",
-        "Multiplier on E_v in the resolvability floor.",
-        "Required band-centre gap = kappa * vertical_accuracy_metres.",
-        "Ladder","param",""};
 
     float_default_map["ladder_reach_window_metres"] = 0.0f;
     help_map["ladder_reach_window_metres"] = {"float","0.0",
@@ -559,21 +814,164 @@ int main(int argc, char* argv[])
         "Field values below this are clamped before taking log10.",
         "Ladder","param",""};
 
-    // --- Classification (hand field) ---
-    float_default_map["floodplain_max_height_metres"] = 1.0f;
-    help_map["floodplain_max_height_metres"] = {"float","1.0",
-        "Upper HAND bound of the floodplain class [m].",
-        "An optional absolute override on the lowest band's upper bound. Under "
-        "band-then-label the ladder already decides where one level ends and "
-        "the next begins; this is a hard cap for cases where you know the "
-        "floodplain height independently. Only meaningful for the hand field.",
-        "Classification","param",""};
+    // --- Floodplain and terrace bounds (fixed_thresholds; clubb2017) ---
+    lsdtt::declare_floodplain_threshold_algorithm_parameter(
+        string_default_map, help_map, "preset");
+    help_map["floodplain_threshold_algorithm_choice"][2] =
+        "How the floodplain bounds are chosen: preset, fixed, qq_gaussian or "
+        "cdf_divergence.";
+    lsdtt::declare_qq_threshold_parameters(
+        float_default_map, help_map, "floodplain",
+        "floodplain_threshold_algorithm_choice");
+    lsdtt::declare_max_floodplain_gradient_parameter(
+        float_default_map, help_map, 0.1f, "floodplain_threshold_algorithm_choice");
+    help_map["max_floodplain_gradient"][3] +=
+        " The gradient bound of admission floodplain_thresholds, used as given "
+        "under floodplain_threshold_algorithm_choice fixed.";
 
-    float_default_map["terrace_min_height_metres"] = 0.0f;
-    help_map["terrace_min_height_metres"] = {"float","0.0",
+    string_default_map["floodplain_bound_algorithm_choice"] = "auto";
+    help_map["floodplain_bound_algorithm_choice"] = {"string","auto",
+        "Which bounds the floodplain admission uses: auto, hand_and_gradient "
+        "or hand_only (admission floodplain_thresholds).",
+        "hand_and_gradient: HAND below its bound AND gradient below its bound, "
+        "as Clubb et al. (2017). hand_only: HAND alone - for low-relief "
+        "landscapes, where the floodplain is cut into a surface that is "
+        "itself nearly flat, and field-, road- and levee-scale relief puts "
+        "much of the true floodplain above a data-chosen gradient bound. "
+        "auto (default): hand_only when more than low_relief_min_area_fraction "
+        "of the DEM's floodplain gradient is below low_relief_max_gradient, "
+        "else hand_and_gradient. The fraction and the branch are in the run "
+        "log, and the branch is recorded in _ingested_params.param so a rerun "
+        "repeats it. On low-relief ground the fraction (below 0.1) can approach 1, "
+        "and the gradient bound can then remove the floodplain.",
+        "Floodplain","param","admission_algorithm_choice"};
+
+    float_default_map["low_relief_max_gradient"] = 0.1f;
+    help_map["low_relief_max_gradient"] = {"float","0.1",
+        "Gradient [m/m] below which a cell counts as low relief "
+        "(floodplain_bound_algorithm_choice auto).",
+        "Read on the floodplain gradient (floodplain_gradient_window_radius_"
+        "metres). Gradient depends on resolution and window, so the fraction "
+        "is too.",
+        "Floodplain","param","floodplain_bound_algorithm_choice"};
+
+    float_default_map["low_relief_min_area_fraction"] = 0.8f;
+    help_map["low_relief_min_area_fraction"] = {"float","0.8",
+        "Fraction of the DEM below low_relief_max_gradient above which auto "
+        "drops the gradient bound.", "",
+        "Floodplain","param","floodplain_bound_algorithm_choice"};
+
+    float_default_map["floodplain_gradient_window_radius_metres"] = 0.0f;
+    help_map["floodplain_gradient_window_radius_metres"] = {"float","0",
+        "Window radius [m] of the polynomial fit the floodplain gradient is "
+        "read over. 0 = three cells.",
+        "LSDTopoTools2's surface_fitting_radius (30 m by default, three cells "
+        "on 10 m data).",
+        "Floodplain","param","admission_algorithm_choice"};
+
+    bool_default_map["run_terrace_classification"] = true;
+    help_map["run_terrace_classification"] = {"bool","true",
+        "Find terraces as well as the floodplain (fixed_thresholds).",
+        "false = the floodplain alone, as LSDTopoTools2 allowed: the terrace "
+        "field (and its swath baseline, the most memory- and time-hungry "
+        "stage on a large DEM) is never built and no terrace class is "
+        "assigned. The floodplain mask is identical either way: it is decided "
+        "before the terraces and independently of them.",
+        "Floodplain","switch","level_algorithm_choice"};
+
+    float_default_map["min_terrace_height_above_floodplain_metres"] = 0.0f;
+    help_map["min_terrace_height_above_floodplain_metres"] = {"float","0",
+        "How far above the floodplain bound a terrace starts [m] "
+        "(fixed_thresholds). Must be >= 0.",
+        "Terraces are ground whose terrace field exceeds max_floodplain_hand_"
+        "metres plus this, so the two never overlap. LSDTopoTools2's "
+        "minimum_terrace_height (whose window could overlap the floodplain). "
+        "Different from min_terrace_hand_metres, the ladder's absolute bound.",
+        "Floodplain","param","level_algorithm_choice"};
+
+    float_default_map["max_terrace_height_metres"] = 0.0f;
+    help_map["max_terrace_height_metres"] = {"float","0",
+        "Highest a terrace may stand on the terrace field [m] "
+        "(fixed_thresholds). 0 = no ceiling.",
+        "With no ceiling the swath half-width and the gradient bound are the "
+        "only limits on how high terraces reach.",
+        "Floodplain","param","level_algorithm_choice"};
+
+    bool_default_map["fill_floodplain_holes"] = false;
+    help_map["fill_floodplain_holes"] = {"bool","false",
+        "Fill enclosed holes in the floodplain (fixed_thresholds).",
+        "LSDTopoTools2's fill_floodplain (lsdtt-valley-metrics), done with "
+        "binary_fill_holes rather than OpenCV: a background region not "
+        "connected to the outside of the valid DEM is a hole. Default false, "
+        "but TRUE under the clubb2017 preset unless the parameter file names "
+        "it; the value used is in the run log's stage table.",
+        "Floodplain","param","level_algorithm_choice"};
+
+    string_default_map["floodplain_second_pass_algorithm_choice"] = "none";
+    help_map["floodplain_second_pass_algorithm_choice"] = {"string","none",
+        "A second HAND bound read off the floodplain itself: none or "
+        "qq_upper_departure (fixed_thresholds).",
+        "qq_upper_departure: the QQ plot of HAND over the first-pass "
+        "floodplain cells, against the same Gaussian line, and the HIGHEST "
+        "quantile at which the data still agree with it (the mirror of the "
+        "Clubb rule, same floodplain_qq_* settings). Above it HAND departs "
+        "upward: wide flats standing above the valley floor - fans at "
+        "tributary mouths, upland basins. The floodplain is then rebuilt "
+        "with that HAND bound (same gradient bound, channel contact and size "
+        "filter) and its holes are always filled; terraces are measured from "
+        "the second-pass bound. Not part of Clubb et al. (2017). The first "
+        "pass is still written (_floodplain_first_pass_mask.tif, "
+        "_floodplain_first_pass_polygons) and the second QQ table is "
+        "<stem>_floodplain_hand_qq_second_pass.csv.",
+        "Floodplain","param","level_algorithm_choice"};
+
+    bool_default_map["write_floodplain_polygons"] = false;
+    help_map["write_floodplain_polygons"] = {"bool","false",
+        "Write the floodplain as polygons (fixed_thresholds).",
+        "Output file: <stem>_floodplain_polygons.<fgb|gpkg> (write_vector_format; "
+        "one polygon per connected floodplain component, 8-connected), and "
+        "<stem>_floodplain_first_pass_polygons.<fgb|gpkg> when a second pass "
+        "ran.",
+        "Outputs","output","level_algorithm_choice"};
+
+    bool_default_map["write_floodplain_threshold_csv"] = true;
+    help_map["write_floodplain_threshold_csv"] = {"bool","true",
+        "Write the table each data-chosen floodplain bound was read from.",
+        "Output files: <stem>_floodplain_hand_qq.csv and "
+        "<stem>_floodplain_gradient_qq.csv (qq_gaussian), or "
+        "_adaptive_cdf.csv (cdf_divergence). A threshold is only "
+        "interpretable against the distribution it was cut from.",
+        "Outputs","output","floodplain_threshold_algorithm_choice"};
+
+    bool_default_map["write_terrace_field_raster"] = false;
+    help_map["write_terrace_field_raster"] = {"bool","false",
+        "Write the terrace reference field (fixed_thresholds).",
+        "Output file: <stem>_terrace_field.tif - swath-baseline relief, or "
+        "HAND under same.",
+        "Outputs","output","terrace_reference_field_algorithm_choice"};
+
+    bool_default_map["write_floodplain_gradient_raster"] = false;
+    help_map["write_floodplain_gradient_raster"] = {"bool","false",
+        "Write the gradient raster (m/m) the floodplain bound was applied to.",
+        "Output file: <stem>_floodplain_gradient.tif.",
+        "Outputs","output","admission_algorithm_choice"};
+
+    // --- Classification (hand field) ---
+    // Shared name with lsdtt-hillslope-channel-coupling's floodplain rule.
+    lsdtt::declare_max_floodplain_hand_parameter(float_default_map, help_map,
+                                                 1.0f);
+    help_map["max_floodplain_hand_metres"][3] =
+        "Under level_algorithm_choice fixed_thresholds (clubb2017) the "
+        "floodplain HAND bound when it is not chosen from the data. Under the "
+        "ladder it is not used: the floodplain is the lowest level touching an "
+        "in-scope channel in each reach window. Only meaningful for the hand "
+        "field. Replaces floodplain_max_height_metres.";
+
+    float_default_map["min_terrace_hand_metres"] = 0.0f;
+    help_map["min_terrace_hand_metres"] = {"float","0.0",
         "Lower HAND bound of the terrace class [m].",
-        "As floodplain_max_height_metres, at the other end. Only meaningful "
-        "for the hand field.",
+        "As max_floodplain_hand_metres, at the other end. Only meaningful "
+        "for the hand field. Replaces terrace_min_height_metres.",
         "Classification","param",""};
 
     float_default_map["channel_adjacency_radius_metres"] = 0.0f;
@@ -820,21 +1218,10 @@ int main(int argc, char* argv[])
         "Set it comfortably wider than the widest valley expected.",
         "Outputs","param","valley_mask_closing_width_fraction"};
 
-    float_default_map["valley_mask_closing_radius_metres"] = 0.0f;
-    help_map["valley_mask_closing_radius_metres"] = {"float","0.0",
-        "Seal narrow gaps in the valley mask with a morphological closing [m]. "
-        "0 = off.",
-        "A dilation followed by an erosion of the same radius. It bridges thin "
-        "OPEN-ENDED gaps - the parallel slivers left by scroll bars, levees, "
-        "abandoned channels and field boundaries lying a little above the "
-        "surrounding floor - which hole filling cannot touch, because a finger "
-        "open at one end is not an enclosed hole. Because the erosion undoes "
-        "the dilation, the outer extent is left about where it was rather than "
-        "grown. Set it to roughly the width of the widest sliver you want "
-        "closed; too large and it will bridge across a genuine terrace riser.",
-        "Outputs","param","clean_valley_mask"};
+    lsdtt::declare_valley_mask_morphology_parameters(
+        float_default_map, bool_default_map, help_map,
+        "Outputs", "clean_valley_mask", true);
 
-    bool_default_map["fill_valley_mask_holes"] = true;
     help_map["fill_valley_mask_holes"] = {"bool","true",
         "Fill enclosed holes in the valley mask before writing it.",
         "A hole in the valley floor - a rise the ladder put in a higher band, a "
@@ -894,7 +1281,7 @@ int main(int argc, char* argv[])
         "tell them apart - it is a means of making connectivity discriminating, "
         "not a way to shrink the mask. The cost is that a reach narrower than "
         "2 * this + 1 pixels erodes to nothing and cannot regrow: on the "
-        "Royalton 10 m DEM a value of 4 (64 m) destroyed 30% of a valley floor "
+        "10 m DEM a value of 4 (64 m) can destroy a large part of a valley floor "
         "that connectivity alone had got right. Raise it only when two valleys "
         "are genuinely merging through a col.",
         "Outputs","param","clean_valley_mask"};
@@ -920,7 +1307,7 @@ int main(int argc, char* argv[])
         "neighbouring one across a broad col, where connectivity alone is not "
         "enough. Default FALSE here: on a meandering floodplain a great deal of "
         "genuine valley floor has no straight line to the channel that stays "
-        "inside the mask. On the Royalton 10 m DEM it removed 82% of band 0 on "
+        "inside the mask. On a 10 m DEM it can remove a large share of band 0 on "
         "its own, with every other filter disabled - which made the valley mask "
         "SMALLER than the floodplain class computed from the same field. Turn "
         "it on where two valleys meet around a col and connectivity alone "
@@ -948,12 +1335,61 @@ int main(int argc, char* argv[])
         "Output file: <stem>_floodplain_mask.tif. hand field only.",
         "Outputs","switch",""};
 
+    bool_default_map["write_method_record_csv"] = true;
+    help_map["write_method_record_csv"] = {"bool","true",
+        "Write the method record: every stage, every data-chosen bound, and "
+        "the measured counts.",
+        "Output file: <stem>_method_record.csv (method, item, value, source). "
+        "source says whether a stage came from the preset or the parameter "
+        "file, or that a value was measured. With several methods in "
+        "fluvial_surface_algorithm_choice (comma-separated, no spaces) each "
+        "has its own, and <write_fname>_method_summary.csv, "
+        "_method_comparison.csv (per pair: floodplain and terrace "
+        "intersection-over-union, agreement on classified cells, the 3 x 3 "
+        "confusion in cells and m^2) and _method_agreement_floodplain.tif / "
+        "_terrace.tif (UInt8, bit k = method k in list order) are written.",
+        "Outputs","output",""};
+
+    bool_default_map["write_surface_class_polygons"] = false;
+    help_map["write_surface_class_polygons"] = {"bool","false",
+        "Write the floodplain and terrace classes as polygons (hand field).",
+        "Output file: <stem>_surface_class_polygons.<fgb|gpkg> "
+        "(write_vector_format): one polygon per connected area of one class "
+        "(8-connected), field class (1 floodplain, 2 terrace), label_id, "
+        "pixel_count, area_m2. Outer boundaries only.",
+        "Outputs","output",""};
+
+    bool_default_map["write_surface_patch_polygons"] = false;
+    help_map["write_surface_patch_polygons"] = {"bool","false",
+        "Write every labelled patch as a polygon, with its level.",
+        "Output file: <stem>_surface_patch_polygons.<fgb|gpkg> "
+        "(write_vector_format). Fields: label_id (joins "
+        "_surface_patches.csv and _banded_labels.tif), pixel_count, area_m2, "
+        "band (the ladder level, or 0 floodplain / 1 terrace under "
+        "fixed_thresholds). Outer boundaries only: a patch enclosing another "
+        "level's patch is drawn without the hole.",
+        "Outputs","output",""};
+
     bool_default_map["write_surface_patches_csv"] = true;
     help_map["write_surface_patches_csv"] = {"bool","true",
         "Write one row per labelled patch.",
         "Output file: <stem>_surface_patches.csv with label, band, class, "
         "source_id, n_pixels, area_m2, median_field_m, aspect_degrees and "
         "window_centre_m. The join key for everything downstream.",
+        "Outputs","switch",""};
+
+    bool_default_map["write_patch_level_clusters_csv"] = true;
+    help_map["write_patch_level_clusters_csv"] = {"bool","true",
+        "Test whether the ladder's floodplain and terrace patches cluster in "
+        "HAND.",
+        "Each classified patch is one value, its median HAND. Sorted, they "
+        "split into clusters wherever neighbours are at least the required gap "
+        "(kappa x E_v) apart. The statistic is the empty fraction - the share "
+        "of the HAND range taken by such gaps - compared with the same number "
+        "of patches at uniformly random heights over the same range (999 "
+        "draws, fixed seed): p = (1 + #null >= observed) / 1000. Per ladder "
+        "window with at least 5 patches, and over all patches. Ladder only (the "
+        "hand field). Output file: <stem>_patch_level_clusters.csv.",
         "Outputs","switch",""};
 
     bool_default_map["write_surface_class_csv"] = true;
@@ -1102,21 +1538,49 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_param_parser pp(cli_args.path, cli_args.fname);
 
-    // A pure rename: the value carries across unchanged. The new spelling says
-    // what the number is - a radius, so 5 is an 11x11 window - because the same
-    // idea is a full window SIDE in lsdtt-flat-surface-finder and
-    // lsdtt-mountain-front.
+    // Renames. Since 2026-10-26 the admission and floodplain names are shared
+    // with lsdtt-flat-surface-finder, lsdtt-mountain-front and
+    // lsdtt-hillslope-channel-coupling (one name per aim), bounds take min_ /
+    // max_ prefixes, and gradients are m/m.
     pp.set_deprecated_aliases({
-        {"fallback_relief_window_pixels", "fallback_relief_window_radius_pixels"},
         {"source_snap_max_radius_pixels", "source_snap_max_search_radius_pixels"},
         {"fill_dem_for_flow_routing", "fill_before_routing"},
         {"channel_threshold_contributing_pixels",
-         "threshold_contributing_pixels"} });
+         "threshold_contributing_pixels"},
+        {"fallback_relief_threshold_metres", "max_relief_metres"},
+        {"fallback_slope_threshold", "max_admission_gradient"},
+        {"min_component_pixels", "min_band_component_pixels"},
+        {"vertical_accuracy_mode", "vertical_accuracy_algorithm_choice"},
+        {"vertical_accuracy_slope_window_radius_metres",
+         "vertical_accuracy_gradient_window_radius_metres"},
+        {"floodplain_max_height_metres", "max_floodplain_hand_metres"},
+        {"terrace_min_height_metres", "min_terrace_hand_metres"} });
     pp.set_deprecated_numeric_aliases({
         {"patch_aspect_window_metres",
          {"patch_aspect_window_radius_metres", 0.5, 0.0, true}},
         {"vertical_accuracy_slope_window_metres",
-         {"vertical_accuracy_slope_window_radius_metres", 0.5, 0.0, true}} });
+         {"vertical_accuracy_gradient_window_radius_metres", 0.5, 0.0, true}} });
+    // Old values that cannot be carried by a plain or affine alias: converted
+    // after parsing (a window in cells needs the cell size; degrees need a
+    // tangent; the old admission selector only applied without a flat mask).
+    pp.set_deprecated_compatibility_aliases({
+        {"fallback_relief_window_radius_pixels",
+         {"legacy_relief_window_radius_pixels", "relief_window_radius_metres",
+          "The radius in cells is converted to metres with the DEM cell size; "
+          "the radius used is in the run log."}},
+        {"fallback_relief_window_pixels",
+         {"legacy_relief_window_radius_pixels", "relief_window_radius_metres",
+          "The radius in cells is converted to metres with the DEM cell size; "
+          "the radius used is in the run log."}},
+        {"fallback_admission_algorithm_choice",
+         {"legacy_fallback_admission_algorithm_choice",
+          "admission_algorithm_choice",
+          "It applies only when flat_mask_fname is empty, as it always did; "
+          "its `slope` is now `gradient`."}},
+        {"vertical_accuracy_break_degrees",
+         {"legacy_vertical_accuracy_break_degrees",
+          "vertical_accuracy_break_gradient",
+          "Converted with gradient = tan(angle)."}} });
 
     try
     {
@@ -1146,23 +1610,451 @@ int main(int argc, char* argv[])
             out_format = lsdtt::raster_output_format::same_as_input;
     }
 
+    // -------------------------------------------------------------------------
+    // Method preset -> stage choices
+    //
+    // Each stage parameter defaults to "preset" and is filled from the preset
+    // unless the parameter file named it. The table printed below says which,
+    // so a run can be read back without the parameter file.
+    // -------------------------------------------------------------------------
+    // Methods to run: one preset, or several, comma-separated with
+    // no spaces (ladder,clubb2017). Each runs the whole pipeline below under
+    // its own stem, <write_fname>_<method>; stage parameters named in the file
+    // apply to every one. One method keeps the plain <write_fname> stem.
+    std::vector<std::string> method_list;
+    {
+        const std::string& ml = sf["fluvial_surface_algorithm_choice"];
+        std::size_t start = 0;
+        while (start <= ml.size())
+        {
+            const std::size_t comma = ml.find(',', start);
+            const std::string m = ml.substr(start, comma == std::string::npos
+                                                       ? std::string::npos
+                                                       : comma - start);
+            if (m.empty())
+            {
+                std::cerr << "FATAL: fluvial_surface_algorithm_choice '" << ml
+                          << "' has an empty entry.\n";
+                return 1;
+            }
+            if (std::find(method_list.begin(), method_list.end(), m) !=
+                method_list.end())
+            {
+                std::cerr << "FATAL: fluvial_surface_algorithm_choice lists '"
+                          << m << "' twice.\n";
+                return 1;
+            }
+            method_list.push_back(m);
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+        if (method_list.size() > 8)
+        {
+            std::cerr << "FATAL: at most 8 methods in one run (the agreement "
+                         "rasters hold one bit per method).\n";
+            return 1;
+        }
+        if (std::find(method_list.begin(), method_list.end(),
+                      "cross_section_levels") != method_list.end() &&
+            sf["supplied_levels_fname"].empty() &&
+            (sf["level_algorithm_choice"] == "preset" ||
+             sf["level_algorithm_choice"] == "supplied_levels"))
+        {
+            std::cerr << "FATAL: cross_section_levels needs supplied_levels_fname "
+                         "(the levels CSV from lsdtt-valley-centreline).\n";
+            return 1;
+        }
+    }
+
+    // ---- mapped surfaces: burned before any work, so a bad file
+    // fails fast. On the DEM grid, scored after the methods have run.
+    const bool mapped_on = !sf["mapped_surfaces_fname"].empty();
+    std::vector<std::uint8_t> mapped_cls, mapped_scored;
+    lsdtt::lsdtt_raster_meta  mapped_meta;
+    if (mapped_on)
+    {
+        std::cout << "--- Mapped surfaces ---\n";
+        lsdtt::lsdtt_data_loader mloader;
+        lsdtt::lsdtt_raster_cpu  grid;
+        try
+        {
+            mloader.open_raster(pp.get_full_read_path());
+            grid = lsdtt::lsdtt_raster_cpu(mloader);
+        }
+        catch (const std::exception& e)
+        { std::cerr << "FATAL: loading DEM: " << e.what() << "\n"; return 1; }
+        mapped_meta = grid.get_meta();
+        const std::size_t n = grid.get_data().size();
+        const std::string mp =
+            pp.add_read_path_if_needed(sf["mapped_surfaces_fname"]);
+        lsdtt::training_set ms;
+        try
+        {
+            ms = lsdtt::read_training_surfaces(
+                grid, mp, sf["mapped_surfaces_layer_name"],
+                sf["mapped_surfaces_class_field_name"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: mapped surfaces: " << e.what() << "\n";
+            return 1;
+        }
+        mapped_cls.assign(n, 0);
+        mapped_scored.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            mapped_scored[i] = grid.get_mask()[i] ? 1 : 0;
+            const std::int32_t f = ms.polygon_of_pixel[i];
+            if (f >= 0)
+                mapped_cls[i] = static_cast<std::uint8_t>(
+                    ms.polygons[static_cast<std::size_t>(f)].cls + 1);
+        }
+        std::int64_t n_poly[2] = {0, 0};
+        for (const auto& mpoly : ms.polygons) ++n_poly[mpoly.cls];
+        std::cout << "  " << mp << ": " << n_poly[0] << " floodplain, "
+                  << n_poly[1] << " terrace polygon(s)\n";
+        if (!sf["mapped_surfaces_extent_fname"].empty())
+        {
+            const std::string ep =
+                pp.add_read_path_if_needed(sf["mapped_surfaces_extent_fname"]);
+            lsdtt::lsdtt_raster_cpu ext;
+            try
+            {
+                ext = lsdtt::rasterise_polygons(
+                    grid, ep, lsdtt::polygon_rasterise_rule::majority_coverage);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: mapped_surfaces_extent_fname: " << e.what()
+                          << "\n";
+                return 1;
+            }
+            std::int64_t n_in = 0;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                if (!(ext.get_data()[i] > 0.5f)) mapped_scored[i] = 0;
+                if (mapped_scored[i]) ++n_in;
+            }
+            std::cout << "  surveyed extent " << ep << ": " << n_in
+                      << " cell(s) scored\n";
+        }
+        else
+            std::cout << "  no mapped_surfaces_extent_fname: the whole DEM "
+                         "counts as surveyed\n";
+        std::cout << "\n";
+    }
+
+    // What each method's run hands back for the comparison and the summary.
+    struct method_run_output
+    {
+        std::vector<std::uint8_t> cls;     // surface_class per cell (hand only)
+        std::vector<std::uint8_t> valid;
+        lsdtt::lsdtt_raster_meta  meta;
+        std::vector<std::pair<std::string, std::string>> summary;
+    };
+
+    auto run_method = [&](const std::string& method, const std::string& stem,
+                          const std::string& fname_stem,
+                          method_run_output& run_out) -> int
+    {
+    if (method != "ladder" && method != "clubb2017" &&
+        method != "cross_section_levels")
+    {
+        std::cerr << "FATAL: unknown fluvial_surface_algorithm_choice '"
+                  << method << "'. Valid: ladder, clubb2017, "
+                     "cross_section_levels.\n";
+        return 1;
+    }
+    const bool clubb_preset = (method == "clubb2017");
+    const bool xs_preset    = (method == "cross_section_levels");
+    struct stage_value { std::string key, value, source; };
+    std::vector<stage_value> stages;
+    auto resolve_stage = [&](const std::string& key,
+                             const std::string& ladder_value,
+                             const std::string& clubb_value,
+                             const std::string& xs_value) -> std::string
+    {
+        const std::string& v = sf[key];
+        if (v != "preset")
+        {
+            stages.push_back({key, v, "parameter file"});
+            return v;
+        }
+        const std::string& pv = clubb_preset ? clubb_value
+                              : xs_preset    ? xs_value
+                                             : ladder_value;
+        stages.push_back({key, pv, "preset " + method});
+        return pv;
+    };
+
+    // Admission. A legacy fallback_admission_algorithm_choice only ever chose
+    // the built-in admission when there was no flat mask, so it is honoured
+    // only then, and only under the ladder preset it predates.
+    std::string admission_choice;
+    {
+        const bool have_mask = !sf["flat_mask_fname"].empty();
+        const bool named = sf["admission_algorithm_choice"] != "preset";
+        const std::string& legacy =
+            sf["legacy_fallback_admission_algorithm_choice"];
+        if (!named && !clubb_preset && !xs_preset && !legacy.empty() &&
+            !have_mask)
+        {
+            admission_choice = (legacy == "slope") ? "gradient" : legacy;
+            stages.push_back({"admission_algorithm_choice", admission_choice,
+                              "fallback_admission_algorithm_choice"});
+            pp.record_resolved_parameter("admission_algorithm_choice",
+                                         admission_choice);
+        }
+        else
+        {
+            admission_choice = resolve_stage("admission_algorithm_choice",
+                                             "flat_mask", "floodplain_thresholds",
+                                             "flat_mask");
+        }
+        if (admission_choice != "flat_mask" && admission_choice != "relief" &&
+            admission_choice != "gradient" &&
+            admission_choice != "floodplain_thresholds")
+        {
+            std::cerr << "FATAL: unknown admission_algorithm_choice '"
+                      << admission_choice << "'. Valid: preset, flat_mask, "
+                         "relief, gradient, floodplain_thresholds.\n";
+            return 1;
+        }
+        if (have_mask && admission_choice != "flat_mask")
+        {
+            // Named in the file: a contradiction, refuse it. From a preset
+            // (clubb2017 in a list run beside ladder): that preset's admission
+            // wins for this method and the mask is for the others.
+            if (named)
+            {
+                std::cerr << "FATAL: admission_algorithm_choice is "
+                          << admission_choice << " but flat_mask_fname is set. "
+                             "Use flat_mask to read the mask, or clear "
+                             "flat_mask_fname.\n";
+                return 1;
+            }
+            std::cout << "NOTE: the " << method << " preset admits by "
+                      << admission_choice << "; flat_mask_fname is not used "
+                         "by this method.\n";
+        }
+        if (admission_choice == "flat_mask" && !have_mask)
+            admission_choice = "relief";   // no mask: the built-in fallback
+    }
+
+    const std::string level_choice =
+        resolve_stage("level_algorithm_choice", "ladder", "fixed_thresholds",
+                      "supplied_levels");
+    const std::string floodplain_threshold_choice =
+        resolve_stage("floodplain_threshold_algorithm_choice",
+                      "fixed", "qq_gaussian", "fixed");
+    const std::string channel_definition =
+        resolve_stage("channel_definition_algorithm_choice",
+                      "contributing_pixels", "stream_order",
+                      "contributing_pixels");
+    const std::string terrace_field_choice =
+        resolve_stage("terrace_reference_field_algorithm_choice",
+                      "same", "swath_baseline", "same");
+    const std::string segmentation_choice =
+        resolve_stage("segmentation_algorithm_choice",
+                      "within_bands", "whole_mask", "within_bands");
+
+    auto check_values = [&](const std::string& key, const std::string& v,
+                            std::initializer_list<const char*> valid) -> bool
+    {
+        for (const char* ok : valid) if (v == ok) return true;
+        std::cerr << "FATAL: unknown " << key << " '" << v << "'. Valid: preset";
+        for (const char* ok : valid) std::cerr << ", " << ok;
+        std::cerr << ".\n";
+        return false;
+    };
+    if (!check_values("level_algorithm_choice", level_choice,
+                      {"ladder", "fixed_thresholds", "supplied_levels"}) ||
+        !check_values("floodplain_threshold_algorithm_choice",
+                      floodplain_threshold_choice,
+                      {"fixed", "qq_gaussian", "cdf_divergence"}) ||
+        !check_values("channel_definition_algorithm_choice", channel_definition,
+                      {"contributing_pixels", "stream_order"}) ||
+        !check_values("terrace_reference_field_algorithm_choice",
+                      terrace_field_choice, {"same", "swath_baseline"}) ||
+        !check_values("segmentation_algorithm_choice", segmentation_choice,
+                      {"within_bands", "whole_mask"}))
+        return 1;
+    const bool segment_whole_mask = (segmentation_choice == "whole_mask");
+
+    // fill_floodplain_holes: false by default, true under clubb2017 unless
+    // the file names it (a bool cannot carry the "preset" sentinel).
+    bool fill_floodplain_holes = bf["fill_floodplain_holes"];
+    if (pp.parameter_supplied("fill_floodplain_holes"))
+    {
+        stages.push_back({"fill_floodplain_holes",
+                          fill_floodplain_holes ? "true" : "false",
+                          "parameter file"});
+    }
+    else if (clubb_preset)
+    {
+        fill_floodplain_holes = true;
+        stages.push_back({"fill_floodplain_holes", "true", "preset " + method});
+        pp.record_resolved_parameter("fill_floodplain_holes", "true");
+    }
+
+    const bool level_fixed     = (level_choice == "fixed_thresholds");
+    const bool level_supplied  = (level_choice == "supplied_levels");
+
+    // Supplied levels -> per-channel band breaks, read before any work so a
+    // missing or malformed file fails fast.
+    std::map<std::int32_t, std::vector<double>> supplied_breaks;
+    if (level_supplied)
+    {
+        if (sf["supplied_levels_fname"].empty())
+        {
+            std::cerr << "FATAL: level_algorithm_choice supplied_levels needs "
+                         "supplied_levels_fname.\n";
+            return 1;
+        }
+        try
+        {
+            const std::string lp =
+                pp.add_read_path_if_needed(sf["supplied_levels_fname"]);
+            const std::map<std::int32_t, std::vector<double>> levels =
+                lsdtt::read_cross_section_levels_csv(lp);
+            supplied_breaks = lsdtt::breaks_from_levels(levels);
+            std::cout << "Supplied levels: " << lp << "\n";
+            for (const auto& [sid, lv] : levels)
+            {
+                std::cout << "  channel " << sid << ":";
+                for (double v : lv) std::cout << " " << v;
+                std::cout << " m\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: supplied levels: " << e.what() << "\n";
+            return 1;
+        }
+    }
+    const bool admit_by_bounds = (admission_choice == "floodplain_thresholds");
+    // The bounds are chosen when either stage reads them.
+    const bool use_floodplain_bounds = level_fixed || admit_by_bounds;
+
+    std::cout << "--- Method: " << method << " ---\n";
+    for (const stage_value& sv : stages)
+        std::cout << "  " << std::left << std::setw(42) << sv.key << std::right
+                  << sv.value << "   (" << sv.source << ")\n";
+    std::cout << "\n";
+
+    // Parameters the resolved stages never read: say so rather than let a
+    // setting silently do nothing.
+    {
+        std::vector<std::pair<std::string, bool>> unused = {
+            {"min_channel_stream_order", channel_definition != "stream_order"},
+            {"swath_half_width_metres",
+             !(level_fixed && terrace_field_choice == "swath_baseline")},
+            {"min_terrace_height_above_floodplain_metres", !level_fixed},
+            {"max_terrace_height_metres", !level_fixed},
+            {"fill_floodplain_holes", !level_fixed},
+            {"supplied_levels_fname", !level_supplied},
+            {"training_surfaces_layer_name", sf["training_surfaces_fname"].empty()},
+            {"training_surfaces_class_field_name", sf["training_surfaces_fname"].empty()},
+            {"training_spread_factor", sf["training_surfaces_fname"].empty()},
+            {"training_max_relative_spread", sf["training_surfaces_fname"].empty()},
+            {"min_training_cells_per_class", sf["training_surfaces_fname"].empty()},
+            {"mapped_surfaces_layer_name", sf["mapped_surfaces_fname"].empty()},
+            {"mapped_surfaces_class_field_name", sf["mapped_surfaces_fname"].empty()},
+            {"mapped_surfaces_extent_fname", sf["mapped_surfaces_fname"].empty()},
+            {"run_terrace_classification", !level_fixed},
+            {"floodplain_second_pass_algorithm_choice", !level_fixed},
+            {"write_floodplain_polygons", !level_fixed},
+            {"riser_mask_fname", !segment_whole_mask},
+            {"max_floodplain_gradient", !admit_by_bounds},
+            {"floodplain_gradient_window_radius_metres", !admit_by_bounds},
+            {"floodplain_bound_algorithm_choice", !admit_by_bounds},
+            {"low_relief_max_gradient", !admit_by_bounds},
+            {"low_relief_min_area_fraction", !admit_by_bounds},
+            {"floodplain_qq_lower_percentile",
+             !(use_floodplain_bounds && floodplain_threshold_choice == "qq_gaussian")},
+            {"floodplain_qq_upper_percentile",
+             !(use_floodplain_bounds && floodplain_threshold_choice == "qq_gaussian")},
+            {"floodplain_qq_threshold_fraction",
+             !(use_floodplain_bounds && floodplain_threshold_choice == "qq_gaussian")},
+        };
+        for (const auto& [key, is_unused] : unused)
+            if (is_unused && pp.parameter_supplied(key))
+                std::cerr << "WARNING: " << key << " is set but the resolved "
+                             "method stages do not use it.\n";
+    }
+
+    // vertical_accuracy_break_gradient, or a legacy angle converted to one.
+    // Held as float, the parameter's type, so the value recorded for
+    // _ingested_params.param reads back exactly.
+    float ev_break_gradient = ff["vertical_accuracy_break_gradient"];
+    if (!sf["legacy_vertical_accuracy_break_degrees"].empty() &&
+        !pp.parameter_supplied("vertical_accuracy_break_gradient"))
+    {
+        try
+        {
+            ev_break_gradient = static_cast<float>(
+                lsdtt::gradient_from_legacy_degrees(
+                    sf["legacy_vertical_accuracy_break_degrees"],
+                    "vertical_accuracy_break_degrees"));
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        std::ostringstream os;
+        os.precision(9);
+        os << ev_break_gradient;
+        pp.record_resolved_parameter("vertical_accuracy_break_gradient",
+                                     os.str());
+        std::cout << "vertical_accuracy_break_degrees "
+                  << sf["legacy_vertical_accuracy_break_degrees"]
+                  << " -> vertical_accuracy_break_gradient " << os.str()
+                  << "\n";
+    }
+
     lsdtt::reference_field_choice field_choice =
         lsdtt::reference_field_choice::hand;
     {
         const std::string& rf = sf["reference_field_algorithm_choice"];
-        if (rf == "hand")
+        if (rf == "hand" || rf == "relative_elevation")
             field_choice = lsdtt::reference_field_choice::hand;
         else if (rf == "fitted_surface")
             field_choice = lsdtt::reference_field_choice::fitted_surface;
         else
         {
             std::cerr << "FATAL: unknown reference_field_algorithm_choice '"
-                      << rf << "'. Valid: hand, fitted_surface.\n";
+                      << rf << "'. Valid: hand, relative_elevation, "
+                         "fitted_surface.\n";
             return 1;
         }
     }
+    // relative_elevation is a height above a channel reference like HAND and
+    // is used wherever HAND is; only where the reference comes from differs.
     const bool use_hand =
         field_choice == lsdtt::reference_field_choice::hand;
+    const bool use_rer =
+        sf["reference_field_algorithm_choice"] == "relative_elevation";
+    // The height the bounds are read on, for the log.
+    const char* const height_word = use_rer ? "relative elevation" : "HAND";
+    if (use_rer && sf["relative_elevation_floor_mask_fname"].empty())
+    {
+        std::cerr << "FATAL: reference_field_algorithm_choice relative_elevation "
+                     "needs relative_elevation_floor_mask_fname (the valley "
+                     "floor, e.g. <stem>_floodplain_mask.tif from a clubb2017 "
+                     "run).\n";
+        return 1;
+    }
+    if (use_floodplain_bounds && !use_hand)
+    {
+        std::cerr << "FATAL: " << (level_fixed ? "level_algorithm_choice "
+                                                 "fixed_thresholds"
+                                               : "admission_algorithm_choice "
+                                                 "floodplain_thresholds")
+                  << " needs reference_field_algorithm_choice hand: "
+                     "floodplain bounds are heights above a channel.\n";
+        return 1;
+    }
 
     lsdtt::fitted_surface_choice fit_choice =
         lsdtt::fitted_surface_choice::cone;
@@ -1222,11 +2114,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    const std::string& ev_mode_name = sf["vertical_accuracy_mode"];
+    const std::string& ev_mode_name = sf["vertical_accuracy_algorithm_choice"];
     const bool ev_slope_dependent = (ev_mode_name == "slope_dependent");
     if (ev_mode_name != "fixed" && !ev_slope_dependent)
     {
-        std::cerr << "FATAL: unknown vertical_accuracy_mode '" << ev_mode_name
+        std::cerr << "FATAL: unknown vertical_accuracy_algorithm_choice '" << ev_mode_name
                   << "'. Valid: fixed, slope_dependent.\n";
         return 1;
     }
@@ -1236,7 +2128,7 @@ int main(int argc, char* argv[])
         const double es = static_cast<double>(ff["vertical_accuracy_steep_metres"]);
         if (!(eg > 0.0) || !(es > 0.0))
         {
-            std::cerr << "FATAL: vertical_accuracy_mode slope_dependent needs "
+            std::cerr << "FATAL: vertical_accuracy_algorithm_choice slope_dependent needs "
                          "both vertical_accuracy_gentle_metres and "
                          "vertical_accuracy_steep_metres > 0.\n";
             return 1;
@@ -1251,7 +2143,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (!ev_slope_dependent && ff["vertical_accuracy_metres"] <= 0.0f)
+    if (!level_fixed && !ev_slope_dependent && ff["vertical_accuracy_metres"] <= 0.0f)
     {
         std::cerr << "WARNING: vertical_accuracy_metres is 0, so the "
                      "resolvability floor is disabled.\n"
@@ -1343,7 +2235,6 @@ int main(int argc, char* argv[])
     const std::size_t n_pixels =
         static_cast<std::size_t>(meta.n_rows) *
         static_cast<std::size_t>(meta.n_cols);
-    const std::string stem = pp.get_full_write_path();
 
     auto load_companion_raster = [&](const std::string& fname,
                                      const char* what,
@@ -1365,13 +2256,55 @@ int main(int argc, char* argv[])
         return true;
     };
 
+    // Risers for segmentation_algorithm_choice whole_mask (1/0 on the DEM grid).
+    lsdtt::lsdtt_raster_cpu riser_mask;
+    const lsdtt::lsdtt_raster_cpu* riser_barrier = nullptr;
+    if (segment_whole_mask && !sf["riser_mask_fname"].empty())
+    {
+        lsdtt::lsdtt_raster_cpu in;
+        try
+        {
+            if (!load_companion_raster(sf["riser_mask_fname"], "riser mask", in))
+                return 1;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: loading riser mask: " << e.what() << "\n";
+            return 1;
+        }
+        std::vector<float> rd(n_pixels, 0.0f);
+        std::int64_t n_riser = 0;
+        for (std::size_t i = 0; i < n_pixels; ++i)
+            if (in.get_mask()[i] && in.get_data()[i] > 0.5f) { rd[i] = 1.0f; ++n_riser; }
+        riser_mask = lsdtt::lsdtt_raster_cpu(std::move(rd),
+                                             std::vector<uint8_t>(n_pixels, 1), meta);
+        riser_barrier = &riser_mask;
+        std::cout << "  " << n_riser << " riser cell(s)\n";
+    }
+    else if (segment_whole_mask)
+    {
+        std::cout << "segmentation whole_mask with no riser_mask_fname: the "
+                     "admitted ground is labelled as it stands.\n";
+    }
+
     // -------------------------------------------------------------------------
     // Admission: which ground may take part
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu admitted;
     {
         std::cout << "--- Admission ---\n";
-        if (!sf["flat_mask_fname"].empty())
+        if (admit_by_bounds)
+        {
+            // floodplain_thresholds: every valid cell for now. The gradient
+            // bound is read off cells with a defined HAND, so it is applied
+            // after the reference field (below).
+            std::cout << "Admission by floodplain bounds: the gradient bound "
+                         "is applied once HAND is known.\n";
+            admitted = lsdtt::lsdtt_raster_cpu(
+                std::vector<float>(n_pixels, 1.0f),
+                std::vector<uint8_t>(dem.get_mask()), meta);
+        }
+        else if (admission_choice == "flat_mask")
         {
             lsdtt::lsdtt_raster_cpu in_mask;
             try
@@ -1399,7 +2332,7 @@ int main(int argc, char* argv[])
             // No flat mask: a coarse built-in admission so the tool can be run
             // on its own for a first look. This is deliberately not as good as
             // lsdtt-flat-surface-finder's texture metrics.
-            const std::string& how = sf["fallback_admission_algorithm_choice"];
+            const std::string& how = admission_choice;
             std::cout << "No flat_mask_fname; using the built-in " << how
                       << " admission.\n"
                       << "  For a publishable result run "
@@ -1411,18 +2344,53 @@ int main(int argc, char* argv[])
 
             if (how == "relief")
             {
+                // Radius in cells: relief_window_radius_metres, or a legacy
+                // fallback_relief_window_radius_pixels, or the default 5.
+                int radius_px = 0;
+                const std::string& legacy_px =
+                    sf["legacy_relief_window_radius_pixels"];
+                try
+                {
+                    if (!legacy_px.empty() &&
+                        !pp.parameter_supplied("relief_window_radius_metres"))
+                    {
+                        std::size_t used = 0;
+                        radius_px = std::stoi(legacy_px, &used);
+                        if (used != legacy_px.size() || radius_px < 1)
+                            throw std::invalid_argument(
+                                "fallback_relief_window_radius_pixels must be "
+                                "a whole number >= 1; got '" + legacy_px + "'.");
+                        std::ostringstream os;
+                        os.precision(9);
+                        os << static_cast<float>(radius_px * meta.cell_size);
+                        pp.record_resolved_parameter(
+                            "relief_window_radius_metres", os.str());
+                    }
+                    else
+                    {
+                        radius_px = lsdtt::relief_window_radius_pixels(
+                            ff["relief_window_radius_metres"],
+                            meta.cell_size, 5);
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: " << e.what() << "\n";
+                    return 1;
+                }
                 const double radius =
-                    static_cast<double>(ip["fallback_relief_window_radius_pixels"]) *
-                    meta.cell_size;
+                    static_cast<double>(radius_px) * meta.cell_size;
+                std::cout << "  Relief window radius: " << radius_px
+                          << " cell(s) = " << radius << " m\n";
                 const lsdtt::lsdtt_raster_cpu relief =
                     lsdtt::moving_window_local_relief(dem, radius);
                 const std::vector<float>& rv = relief.get_data();
-                const float thr = ff["fallback_relief_threshold_metres"];
+                const float thr = ff["max_relief_metres"];
                 for (std::size_t i = 0; i < n_pixels; ++i)
                     if (dm[i] && std::isfinite(rv[i]) && rv[i] < thr)
                         ad[i] = 1.0f;
             }
-            else if (how == "slope")
+            else if (how == "gradient")
             {
                 const lsdtt::poly_fit_coeffs pc =
                     lsdtt::direct_polyfit(dem, 2.0 * meta.cell_size,
@@ -1433,22 +2401,35 @@ int main(int argc, char* argv[])
                     lsdtt::compute_polyfit_metrics(pc, mreq);
                 const std::vector<float>& sv =
                     mres.at(lsdtt::polyfit_metric::slope).get_data();
-                const float thr = ff["fallback_slope_threshold"];
+                const float thr = ff["max_admission_gradient"];
                 for (std::size_t i = 0; i < n_pixels; ++i)
                     if (dm[i] && std::isfinite(sv[i]) && sv[i] < thr)
                         ad[i] = 1.0f;
             }
             else
             {
-                std::cerr << "FATAL: unknown "
-                             "fallback_admission_algorithm_choice '" << how
-                          << "'. Valid: relief, slope.\n";
+                std::cerr << "FATAL: unknown admission_algorithm_choice '"
+                          << how << "'. Valid: flat_mask, relief, gradient.\n";
                 return 1;
             }
             admitted = lsdtt::lsdtt_raster_cpu(
                 std::move(ad), std::move(am), meta);
         }
 
+        // fill_admitted_holes: roughness (noise, crops, buildings) leaves
+        // enclosed gaps in a relief / gradient / flat-mask admission that
+        // become holes in every surface built on it (a flat mask on a rough
+        // 25 m DEM had about a thousand). The floodplain_thresholds admission is not filled here:
+        // its floodplain has its own fill (fill_floodplain_holes).
+        if (!admit_by_bounds && bf["fill_admitted_holes"])
+        {
+            std::int64_t before = 0, after = 0;
+            for (const float v : admitted.get_data()) if (v > 0.5f) ++before;
+            admitted = lsdtt::binary_fill_holes(admitted);
+            for (const float v : admitted.get_data()) if (v > 0.5f) ++after;
+            std::cout << "  fill_admitted_holes: " << (after - before)
+                      << " enclosed cell(s) admitted\n";
+        }
         std::int64_t n_admitted = 0;
         for (const float v : admitted.get_data()) if (v > 0.5f) ++n_admitted;
         std::cout << "  " << n_admitted << " admitted cell(s)\n\n";
@@ -1555,11 +2536,40 @@ int main(int argc, char* argv[])
                 bf["auto_detect_outlet_points"] &&
                 sf["outlet_points_fname"].empty() &&
                 !sreq.source_flats.empty();
+            if (channel_definition == "stream_order")
+            {
+                sreq.channel_definition =
+                    lsdtt::channel_definition_choice::stream_order;
+                sreq.min_stream_order = ip["min_channel_stream_order"];
+            }
 
             scope = lsdtt::resolve_channel_scope(*flow, sreq);
             scope_resolved = true;
             std::cout << "  " << scope.resolved_sources.size()
                       << " channel source(s) in scope\n";
+            if (channel_definition == "stream_order")
+            {
+                std::int64_t n_chan = 0;
+                std::int32_t max_order = 0;
+                for (std::size_t i = 0; i < scope.channel_mask.size(); ++i)
+                {
+                    if (scope.channel_mask[i]) ++n_chan;
+                    max_order = std::max(max_order, scope.stream_order[i]);
+                }
+                std::cout << "  channel = Strahler order >= "
+                          << ip["min_channel_stream_order"] << ": " << n_chan
+                          << " channel pixel(s); highest order on the network "
+                          << max_order << "\n";
+                if (n_chan == 0)
+                {
+                    std::cerr << "FATAL: no channel pixel of order >= "
+                              << ip["min_channel_stream_order"]
+                              << " (the network reaches order " << max_order
+                              << "). Lower min_channel_stream_order or "
+                                 "threshold_contributing_pixels.\n";
+                    return 1;
+                }
+            }
 
             lsdtt::channel_scope_diagnostic_request diag;
             diag.write_scope_raster    = bf["write_channel_scope_raster"];
@@ -1586,7 +2596,127 @@ int main(int argc, char* argv[])
     std::vector<std::int64_t> donor_flat;
     bool have_donors = false;
 
-    if (use_hand)
+    if (use_rer)
+    {
+        std::cout << "--- Reference field: relative elevation ---\n";
+        if (!scope_resolved)
+        {
+            std::cerr << "FATAL: no channel scope, so the relative elevation's "
+                         "centrelines cannot be built.\n";
+            return 1;
+        }
+        if (!sf["hand_fname"].empty())
+            std::cout << "  hand_fname is ignored: the field is the relative "
+                         "elevation.\n";
+        try
+        {
+            lsdtt::lsdtt_raster_cpu floor_in;
+            if (!load_companion_raster(sf["relative_elevation_floor_mask_fname"],
+                                       "valley-floor mask", floor_in))
+                return 1;
+            std::vector<float> fb(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (floor_in.get_mask()[i] && floor_in.get_data()[i] > 0.5f)
+                    fb[i] = 1.0f;
+            const lsdtt::lsdtt_raster_cpu floor(
+                std::move(fb), std::vector<uint8_t>(dem.get_mask()), meta);
+
+            lsdtt::valley_width_network_request nreq;
+            nreq.centreline = lsdtt::parse_network_centreline_choice(
+                sf["network_centreline_algorithm_choice"]);
+            nreq.window_margin_multiple = static_cast<double>(
+                ff["network_centreline_window_margin_multiple"]);
+            nreq.smoothing_width_multiple = static_cast<double>(
+                ff["network_centreline_smoothing_width_multiple"]);
+            nreq.baseline = lsdtt::parse_centreline_baseline_choice(
+                sf["centreline_baseline_algorithm_choice"]);
+            const lsdtt::valley_width_network_result net =
+                lsdtt::build_valley_width_network(routing_dem, *flow,
+                                                  scope.channel_mask, floor, nreq);
+
+            // Centrelines with baselines; priority = drainage area of each
+            // node's channel pixel, matched in downstream order. The matched
+            // channel pixels are kept: they become each cell's donor.
+            const std::vector<float> da = flow->get_drainage_area_raster().data;
+            std::vector<lsdtt::valley_rer_centreline> rc;
+            std::vector<std::vector<std::int64_t>> node_channel;
+            for (std::size_t s = 0; s < net.centrelines.channels.size(); ++s)
+            {
+                const auto& ch = net.centrelines.channels[s];
+                if (ch.centreline_flats.empty()) continue;
+                const auto& chan = net.segments[s].channel_flats;
+                lsdtt::valley_rer_centreline c;
+                c.id = ch.source_id;
+                c.flats = ch.centreline_flats;
+                c.baseline = ch.centreline_baseline_elevation;
+                std::vector<lsdtt::lsdtt_xy> pts;
+                std::vector<double> along;
+                double len = 0.0;
+                for (const std::int64_t f : c.flats)
+                {
+                    const lsdtt::lsdtt_xy q = lsdtt::cell_center_from_row_col(
+                        meta, static_cast<int>(f / meta.n_cols),
+                        static_cast<int>(f % meta.n_cols));
+                    if (!pts.empty())
+                        len += std::hypot(q.x - pts.back().x, q.y - pts.back().y);
+                    pts.push_back(q);
+                    along.push_back(len);
+                }
+                const std::vector<std::int64_t> m =
+                    lsdtt::match_points_to_channel(pts, along, len, chan, meta);
+                c.priority.assign(c.flats.size(), 0.0);
+                std::vector<std::int64_t> nc(c.flats.size(), -1);
+                for (std::size_t k = 0; k < m.size(); ++k)
+                    if (m[k] >= 0)
+                    {
+                        nc[k] = chan[static_cast<std::size_t>(m[k])];
+                        c.priority[k] = da[static_cast<std::size_t>(nc[k])];
+                    }
+                rc.push_back(std::move(c));
+                node_channel.push_back(std::move(nc));
+            }
+
+            const lsdtt::lsdtt_raster_cpu whole(
+                std::vector<float>(n_pixels, 1.0f),
+                std::vector<uint8_t>(dem.get_mask()), meta);
+            lsdtt::valley_rer_request rreq;
+            rreq.max_distance_metres =
+                static_cast<double>(ff["relative_elevation_max_distance_metres"]);
+            lsdtt::valley_rer_result rr = lsdtt::compute_valley_relative_elevation(
+                dem, floor, whole, rc, rreq);
+            std::cout << "  " << net.segments.size() << " channel segment(s), "
+                      << rc.size() << " centreline(s); " << rr.n_by_disc
+                      << " floor cell(s) by the larger-channel discs, "
+                      << rr.n_by_geodesic << " by floor-width-scaled ground "
+                         "distance, " << rr.n_unassigned << " left out\n";
+
+            // Donor = the channel pixel of the cell's centreline node, so the
+            // reach windows (and everything else keyed by a donor) work as
+            // they do for HAND.
+            donor_flat.assign(n_pixels, -1);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const std::int32_t ci = rr.owner_centreline[i];
+                if (ci < 0) continue;
+                donor_flat[i] = node_channel[static_cast<std::size_t>(ci)]
+                                            [static_cast<std::size_t>(rr.owner_node[i])];
+            }
+            reference_field = std::move(rr.relative_elevation);
+            flow_distance   = lsdtt::lsdtt_raster_cpu(
+                flow->get_distance_from_outlet_raster());
+            have_donors     = true;
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: relative elevation: " << e.what() << "\n";
+            return 1;
+        }
+        if (bf["write_hand_raster"])
+            std::cout << "  write_hand_raster: not written, the field is the "
+                         "relative elevation (write_reference_field_raster "
+                         "writes it).\n";
+    }
+    else if (use_hand)
     {
         std::cout << "--- Reference field: height above channel ---\n";
         if (!sf["hand_fname"].empty())
@@ -1718,6 +2848,385 @@ int main(int argc, char* argv[])
     std::cout << "\n";
 
     // -------------------------------------------------------------------------
+    // Floodplain bounds (admission floodplain_thresholds, level
+    // fixed_thresholds)
+    //
+    // The bounds are read off the cells that could be floodplain: admitted,
+    // with a defined HAND (a pixel that reaches no in-scope channel has no
+    // height above one), and for the gradient a defined gradient.
+    // -------------------------------------------------------------------------
+    // One row per data-chosen floodplain bound, written as
+    // <stem>_floodplain_thresholds.csv: the numbers a plot of the QQ tables
+    // needs, so nothing downstream has to recompute them.
+    std::vector<std::vector<std::string>> floodplain_threshold_rows;
+    auto num9 = [](double v)
+    {
+        std::ostringstream os;
+        os.precision(9);
+        os << v;
+        return os.str();
+    };
+    float floodplain_hand_bound     = ff["max_floodplain_hand_metres"];
+    float floodplain_gradient_bound = ff["max_floodplain_gradient"];
+    lsdtt::lsdtt_raster_cpu floodplain_gradient;
+    // floodplain_bound_algorithm_choice: false = HAND alone (hand_only).
+    bool use_floodplain_gradient_bound = true;
+    double low_relief_fraction = -1.0;   // auto only; -1 = not measured
+    if (use_floodplain_bounds)
+    {
+        std::cout << "--- Floodplain bounds (" << floodplain_threshold_choice
+                  << ") ---\n";
+        if (admit_by_bounds)
+        {
+            const double cell = dem.get_meta().cell_size;
+            double radius = static_cast<double>(
+                ff["floodplain_gradient_window_radius_metres"]);
+            if (!(radius > 0.0)) radius = 3.0 * cell;
+            std::cout << "Floodplain gradient: polyfit window radius " << radius
+                      << " m\n";
+            try
+            {
+                // direct_polyfit takes the full physical window diameter.
+                const lsdtt::poly_fit_coeffs fit =
+                    lsdtt::direct_polyfit(dem, 2.0 * radius, ip["n_threads"]);
+                lsdtt::polyfit_metric_request mreq;
+                mreq.metrics   = {lsdtt::polyfit_metric::slope};
+                mreq.n_threads = ip["n_threads"];
+                lsdtt::polyfit_metric_result mres =
+                    lsdtt::compute_polyfit_metrics(fit, mreq);
+                floodplain_gradient = mres.at(lsdtt::polyfit_metric::slope);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: floodplain gradient failed: " << e.what()
+                          << "\n";
+                return 1;
+            }
+            // floodplain_bound_algorithm_choice: is the gradient bound used?
+            {
+                const std::string& bc = sf["floodplain_bound_algorithm_choice"];
+                if (bc != "auto" && bc != "hand_and_gradient" && bc != "hand_only")
+                {
+                    std::cerr << "FATAL: unknown floodplain_bound_algorithm_choice '"
+                              << bc << "'. Valid: auto, hand_and_gradient, "
+                                 "hand_only.\n";
+                    return 1;
+                }
+                if (bc == "auto")
+                {
+                    const float g_low = ff["low_relief_max_gradient"];
+                    std::int64_t n_def = 0, n_low = 0;
+                    const std::vector<float>&   gd = floodplain_gradient.get_data();
+                    const std::vector<uint8_t>& gm = floodplain_gradient.get_mask();
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        if (!gm[i] || !std::isfinite(gd[i]) ||
+                            floodplain_gradient.get_meta().is_nodata(gd[i]))
+                            continue;
+                        ++n_def;
+                        if (gd[i] < g_low) ++n_low;
+                    }
+                    const double frac = n_def > 0 ? double(n_low) / double(n_def) : 0.0;
+                    low_relief_fraction = frac;
+                    use_floodplain_gradient_bound =
+                        !(frac > static_cast<double>(ff["low_relief_min_area_fraction"]));
+                    std::cout << "  low relief test: " << frac
+                              << " of the DEM's floodplain gradient is below "
+                              << g_low << " (switch above "
+                              << ff["low_relief_min_area_fraction"] << ") -> "
+                              << (use_floodplain_gradient_bound ? "hand_and_gradient"
+                                                                : "hand_only")
+                              << "\n";
+                    pp.record_resolved_parameter(
+                        "floodplain_bound_algorithm_choice",
+                        use_floodplain_gradient_bound ? "hand_and_gradient"
+                                                      : "hand_only");
+                }
+                else
+                {
+                    use_floodplain_gradient_bound = (bc == "hand_and_gradient");
+                }
+            }
+            if (bf["write_floodplain_gradient_raster"])
+            {
+                const std::string p = stem + "_floodplain_gradient.tif";
+                std::cout << "Writing floodplain gradient: " << p << "\n";
+                loader.write_full(floodplain_gradient.get_data(),
+                                  floodplain_gradient.get_meta(), p, out_format);
+            }
+        }
+
+        const std::vector<float>&   rf  = reference_field.get_data();
+        const std::vector<uint8_t>& rfm = reference_field.get_mask();
+        const std::vector<float>&   ad  = admitted.get_data();
+        auto hand_defined = [&](std::size_t i)
+        {
+            return ad[i] > 0.5f && rfm[i] && std::isfinite(rf[i]);
+        };
+        auto grad_defined = [&](std::size_t i)
+        {
+            return floodplain_gradient.get_mask()[i] &&
+                   std::isfinite(floodplain_gradient.get_data()[i]);
+        };
+
+        if (floodplain_threshold_choice != "fixed")
+        {
+            // stem suffix for the table a bound was read from
+            const std::string table_suffix =
+                floodplain_threshold_choice == "qq_gaussian" ? "_qq.csv"
+                                                             : "_adaptive_cdf.csv";
+            auto choose = [&](const std::vector<double>& values,
+                              double fixed_value, const char* what,
+                              const std::string& out_name,
+                              float& bound) -> bool
+            {
+                lsdtt::threshold_selection_result sel;
+                try
+                {
+                    sel = lsdtt::select_threshold(values,
+                        lsdtt::threshold_request_from_parameters(
+                            floodplain_threshold_choice,
+                            "floodplain_threshold_algorithm_choice",
+                            fixed_value, ff, "floodplain"));
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: floodplain " << what << " bound: "
+                              << e.what() << "\n";
+                    return false;
+                }
+                if (!sel.found)
+                {
+                    std::cerr << "FATAL: " << floodplain_threshold_choice
+                              << " found no floodplain " << what << " bound in "
+                              << values.size() << " value(s): the data never "
+                                 "settle onto the reference line. Look at the "
+                                 "table, or set the bound and use fixed.\n";
+                    return false;
+                }
+                bound = static_cast<float>(sel.threshold);
+                floodplain_threshold_rows.push_back({
+                    "1", out_name, floodplain_threshold_choice,
+                    num9(sel.threshold),
+                    floodplain_threshold_choice == "qq_gaussian"
+                        ? std::to_string(sel.qq_index) : "",
+                    std::to_string(values.size()),
+                    fname_stem + "_floodplain_" + out_name + table_suffix});
+                if (bf["write_floodplain_threshold_csv"])
+                {
+                    const std::string p = stem + "_floodplain_" + out_name +
+                                          table_suffix;
+                    if (floodplain_threshold_choice == "qq_gaussian")
+                        lsdtt::write_qq_csv(loader, p, sel.qq);
+                    else
+                        lsdtt::write_smoothed_cdf_csv(loader, p, sel.cdf,
+                                                      sel.fits);
+                    std::cout << "  Writing " << p << "\n";
+                }
+                if (floodplain_threshold_choice == "qq_gaussian")
+                    std::cout << "  " << what << ": quantile " << sel.qq_index
+                              << " of " << sel.qq.data_quantile.size()
+                              << " (data range " << sel.qq_range << ")\n";
+                else
+                    std::cout << "  " << what << ": best fit "
+                              << sel.best_family << ", percentile "
+                              << sel.threshold_percentile << "\n";
+                return true;
+            };
+
+            if (level_fixed)
+            {
+                std::vector<double> hv;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (hand_defined(i)) hv.push_back(rf[i]);
+                if (!choose(hv, floodplain_hand_bound, "HAND", "hand",
+                            floodplain_hand_bound))
+                    return 1;
+                std::ostringstream os; os.precision(9); os << floodplain_hand_bound;
+                pp.record_resolved_parameter("max_floodplain_hand_metres", os.str());
+            }
+            if (admit_by_bounds && use_floodplain_gradient_bound)
+            {
+                std::vector<double> gv;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (hand_defined(i) && grad_defined(i))
+                        gv.push_back(floodplain_gradient.get_data()[i]);
+                if (!choose(gv, floodplain_gradient_bound, "gradient",
+                            "gradient", floodplain_gradient_bound))
+                    return 1;
+                std::ostringstream os; os.precision(9); os << floodplain_gradient_bound;
+                pp.record_resolved_parameter("max_floodplain_gradient", os.str());
+            }
+        }
+
+        if (level_fixed)
+            std::cout << "  floodplain " << height_word << " bound     : "
+                      << floodplain_hand_bound << " m\n";
+        if (admit_by_bounds)
+        {
+            if (use_floodplain_gradient_bound)
+                std::cout << "  floodplain gradient bound : "
+                          << floodplain_gradient_bound << " (m/m)\n";
+            else
+                std::cout << "  floodplain gradient bound : none (hand_only)\n";
+            std::vector<float>& ad_w = admitted.get_data();
+            std::int64_t n_in = 0;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const bool keep = hand_defined(i) &&
+                    (!use_floodplain_gradient_bound ||
+                     (grad_defined(i) &&
+                      floodplain_gradient.get_data()[i] < floodplain_gradient_bound));
+                ad_w[i] = keep ? 1.0f : 0.0f;
+                if (keep) ++n_in;
+            }
+            std::cout << (use_floodplain_gradient_bound
+                              ? "  admitted below the gradient bound: "
+                              : "  admitted (HAND defined): ")
+                      << n_in << " cell(s)\n";
+        }
+        std::cout << "\n";
+    }
+
+    // Negative HAND -> 0 for the antimode ladder (Simon, 2026-10-27). The
+    // antimode finder bins log10 HAND and refuses a negative value, and every
+    // real DEM tried had some: cells routed to a channel cell higher than
+    // themselves (fill and flat-resolution artefacts). Below the channel is
+    // height 0 above it; the clamp count is in the log and the method record.
+    std::int64_t n_hand_clamped = 0;
+    if (use_hand && !level_fixed &&
+        break_choice == lsdtt::ladder_break_choice::antimode)
+    {
+        std::vector<float>&         rfd = reference_field.get_data();
+        const std::vector<uint8_t>& rfm = reference_field.get_mask();
+        for (std::size_t i = 0; i < rfd.size(); ++i)
+            if (rfm[i] && std::isfinite(rfd[i]) &&
+                !reference_field.get_meta().is_nodata(rfd[i]) && rfd[i] < 0.0f)
+            {
+                rfd[i] = 0.0f;
+                ++n_hand_clamped;
+            }
+        if (n_hand_clamped > 0)
+            std::cout << "  " << n_hand_clamped << " negative HAND cell(s) set "
+                         "to 0 for the antimode ladder\n";
+    }
+
+    // ---- training polygons -------------------------------------------------
+    const bool training_on = !sf["training_surfaces_fname"].empty();
+    lsdtt::training_set training;
+    std::vector<lsdtt::training_polygon>  training_polygon_stats;
+    std::vector<std::vector<std::string>> training_fit_rows;
+    const double training_spread_factor =
+        static_cast<double>(ff["training_spread_factor"]);
+    const double training_relative_spread =
+        static_cast<double>(ff["training_max_relative_spread"]);
+    const int training_min_cells = ip["min_training_cells_per_class"];
+    if (training_on)
+    {
+        std::cout << "--- Training polygons ---\n";
+        if (!use_hand)
+        {
+            std::cerr << "FATAL: training_surfaces_fname sets HAND bounds and "
+                         "breaks; reference_field_choice "
+                      << sf["reference_field_choice"] << " has no HAND.\n";
+            return 1;
+        }
+        const std::string tp =
+            pp.add_read_path_if_needed(sf["training_surfaces_fname"]);
+        try
+        {
+            training = lsdtt::read_training_surfaces(
+                reference_field, tp, sf["training_surfaces_layer_name"],
+                sf["training_surfaces_class_field_name"]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: training polygons: " << e.what() << "\n";
+            return 1;
+        }
+        std::int64_t n_poly[2] = {0, 0}, n_cell[2] = {0, 0};
+        for (const lsdtt::training_polygon& tpoly : training.polygons)
+        {
+            ++n_poly[tpoly.cls];
+            n_cell[tpoly.cls] += tpoly.n_cells;
+        }
+        std::cout << "  " << tp << ": " << n_poly[0] << " floodplain polygon(s) ("
+                  << n_cell[0] << " cells), " << n_poly[1]
+                  << " terrace polygon(s) (" << n_cell[1] << " cells)\n";
+        if (level_supplied)
+            std::cout << "  NOTE: supplied levels are used as given; the "
+                         "training polygons do not set the ladder breaks.\n";
+
+        std::vector<float> tl(n_pixels, -1.0f);
+        for (std::size_t i = 0; i < n_pixels; ++i)
+        {
+            const std::int32_t f = training.polygon_of_pixel[i];
+            if (f >= 0)
+                tl[i] = static_cast<float>(
+                    training.polygons[static_cast<std::size_t>(f)].cls);
+        }
+        lsdtt::lsdtt_raster_meta tmeta = meta;
+        tmeta.no_data_value = -1.0;
+        const std::string p = stem + "_training_levels.tif";
+        std::cout << "  writing training levels (0 floodplain, 1 terrace): "
+                  << p << "\n\n";
+        loader.write_full(tl, tmeta, p, out_format);
+    }
+    // Per training polygon: the window holding most of its core cells, its
+    // level there, and whether any window found it below a floodplain polygon.
+    struct polygon_window_record
+    {
+        std::int64_t cells = -1;
+        std::int32_t source = -1;
+        double centre = 0.0;
+        int level = -1;
+        bool from_window = false;
+        bool below_floodplain = false;
+    };
+    std::map<std::int32_t, polygon_window_record> polygon_window;
+    auto add_training_fit_rows = [&](const std::string& scope,
+                                     std::int32_t source, double centre,
+                                     const std::string& used,
+                                     const lsdtt::training_window_fit& fit)
+    {
+        const bool is_window = (scope == "window");
+        for (const auto& [pid, n] : fit.polygon_core_cells)
+        {
+            polygon_window_record& r = polygon_window[pid];
+            for (const std::int32_t b : fit.terrace_below_floodplain)
+                if (b == pid) r.below_floodplain = true;
+            // A window beats the global fit; among windows, more cells win.
+            if (r.cells >= 0 && (r.from_window && !is_window)) continue;
+            if (r.cells >= 0 && r.from_window == is_window && n <= r.cells) continue;
+            r.cells = n;
+            r.source = source;
+            r.centre = centre;
+            r.from_window = is_window;
+            r.level = -1;
+            for (std::size_t l = 0; l < fit.levels.size(); ++l)
+                for (const std::int32_t q : fit.levels[l])
+                    if (q == pid)
+                        r.level = static_cast<int>(l) +
+                                  (fit.has_floodplain_level ? 0 : 1);
+        }
+        auto row = [&](const std::string& name, const lsdtt::training_split& sp)
+        {
+            training_fit_rows.push_back({
+                scope, std::to_string(source), num9(centre), used, name,
+                num9(sp.threshold), num9(sp.youden_j),
+                std::to_string(sp.n_lower), std::to_string(sp.n_upper),
+                std::to_string(sp.lower_below), std::to_string(sp.upper_above),
+                fit.note});
+        };
+        if (fit.has_bound) row("floodplain_bound", fit.bound);
+        for (std::size_t b = 0; b < fit.break_fits.size(); ++b)
+            row("break_" + std::to_string(b + 1), fit.break_fits[b]);
+        if (!fit.has_bound && fit.break_fits.empty())
+            training_fit_rows.push_back({scope, std::to_string(source),
+                num9(centre), used, "none", "", "", "", "", "", "", fit.note});
+    };
+
+    // -------------------------------------------------------------------------
     // The ladder, band-then-label, and classification
     //
     // The hand field goes through classify_flat_surfaces_by_channel, which runs
@@ -1731,15 +3240,17 @@ int main(int argc, char* argv[])
     std::vector<lsdtt::flat_surface_label_class>  classes;
     lsdtt::lsdtt_raster_cpu                       class_raster;
     lsdtt::lsdtt_raster_cpu                       floodplain_mask;
+    lsdtt::lsdtt_raster_cpu                       floodplain_first_pass_mask;
 
-    std::cout << "--- Ladder and band-then-label ---\n";
+    std::cout << (level_fixed ? "--- Floodplain and terraces (fixed thresholds) ---\n"
+                              : "--- Ladder and band-then-label ---\n");
     if (use_hand)
     {
         lsdtt::flat_surface_classify_request creq;
         creq.floodplain_max_height_metres =
-            static_cast<double>(ff["floodplain_max_height_metres"]);
+            static_cast<double>(ff["max_floodplain_hand_metres"]);
         creq.terrace_min_height_metres =
-            static_cast<double>(ff["terrace_min_height_metres"]);
+            static_cast<double>(ff["min_terrace_hand_metres"]);
         creq.channel_adjacency_radius_metres =
             static_cast<double>(ff["channel_adjacency_radius_metres"]);
         creq.terrace_max_distance_to_channel_metres =
@@ -1750,6 +3261,8 @@ int main(int argc, char* argv[])
         creq.n_threads                   = ip["n_threads"];
 
         creq.label_within_bands          = true;
+        creq.segment_whole_mask          = segment_whole_mask;
+        creq.whole_mask_barrier          = riser_barrier;
         creq.ladder_break_algorithm      = break_choice;
         creq.ladder_level_count          = ip["ladder_level_count"];
         creq.ladder_max_level_count      = ip["ladder_max_level_count"];
@@ -1764,8 +3277,8 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
         creq.vertical_accuracy_steep_metres =
             static_cast<double>(ff["vertical_accuracy_steep_metres"]);
-        creq.vertical_accuracy_break_degrees =
-            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
+        creq.vertical_accuracy_break_gradient =
+            static_cast<double>(ev_break_gradient);
         creq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         creq.band_reach_window_metres =
@@ -1815,7 +3328,23 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["ladder_min_break_metres"]);
         creq.ladder_max_break_metres =
             static_cast<double>(ff["ladder_max_break_metres"]);
-        creq.band_min_component_pixels   = ip["min_component_pixels"];
+        creq.band_min_component_pixels   = ip["min_band_component_pixels"];
+        creq.ladder_supplied_breaks      = supplied_breaks;
+        {
+            const std::string& uw = sf["ladder_unresolved_window_algorithm_choice"];
+            if (uw != "nearest_resolved" && uw != "single_band")
+            {
+                std::cerr << "FATAL: unknown ladder_unresolved_window_algorithm_"
+                             "choice '" << uw << "'. Valid: nearest_resolved, "
+                             "single_band.\n";
+                return 1;
+            }
+            creq.ladder_unresolved_borrow_breaks = (uw == "nearest_resolved");
+        }
+        creq.ladder_training             = training_on ? &training : nullptr;
+        creq.ladder_training_spread_factor       = training_spread_factor;
+        creq.ladder_training_relative_spread     = training_relative_spread;
+        creq.ladder_training_min_cells_per_class = training_min_cells;
         creq.record_window_histograms    = bf["write_ladder_histogram_csv"] ||
                                            bf["write_ladder_break_metric_csv"];
         creq.window_hist_bins            = ip["ladder_hist_plot_bins"];
@@ -1852,21 +3381,21 @@ int main(int argc, char* argv[])
             const double cell = dem.get_meta().cell_size;
             // direct_polyfit takes the full physical window diameter.
             double lambda = 2.0 * static_cast<double>(
-                ff["vertical_accuracy_slope_window_radius_metres"]);
+                ff["vertical_accuracy_gradient_window_radius_metres"]);
             if (!(lambda > 0.0)) lambda = 5.0 * cell;
             std::cout << "Window gradient for E_v: polyfit window " << lambda
                       << " m, break at "
-                      << ff["vertical_accuracy_break_degrees"] << " degrees\n";
+                      << ev_break_gradient << " (gradient)\n";
             try
             {
                 const lsdtt::poly_fit_coeffs fit =
                     lsdtt::direct_polyfit(dem, lambda, ip["n_threads"]);
                 lsdtt::polyfit_metric_request mreq;
-                mreq.metrics   = {lsdtt::polyfit_metric::slope_degrees};
+                mreq.metrics   = {lsdtt::polyfit_metric::slope};
                 mreq.n_threads = ip["n_threads"];
                 lsdtt::polyfit_metric_result mres =
                     lsdtt::compute_polyfit_metrics(fit, mreq);
-                ev_slope = mres.at(lsdtt::polyfit_metric::slope_degrees);
+                ev_slope = mres.at(lsdtt::polyfit_metric::slope);
                 have_ev_slope = true;
             }
             catch (const std::exception& e)
@@ -1908,6 +3437,447 @@ int main(int argc, char* argv[])
             }
         }
 
+        if (level_fixed)
+        {
+            // ---- fixed_thresholds: two levels from two bounds ----------------
+            std::cout << "  (level_algorithm_choice fixed_thresholds: no ladder)\n";
+            if (bf["break_flats_with_channels"])
+                std::cout << "  NOTE: the channel pixels are seeded into the "
+                             "floodplain, as Clubb et al. do; "
+                             "break_flats_with_channels only affected admission.\n";
+
+            // run_terrace_classification false: floodplain only. No terrace
+            // field is built (not even a copy of HAND), and the engine never
+            // reads one.
+            const bool run_terraces = bf["run_terrace_classification"];
+            if (!run_terraces)
+                std::cout << "  run_terrace_classification false: floodplain "
+                             "only, no terrace field.\n";
+            lsdtt::lsdtt_raster_cpu terrace_field;
+            if (run_terraces) terrace_field = reference_field;
+            std::vector<std::int64_t> swath_nearest;
+            if (run_terraces && terrace_field_choice == "swath_baseline")
+            {
+                std::vector<std::int64_t> baseline;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (cmask[i]) baseline.push_back(static_cast<std::int64_t>(i));
+                try
+                {
+                    lsdtt::baseline_relief_result br =
+                        lsdtt::relief_above_nearest_baseline(
+                            dem, baseline,
+                            static_cast<double>(ff["swath_half_width_metres"]),
+                            ip["n_threads"]);
+                    terrace_field = std::move(br.relief);
+                    swath_nearest = std::move(br.nearest_baseline_flat);
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: swath baseline failed: " << e.what()
+                              << "\n";
+                    return 1;
+                }
+                std::cout << "  terrace field: relief above the nearest of "
+                          << baseline.size() << " channel pixel(s) within "
+                          << ff["swath_half_width_metres"] << " m\n";
+            }
+            if (run_terraces && bf["write_terrace_field_raster"])
+            {
+                const std::string p = stem + "_terrace_field.tif";
+                std::cout << "Writing terrace field: " << p << "\n";
+                loader.write_full(terrace_field.get_data(),
+                                  terrace_field.get_meta(), p, out_format);
+            }
+
+            // Training: a HAND bound per reach window (the ladder's windows,
+            // pooled k-1..k+1), else the fit over all training cells, else
+            // the data-chosen bound.
+            std::vector<float> trained_bound;
+            if (training_on)
+            {
+                lsdtt::training_set tset = training;
+                const double ev = ev_slope_dependent
+                    ? static_cast<double>(ff["vertical_accuracy_gentle_metres"])
+                    : static_cast<double>(ff["vertical_accuracy_metres"]);
+                const double gap =
+                    static_cast<double>(ff["ladder_resolvability_kappa"]) * ev;
+                lsdtt::compute_training_polygon_stats(
+                    tset, reference_field, training_spread_factor * gap,
+                    training_relative_spread);
+                training_polygon_stats = tset.polygons;
+
+                const std::vector<float>&   rf  = reference_field.get_data();
+                const std::vector<uint8_t>& rfm = reference_field.get_mask();
+                auto cell_ok = [&](std::size_t i)
+                { return rfm[i] && std::isfinite(rf[i]); };
+                std::vector<std::pair<std::int32_t, double>> all_cells;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (tset.polygon_of_pixel[i] >= 0 && cell_ok(i))
+                        all_cells.emplace_back(tset.polygon_of_pixel[i],
+                                               static_cast<double>(rf[i]));
+                const lsdtt::training_window_fit gfit = lsdtt::fit_training_window(
+                    all_cells, tset, gap, training_min_cells);
+                add_training_fit_rows("global", -1, 0.0,
+                                      gfit.has_bound ? "fallback" : "no", gfit);
+                const float gbound = gfit.has_bound
+                    ? static_cast<float>(gfit.bound.threshold)
+                    : std::numeric_limits<float>::quiet_NaN();
+
+                trained_bound.assign(n_pixels, gbound);
+                std::int64_t n_window = 0, n_global = 0;
+                const double reach_w =
+                    static_cast<double>(ff["ladder_reach_window_metres"]);
+                if (have_donors && scope_resolved && reach_w >= 0.0)
+                {
+                    const lsdtt::donor_reach_coordinate rc =
+                        lsdtt::donor_reach_coordinates(donor_flat, flow_distance,
+                                                       src_ids);
+                    std::vector<std::uint8_t> defined(n_pixels, 0);
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                        defined[i] = cell_ok(i) ? 1 : 0;
+                    const lsdtt::reach_window_set rw = lsdtt::assign_reach_windows(
+                        rc.source_of_pixel, rc.distance, defined, reach_w);
+                    std::vector<std::vector<std::pair<std::int32_t, double>>>
+                        wcells(rw.windows.size());
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        const std::int32_t w = rw.window_of_pixel[i];
+                        if (w >= 0 && tset.polygon_of_pixel[i] >= 0)
+                            wcells[static_cast<std::size_t>(w)].emplace_back(
+                                tset.polygon_of_pixel[i], static_cast<double>(rf[i]));
+                    }
+                    std::vector<float> wbound(rw.windows.size(), gbound);
+                    for (std::size_t w = 0; w < rw.windows.size(); ++w)
+                    {
+                        std::vector<std::pair<std::int32_t, double>> pooled;
+                        for (const std::int32_t k : rw.windows[w].neighbours)
+                            pooled.insert(pooled.end(),
+                                          wcells[static_cast<std::size_t>(k)].begin(),
+                                          wcells[static_cast<std::size_t>(k)].end());
+                        if (pooled.empty()) continue;
+                        const lsdtt::training_window_fit fit =
+                            lsdtt::fit_training_window(pooled, tset, gap,
+                                                       training_min_cells);
+                        if (fit.has_bound)
+                            wbound[w] = static_cast<float>(fit.bound.threshold);
+                        add_training_fit_rows(
+                            "window", rw.windows[w].source, rw.windows[w].centre_m,
+                            fit.has_bound ? "window"
+                                          : (gfit.has_bound ? "global" : "no"),
+                            fit);
+                        fit.has_bound ? ++n_window : ++n_global;
+                    }
+                    for (std::size_t i = 0; i < n_pixels; ++i)
+                    {
+                        const std::int32_t w = rw.window_of_pixel[i];
+                        if (w >= 0) trained_bound[i] = wbound[static_cast<std::size_t>(w)];
+                    }
+                }
+                std::cout << "  training: floodplain / terrace " << height_word << " bound ";
+                if (gfit.has_bound)
+                    std::cout << gfit.bound.threshold << " m over all training "
+                                 "(J " << gfit.bound.youden_j << ")";
+                else
+                    std::cout << "not fitted over all training ("
+                              << gfit.note << ")";
+                std::cout << "; " << n_window << " window(s) with their own "
+                          << "bound, " << n_global << " with training but "
+                             "too little of it\n";
+                if (!gfit.has_bound && n_window == 0)
+                {
+                    std::cout << "  NOTE: the training sets no bound; the "
+                                 "data-chosen bound is used.\n";
+                    trained_bound.clear();
+                }
+            }
+
+            lsdtt::floodplain_threshold_request freq;
+            freq.max_floodplain_hand_metres = floodplain_hand_bound;
+            if (!trained_bound.empty()) freq.hand_bound_per_cell = &trained_bound;
+            freq.max_floodplain_gradient    = 0.0;   // applied in admission
+            freq.seed_channel_pixels        = true;
+            freq.require_channel_contact    = true;
+            freq.min_component_pixels       = ip["min_band_component_pixels"];
+            freq.fill_holes                 = fill_floodplain_holes;
+            freq.connectivity               = lsdtt::pixel_connectivity::d8;
+            freq.find_terraces              = run_terraces;
+            freq.min_terrace_height_above_floodplain_metres = static_cast<double>(
+                ff["min_terrace_height_above_floodplain_metres"]);
+            freq.max_terrace_height_metres =
+                static_cast<double>(ff["max_terrace_height_metres"]);
+
+            lsdtt::floodplain_threshold_result fres;
+            try
+            {
+                fres = lsdtt::classify_floodplain_terraces_by_thresholds(
+                    admitted, reference_field, reference_field, cmask,
+                    run_terraces ? &terrace_field : nullptr, freq);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: floodplain / terrace thresholds: "
+                          << e.what() << "\n";
+                return 1;
+            }
+            // ---- optional second pass on the first-pass floodplain's HAND ----
+            const std::string& second_pass =
+                sf["floodplain_second_pass_algorithm_choice"];
+            if (second_pass != "none" && second_pass != "qq_upper_departure")
+            {
+                std::cerr << "FATAL: unknown floodplain_second_pass_algorithm_"
+                             "choice '" << second_pass << "'. Valid: none, "
+                             "qq_upper_departure.\n";
+                return 1;
+            }
+            if (second_pass == "qq_upper_departure" && !trained_bound.empty())
+                std::cout << "  NOTE: the training sets the HAND bound; the "
+                             "second pass is skipped.\n";
+            else if (second_pass == "qq_upper_departure")
+            {
+                std::cout << "  first pass: " << fres.n_floodplain_pixels
+                          << " floodplain cell(s) at HAND <= "
+                          << floodplain_hand_bound << " m\n";
+                const std::vector<float>& fpd = fres.floodplain_mask.get_data();
+                const std::vector<float>& rf  = reference_field.get_data();
+                const std::vector<uint8_t>& rfm = reference_field.get_mask();
+                std::vector<double> fp_hand;
+                for (std::size_t i = 0; i < n_pixels; ++i)
+                    if (fpd[i] > 0.5f && rfm[i] && std::isfinite(rf[i]))
+                        fp_hand.push_back(static_cast<double>(rf[i]));
+                lsdtt::threshold_selection_result sel2;
+                try
+                {
+                    sel2 = lsdtt::select_qq_upper_departure(fp_hand,
+                        lsdtt::threshold_request_from_parameters(
+                            "qq_gaussian", "floodplain_second_pass_algorithm_choice",
+                            0.0, ff, "floodplain"));
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "FATAL: floodplain second pass: " << e.what()
+                              << "\n";
+                    return 1;
+                }
+                if (bf["write_floodplain_threshold_csv"] && !sel2.qq.data_quantile.empty())
+                {
+                    const std::string p = stem + "_floodplain_hand_qq_second_pass.csv";
+                    lsdtt::write_qq_csv(loader, p, sel2.qq);
+                    std::cout << "  Writing " << p << "\n";
+                }
+                if (!sel2.found || !(sel2.threshold < floodplain_hand_bound))
+                {
+                    std::cout << "  second pass: "
+                              << (sel2.found ? "the upper departure is not below "
+                                               "the first-pass bound"
+                                             : "no upper departure found")
+                              << "; the first-pass floodplain is kept.\n";
+                }
+                else
+                {
+                    std::cout << "  second pass (qq_upper_departure): " << height_word
+                              << " bound "
+                              << sel2.threshold << " m (quantile " << sel2.qq_index
+                              << " of " << sel2.qq.data_quantile.size()
+                              << " over " << fp_hand.size()
+                              << " first-pass floodplain cell(s))\n";
+                    floodplain_threshold_rows.push_back({
+                        "2", "hand", "qq_upper_departure",
+                        num9(sel2.threshold), std::to_string(sel2.qq_index),
+                        std::to_string(fp_hand.size()),
+                        fname_stem +
+                            "_floodplain_hand_qq_second_pass.csv"});
+                    floodplain_first_pass_mask = fres.floodplain_mask;
+                    floodplain_hand_bound = static_cast<float>(sel2.threshold);
+                    freq.max_floodplain_hand_metres = floodplain_hand_bound;
+                    freq.fill_holes = true;   // the second pass is always filled
+                    try
+                    {
+                        fres = lsdtt::classify_floodplain_terraces_by_thresholds(
+                            admitted, reference_field, reference_field, cmask,
+                            run_terraces ? &terrace_field : nullptr, freq);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::cerr << "FATAL: floodplain second pass: "
+                                  << e.what() << "\n";
+                        return 1;
+                    }
+                }
+            }
+
+            std::cout << "  floodplain: " << fres.n_floodplain_candidates
+                      << " candidate cell(s) (channel included); kept "
+                      << fres.n_floodplain_components_kept
+                      << " component(s), dropped "
+                      << fres.n_floodplain_dropped_small << " small and "
+                      << fres.n_floodplain_dropped_no_channel
+                      << " not touching the channel; "
+                      << fres.n_floodplain_pixels << " cell(s)\n"
+                      << "  terraces: " << fres.n_terrace_components
+                      << " component(s), " << fres.n_terrace_pixels
+                      << " cell(s), above " << floodplain_hand_bound +
+                             ff["min_terrace_height_above_floodplain_metres"]
+                      << " m on the terrace field\n";
+
+            // Each patch's own field: HAND on the floodplain, the terrace field
+            // on a terrace - the quantity its level was decided on.
+            const std::vector<float>& bi = fres.band_index.get_data();
+            std::vector<float>   pf(n_pixels, 0.0f);
+            std::vector<uint8_t> pfm(n_pixels, 0);
+            std::vector<float>   on(n_pixels, 0.0f);
+            std::int64_t n_riser_removed = 0;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                if (bi[i] < -0.5f) continue;
+                // whole_mask: one terrace level, so the risers only split it.
+                if (riser_barrier != nullptr && riser_mask.get_data()[i] > 0.5f)
+                {
+                    ++n_riser_removed;
+                    continue;
+                }
+                on[i] = 1.0f;
+                const lsdtt::lsdtt_raster_cpu& f =
+                    (bi[i] < 0.5f) ? reference_field : terrace_field;
+                if (f.get_mask()[i] && std::isfinite(f.get_data()[i]))
+                {
+                    pf[i]  = f.get_data()[i];
+                    pfm[i] = 1;
+                }
+            }
+            if (riser_barrier != nullptr)
+                std::cout << "  whole_mask: " << n_riser_removed
+                          << " floodplain / terrace cell(s) removed as riser\n";
+            const lsdtt::lsdtt_raster_cpu patch_field(
+                std::move(pf), std::move(pfm), meta);
+            const lsdtt::lsdtt_raster_cpu on_level(
+                std::move(on), std::vector<uint8_t>(dem.get_mask()), meta);
+            try
+            {
+                // Size was already filtered on the whole floodplain / terrace
+                // masks, so labelling keeps every component, 8-connected as
+                // the engine counted them.
+                banded = lsdtt::label_components_within_bands(
+                    fres.band_index, on_level, patch_field, 1,
+                    lsdtt::pixel_connectivity::d8,
+                    have_patch_aspect ? &patch_aspect : nullptr,
+                    true_north.get());
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: labelling failed: " << e.what() << "\n";
+                return 1;
+            }
+
+            // Class records, one per patch, in the classifier's schema.
+            std::vector<float> chan_bin(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (cmask[i]) chan_bin[i] = 1.0f;
+            const lsdtt::lsdtt_raster_cpu chan_dist =
+                lsdtt::euclidean_distance_transform(
+                    lsdtt::lsdtt_raster_cpu(std::move(chan_bin),
+                                            std::vector<uint8_t>(dem.get_mask()),
+                                            meta),
+                    ip["n_threads"]);
+            const std::vector<float>& lab = banded.labels.get_data();
+            const std::size_t n_patch = banded.patches.size();
+            std::vector<std::vector<double>> heights(n_patch), cdist(n_patch);
+            std::vector<std::map<std::int32_t, std::int64_t>> src_votes(n_patch);
+            std::vector<double> min_dist(n_patch,
+                                         std::numeric_limits<double>::infinity());
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                if (!(lab[i] > 0.5f)) continue;
+                const std::size_t k = static_cast<std::size_t>(lab[i]) - 1;
+                if (k >= n_patch) continue;
+                if (patch_field.get_mask()[i])
+                    heights[k].push_back(patch_field.get_data()[i]);
+                if (chan_dist.get_mask()[i])
+                    min_dist[k] = std::min(min_dist[k],
+                        static_cast<double>(chan_dist.get_data()[i]));
+                // The channel a pixel belongs to: the swath node it was
+                // measured from on a terrace, its HAND donor otherwise.
+                std::int64_t node = -1;
+                if (bi[i] > 0.5f && !swath_nearest.empty())
+                    node = swath_nearest[i];
+                else if (have_donors)
+                    node = donor_flat[i];
+                if (node >= 0 && static_cast<std::size_t>(node) < n_pixels)
+                {
+                    const std::int32_t sid =
+                        scope.channel_source_id[static_cast<std::size_t>(node)];
+                    if (sid >= 0) ++src_votes[k][sid];
+                    if (have_donors && donor_flat[i] >= 0)
+                        cdist[k].push_back(flow_distance.get_data()[
+                            static_cast<std::size_t>(donor_flat[i])]);
+                }
+            }
+            classes.clear();
+            classes.reserve(n_patch);
+            const double cell = meta.cell_size;
+            for (std::size_t k = 0; k < n_patch; ++k)
+            {
+                const lsdtt::patch_record& pr = banded.patches[k];
+                lsdtt::flat_surface_label_class c;
+                c.label     = pr.label;
+                c.cls       = pr.band == 0 ? lsdtt::surface_class::floodplain
+                                           : lsdtt::surface_class::terrace;
+                c.n_pixels  = pr.n_pixels;
+                c.hand_band = pr.band;
+                std::int64_t best = 0;
+                for (const auto& [sid, nv] : src_votes[k])
+                    if (nv > best) { best = nv; c.source_id = sid; }
+                std::vector<double>& h = heights[k];
+                if (!h.empty())
+                {
+                    std::sort(h.begin(), h.end());
+                    c.has_height    = true;
+                    c.min_height    = h.front();
+                    c.max_height    = h.back();
+                    c.median_height = (h.size() % 2)
+                        ? h[h.size() / 2]
+                        : 0.5 * (h[h.size() / 2 - 1] + h[h.size() / 2]);
+                    double sum = 0.0;
+                    for (double v : h) sum += v;
+                    c.mean_height = sum / static_cast<double>(h.size());
+                    c.hand_spread_metres = c.max_height - c.min_height;
+                }
+                if (std::isfinite(min_dist[k]))
+                {
+                    c.min_distance_to_channel_metres = min_dist[k];
+                    c.adjacent_to_channel = min_dist[k] <= cell * 1.5;
+                }
+                std::vector<double>& cd = cdist[k];
+                if (!cd.empty())
+                {
+                    std::sort(cd.begin(), cd.end());
+                    c.median_channel_distance_metres = cd[cd.size() / 2];
+                }
+                c.ladder_window_centre_metres = -1.0;
+                classes.push_back(c);
+            }
+
+            std::vector<float> cls(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                if (bi[i] > -0.5f && bi[i] < 0.5f)
+                    cls[i] = static_cast<float>(lsdtt::surface_class::floodplain);
+                else if (bi[i] > 0.5f)
+                    cls[i] = static_cast<float>(lsdtt::surface_class::terrace);
+            }
+            class_raster = lsdtt::lsdtt_raster_cpu(
+                std::move(cls), std::vector<uint8_t>(dem.get_mask()), meta);
+            floodplain_mask   = fres.floodplain_mask;
+            ladder.band_index = fres.band_index;
+            ladder.max_band_index = 1;
+
+            std::int64_t n_fp = 0, n_tr = 0;
+            for (const auto& c : classes)
+                (c.cls == lsdtt::surface_class::floodplain ? n_fp : n_tr)++;
+            std::cout << "  " << n_fp << " floodplain, " << n_tr
+                      << " terrace surface(s)\n";
+        }
+        else
+        {
         lsdtt::flat_surface_classify_result cres;
         try
         {
@@ -1926,6 +3896,29 @@ int main(int argc, char* argv[])
 
         ladder.windows       = cres.ladder_windows;
         ladder.max_band_index = 0;
+        if (training_on && !level_supplied)
+        {
+            training_polygon_stats = cres.ladder_training_polygons;
+            const lsdtt::training_window_fit& g = cres.ladder_training_global_fit;
+            add_training_fit_rows("global", -1, 0.0,
+                                  g.breaks.empty() ? "no" : "fallback", g);
+            for (const lsdtt::ladder_window& w : cres.ladder_windows)
+                if (w.source_id >= 0)
+                    add_training_fit_rows(
+                        "window", w.source_id, w.window_centre_m,
+                        w.training_source.empty() ? "no" : w.training_source,
+                        w.training_fit);
+            std::cout << "  training: " << cres.ladder_n_windows_trained
+                      << " of " << cres.ladder_windows.size()
+                      << " window(s) banded with trained breaks";
+            if (!g.breaks.empty())
+            {
+                std::cout << "; over all training:";
+                for (const double b : g.breaks) std::cout << " " << b;
+                std::cout << " m";
+            }
+            std::cout << "\n";
+        }
         banded.labels        = cres.banded_labels_raster;
         banded.patches       = cres.patches;
         classes              = cres.labels;
@@ -1934,8 +3927,14 @@ int main(int argc, char* argv[])
         ladder.band_index    = cres.hand_band_raster;
         ladder.window_index  = cres.ladder_window_index;
 
+        if (segment_whole_mask)
+            std::cout << "  whole_mask: " << cres.n_whole_mask_barrier_pixels
+                      << " admitted cell(s) removed as riser, "
+                      << cres.n_whole_mask_reassigned_pixels
+                      << " cell(s) moved to their patch's majority band\n";
         std::cout << "  " << cres.n_floodplain_labels << " floodplain, "
                   << cres.n_terrace_labels << " terrace surface(s)\n";
+        }
     }
     else
     {
@@ -1955,11 +3954,12 @@ int main(int argc, char* argv[])
             static_cast<double>(ff["vertical_accuracy_gentle_metres"]);
         lreq.vertical_accuracy_steep_metres =
             static_cast<double>(ff["vertical_accuracy_steep_metres"]);
-        lreq.vertical_accuracy_break_degrees =
-            static_cast<double>(ff["vertical_accuracy_break_degrees"]);
+        lreq.vertical_accuracy_break_gradient =
+            static_cast<double>(ev_break_gradient);
         lreq.resolvability_kappa =
             static_cast<double>(ff["ladder_resolvability_kappa"]);
         lreq.reach_window_metres = -1.0;   // no reach on a fitted surface (C6)
+        lreq.supplied_breaks     = supplied_breaks;
         lreq.min_window_pixels   = ip["ladder_min_window_pixels"];
         lreq.hist_bins           = ip["ladder_hist_bins"];
         lreq.min_field_metres =
@@ -1999,9 +3999,22 @@ int main(int argc, char* argv[])
         {
             ladder = lsdtt::build_reference_field_ladder(
                 reference_field, admitted, lreq);
+            lsdtt::lsdtt_raster_cpu label_admitted = admitted;
+            if (segment_whole_mask)
+            {
+                lsdtt::whole_mask_segmentation seg = lsdtt::segment_whole_mask(
+                    ladder.band_index, admitted, riser_barrier,
+                    lsdtt::pixel_connectivity::d4);
+                std::cout << "  whole_mask: " << seg.n_barrier_pixels
+                          << " admitted cell(s) removed as riser, "
+                          << seg.n_reassigned_pixels
+                          << " cell(s) moved to their patch's majority band\n";
+                ladder.band_index = std::move(seg.band_index);
+                label_admitted    = std::move(seg.admitted);
+            }
             banded = lsdtt::label_components_within_bands(
-                ladder.band_index, admitted, reference_field,
-                std::max(1, ip["min_component_pixels"]),
+                ladder.band_index, label_admitted, reference_field,
+                std::max(1, ip["min_band_component_pixels"]),
                 lsdtt::pixel_connectivity::d4, nullptr, true_north.get());
         }
         catch (const std::exception& e)
@@ -2017,18 +4030,38 @@ int main(int argc, char* argv[])
 
     // The resolvability report, on stdout as well as in the CSV: which branch
     // the ladder took decides what may be claimed about it.
+    if (level_fixed)
     {
-        std::int64_t n_res = 0, n_unres = 0, n_deg = 0;
+        std::cout << "  " << banded.patches.size() << " patch(es)\n";
+    }
+    else
+    {
+        std::int64_t n_res = 0, n_unres = 0, n_deg = 0, n_sup = 0, n_sup_low = 0;
+        std::int64_t n_borrowed = 0;
         for (const lsdtt::ladder_window& w : ladder.windows)
         {
+            if (w.breaks_from_window_m >= 0.0) ++n_borrowed;
             if (w.status == lsdtt::ladder_status::resolved ||
                 w.status == lsdtt::ladder_status::forced) ++n_res;
             else if (w.status == lsdtt::ladder_status::unresolved) ++n_unres;
+            else if (w.status == lsdtt::ladder_status::supplied)
+            {
+                ++n_sup;
+                // Two measured bands at least (an empty band has no centre).
+                if (w.min_band_centre_gap_m > 0.0 &&
+                    w.min_band_centre_gap_m < w.required_gap_m) ++n_sup_low;
+            }
             else ++n_deg;
         }
         std::cout << "  " << banded.patches.size() << " patch(es)\n"
                   << "  ladder: " << n_res << " window(s) resolved, "
                   << n_unres << " unresolved, " << n_deg << " degenerate";
+        if (n_sup > 0)
+            std::cout << ", " << n_sup << " with supplied levels ("
+                      << n_sup_low << " below the resolvability floor)";
+        if (n_borrowed > 0)
+            std::cout << ", " << n_borrowed << " unresolved banded with the "
+                         "nearest resolved window's breaks";
         if (!ladder.windows.empty())
         {
             // Under slope_dependent the floor is per window, so reporting one
@@ -2278,6 +4311,29 @@ int main(int argc, char* argv[])
             }
         }
 
+        const double opening_r =
+            static_cast<double>(ff["valley_mask_opening_radius_metres"]);
+        if (opening_r > 0.0)
+        {
+            try
+            {
+                valley_raster =
+                    lsdtt::binary_morphological_opening(valley_raster, opening_r);
+                std::int64_t n_opened = 0;
+                for (const float v : valley_raster.get_data())
+                    if (v > 0.5f) ++n_opened;
+                std::cout << "  valley mask opened (radius " << opening_r
+                          << " m): " << n_valley << " -> " << n_opened
+                          << " cell(s)\n";
+                n_valley = n_opened;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Warning: opening the valley mask failed: "
+                          << e.what() << "\n";
+            }
+        }
+
         if (bf["fill_valley_mask_holes"])
         {
             try
@@ -2304,6 +4360,74 @@ int main(int argc, char* argv[])
                           lsdtt::lsdtt_pixel_type::uint8);
     }
 
+    if (use_hand && bf["write_surface_class_polygons"] &&
+        !class_raster.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_surface_class_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        // One label per connected area of each class; the class travels as
+        // the polygon attribute.
+        const std::vector<float>& cv = class_raster.get_data();
+        std::vector<float>        labels(n_pixels, 0.0f);
+        std::vector<std::int32_t> class_of(1, -1);
+        std::int64_t next = 0;
+        for (const int c : {1, 2})
+        {
+            std::vector<float> m(n_pixels, 0.0f);
+            for (std::size_t i = 0; i < n_pixels; ++i)
+                if (static_cast<int>(cv[i] + 0.5f) == c) m[i] = 1.0f;
+            const lsdtt::lsdtt_raster_cpu lab = lsdtt::label_binary_components_by_size(
+                lsdtt::lsdtt_raster_cpu(std::move(m),
+                                        std::vector<uint8_t>(n_pixels, 1), meta),
+                1, lsdtt::pixel_connectivity::d8);
+            std::int64_t max_here = 0;
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const float l = lab.get_data()[i];
+                if (l > 0.5f)
+                {
+                    const std::int64_t li = static_cast<std::int64_t>(l + 0.5f);
+                    labels[i] = static_cast<float>(next + li);
+                    max_here = std::max(max_here, li);
+                }
+            }
+            for (std::int64_t k = 0; k < max_here; ++k) class_of.push_back(c);
+            next += max_here;
+        }
+        lsdtt::lsdtt_vectorise_options vopt;
+        vopt.layer_name           = "surface_classes";
+        vopt.format               = pfmt;
+        vopt.background           = 0.0f;
+        vopt.spatial_index        = true;
+        vopt.label_attribute_name = "class";
+        const std::string p = stem + "_surface_class_polygons" +
+                              lsdtt::output_extension(pfmt);
+        std::cout << "Writing surface class polygons: " << p << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(
+                lsdtt::lsdtt_raster_cpu(std::move(labels),
+                                        std::vector<uint8_t>(n_pixels, 1), meta),
+                vec_loader, p, vopt, class_of);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: surface class polygons: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
     if (use_hand && bf["write_surface_class_raster"] &&
         !class_raster.get_data().empty())
     {
@@ -2322,6 +4446,251 @@ int main(int argc, char* argv[])
                           floodplain_mask.get_meta(), p, out_format, lsdtt::lsdtt_pixel_type::uint8);
     }
 
+    if (use_hand && bf["write_floodplain_mask_raster"] &&
+        !floodplain_first_pass_mask.get_data().empty())
+    {
+        const std::string p = stem + "_floodplain_first_pass_mask.tif";
+        std::cout << "Writing first-pass floodplain mask: " << p << "\n";
+        loader.write_full(floodplain_first_pass_mask.get_data(),
+                          floodplain_first_pass_mask.get_meta(), p, out_format,
+                          lsdtt::lsdtt_pixel_type::uint8);
+    }
+
+    // ---- do the ladder's patches cluster in HAND? ---------------------------
+    if (use_hand && !level_fixed && bf["write_patch_level_clusters_csv"] &&
+        !classes.empty())
+    {
+        std::map<std::pair<std::int32_t, double>, std::vector<double>> by_window;
+        std::vector<double> all_medians;
+        for (const lsdtt::flat_surface_label_class& c : classes)
+        {
+            if (c.cls == lsdtt::surface_class::none || !c.has_height) continue;
+            all_medians.push_back(c.median_height);
+            by_window[{c.source_id, c.ladder_window_centre_metres}]
+                .push_back(c.median_height);
+        }
+        std::map<std::pair<std::int32_t, double>, double> window_gap;
+        std::vector<double> gaps;
+        for (const lsdtt::ladder_window& w : ladder.windows)
+        {
+            window_gap[{w.source_id, w.window_centre_m}] = w.required_gap_m;
+            if (w.required_gap_m > 0.0) gaps.push_back(w.required_gap_m);
+        }
+        double global_gap = 0.0;
+        if (!gaps.empty())
+        {
+            std::sort(gaps.begin(), gaps.end());
+            global_gap = gaps[gaps.size() / 2];
+        }
+        std::vector<std::vector<std::string>> rows;
+        auto add_row = [&](const std::string& scope, std::int32_t src,
+                           double centre, const std::vector<double>& v,
+                           double gap) -> lsdtt::level_clustering_result
+        {
+            const lsdtt::level_clustering_result r =
+                lsdtt::test_level_clustering(v, gap);
+            std::string centres, counts;
+            for (std::size_t k = 0; k < r.clusters.size(); ++k)
+            {
+                if (k) { centres += " "; counts += " "; }
+                centres += num9(r.clusters[k].centre);
+                counts  += std::to_string(r.clusters[k].n);
+            }
+            rows.push_back({scope, std::to_string(src), num9(centre),
+                            std::to_string(r.n_values), num9(gap),
+                            std::to_string(r.clusters.size()),
+                            num9(r.empty_fraction),
+                            num9(r.null_mean_empty_fraction),
+                            num9(r.p_value), centres, counts});
+            return r;
+        };
+        if (global_gap > 0.0 && all_medians.size() >= 3)
+        {
+            const lsdtt::level_clustering_result g =
+                add_row("all", -1, 0.0, all_medians, global_gap);
+            std::cout << "Patch level clustering: " << g.n_values
+                      << " patch(es), " << g.clusters.size()
+                      << " cluster(s) at a " << global_gap
+                      << " m gap; empty fraction " << g.empty_fraction
+                      << " (random heights " << g.null_mean_empty_fraction
+                      << "), p = " << g.p_value << "\n";
+            int n_win = 0, n_sig = 0;
+            for (const auto& [key, v] : by_window)
+            {
+                const auto it = window_gap.find(key);
+                if (v.size() < 5 || it == window_gap.end() || !(it->second > 0.0))
+                    continue;
+                const lsdtt::level_clustering_result r =
+                    add_row("window", key.first, key.second, v, it->second);
+                ++n_win;
+                if (r.p_value <= 0.05) ++n_sig;
+            }
+            std::cout << "  per window (>= 5 patches): " << n_sig << " of "
+                      << n_win << " window(s) at p <= 0.05\n";
+        }
+        else
+            std::cout << "Patch level clustering: skipped (fewer than 3 "
+                         "classified patches, or no resolvability floor - "
+                         "E_v 0)\n";
+        if (!rows.empty())
+        {
+            const std::string p = stem + "_patch_level_clusters.csv";
+            std::cout << "Writing patch level clusters: " << p << "\n";
+            loader.write_csv(p, {"scope", "source_id", "window_centre_m",
+                                 "n_patches", "required_gap_m", "n_clusters",
+                                 "empty_fraction", "null_mean_empty_fraction",
+                                 "p_value", "cluster_centres_m",
+                                 "cluster_n_patches"},
+                             rows);
+        }
+    }
+
+    if (training_on)
+    {
+        const std::string pf = stem + "_training_fit.csv";
+        std::cout << "Writing training fit: " << pf << "\n";
+        loader.write_csv(pf, {"scope", "source_id", "window_centre_m", "used",
+                              "threshold", "threshold_m", "youden_j",
+                              "n_lower", "n_upper", "n_lower_below",
+                              "n_upper_above", "note"},
+                         training_fit_rows);
+        std::vector<std::vector<std::string>> prow;
+        for (std::size_t k = 0; k < training_polygon_stats.size(); ++k)
+        {
+            const lsdtt::training_polygon& tp = training_polygon_stats[k];
+            const bool has = tp.n_with_field > 0;
+            const auto pw = polygon_window.find(static_cast<std::int32_t>(k));
+            const bool placed = pw != polygon_window.end();
+            prow.push_back({std::to_string(k), tp.label,
+                            tp.cls == 0 ? "floodplain" : "terrace",
+                            std::to_string(tp.number), std::to_string(tp.n_cells),
+                            std::to_string(tp.n_with_field),
+                            has ? num9(tp.median) : "", has ? num9(tp.p10) : "",
+                            has ? num9(tp.p25) : "", has ? num9(tp.p75) : "",
+                            has ? num9(tp.p90) : "",
+                            has ? num9(tp.p75 - tp.p25) : "",
+                            tp.flagged ? "1" : "0",
+                            placed ? std::to_string(pw->second.source) : "",
+                            placed ? num9(pw->second.centre) : "",
+                            placed ? std::to_string(pw->second.level) : "",
+                            placed && pw->second.below_floodplain ? "1" : "0"});
+        }
+        {
+            std::string below;
+            for (const auto& [pid, r] : polygon_window)
+                if (r.below_floodplain) below += " " + std::to_string(pid);
+            if (!below.empty())
+                std::cout << "  NOTE: terrace polygon(s)" << below
+                          << " lie below a floodplain polygon in the same window "
+                             "(see the note column of _training_fit.csv)\n";
+        }
+        const std::string pp2 = stem + "_training_polygons.csv";
+        std::cout << "Writing training polygons: " << pp2 << "\n";
+        loader.write_csv(pp2, {"polygon_id", "label", "class", "terrace_number",
+                               "n_cells", "n_with_field", "median_m", "p10_m",
+                               "p25_m", "p75_m", "p90_m", "iqr_m", "flagged",
+                               "main_window_source_id", "main_window_centre_m",
+                               "level_in_main_window", "below_floodplain"},
+                         prow);
+    }
+
+    if (bf["write_floodplain_threshold_csv"] && !floodplain_threshold_rows.empty())
+    {
+        const std::string p = stem + "_floodplain_thresholds.csv";
+        std::cout << "Writing floodplain thresholds: " << p << "\n";
+        loader.write_csv(p, {"pass", "quantity", "algorithm", "threshold",
+                             "qq_index", "n_values", "table_fname"},
+                         floodplain_threshold_rows);
+    }
+
+    if (level_fixed && bf["write_floodplain_polygons"] &&
+        !floodplain_mask.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_floodplain_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        auto write_polygons = [&](const lsdtt::lsdtt_raster_cpu& mask,
+                                  const std::string& suffix,
+                                  const std::string& layer)
+        {
+            const lsdtt::lsdtt_raster_cpu labels =
+                lsdtt::label_binary_components_by_size(
+                    mask, 1, lsdtt::pixel_connectivity::d8);
+            lsdtt::lsdtt_vectorise_options vopt;
+            vopt.layer_name = layer;
+            vopt.format     = pfmt;
+            vopt.background = 0.0f;
+            vopt.spatial_index = true;   // as lsdtt-marsh-topography
+            const std::string p = stem + suffix + lsdtt::output_extension(pfmt);
+            std::cout << "Writing " << layer << ": " << p << "\n";
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(labels, vec_loader, p, vopt);
+        };
+        try
+        {
+            write_polygons(floodplain_mask, "_floodplain_polygons",
+                           "floodplain");
+            if (!floodplain_first_pass_mask.get_data().empty())
+                write_polygons(floodplain_first_pass_mask,
+                               "_floodplain_first_pass_polygons",
+                               "floodplain_first_pass");
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: floodplain polygons: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    if (bf["write_surface_patch_polygons"] && !banded.labels.get_data().empty())
+    {
+        lsdtt::vector_output_format pfmt;
+        try
+        {
+            pfmt = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "FATAL: write_surface_patch_polygons needs "
+                         "write_vector_format flatgeobuf or gpkg, not '"
+                      << sf["write_vector_format"] << "'.\n";
+            return 1;
+        }
+        std::int64_t max_label = 0;
+        for (const auto& pr : banded.patches) max_label = std::max(max_label, pr.label);
+        std::vector<std::int32_t> band_of(static_cast<std::size_t>(max_label) + 1, -1);
+        for (const auto& pr : banded.patches)
+            band_of[static_cast<std::size_t>(pr.label)] = pr.band;
+        lsdtt::lsdtt_vectorise_options vopt;
+        vopt.layer_name           = "surface_patches";
+        vopt.format               = pfmt;
+        vopt.background           = 0.0f;
+        vopt.spatial_index        = true;
+        vopt.label_attribute_name = "band";
+        const std::string p = stem + "_surface_patch_polygons" +
+                              lsdtt::output_extension(pfmt);
+        std::cout << "Writing surface patch polygons: " << p << "\n";
+        try
+        {
+            lsdtt::lsdtt_data_loader vec_loader;
+            lsdtt::trace_labelled_polygons(banded.labels, vec_loader, p, vopt, band_of);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: surface patch polygons: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
     if (bf["write_surface_patches_csv"])
     {
         const std::string p = stem + "_surface_patches.csv";
@@ -2336,7 +4705,12 @@ int main(int argc, char* argv[])
         lsdtt::write_surface_class_csv(loader, p, classes);
     }
 
-    if (bf["write_ladder_windows_csv"])
+    if (bf["write_ladder_windows_csv"] && level_fixed)
+    {
+        std::cout << "No ladder windows: level_algorithm_choice is "
+                     "fixed_thresholds.\n";
+    }
+    else if (bf["write_ladder_windows_csv"])
     {
         const std::string p = stem + "_ladder_windows.csv";
         std::cout << "Writing ladder windows: " << p << "\n";
@@ -2479,6 +4853,269 @@ int main(int argc, char* argv[])
             std::cerr << "Warning: channel network failed: "
                       << e.what() << "\n";
         }
+    }
+
+    // ---- method record and what the comparison needs ----------------------
+    {
+        std::vector<std::vector<std::string>> rec;
+        auto add = [&](const std::string& item, const std::string& value,
+                       const std::string& source)
+        { rec.push_back({method, item, value, source}); };
+        for (const stage_value& sv : stages) add(sv.key, sv.value, sv.source);
+        for (const auto& r : floodplain_threshold_rows)
+            add("pass" + r[0] + "_" + r[1] + "_bound", r[3], r[2]);
+        if (low_relief_fraction >= 0.0)
+        {
+            std::ostringstream os; os.precision(6); os << low_relief_fraction;
+            add("low_relief_fraction", os.str(), "measured");
+            add("floodplain_bound_algorithm_choice",
+                use_floodplain_gradient_bound ? "hand_and_gradient" : "hand_only",
+                "auto");
+        }
+        if (n_hand_clamped > 0)
+            add("negative_hand_cells_set_to_0", std::to_string(n_hand_clamped),
+                "antimode ladder");
+        std::int64_t n_res = 0, n_unres = 0, n_deg = 0, n_sup = 0;
+        for (const lsdtt::ladder_window& w : ladder.windows)
+        {
+            if (w.status == lsdtt::ladder_status::resolved ||
+                w.status == lsdtt::ladder_status::forced) ++n_res;
+            else if (w.status == lsdtt::ladder_status::unresolved) ++n_unres;
+            else if (w.status == lsdtt::ladder_status::supplied) ++n_sup;
+            else ++n_deg;
+        }
+        if (!ladder.windows.empty())
+        {
+            add("ladder_windows_resolved", std::to_string(n_res), "measured");
+            add("ladder_windows_unresolved", std::to_string(n_unres), "measured");
+            add("ladder_windows_degenerate", std::to_string(n_deg), "measured");
+            if (n_sup > 0)
+                add("ladder_windows_supplied", std::to_string(n_sup), "measured");
+        }
+        int max_band = -1;
+        for (const auto& pr : banded.patches) max_band = std::max(max_band, pr.band);
+        add("patches", std::to_string(banded.patches.size()), "measured");
+        add("levels", std::to_string(max_band + 1), "measured");
+
+        std::int64_t n_fp = 0, n_tr = 0;
+        run_out.meta = meta;
+        run_out.valid.assign(n_pixels, 0);
+        for (std::size_t i = 0; i < n_pixels; ++i)
+            run_out.valid[i] = dem.get_mask()[i] ? 1 : 0;
+        if (use_hand && !class_raster.get_data().empty())
+        {
+            run_out.cls.assign(n_pixels, 0);
+            const std::vector<float>& cv = class_raster.get_data();
+            for (std::size_t i = 0; i < n_pixels; ++i)
+            {
+                const int c = static_cast<int>(cv[i] + 0.5f);
+                if (c == 1 || c == 2) run_out.cls[i] = static_cast<std::uint8_t>(c);
+                if (c == 1) ++n_fp;
+                if (c == 2) ++n_tr;
+            }
+        }
+        const double cell_area = meta.cell_size * meta.cell_size;
+        add("floodplain_cells", std::to_string(n_fp), "measured");
+        add("terrace_cells", std::to_string(n_tr), "measured");
+
+        if (bf["write_method_record_csv"])
+        {
+            const std::string p = stem + "_method_record.csv";
+            std::cout << "Writing method record: " << p << "\n";
+            loader.write_csv(p, {"method", "item", "value", "source"}, rec);
+        }
+        auto num = [](double v) { std::ostringstream os; os.precision(9); os << v; return os.str(); };
+        run_out.summary = {
+            {"floodplain_cells", std::to_string(n_fp)},
+            {"floodplain_area_m2", num(n_fp * cell_area)},
+            {"terrace_cells", std::to_string(n_tr)},
+            {"terrace_area_m2", num(n_tr * cell_area)},
+            {"patches", std::to_string(banded.patches.size())},
+            {"levels", std::to_string(max_band + 1)},
+            {"ladder_windows_resolved", std::to_string(n_res)},
+            {"ladder_windows_unresolved", std::to_string(n_unres)},
+            {"ladder_windows_degenerate", std::to_string(n_deg)}};
+        for (const auto& r : floodplain_threshold_rows)
+            run_out.summary.push_back({"pass" + r[0] + "_" + r[1] + "_bound", r[3]});
+    }
+    return 0;
+    };   // run_method
+
+    std::vector<method_run_output> runs(method_list.size());
+    const bool several = method_list.size() > 1;
+    for (std::size_t k = 0; k < method_list.size(); ++k)
+    {
+        const std::string& m = method_list[k];
+        const std::string run_stem  = several
+            ? pp.get_full_write_path() + "_" + m : pp.get_full_write_path();
+        const std::string run_fname = several
+            ? pp.get_write_fname() + "_" + m : pp.get_write_fname();
+        if (several)
+            std::cout << "\n================ method " << (k + 1) << " of "
+                      << method_list.size() << ": " << m
+                      << " ================\n";
+        const int rc = run_method(m, run_stem, run_fname, runs[k]);
+        if (rc != 0) return rc;
+    }
+
+    // ---- comparison of the methods ---------------------------------------------
+    if (several)
+    {
+        const std::string base = pp.get_full_write_path();
+        lsdtt::lsdtt_data_loader out_loader;
+        {
+            std::vector<std::string> head = {"method"};
+            for (const auto& kv : runs[0].summary) head.push_back(kv.first);
+            std::vector<std::vector<std::string>> rows;
+            for (std::size_t k = 0; k < runs.size(); ++k)
+            {
+                std::vector<std::string> row = {method_list[k]};
+                for (const std::string& h : std::vector<std::string>(head.begin() + 1, head.end()))
+                {
+                    std::string v;
+                    for (const auto& kv : runs[k].summary) if (kv.first == h) v = kv.second;
+                    row.push_back(v);
+                }
+                rows.push_back(row);
+            }
+            // Bounds only some methods have go in extra columns.
+            for (std::size_t k = 0; k < runs.size(); ++k)
+                for (const auto& kv : runs[k].summary)
+                    if (std::find(head.begin(), head.end(), kv.first) == head.end())
+                    {
+                        head.push_back(kv.first);
+                        for (auto& r : rows) r.push_back("");
+                    }
+            for (std::size_t k = 0; k < runs.size(); ++k)
+                for (const auto& kv : runs[k].summary)
+                {
+                    const auto it = std::find(head.begin(), head.end(), kv.first);
+                    rows[k][static_cast<std::size_t>(it - head.begin())] = kv.second;
+                }
+            const std::string p = base + "_method_summary.csv";
+            std::cout << "\nWriting method summary: " << p << "\n";
+            out_loader.write_csv(p, head, rows);
+        }
+
+        std::vector<lsdtt::method_class_map> maps;
+        for (std::size_t k = 0; k < runs.size(); ++k)
+            if (!runs[k].cls.empty()) maps.push_back({method_list[k], runs[k].cls});
+        if (maps.size() < 2)
+        {
+            std::cout << "Fewer than two methods produced floodplain / terrace "
+                         "classes (hand field only); no comparison.\n";
+        }
+        else
+        {
+            const auto pairs = lsdtt::compare_surface_classes(maps, runs[0].valid);
+            const double ca = runs[0].meta.cell_size * runs[0].meta.cell_size;
+            auto num = [](double v) { std::ostringstream os; os.precision(6); os << v; return os.str(); };
+            std::vector<std::vector<std::string>> rows;
+            const char* cname[3] = {"none", "floodplain", "terrace"};
+            for (const auto& pc : pairs)
+            {
+                std::vector<std::string> row = {maps[pc.a].name, maps[pc.b].name,
+                    num(pc.floodplain_iou), num(pc.terrace_iou),
+                    num(pc.classified_agreement)};
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        row.push_back(std::to_string(pc.confusion[i][j]));
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        row.push_back(num(pc.confusion[i][j] * ca));
+                rows.push_back(row);
+            }
+            std::vector<std::string> head = {"method_a", "method_b",
+                "floodplain_iou", "terrace_iou", "classified_agreement"};
+            for (const char* suffix : {"_cells", "_m2"})
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        head.push_back(std::string("a_") + cname[i] + "_b_" +
+                                       cname[j] + suffix);
+            const std::string p = base + "_method_comparison.csv";
+            std::cout << "Writing method comparison: " << p << "\n";
+            out_loader.write_csv(p, head, rows);
+
+            std::cout << "Agreement rasters: bit k = method k in this order:";
+            for (std::size_t k = 0; k < maps.size(); ++k)
+                std::cout << " " << k << "=" << maps[k].name;
+            std::cout << "\n";
+            for (const auto& [cls, name] : std::vector<std::pair<std::uint8_t, std::string>>{
+                     {1, "floodplain"}, {2, "terrace"}})
+            {
+                const std::vector<std::uint8_t> bits =
+                    lsdtt::surface_class_agreement_bits(maps, runs[0].valid, cls);
+                std::vector<float> f(bits.begin(), bits.end());
+                const std::string rp = base + "_method_agreement_" + name + ".tif";
+                std::cout << "Writing " << rp << "\n";
+                out_loader.write_full(f, runs[0].meta, rp, out_format,
+                                      lsdtt::lsdtt_pixel_type::uint8);
+            }
+        }
+    }
+
+    // ---- scores against the mapped surfaces -------------------------------------
+    if (mapped_on)
+    {
+        const std::string base = pp.get_full_write_path();
+        lsdtt::lsdtt_data_loader out_loader;
+        {
+            std::vector<float> f(mapped_cls.size(), -1.0f);
+            for (std::size_t i = 0; i < f.size(); ++i)
+                if (mapped_scored[i]) f[i] = mapped_cls[i];
+            lsdtt::lsdtt_raster_meta m = mapped_meta;
+            m.no_data_value = -1.0;
+            const std::string rp = base + "_mapped_surface_class.tif";
+            std::cout << "Writing mapped surface classes: " << rp << "\n";
+            out_loader.write_full(f, m, rp, out_format);
+        }
+        auto num = [](double v)
+        { std::ostringstream os; os.precision(9); os << v; return os.str(); };
+        const char* cname[3] = {"none", "floodplain", "terrace"};
+        const double cell_area = mapped_meta.cell_size * mapped_meta.cell_size;
+        std::vector<std::vector<std::string>> rows;
+        for (std::size_t k = 0; k < runs.size(); ++k)
+        {
+            if (runs[k].cls.size() != mapped_cls.size())
+            {
+                std::cout << "  " << method_list[k] << ": no floodplain / "
+                             "terrace classes (not a HAND run); not scored\n";
+                continue;
+            }
+            std::vector<std::uint8_t> sc = mapped_scored;
+            for (std::size_t i = 0; i < sc.size(); ++i)
+                if (!runs[k].valid[i]) sc[i] = 0;
+            const lsdtt::mapped_surface_score r = lsdtt::score_against_mapped(
+                lsdtt::method_class_map{method_list[k], runs[k].cls},
+                mapped_cls, sc);
+            std::vector<std::string> row = {method_list[k],
+                std::to_string(r.n_scored), num(cell_area)};
+            for (int c = 1; c <= 2; ++c)
+            {
+                row.push_back(num(r.precision[c]));
+                row.push_back(num(r.recall[c]));
+                row.push_back(num(r.iou[c]));
+            }
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    row.push_back(std::to_string(r.confusion[i][j]));
+            rows.push_back(row);
+            std::cout << "  " << method_list[k] << " vs mapped (" << r.n_scored
+                      << " cells): floodplain precision " << r.precision[1]
+                      << " recall " << r.recall[1] << " IoU " << r.iou[1]
+                      << "; terrace precision " << r.precision[2] << " recall "
+                      << r.recall[2] << " IoU " << r.iou[2] << "\n";
+        }
+        std::vector<std::string> head = {"method", "n_scored_cells", "cell_area_m2",
+            "floodplain_precision", "floodplain_recall", "floodplain_iou",
+            "terrace_precision", "terrace_recall", "terrace_iou"};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                head.push_back(std::string("mapped_") + cname[i] + "_method_" +
+                               cname[j] + "_cells");
+        const std::string p = base + "_mapped_surface_scores.csv";
+        std::cout << "Writing mapped surface scores: " << p << "\n";
+        out_loader.write_csv(p, head, rows);
     }
 
     std::cout << "\n";

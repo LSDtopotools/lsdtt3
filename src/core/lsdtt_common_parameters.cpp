@@ -13,6 +13,12 @@
 
 #include "lsdtt_common_parameters.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+
 namespace lsdtt
 {
 
@@ -38,6 +44,29 @@ std::string prefixed_group_label(const std::string& prefix,
         return group;
     }
     return group + " (" + bare + ")";
+}
+
+// Shortest text that reads back to the same float, for the default column of
+// a help entry ("0.05", not "0.050000").
+std::string round_trip_text(float value)
+{
+    for (int precision = 1; precision <= 9; ++precision)
+    {
+        std::ostringstream os;
+        os.imbue(std::locale::classic());
+        os.precision(precision);
+        os << value;
+        std::istringstream is(os.str());
+        is.imbue(std::locale::classic());
+        float back = 0.0f;
+        is >> back;
+        if (back == value) return os.str();
+    }
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(9);
+    os << value;
+    return os.str();
 }
 
 } // namespace
@@ -239,6 +268,382 @@ void declare_channel_initiation_parameters(
         "threshold_contributing_pixels x cell area. Where a genuine area is "
         "wanted instead, the convention is <what>_area_threshold_m2.",
         group, "param", ""};
+}
+
+// -----------------------------------------------------------------------------
+// Flat-ground admission and floodplain bounds
+// -----------------------------------------------------------------------------
+void declare_relief_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    int                           default_cells,
+    const std::string&            parent)
+{
+    const std::string cells = std::to_string(default_cells);
+    float_default_map["relief_window_radius_metres"] = 0.0f;
+    help_map["relief_window_radius_metres"] = {"float", "0",
+        "Radius (m) of the square window local relief (max - min) is measured "
+        "over. 0 = " + cells + " cells.",
+        "Converted to the nearest whole number of cells, at least one; the run "
+        "log states the radius actually used. A radius r cells is a (2r+1) x "
+        "(2r+1) window, so the default is a " +
+        std::to_string(2 * default_cells + 1) + " x " +
+        std::to_string(2 * default_cells + 1) + " window. Replaces "
+        "relief_window_side_pixels (a full side) and "
+        "fallback_relief_window_radius_pixels (a radius in cells), which "
+        "spelled the same idea two ways.",
+        "Admission", "param", parent};
+}
+
+void declare_max_relief_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent)
+{
+    float_default_map["max_relief_metres"] = default_metres;
+    help_map["max_relief_metres"] = {"float", round_trip_text(default_metres),
+        "Local relief (m) below which a pixel is admitted as flat.",
+        "Read a value off the relief CDF the tool writes. Where the tool has "
+        "relief_threshold_algorithm_choice, this is the value used by `fixed`.",
+        "Admission", "param", parent};
+}
+
+void declare_relief_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice)
+{
+    string_default_map["relief_threshold_algorithm_choice"] = default_choice;
+    help_map["relief_threshold_algorithm_choice"] = {"string", default_choice,
+        "How the relief bound is chosen: fixed, cdf_divergence or qq_gaussian.",
+        "fixed uses max_relief_metres. cdf_divergence computes the relief CDF, "
+        "fits the best of a family of parametric distributions (normal, "
+        "exponential, Weibull, Pareto) and takes the relief at which the "
+        "empirical CDF most exceeds the fit: flat pixels inflate the empirical "
+        "distribution at low relief. qq_gaussian is the Clubb et al. (2017) "
+        "rule: the lowest relief at which the quantiles rejoin a Gaussian drawn "
+        "through two percentiles of the QQ plot (relief_qq_*) and stay on it. "
+        "The table and the chosen value are written out. Replaces the boolean "
+        "adaptive_relief_threshold.",
+        "Admission", "param", ""};
+}
+
+void declare_max_admission_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent)
+{
+    float_default_map["max_admission_gradient"] = default_gradient;
+    help_map["max_admission_gradient"] = {"float",
+        round_trip_text(default_gradient),
+        "Gradient (m/m) below which a pixel is admitted as flat.",
+        "A gradient, not an angle: 0.087 is 5 degrees, 0.176 is 10, 0.268 is "
+        "15 (gradient = tan(angle)). Measured from a fitted polynomial surface "
+        "rather than a 3x3 difference.",
+        "Admission", "param", parent};
+}
+
+void declare_max_floodplain_hand_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent)
+{
+    float_default_map["max_floodplain_hand_metres"] = default_metres;
+    help_map["max_floodplain_hand_metres"] = {"float",
+        round_trip_text(default_metres),
+        "HAND (m) above which ground is not floodplain.",
+        "HAND is height above nearest drainage (Nobre et al. 2011, J. "
+        "Hydrology 404:13-29), measured along the flow path to the channel.",
+        "Floodplain", "param", parent};
+}
+
+void declare_valley_mask_morphology_parameters(
+    std::map<std::string, float>& float_default_map,
+    std::map<std::string, bool>&  bool_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent,
+    bool                          fill_holes_default)
+{
+    float_default_map["valley_mask_closing_radius_metres"] = 0.0f;
+    help_map["valley_mask_closing_radius_metres"] = {"float","0.0",
+        "Seal narrow gaps in the valley mask with a morphological closing [m]. "
+        "0 = off.",
+        "A dilation followed by an erosion of the same radius. It removes thin "
+        "non-valley features that reach into the valley - a road, a riser, a "
+        "levee, scroll bars, a field boundary a little above the floor - which "
+        "hole filling cannot touch, because a finger open at one end is not an "
+        "enclosed hole. Because the erosion undoes the dilation, the outer "
+        "extent stays about where it was. Set it to roughly half the width of "
+        "the widest intrusion to close; too large and it bridges a genuine "
+        "terrace riser. Applied before the opening and the hole filling.",
+        group, "param", parent};
+
+    float_default_map["valley_mask_opening_radius_metres"] = 0.0f;
+    help_map["valley_mask_opening_radius_metres"] = {"float","0.0",
+        "Remove narrow tendrils of the valley mask with a morphological opening "
+        "[m]. 0 = off.",
+        "An erosion followed by a dilation of the same radius: valley that is "
+        "narrower than about twice the radius - a thread running up a gully or "
+        "along a ditch - disappears and the rest is restored to its extent. The "
+        "converse of the closing, which removes thin NON-valley features. "
+        "Applied after the closing and before the hole filling. A reach of real "
+        "valley narrower than twice the radius is removed too.",
+        group, "param", parent};
+
+    bool_default_map["fill_valley_mask_holes"] = fill_holes_default;
+    help_map["fill_valley_mask_holes"] = {"bool",
+        fill_holes_default ? "true" : "false",
+        "Fill enclosed holes in the valley mask.",
+        "A background region not connected to the outside of the valid DEM is a "
+        "hole. Applied last, so holes the closing has sealed off are filled too.",
+        group, "switch", parent};
+}
+
+void declare_relative_elevation_parameters(
+    std::map<std::string, std::string>& string_default_map,
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  group,
+    const std::string&                  parent)
+{
+    string_default_map["network_centreline_algorithm_choice"] = "medial_path";
+    help_map["network_centreline_algorithm_choice"] = {"string","medial_path",
+        "Line each channel segment's valley centreline follows: medial_path or "
+        "smoothed_channel.",
+        "Not the raw D8 channel: sections cast from a meandering channel swing "
+        "with every bend and cross one another, and a baseline tied to its "
+        "planform imprints the meanders on the relative elevation. medial_path: "
+        "the least-cost walk along the valley's medial axis (cost = largest "
+        "distance-to-wall minus distance-to-wall), head to confluence, confined "
+        "to the valley mask plus the segment's own channel pixels. "
+        "smoothed_channel: the D8 channel smoothed by a Gaussian-smoothed cubic "
+        "spline whose sigma scales with the valley width; it may not leave the "
+        "valley mask, so where it would, it runs along the mask edge until it "
+        "comes back in.",
+        group, "param", parent};
+
+    float_default_map["network_centreline_window_margin_multiple"] = 3.0f;
+    help_map["network_centreline_window_margin_multiple"] = {"float","3",
+        "medial_path: each walk runs in the segment's bounding box padded by "
+        "this multiple of its largest distance-to-wall (plus 10 cells).",
+        "Bounds the work per segment. The medial axis lies within a valley "
+        "width of the channel, so 3 leaves room on both sides.",
+        group, "param", "network_centreline_algorithm_choice"};
+
+    float_default_map["network_centreline_smoothing_width_multiple"] = 1.0f;
+    help_map["network_centreline_smoothing_width_multiple"] = {"float","1",
+        "smoothed_channel: Gaussian sigma (along-channel metres) as a multiple "
+        "of the segment's valley width.",
+        "Valley width = 2 x the 90th percentile of distance-to-wall over the "
+        "segment's channel pixels; sigma is never below two cells. Larger "
+        "values remove longer meanders but cut more corners.",
+        group, "param", "network_centreline_algorithm_choice"};
+
+    string_default_map["centreline_baseline_algorithm_choice"] = "projected_monotonic";
+    help_map["centreline_baseline_algorithm_choice"] = {"string","projected_monotonic",
+        "How a centreline's baseline is pinned to its channel: "
+        "projected_monotonic or channel_crossings.",
+        "projected_monotonic: every channel pixel pins the centreline node "
+        "nearest it (the lowest elevation winning on a shared node), then each "
+        "pin is lowered to the lowest pin upstream of it and the baseline is "
+        "linear between pins - it never rises downstream and is never above the "
+        "channel. channel_crossings (LSDTopoTools2): pins only where the channel "
+        "crosses the centreline in plan view, at the channel elevation "
+        "interpolated at the crossing (and at centreline nodes that are channel "
+        "pixels), linear between crossings and flat beyond the first and last, "
+        "with no other constraint.",
+        group, "param", parent};
+
+    float_default_map["relative_elevation_max_distance_metres"] = 0.0f;
+    help_map["relative_elevation_max_distance_metres"] = {"float","0",
+        "Farthest a cell may be, along the ground, from the centreline node it "
+        "is measured against [m]. 0 = no limit.",
+        "Ground distance through the relative-elevation domain, in metres (not "
+        "the floor-width-scaled distance that decides which node a cell "
+        "belongs to). Cells farther away are left out. Use it to keep a "
+        "whole-DEM domain to the valley sides.",
+        group, "param", parent};
+}
+
+void declare_max_floodplain_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent)
+{
+    float_default_map["max_floodplain_gradient"] = default_gradient;
+    help_map["max_floodplain_gradient"] = {"float",
+        round_trip_text(default_gradient),
+        "Gradient (m/m) above which ground is not floodplain.",
+        "A gradient, not an angle (gradient = tan(angle)).",
+        "Floodplain", "param", parent};
+}
+
+void declare_ladder_selection_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map)
+{
+    int_default_map["ladder_max_level_count"] = 12;
+    help_map["ladder_max_level_count"] = {"int","12",
+        "Ceiling on the level count considered under auto selection.",
+        "A ceiling on what one reach can plausibly carry, not a storage limit. "
+        "A reach resolving more than a dozen distinct fluvial levels is more "
+        "likely over-fitting noise than recording twelve terraces. Raise it "
+        "freely for a genuine long Quaternary staircase; there is no numeric "
+        "cliff behind it.",
+        "Ladder","param",""};
+
+    string_default_map["ladder_break_algorithm_choice"] = "antimode";
+    help_map["ladder_break_algorithm_choice"] = {"string","antimode",
+        "Break finder: gap, antimode or jenks.",
+        "antimode finds dips in a smoothed log10 density. jenks is "
+        "Fisher-Jenks on the linear values; it takes the level count directly "
+        "and is the source of the reported goodness-of-variance fit. gap "
+        "finds empty spans between clusters.",
+        "Ladder","param",""};
+
+    float_default_map["vertical_accuracy_metres"] = 0.0f;
+    help_map["vertical_accuracy_metres"] = {"float","0.0",
+        "Vertical accuracy of the DEM, E_v [m]. 0 disables the floor.",
+        "Two levels are only claimed as distinct when their band centres are "
+        "at least ladder_resolvability_kappa * E_v apart. This is metadata you "
+        "must supply: it cannot be derived from the DEM. 0 disables the check "
+        "and every window then reports resolved, carrying no instrument "
+        "guarantee at all. Note that a DEM whose vertical units are feet on a "
+        "metre grid has an effective E_v 3.28 times larger than you think.",
+        "Ladder","param",""};
+
+    float_default_map["ladder_resolvability_kappa"] = 3.0f;
+    help_map["ladder_resolvability_kappa"] = {"float","3.0",
+        "Multiplier on E_v in the resolvability floor.",
+        "Required band-centre gap = kappa * vertical_accuracy_metres.",
+        "Ladder","param",""};
+}
+
+void declare_floodplain_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice)
+{
+    string_default_map["floodplain_threshold_algorithm_choice"] = default_choice;
+    help_map["floodplain_threshold_algorithm_choice"] = {"string", default_choice,
+        "How the floodplain bounds are chosen: fixed, qq_gaussian or "
+        "cdf_divergence.",
+        "fixed uses max_floodplain_hand_metres and max_floodplain_gradient as "
+        "given. qq_gaussian is Clubb et al. (2017): for each quantity, the "
+        "lowest value at which the data rejoin a Gaussian drawn through two "
+        "percentiles of the quantile-quantile plot (floodplain_qq_*), and stay "
+        "on it. cdf_divergence fits a family of distributions and takes the "
+        "value at which the empirical CDF most exceeds the best fit. The chosen "
+        "values are printed and written to the ingested-parameters file, so a "
+        "run can be repeated with fixed.",
+        "Floodplain", "param", ""};
+}
+
+void declare_qq_threshold_parameters(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix,
+    const std::string&            parent)
+{
+    const std::string lo = prefix + "_qq_lower_percentile";
+    const std::string hi = prefix + "_qq_upper_percentile";
+    const std::string fr = prefix + "_qq_threshold_fraction";
+    float_default_map[lo] = 25.0f;
+    help_map[lo] = {"float", "25",
+        "Lower percentile of the QQ cloud the Gaussian reference line is drawn "
+        "through (qq_gaussian).",
+        "25 and 75 (the IQR) are the values Clubb et al. (2017) used.",
+        "Threshold selection", "param", parent};
+    float_default_map[hi] = 75.0f;
+    help_map[hi] = {"float", "75",
+        "Upper percentile of the QQ cloud the Gaussian reference line is drawn "
+        "through (qq_gaussian).",
+        "Must be above the lower percentile.",
+        "Threshold selection", "param", parent};
+    float_default_map[fr] = 0.01f;
+    help_map[fr] = {"float", "0.01",
+        "Fraction of the data range within which a quantile counts as on the "
+        "Gaussian line (qq_gaussian).",
+        "0.01 (1%) is the paper's value. The threshold is the lowest quantile "
+        "that is on the line and stays on it for the next 200 quantiles of "
+        "10000. Larger values admit more ground.",
+        "Threshold selection", "param", parent};
+}
+
+threshold_selection_request threshold_request_from_parameters(
+    const std::string&                  choice,
+    const std::string&                  choice_key,
+    double                              fixed_value,
+    const std::map<std::string, float>& float_parameters,
+    const std::string&                  prefix)
+{
+    threshold_selection_request r;
+    if (choice == "fixed")               r.method = threshold_selection_choice::fixed;
+    else if (choice == "qq_gaussian")    r.method = threshold_selection_choice::qq_gaussian;
+    else if (choice == "cdf_divergence") r.method = threshold_selection_choice::cdf_divergence;
+    else
+        throw std::invalid_argument(
+            "unknown " + choice_key + " '" + choice +
+            "'. Valid: fixed, qq_gaussian, cdf_divergence.");
+    r.fixed_value = fixed_value;
+    auto get = [&](const std::string& key, double fallback)
+    {
+        const auto it = float_parameters.find(key);
+        return it == float_parameters.end() ? fallback
+                                            : static_cast<double>(it->second);
+    };
+    r.qq_lower_percentile   = get(prefix + "_qq_lower_percentile", 25.0);
+    r.qq_upper_percentile   = get(prefix + "_qq_upper_percentile", 75.0);
+    r.qq_threshold_fraction = get(prefix + "_qq_threshold_fraction", 0.01);
+    return r;
+}
+
+int relief_window_radius_pixels(double radius_metres,
+                                double cell_size,
+                                int    default_cells)
+{
+    if (!std::isfinite(radius_metres) || radius_metres < 0.0)
+        throw std::invalid_argument(
+            "relief_window_radius_metres must be a finite value >= 0");
+    if (radius_metres == 0.0) return default_cells;
+    if (!(cell_size > 0.0))
+        throw std::invalid_argument("relief window: cell size must be > 0");
+    const long r = std::lround(radius_metres / cell_size);
+    return static_cast<int>(std::max(1L, r));
+}
+
+double gradient_from_legacy_degrees(const std::string& text,
+                                    const std::string& old_key)
+{
+    std::size_t used = 0;
+    double deg = 0.0;
+    try { deg = std::stod(text, &used); }
+    catch (const std::exception&) { used = 0; }
+    if (used == 0 || used != text.size() || !std::isfinite(deg) ||
+        deg < 0.0 || deg >= 90.0)
+        throw std::invalid_argument(
+            "'" + old_key + "' must be an angle in [0, 90) degrees to convert "
+            "to a gradient; got '" + text + "'.");
+    if (deg == 0.0) return 0.0;
+    return std::tan(deg * 3.14159265358979323846 / 180.0);
+}
+
+std::string relief_threshold_choice_from_legacy_bool(const std::string& text,
+                                                     const std::string& old_key)
+{
+    for (const char* t : {"true", "True", "TRUE", "t", "T", "1"})
+        if (text == t) return "cdf_divergence";
+    for (const char* f : {"false", "False", "FALSE", "f", "F", "0"})
+        if (text == f) return "fixed";
+    throw std::invalid_argument(
+        "'" + old_key + "' must be true or false; got '" + text + "'.");
 }
 
 // -----------------------------------------------------------------------------

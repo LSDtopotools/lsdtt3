@@ -28,10 +28,13 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_valley_centreline_cpu.hpp"
+#include "lsdtt_reference_field_ladder_cpu.hpp"
 
 namespace lsdtt
 {
@@ -310,5 +313,76 @@ cross_section_informed_valley_mask(
     const valley_centreline_result&     centrelines,
     const valley_cross_section_result&  sections
 );
+
+// -----------------------------------------------------------------------------
+// Cross-section levels
+//
+// Every section's hydraulic breaks (hydraulic_break_stages, index >= 1) are
+// heights above that section's thalweg at which the valley widens in a step: a
+// tread. Pooled per channel they cluster around the channel's levels. They are
+// clustered with the ladder's own rule (partition_population: the largest k
+// whose medians are at least kappa * E_v apart), so a cross-section level and a
+// ladder level are found the same way.
+//
+// One row per level per channel. window_centre_m is 0: levels are per whole
+// channel (reach windows are a possible extension). n_sections counts distinct
+// sections with a break on the level; spread_m is p90 - p10 of those breaks.
+// status describes the channel's partition: a channel whose breaks do not
+// separate gets one level with status unresolved.
+//
+// SUPPORT. A level found on fewer than min_section_fraction of the channel's
+// sections is dropped (and listed in `dropped`). A tread is crossed by most
+// sections; a step that only a few sections see - a section running up a
+// riser gap's ramp, or a valley wall - is not a level of the channel.
+// min_level_gap_m is the tightest gap among the levels kept.
+//
+// On a low-relief floodplain DEM the section thalweg sat a few centimetres
+// (median) above the pinned centreline baseline, and height above that
+// baseline was a few tenths of a metre (median) below flow-path HAND within
+// 400 m of the centreline - so these heights can band flow-path HAND.
+// -----------------------------------------------------------------------------
+struct cross_section_level
+{
+    std::int32_t  source_id       = -1;
+    double        window_centre_m = 0.0;
+    int           level_index     = 0;
+    double        level_hand_m    = 0.0;
+    std::int64_t  n_breaks        = 0;
+    std::int64_t  n_sections      = 0;
+    double        spread_m        = 0.0;
+    ladder_status status          = ladder_status::degenerate;
+    double        required_gap_m  = 0.0;
+    double        min_level_gap_m = 0.0;
+};
+
+struct cross_section_levels_result
+{
+    std::vector<cross_section_level> levels;    // kept
+    std::vector<cross_section_level> dropped;   // below the support fraction
+    std::map<std::int32_t, std::int64_t> n_sections_per_channel;
+};
+
+[[nodiscard]] cross_section_levels_result cluster_cross_section_levels(
+    const valley_cross_section_result& sections,
+    const ladder_request&              request,
+    double                             min_section_fraction = 0.5);
+
+// The levels file: header source_id,window_centre_m,level_index,level_hand_m,
+// n_breaks,n_sections,spread_m,status,required_gap_m,min_level_gap_m.
+void write_cross_section_levels_csv(
+    const std::string&                      path,
+    const std::vector<cross_section_level>& levels);
+
+// Reads a levels file - written above, or by hand - into source_id -> level
+// heights (m), ascending and de-duplicated. Only source_id and level_hand_m
+// are required; other columns are ignored. Throws std::runtime_error naming the
+// file and row on a missing column or a non-numeric value.
+[[nodiscard]] std::map<std::int32_t, std::vector<double>>
+read_cross_section_levels_csv(const std::string& path);
+
+// Levels to band breaks: the midpoints between consecutive levels, so each
+// level sits inside its own band. One level gives no breaks (one band).
+[[nodiscard]] std::map<std::int32_t, std::vector<double>>
+breaks_from_levels(const std::map<std::int32_t, std::vector<double>>& levels);
 
 } // namespace lsdtt

@@ -249,18 +249,37 @@ ordinary alias map coexist. Transformed aliases are applied before ordinary
 aliases. Registering the same old key in both maps is a fatal configuration
 error; do not rely on ordering to choose a policy.
 
-#### `set_deprecated_compatibility_aliases()` — consolidated selectors
+#### `set_deprecated_compatibility_aliases()` — values the parser cannot convert
 
-Use this only when several old per-output selectors are consolidated into one
-canonical selector and old files may set those selectors differently. Each old
-key maps to a distinct hidden storage key plus the public replacement named in
-the warning. The old value remains attached to its original output for that run
-without exposing fake public overrides.
+Use this in two cases:
 
-Compatibility storage keys default to `same_as_write_vector_format` or
-`same_as_write_output_format` and are resolved after parsing with
-`resolve_output_format_override()`. They are implementation details and must not
-be added to help or user documentation.
+1. **Consolidated selectors.** Several old per-output selectors are consolidated
+   into one canonical selector and old files may set those selectors
+   differently. Each old key maps to a distinct hidden storage key plus the
+   public replacement named in the warning. The old value remains attached to
+   its original output for that run without exposing fake public overrides.
+   These storage keys default to `same_as_write_vector_format` or
+   `same_as_write_output_format` and are resolved after parsing with
+   `resolve_output_format_override()`.
+2. **Conversions the parser cannot make.** The old value can only be turned into
+   the new one with information the parser does not have (the DEM cell size, for
+   a window in cells becoming a radius in metres) or with a function that is not
+   affine (a tangent, for an angle becoming a gradient), or it changes type (a
+   bool becoming a `*_algorithm_choice`). The CLI declares the storage key as an
+   empty string, converts the stored text after parsing when the new key was
+   not supplied, and calls `pp.record_resolved_parameter(new_key, value)` so
+   `_ingested_params.param` carries the converted value and a rerun from it
+   reproduces the run. The conversions in `lsdtt_common_parameters.hpp`
+   (`gradient_from_legacy_degrees`, `relief_threshold_choice_from_legacy_bool`)
+   throw with the old key named when the stored text is not a valid old value.
+
+The policy's optional third field, `note`, replaces the default warning tail
+(which is written for case 1) with a sentence saying what happened to the
+value, for example `"Converted with gradient = tan(angle)."`.
+
+Storage keys are implementation details and must not be added to help or user
+documentation. Do not reach for case 2 when an affine numeric alias would do:
+that facility stays deliberately narrow.
 
 #### `set_removed_keys()` — the parameter is gone; fatal
 

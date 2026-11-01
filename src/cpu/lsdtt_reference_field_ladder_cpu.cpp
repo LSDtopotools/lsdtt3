@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -792,7 +793,7 @@ ladder_result build_reference_field_ladder(
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id,
     const lsdtt_raster_cpu*          window_coordinate,
-    const lsdtt_raster_cpu*          slope_degrees)
+    const lsdtt_raster_cpu*          gradient)
 {
     static const char* fn = "lsdtt::build_reference_field_ladder";
 
@@ -853,11 +854,11 @@ ladder_result build_reference_field_ladder(
 
     const std::vector<float>*   sld = nullptr;
     const std::vector<uint8_t>* slm = nullptr;
-    if (want_slope_ev && slope_degrees != nullptr &&
-        slope_degrees->get_data().size() == n)
+    if (want_slope_ev && gradient != nullptr &&
+        gradient->get_data().size() == n)
     {
-        sld = &slope_degrees->get_data();
-        slm = &slope_degrees->get_mask();
+        sld = &gradient->get_data();
+        slm = &gradient->get_mask();
     }
     else if (want_slope_ev)
     {
@@ -873,7 +874,7 @@ ladder_result build_reference_field_ladder(
         if (sld == nullptr || slopes.empty())
             return request.vertical_accuracy_metres;
         const double med = compute_median_of_copy(slopes);
-        return (med <= request.vertical_accuracy_break_degrees)
+        return (med <= request.vertical_accuracy_break_gradient)
             ? request.vertical_accuracy_gentle_metres
             : request.vertical_accuracy_steep_metres;
     };
@@ -912,7 +913,9 @@ ladder_result build_reference_field_ladder(
     // come back mean nothing. Refuse rather than return a plausible-looking
     // ladder built on a destroyed histogram. See ladder_break_choice.
     // gap and jenks both work on the linear field, so only antimode is caught.
-    if (request.break_algorithm == ladder_break_choice::antimode &&
+    // Nothing is binned when the breaks are supplied, so nothing is refused.
+    if (request.supplied_breaks.empty() &&
+        request.break_algorithm == ladder_break_choice::antimode &&
         std::isfinite(lo) && lo < 0.0)
     {
         throw std::invalid_argument(
@@ -960,6 +963,7 @@ ladder_result build_reference_field_ladder(
         return std::clamp(b, 0, nbins - 1);
     };
 
+    if (request.supplied_breaks.empty())
     {
         std::vector<std::int64_t> ghist(static_cast<std::size_t>(nbins), 0);
         for (const double v : all_values) ++ghist[static_cast<std::size_t>(log_bin(v))];
@@ -970,8 +974,140 @@ ladder_result build_reference_field_ladder(
                                          request.max_valley_fraction),
             request);
     }
-    const selection global_selection = select_partition(
-        all_values, result.global_breaks_m, request, required_gap);
+    // Supplied breaks (ladder_request::supplied_breaks): used as given, with
+    // centres and the tightest gap measured on the values they band, so a set
+    // the DEM cannot resolve is visible in the window record.
+    const bool supplied = !request.supplied_breaks.empty();
+    auto supplied_for = [&](std::int32_t source) -> const std::vector<double>*
+    {
+        auto it = request.supplied_breaks.find(source);
+        if (it == request.supplied_breaks.end())
+            it = request.supplied_breaks.find(-1);
+        return it == request.supplied_breaks.end() ? nullptr : &it->second;
+    };
+    auto make_supplied = [&](const std::vector<double>& values,
+                             std::vector<double>        brk) -> selection
+    {
+        std::sort(brk.begin(), brk.end());
+        selection sel;
+        sel.breaks = brk;
+        sel.k      = static_cast<int>(brk.size()) + 1;
+        sel.status = ladder_status::supplied;
+        // Not evaluate_partition: that rejects any partition with an empty
+        // band, which is right when SEARCHING for levels and wrong here - a
+        // supplied level may simply have no ground in this window. Empty bands
+        // get a NaN centre and are skipped in the gap.
+        std::vector<std::vector<double>> bins(brk.size() + 1);
+        for (const double v : values)
+            bins[static_cast<std::size_t>(band_of(v, brk))].push_back(v);
+        double prev = std::numeric_limits<double>::quiet_NaN();
+        double gap  = std::numeric_limits<double>::infinity();
+        int n_full  = 0;
+        for (std::vector<double>& b : bins)
+        {
+            if (b.empty())
+            {
+                sel.band_centres.push_back(std::numeric_limits<double>::quiet_NaN());
+                continue;
+            }
+            const double c = compute_median_of_copy(std::move(b), 0.0);
+            sel.band_centres.push_back(c);
+            if (n_full > 0) gap = std::min(gap, c - prev);
+            prev = c;
+            ++n_full;
+        }
+        sel.min_centre_gap = (n_full > 1) ? gap : 0.0;
+        return sel;
+    };
+    const std::vector<double>* global_supplied = nullptr;
+    if (supplied)
+    {
+        global_supplied = supplied_for(-1);
+        if (global_supplied == nullptr && request.supplied_breaks.size() == 1)
+            global_supplied = &request.supplied_breaks.begin()->second;
+    }
+
+    // Training polygons (ladder_request::training): statistics on this field,
+    // the fit over every training cell, and the selection built from a fit -
+    // trained lower breaks, then the ladder's own search on the values above
+    // the top one.
+    const bool training_on = request.training != nullptr && !supplied;
+    training_set tset;
+    if (training_on)
+    {
+        if (request.training->polygon_of_pixel.size() != n)
+            throw std::invalid_argument(
+                std::string(fn) + ": training polygons are not on the field's grid");
+        tset = *request.training;
+        compute_training_polygon_stats(
+            tset, reference_field, request.training_spread_factor * required_gap,
+            request.training_relative_spread);
+        result.training_polygons = tset.polygons;
+    }
+    auto training_cell = [&](std::size_t i) -> std::int32_t
+    {
+        if (!training_on || !fm[i] || !std::isfinite(fv[i])) return -1;
+        return tset.polygon_of_pixel[i];
+    };
+    if (training_on)
+    {
+        std::vector<std::pair<std::int32_t, double>> all_training;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::int32_t f = training_cell(i);
+            if (f >= 0) all_training.emplace_back(f, static_cast<double>(fv[i]));
+        }
+        result.training_global_fit = fit_training_window(
+            all_training, tset, required_gap, request.training_min_cells_per_class);
+    }
+    // A fit is usable when its lowest level is floodplain and it has a break.
+    auto fit_usable = [&](const training_window_fit& f) -> bool
+    {
+        return !f.breaks.empty() && !f.levels.empty() && !f.levels[0].empty() &&
+               tset.polygons[static_cast<std::size_t>(f.levels[0][0])].cls == 0;
+    };
+    auto trained_selection = [&](const std::vector<double>& values,
+                                 const std::vector<double>& trained,
+                                 double                     gap_m) -> selection
+    {
+        std::vector<double> brk = trained;
+        ladder_status st = ladder_status::supplied;
+        std::vector<double> above;
+        for (const double v : values)
+            if (v > trained.back()) above.push_back(v);
+        if (static_cast<int>(above.size()) >= request.min_window_pixels)
+        {
+            std::vector<std::int64_t> h(static_cast<std::size_t>(nbins), 0);
+            for (const double v : above) ++h[static_cast<std::size_t>(log_bin(v))];
+            const std::vector<double> cand = clamp_breaks(
+                request.break_algorithm == ladder_break_choice::gap
+                    ? gap_break_candidates(above, request, nullptr, nullptr)
+                    : find_population_breaks(h, lo_log, hi_log,
+                                             request.max_valley_fraction),
+                request);
+            const selection up = select_partition(above, cand, request, gap_m);
+            if (up.status == ladder_status::resolved ||
+                up.status == ladder_status::forced)
+            {
+                for (const double b : up.breaks)
+                    if (b > brk.back()) brk.push_back(b);
+                st = up.status;
+            }
+        }
+        selection sel = make_supplied(values, brk);
+        sel.status = st;
+        return sel;
+    };
+    const bool global_trained =
+        training_on && fit_usable(result.training_global_fit);
+
+    const selection global_selection = (global_supplied != nullptr)
+        ? make_supplied(all_values, *global_supplied)
+        : global_trained
+            ? trained_selection(all_values, result.training_global_fit.breaks,
+                                required_gap)
+            : select_partition(all_values, result.global_breaks_m, request,
+                               required_gap);
 
     // -------------------------------------------------------------------------
     // Windowing. A fan has no along-channel coordinate, so the fitted-surface
@@ -987,6 +1123,11 @@ ladder_result build_reference_field_ladder(
 
     if (!want_windows)
     {
+        if (supplied && global_supplied == nullptr)
+            throw std::invalid_argument(
+                std::string(fn) + ": supplied levels are keyed by channel, but "
+                "this ladder has no channel windows (a supplied HAND raster, or "
+                "a fitted surface). Supply one set of levels with source_id -1.");
         // One global ladder.
         const selection& sel = global_selection;
 
@@ -1005,6 +1146,14 @@ ladder_result build_reference_field_ladder(
         w.status                = sel.status;
         w.used_global_breaks    = true;
         w.breaks_m              = sel.breaks;
+        if (global_trained)
+        {
+            w.n_trained_breaks = static_cast<int>(
+                result.training_global_fit.breaks.size());
+            w.training_source  = "global";
+            w.training_fit     = result.training_global_fit;
+            result.n_windows_trained = 1;
+        }
         {
             double hlo = 0.0, hhi = 0.0;
             std::vector<std::int64_t> hc;
@@ -1024,7 +1173,7 @@ ladder_result build_reference_field_ladder(
         w.min_band_centre_gap_m = sel.min_centre_gap;
         w.required_gap_m        = required_gap;
         w.vertical_accuracy_m   = global_ev;
-        w.median_slope_degrees  = median_slope_of(all_slopes);
+        w.median_gradient       = median_slope_of(all_slopes);
         w.goodness_of_variance_fit = sel.gvf;
         {
             const bootstrap_summary bs = bootstrap_k(
@@ -1042,6 +1191,12 @@ ladder_result build_reference_field_ladder(
         if (sel.status == ladder_status::resolved ||
             sel.status == ladder_status::forced)      ++result.n_windows_resolved;
         else if (sel.status == ladder_status::unresolved) ++result.n_windows_unresolved;
+        else if (sel.status == ladder_status::supplied)
+        {
+            ++result.n_windows_supplied;
+            if (sel.min_centre_gap > 0.0 && sel.min_centre_gap < required_gap)
+                ++result.n_windows_supplied_below_floor;
+        }
         else                                              ++result.n_windows_degenerate;
 
         result.band_index = lsdtt_raster_cpu(
@@ -1067,6 +1222,8 @@ ladder_result build_reference_field_ladder(
         // Gradients of the same cells, in the same order, so a window's E_v is
         // read off the ground the window actually covers.
         std::vector<std::vector<double>> window_slopes;
+        // Training cells (polygon id, field value), when training.
+        std::vector<std::vector<std::pair<std::int32_t, double>>> window_training;
     };
 
     // Per-source coordinate range.
@@ -1099,6 +1256,7 @@ ladder_result build_reference_field_ladder(
         sb.n_windows = static_cast<int>(span / sb.wstep) + 1;
         sb.window_values.resize(static_cast<std::size_t>(sb.n_windows));
         sb.window_slopes.resize(static_cast<std::size_t>(sb.n_windows));
+        sb.window_training.resize(static_cast<std::size_t>(sb.n_windows));
         bins.emplace(s, std::move(sb));
     }
 
@@ -1121,6 +1279,22 @@ ladder_result build_reference_field_ladder(
         if (sld != nullptr && (*slm)[i] && std::isfinite((*sld)[i]))
         {
             sb.window_slopes[w].push_back(static_cast<double>((*sld)[i]));
+        }
+    }
+
+    // Training cells need not be admitted: they bin by their own coordinate.
+    if (training_on)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const std::int32_t f = training_cell(i);
+            if (f < 0 || !cm[i] || !std::isfinite(cd[i])) continue;
+            const auto bit = bins.find((*window_source_id)[i]);
+            if (bit == bins.end()) continue;
+            source_bins& sb = bit->second;
+            sb.window_training[static_cast<std::size_t>(
+                window_of(sb, static_cast<double>(cd[i])))]
+                .emplace_back(f, static_cast<double>(fv[i]));
         }
     }
 
@@ -1162,7 +1336,61 @@ ladder_result build_reference_field_ladder(
             rec.n_pixels        = static_cast<std::int64_t>(pooled.size());
             rec.required_gap_m  = win_gap;
             rec.vertical_accuracy_m  = win_ev;
-            rec.median_slope_degrees = median_slope_of(pooled_slopes);
+            rec.median_gradient      = median_slope_of(pooled_slopes);
+
+            if (training_on)
+            {
+                std::vector<std::pair<std::int32_t, double>> tcells;
+                for (int k = std::max(w - 1, 0);
+                     k <= std::min(w + 1, sb.n_windows - 1); ++k)
+                {
+                    const auto& src = sb.window_training[static_cast<std::size_t>(k)];
+                    tcells.insert(tcells.end(), src.begin(), src.end());
+                }
+                rec.training_fit = fit_training_window(
+                    tcells, tset, win_gap, request.training_min_cells_per_class);
+                const bool own = fit_usable(rec.training_fit);
+                if ((own || global_trained) && !pooled.empty())
+                {
+                    const std::vector<double>& tb = own
+                        ? rec.training_fit.breaks
+                        : result.training_global_fit.breaks;
+                    const selection sel = trained_selection(pooled, tb, win_gap);
+                    selected[static_cast<std::size_t>(w)] = sel;
+                    has_own[static_cast<std::size_t>(w)]  = 1;
+                    rec.k_selected            = sel.k;
+                    rec.status                = sel.status;
+                    rec.breaks_m              = sel.breaks;
+                    rec.band_centres_m        = sel.band_centres;
+                    rec.min_band_centre_gap_m = sel.min_centre_gap;
+                    rec.n_trained_breaks      = static_cast<int>(tb.size());
+                    rec.training_source       = own ? "window" : "global";
+                    wb[static_cast<std::size_t>(w)] = sel.breaks;
+                    result.windows.push_back(std::move(rec));
+                    continue;
+                }
+            }
+
+            if (supplied)
+            {
+                const std::vector<double>* b = supplied_for(s);
+                if (b == nullptr)
+                    throw std::invalid_argument(
+                        std::string(fn) + ": the supplied levels have no entry "
+                        "for channel source_id " + std::to_string(s) +
+                        " (and no source_id -1 set for every channel).");
+                const selection sel = make_supplied(pooled, *b);
+                selected[static_cast<std::size_t>(w)] = sel;
+                has_own[static_cast<std::size_t>(w)]  = 1;
+                rec.k_selected            = sel.k;
+                rec.status                = sel.status;
+                rec.breaks_m              = sel.breaks;
+                rec.band_centres_m        = sel.band_centres;
+                rec.min_band_centre_gap_m = sel.min_centre_gap;
+                wb[static_cast<std::size_t>(w)] = sel.breaks;
+                result.windows.push_back(std::move(rec));
+                continue;
+            }
 
             if (static_cast<int>(pooled.size()) >= request.min_window_pixels)
             {
@@ -1257,11 +1485,61 @@ ladder_result build_reference_field_ladder(
             result.windows.push_back(std::move(rec));
         }
 
+        // ladder_request::unresolved_borrow_breaks: an unresolved one-band window takes
+        // the breaks of the nearest window on the same source that found
+        // levels (resolved, forced, or supplied / trained with k >= 2). Status
+        // stays unresolved - the DEM did not resolve levels HERE - and the
+        // window the breaks came from is recorded. Decided on the original
+        // statuses, before the sparse windows below inherit.
+        if (request.unresolved_borrow_breaks)
+        {
+            std::vector<char> found(static_cast<std::size_t>(sb.n_windows), 0);
+            for (int k = 0; k < sb.n_windows; ++k)
+            {
+                const selection& sk = selected[static_cast<std::size_t>(k)];
+                found[static_cast<std::size_t>(k)] =
+                    has_own[static_cast<std::size_t>(k)] && sk.k >= 2 &&
+                    sk.status != ladder_status::unresolved;
+            }
+            const std::vector<selection> original = selected;
+            for (int w = 0; w < sb.n_windows; ++w)
+            {
+                // Only a one-band window: an unresolved window under an
+                // explicit level_count already carries its own k bands.
+                if (!has_own[static_cast<std::size_t>(w)] ||
+                    original[static_cast<std::size_t>(w)].status !=
+                        ladder_status::unresolved ||
+                    original[static_cast<std::size_t>(w)].k >= 2)
+                    continue;
+                int best = -1;
+                for (int k = 0; k < sb.n_windows; ++k)
+                    if (found[static_cast<std::size_t>(k)] &&
+                        (best < 0 || std::abs(k - w) < std::abs(best - w)))
+                        best = k;
+                if (best < 0) continue;
+                const selection& from = original[static_cast<std::size_t>(best)];
+                selection borrowed = from;
+                borrowed.status = ladder_status::unresolved;
+                selected[static_cast<std::size_t>(w)] = borrowed;
+                ladder_window& rec =
+                    result.windows[first_rec + static_cast<std::size_t>(w)];
+                rec.k_selected            = from.k;
+                rec.breaks_m              = from.breaks;
+                rec.band_centres_m        = from.band_centres;
+                rec.min_band_centre_gap_m = from.min_centre_gap;
+                rec.breaks_from_window_m  =
+                    result.windows[first_rec + static_cast<std::size_t>(best)]
+                        .window_centre_m;
+                wb[static_cast<std::size_t>(w)] = from.breaks;
+            }
+        }
+
         // A sparse window inherits the complete selection from the nearest
         // adequately populated window on the same source, or the complete
-        // global selection when that source has none. An adequately populated
-        // unresolved window owns its one-band selection and is never replaced
-        // by unrelated multi-band breaks.
+        // global selection when that source has none. Without
+        // unresolved_borrow_breaks an adequately populated unresolved window
+        // owns its one-band selection and is never replaced by unrelated
+        // multi-band breaks.
         for (int w = 0; w < sb.n_windows; ++w)
         {
             if (has_own[static_cast<std::size_t>(w)]) continue;
@@ -1337,9 +1615,16 @@ ladder_result build_reference_field_ladder(
 
     for (const ladder_window& w : result.windows)
     {
+        if (!w.training_source.empty()) ++result.n_windows_trained;
         if (w.status == ladder_status::resolved ||
             w.status == ladder_status::forced)          ++result.n_windows_resolved;
         else if (w.status == ladder_status::unresolved) ++result.n_windows_unresolved;
+        else if (w.status == ladder_status::supplied)
+        {
+            ++result.n_windows_supplied;
+            if (w.min_band_centre_gap_m > 0.0 && w.min_band_centre_gap_m < w.required_gap_m)
+                ++result.n_windows_supplied_below_floor;
+        }
         else                                            ++result.n_windows_degenerate;
     }
 
@@ -1351,6 +1636,48 @@ ladder_result build_reference_field_ladder(
 // =============================================================================
 // label_components_within_bands
 // =============================================================================
+population_partition partition_population(
+    const std::vector<double>& values,
+    const ladder_request&      request)
+{
+    population_partition out;
+    std::vector<double> v;
+    v.reserve(values.size());
+    for (const double x : values) if (std::isfinite(x)) v.push_back(x);
+    if (v.empty()) return out;
+
+    // One row of cells, all admitted, no windows: build_reference_field_ladder
+    // then runs exactly its global path on these values, so this is the
+    // ladder's rule and not a second implementation of it.
+    lsdtt_raster_meta m;
+    m.n_rows        = 1;
+    m.n_cols        = static_cast<int>(v.size());
+    m.cell_size     = 1.0;
+    m.x_min         = 0.0;
+    m.y_min         = 0.0;
+    m.no_data_value = -9999.0;
+    std::vector<float> fv(v.begin(), v.end());
+    const lsdtt_raster_cpu field(std::move(fv),
+                                 std::vector<uint8_t>(v.size(), 1u), m);
+    const lsdtt_raster_cpu admitted(std::vector<float>(v.size(), 1.0f),
+                                    std::vector<uint8_t>(v.size(), 1u), m);
+    ladder_request r = request;
+    r.reach_window_metres = -1.0;
+    r.min_window_pixels   = 1;
+    r.k_bootstrap         = 0;
+    r.vertical_accuracy_mode = vertical_accuracy_choice::fixed;
+    const ladder_result lr = build_reference_field_ladder(field, admitted, r);
+    if (lr.windows.empty()) return out;
+    const ladder_window& w = lr.windows.front();
+    out.k                   = w.k_selected;
+    out.status              = w.status;
+    out.breaks              = w.breaks_m;
+    out.band_centres        = w.band_centres_m;
+    out.min_band_centre_gap = w.min_band_centre_gap_m;
+    out.required_gap        = w.required_gap_m;
+    return out;
+}
+
 banded_label_result label_components_within_bands(
     const lsdtt_raster_cpu& band_index,
     const lsdtt_raster_cpu& admitted_mask,
@@ -1572,6 +1899,80 @@ banded_label_result label_components_within_bands(
     std::vector<uint8_t> label_mask(n, 1);
     out.labels = lsdtt_raster_cpu(
         std::move(label_data), std::move(label_mask), meta);
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// segment_whole_mask
+// -----------------------------------------------------------------------------
+whole_mask_segmentation segment_whole_mask(
+    const lsdtt_raster_cpu& band_index,
+    const lsdtt_raster_cpu& admitted_mask,
+    const lsdtt_raster_cpu* barrier,
+    pixel_connectivity      connectivity)
+{
+    static const char* fn = "lsdtt::segment_whole_mask";
+    const lsdtt_raster_meta& meta = band_index.get_meta();
+    const std::size_t n = band_index.get_data().size();
+    if (admitted_mask.get_data().size() != n ||
+        (barrier != nullptr && barrier->get_data().size() != n))
+        throw std::invalid_argument(
+            std::string(fn) + ": input rasters are not co-registered");
+
+    const std::vector<float>&   bi = band_index.get_data();
+    const std::vector<float>&   am = admitted_mask.get_data();
+    const std::vector<uint8_t>& amm = admitted_mask.get_mask();
+
+    whole_mask_segmentation out;
+    std::vector<float> adm(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!amm[i] || !(am[i] > 0.5f)) continue;
+        if (barrier != nullptr && barrier->get_mask()[i] &&
+            barrier->get_data()[i] > 0.5f)
+        {
+            ++out.n_barrier_pixels;
+            continue;
+        }
+        adm[i] = 1.0f;
+    }
+    out.admitted = lsdtt_raster_cpu(std::vector<float>(adm),
+                                    std::vector<uint8_t>(n, 1), meta);
+
+    const lsdtt_raster_cpu lab = label_binary_components_by_size(
+        out.admitted, 1, connectivity);
+    const std::vector<float>&   ld = lab.get_data();
+    const std::vector<uint8_t>& lm = lab.get_mask();
+
+    // Band votes per component.
+    std::unordered_map<std::int64_t, std::map<int, std::int64_t>> votes;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!lm[i] || !(ld[i] > 0.5f)) continue;
+        auto& v = votes[static_cast<std::int64_t>(ld[i])];
+        if (bi[i] >= 0.0f) ++v[static_cast<int>(bi[i])];
+    }
+    std::unordered_map<std::int64_t, int> majority;
+    for (const auto& [l, v] : votes)
+    {
+        int best = -1;
+        std::int64_t best_n = 0;
+        for (const auto& [b, c] : v)   // ascending band: ties to the lower
+            if (c > best_n) { best = b; best_n = c; }
+        majority[l] = best;
+    }
+    out.n_components = static_cast<std::int64_t>(votes.size());
+
+    std::vector<float> nb(n, -1.0f);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!lm[i] || !(ld[i] > 0.5f)) continue;
+        nb[i] = static_cast<float>(majority[static_cast<std::int64_t>(ld[i])]);
+        if (bi[i] >= 0.0f && nb[i] != bi[i]) ++out.n_reassigned_pixels;
+    }
+    out.band_index = lsdtt_raster_cpu(std::move(nb),
+                                      std::vector<uint8_t>(band_index.get_mask()),
+                                      meta);
     return out;
 }
 

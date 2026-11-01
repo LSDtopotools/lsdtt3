@@ -325,6 +325,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_binary_array2d_tracing.cpp
     src/utils/lsdtt_signal1d.cpp
     src/utils/lsdtt_natural_breaks.cpp
+    src/utils/lsdtt_threshold_selection.cpp
     src/utils/lsdtt_image_filters.cpp
 )
 
@@ -390,8 +391,13 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_outlet_basin_verification_cpu.cpp
     src/cpu/lsdtt_channel_scope_cpu.cpp
     src/cpu/lsdtt_flat_surface_channel_classify_cpu.cpp
+    src/cpu/lsdtt_floodplain_thresholds_cpu.cpp
     src/cpu/lsdtt_valley_centreline_cpu.cpp
     src/cpu/lsdtt_valley_cross_sections_cpu.cpp
+    src/cpu/lsdtt_valley_width_network_cpu.cpp
+    src/cpu/lsdtt_valley_relative_elevation_cpu.cpp
+    src/cpu/lsdtt_valley_terrace_profile_cpu.cpp
+    src/cpu/lsdtt_perimeter_sources_cpu.cpp
     src/cpu/lsdtt_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_cpu.cpp
     src/cpu/lsdtt_junction_basin_manager_cpu.cpp
@@ -447,6 +453,10 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_burn_streams_cpu.cpp
     src/cpu/lsdtt_least_cost_path.cpp
     src/cpu/lsdtt_terrace_edge_tracer_cpu.cpp
+    src/cpu/lsdtt_riser_finder_cpu.cpp
+    src/cpu/lsdtt_surface_method_comparison_cpu.cpp
+    src/cpu/lsdtt_surface_training_cpu.cpp
+    src/cpu/lsdtt_surface_level_clustering_cpu.cpp
     src/cpu/lsdtt_raster_contours_cpu.cpp
     src/cpu/lsdtt_labelled_raster_stats_cpu.cpp
     src/cpu/lsdtt_cross_sections_cpu.cpp

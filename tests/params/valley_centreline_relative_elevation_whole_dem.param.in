@@ -1,0 +1,22 @@
+# Relative elevation over the whole DEM: centrelines traced through the
+# staircase's valley floor (channel + lowest tread), the field computed on
+# every cell within 1500 m of a centreline node (relative_elevation_domain_
+# algorithm_choice whole_dem), so it reaches the treads above the floor.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vcrer
+
+n_threads: 1
+write_output_format: gtiff
+
+valley_mask_fname: staircase_floor_mask.tif
+threshold_contributing_pixels: 500
+run_valley_width_network: true
+write_valley_cross_sections: false
+write_valley_mask_raster: false
+
+write_relative_elevation_raster: true
+write_relative_elevation_owner_raster: true
+relative_elevation_domain_algorithm_choice: whole_dem
+relative_elevation_max_distance_metres: 1500

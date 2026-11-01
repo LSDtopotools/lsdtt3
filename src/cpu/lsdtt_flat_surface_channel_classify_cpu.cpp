@@ -235,7 +235,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     const flat_surface_classify_request& request,
     const std::vector<std::int64_t>*     donor_flat,
     const lsdtt_raster_cpu*              channel_flow_distance,
-    const lsdtt_raster_cpu*              slope_degrees,
+    const lsdtt_raster_cpu*              gradient,
     const lsdtt_raster_cpu*              terrain_aspect_degrees)
 {
     const lsdtt_raster_meta& meta = labelled_flat_mask.get_meta();
@@ -275,6 +275,8 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     ladder_result        lad;
     banded_label_result  banded;
     bool                 used_ladder = false;
+    std::int64_t         n_whole_mask_barrier_pixels    = 0;
+    std::int64_t         n_whole_mask_reassigned_pixels = 0;
 
     if (request.label_within_bands)
     {
@@ -307,8 +309,14 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             request.vertical_accuracy_gentle_metres;
         lr.vertical_accuracy_steep_metres =
             request.vertical_accuracy_steep_metres;
-        lr.vertical_accuracy_break_degrees =
-            request.vertical_accuracy_break_degrees;
+        lr.vertical_accuracy_break_gradient =
+            request.vertical_accuracy_break_gradient;
+        lr.supplied_breaks = request.ladder_supplied_breaks;
+        lr.training                     = request.ladder_training;
+        lr.unresolved_borrow_breaks     = request.ladder_unresolved_borrow_breaks;
+        lr.training_spread_factor       = request.ladder_training_spread_factor;
+        lr.training_relative_spread     = request.ladder_training_relative_spread;
+        lr.training_min_cells_per_class = request.ladder_training_min_cells_per_class;
         lr.reach_window_metres     = request.band_reach_window_metres;
         lr.min_window_pixels       = request.band_min_window_pixels;
         lr.hist_bins               = request.band_hist_bins;
@@ -340,36 +348,38 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             donor_flat->size() == n &&
             channel_flow_distance->get_data().size() == n)
         {
-            const std::vector<float>&   fd  = channel_flow_distance->get_data();
-            const std::vector<uint8_t>& fdm = channel_flow_distance->get_mask();
-
-            pixel_source.assign(n, -1);
-            std::vector<float>   dd(n, 0.0f);
-            std::vector<uint8_t> dm(n, 0);
-            for (std::size_t i = 0; i < n; ++i)
-            {
-                const std::int64_t df = (*donor_flat)[i];
-                if (df < 0) continue;
-                const std::size_t dfi = static_cast<std::size_t>(df);
-                if (dfi >= n || !fdm[dfi] || !std::isfinite(fd[dfi])) continue;
-                pixel_source[i] = channel_source_id[dfi];
-                dd[i] = fd[dfi];
-                dm[i] = 1;
-            }
-            donor_distance = lsdtt_raster_cpu(
-                std::move(dd), std::move(dm), meta);
+            donor_reach_coordinate rc = donor_reach_coordinates(
+                *donor_flat, *channel_flow_distance, channel_source_id);
+            pixel_source   = std::move(rc.source_of_pixel);
+            donor_distance = std::move(rc.distance);
             src_ptr  = &pixel_source;
             dist_ptr = &donor_distance;
         }
 
         lad = build_reference_field_ladder(
             height_above_channel, admitted, lr, src_ptr, dist_ptr,
-            slope_degrees);
+            gradient);
 
-        banded = label_components_within_bands(
-            lad.band_index, admitted, height_above_channel,
-            std::max(1, request.band_min_component_pixels),
-            pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        if (request.segment_whole_mask)
+        {
+            whole_mask_segmentation seg = segment_whole_mask(
+                lad.band_index, admitted, request.whole_mask_barrier,
+                pixel_connectivity::d4);
+            n_whole_mask_barrier_pixels    = seg.n_barrier_pixels;
+            n_whole_mask_reassigned_pixels = seg.n_reassigned_pixels;
+            lad.band_index = std::move(seg.band_index);
+            banded = label_components_within_bands(
+                lad.band_index, seg.admitted, height_above_channel,
+                std::max(1, request.band_min_component_pixels),
+                pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        }
+        else
+        {
+            banded = label_components_within_bands(
+                lad.band_index, admitted, height_above_channel,
+                std::max(1, request.band_min_component_pixels),
+                pixel_connectivity::d4, terrain_aspect_degrees, request.true_north);
+        }
 
         banded_labels = banded.labels;
         used_ladder   = true;
@@ -733,6 +743,14 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
 
     std::unordered_map<std::int64_t, char> band_split_counted;
 
+    // Ladder: floodplain is the lowest level touching the channel (Simon,
+    // 2026-10-27), not a HAND cap. Units touching an in-scope channel are
+    // classified as if they were not floodplain, remembered here, and after
+    // the loop those on the lowest band among the channel-touching units of
+    // their reach window (source, window centre) become floodplain.
+    struct fp_candidate { std::size_t rec_index; std::int64_t key; };
+    std::vector<fp_candidate> ladder_fp_candidates;
+
     for (auto& [key, a] : acc)
     {
         const std::int64_t parent = key / 512;
@@ -850,7 +868,7 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
             if (d.fp_ok)   ++result.n_floodplain_labels;
             if (d.terr_ok) ++result.n_terrace_labels;
         }
-        else if (rec.adjacent_to_channel && rec.has_height &&
+        else if (!used_ladder && rec.adjacent_to_channel && rec.has_height &&
                  rec.median_height <= request.floodplain_max_height_metres)
         {
             rec.cls = surface_class::floodplain;
@@ -874,8 +892,35 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
                 rec.median_height >= request.terrace_min_height_metres;
         }
 
+        if (used_ladder && !leak.is_leak && rec.adjacent_to_channel &&
+            rec.has_height && rec.hand_band >= 0)
+            ladder_fp_candidates.push_back({result.labels.size(), key});
+
         decision[key] = d;
         result.labels.push_back(rec);
+    }
+
+    if (!ladder_fp_candidates.empty())
+    {
+        std::map<std::pair<std::int32_t, double>, int> lowest;
+        for (const fp_candidate& c : ladder_fp_candidates)
+        {
+            const flat_surface_label_class& r = result.labels[c.rec_index];
+            const auto k = std::make_pair(r.source_id, r.ladder_window_centre_metres);
+            auto it = lowest.find(k);
+            if (it == lowest.end() || r.hand_band < it->second) lowest[k] = r.hand_band;
+        }
+        for (const fp_candidate& c : ladder_fp_candidates)
+        {
+            flat_surface_label_class& r = result.labels[c.rec_index];
+            if (r.hand_band != lowest.at({r.source_id, r.ladder_window_centre_metres}))
+                continue;
+            if (r.cls == surface_class::terrace) --result.n_terrace_labels;
+            r.cls = surface_class::floodplain;
+            r.spread_guard_failed = false;
+            decision[c.key].cls = surface_class::floodplain;
+            ++result.n_floodplain_labels;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -954,9 +999,14 @@ flat_surface_classify_result classify_flat_surfaces_by_channel(
     if (used_ladder)
     {
         result.used_band_then_label = true;
+        result.n_whole_mask_barrier_pixels    = n_whole_mask_barrier_pixels;
+        result.n_whole_mask_reassigned_pixels = n_whole_mask_reassigned_pixels;
         result.banded_labels_raster = std::move(banded.labels);
         result.patches              = std::move(banded.patches);
         result.ladder_windows       = lad.windows;
+        result.ladder_training_polygons    = lad.training_polygons;
+        result.ladder_training_global_fit  = lad.training_global_fit;
+        result.ladder_n_windows_trained    = lad.n_windows_trained;
         result.ladder_window_index  = lad.window_index;
         result.global_breaks_m      = lad.global_breaks_m;
         // The ladder's band index is the authoritative per-pixel band here;
@@ -991,6 +1041,7 @@ const char* ladder_status_name(ladder_status st)
         case ladder_status::resolved:   return "resolved";
         case ladder_status::unresolved: return "unresolved";
         case ladder_status::forced:     return "forced";
+        case ladder_status::supplied:   return "supplied";
         default:                        return "degenerate";
     }
 }
@@ -1037,10 +1088,12 @@ void write_ladder_windows_csv(
             // Beside required_gap_m rather than replacing it, because the floor
             // is the constraint and E_v is where the constraint came from.
             std::to_string(w.vertical_accuracy_m),
-            std::isfinite(w.median_slope_degrees)
-                ? std::to_string(w.median_slope_degrees) : std::string(),
+            std::isfinite(w.median_gradient)
+                ? std::to_string(w.median_gradient) : std::string(),
             std::to_string(w.goodness_of_variance_fit),
-            join_doubles(w.separation_ratio) });
+            join_doubles(w.separation_ratio),
+            w.breaks_from_window_m >= 0.0
+                ? std::to_string(w.breaks_from_window_m) : std::string() });
     }
     loader.write_csv(out_path,
         {"source_id","window_centre_m","n_pixels","k_selected",
@@ -1048,8 +1101,8 @@ void write_ladder_windows_csv(
          "min_band_centre_gap_m","required_gap_m",
          "k_bootstrap_mode","k_stability","k_ci_lo","k_ci_hi","n_bootstrap",
          "vertical_accuracy_m",
-         "median_slope_degrees","goodness_of_variance_fit",
-         "separation_ratio"},
+         "median_gradient","goodness_of_variance_fit",
+         "separation_ratio","breaks_from_window_m"},
         rows);
 }
 

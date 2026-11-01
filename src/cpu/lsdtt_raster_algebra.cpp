@@ -15,6 +15,7 @@
 #include "../utils/lsdtt_distributions.hpp"
 #include "../utils/lsdtt_histogram.hpp"
 #include "../utils/lsdtt_natural_breaks.hpp"
+#include "../utils/lsdtt_threshold_selection.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1674,49 +1675,35 @@ double raster_cdf_divergence_threshold(
         vals.push_back(static_cast<double>(v));
     }
 
-    if (vals.size() < 10)
-        throw std::runtime_error(
-            "lsdtt::algebra::raster_cdf_divergence_threshold: too few valid pixels");
-
-    const lsdtt_smoothed_cdf                  scdf = compute_smoothed_cdf(vals, 500);
-    const std::vector<lsdtt_distribution_fit> fits = fit_distributions(vals);
-
-    const lsdtt_distribution_fit* best_fit = nullptr;
-    for (const auto& f : fits)
+    // The rule itself lives in lsdtt_threshold_selection (cdf_divergence), so
+    // every tool that picks a threshold this way picks it the same way.
+    threshold_selection_request request;
+    request.method     = threshold_selection_choice::cdf_divergence;
+    request.cdf_n_bins = 500;
+    threshold_selection_result sel;
+    try
     {
-        if (!f.valid || !std::isfinite(f.ks_statistic)) continue;
-        if (!best_fit || f.ks_statistic < best_fit->ks_statistic) best_fit = &f;
+        sel = select_threshold(vals, request);
     }
-
-    if (!best_fit)
-        throw std::runtime_error(
-            "lsdtt::algebra::raster_cdf_divergence_threshold: no valid distribution fit");
-
-    double      max_diff = -std::numeric_limits<double>::infinity();
-    std::size_t max_idx  = 0;
-    for (std::size_t i = 0; i < scdf.bin_centres.size(); ++i)
+    catch (const std::runtime_error& e)
     {
-        const double fitted = eval_cdf(*best_fit, scdf.bin_centres[i]);
-        if (!std::isfinite(fitted)) continue;
-        const double diff = scdf.cdf[i] - fitted;
-        if (diff > max_diff) { max_diff = diff; max_idx = i; }
+        throw std::runtime_error(
+            std::string("lsdtt::algebra::raster_cdf_divergence_threshold: ") +
+            e.what());
     }
-
-    const double threshold  = scdf.bin_centres[max_idx];
-    const double percentile = scdf.cdf[max_idx] * 100.0;
 
     if (verbose)
     {
-        std::cout << "  Best-fit distribution: "
-                  << distribution_family_name(best_fit->family) << "\n"
-                  << "  Max CDF divergence   : " << max_diff << "\n"
-                  << "  Threshold percentile : " << percentile << "th\n";
+        std::cout << "  Best-fit distribution: " << sel.best_family << "\n"
+                  << "  Max CDF divergence   : " << sel.max_cdf_divergence << "\n"
+                  << "  Threshold percentile : " << sel.threshold_percentile
+                  << "th\n";
     }
 
     if (write_cdf && loader && !cdf_path.empty())
-        write_smoothed_cdf_csv(*loader, cdf_path, scdf, fits);
+        write_smoothed_cdf_csv(*loader, cdf_path, sel.cdf, sel.fits);
 
-    return threshold;
+    return sel.threshold;
 }
 
 // =============================================================================

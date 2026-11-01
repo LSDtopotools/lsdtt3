@@ -12,9 +12,9 @@ write_output_format: gtiff
 
 # Detection. Fixed threshold, not adaptive: the adaptive path picks its value
 # from the relief CDF and would drift with any change to the generator.
-relief_window_side_pixels: 5
-relief_threshold_metres: 2.0
-adaptive_relief_threshold: false
+relief_window_radius_metres: 20
+max_relief_metres: 2.0
+relief_threshold_algorithm_choice: fixed
 
 # No morphology, so the mask written here is the raw thresholded relief.
 flat_closing_radius_metres: 0

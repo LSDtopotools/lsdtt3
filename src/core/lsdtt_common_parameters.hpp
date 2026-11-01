@@ -142,6 +142,7 @@
 #include <string>
 
 #include "lsdtt_param_parser.hpp"
+#include "../utils/lsdtt_threshold_selection.hpp"
 
 namespace lsdtt
 {
@@ -217,6 +218,147 @@ void declare_channel_initiation_parameters(
     std::map<std::string, int>& int_default_map,
     lsdtt_help_registry&        help_map,
     const std::string&          prefix = "");
+
+// -----------------------------------------------------------------------------
+// Flat-ground admission and floodplain bounds, shared by
+// lsdtt-flat-surface-finder, lsdtt-fluvial-surfaces, lsdtt-mountain-front and
+// lsdtt-hillslope-channel-coupling. One name per aim (2026-10-26); each tool
+// declares only the concepts it uses. Defaults differ legitimately between the
+// tools, so each is an argument rather than an overwrite after the call: the
+// help text then always states the default the tool actually uses.
+//
+//   relief_window_radius_metres       float   0 = default_cells x cell size
+//   max_relief_metres                 float   default_metres
+//   relief_threshold_algorithm_choice string  fixed | cdf_divergence
+//   max_admission_gradient            float   m/m
+//   max_floodplain_hand_metres        float   m
+//   max_floodplain_gradient           float   m/m
+//
+// Gradients are m/m, never angles.
+// -----------------------------------------------------------------------------
+void declare_relief_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    int                           default_cells,
+    const std::string&            parent = "");
+
+void declare_max_relief_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent = "");
+
+void declare_relief_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice);
+
+void declare_max_admission_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent = "");
+
+void declare_max_floodplain_hand_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_metres,
+    const std::string&            parent = "");
+
+// Morphological clean-up of a valley mask, shared by lsdtt-fluvial-surfaces
+// (on the mask it writes) and lsdtt-valley-centreline (on the mask it reads):
+// valley_mask_closing_radius_metres (dilation then erosion: closes narrow
+// non-valley intrusions and slivers), valley_mask_opening_radius_metres
+// (erosion then dilation: removes narrow valley tendrils) and
+// fill_valley_mask_holes. Applied in that order.
+void declare_valley_mask_morphology_parameters(
+    std::map<std::string, float>& float_default_map,
+    std::map<std::string, bool>&  bool_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent,
+    bool                          fill_holes_default);
+
+// Valley centrelines and the relative elevation measured from them, shared by
+// lsdtt-valley-centreline (run_valley_width_network, write_relative_elevation_
+// raster) and lsdtt-fluvial-surfaces (reference_field_algorithm_choice
+// relative_elevation): network_centreline_algorithm_choice and its two
+// settings, centreline_baseline_algorithm_choice and
+// relative_elevation_max_distance_metres.
+void declare_relative_elevation_parameters(
+    std::map<std::string, std::string>& string_default_map,
+    std::map<std::string, float>&       float_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  group,
+    const std::string&                  parent);
+
+void declare_max_floodplain_gradient_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_gradient,
+    const std::string&            parent = "");
+
+// The ladder's selection rule - the largest level count whose band centres are
+// at least kappa * E_v apart - as used by lsdtt-fluvial-surfaces on HAND and by
+// lsdtt-valley-centreline on cross-section break heights:
+//   ladder_break_algorithm_choice  string  antimode   gap | antimode | jenks
+//   ladder_max_level_count         int     12
+//   vertical_accuracy_metres       float   0          E_v; 0 disables the floor
+//   ladder_resolvability_kappa     float   3
+void declare_ladder_selection_parameters(
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map);
+
+// How the floodplain bounds (max_floodplain_hand_metres,
+// max_floodplain_gradient) are chosen: fixed | qq_gaussian | cdf_divergence.
+// Shared by lsdtt-fluvial-surfaces and lsdtt-hillslope-channel-coupling.
+void declare_floodplain_threshold_algorithm_parameter(
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    const std::string&                  default_choice);
+
+// The Clubb et al. (2017) QQ rule's controls, for one quantity:
+//   <prefix>_qq_lower_percentile    float  25
+//   <prefix>_qq_upper_percentile    float  75
+//   <prefix>_qq_threshold_fraction  float  0.01  (of the data range)
+// e.g. prefix "floodplain" or "relief".
+void declare_qq_threshold_parameters(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            prefix,
+    const std::string&            parent);
+
+// A threshold_selection_request from a *_threshold_algorithm_choice value, the
+// fixed value to use under `fixed`, and the <prefix>_qq_* parameters. Throws
+// std::invalid_argument on an unknown choice, naming choice_key and the valid
+// values.
+[[nodiscard]] threshold_selection_request threshold_request_from_parameters(
+    const std::string&                  choice,
+    const std::string&                  choice_key,
+    double                              fixed_value,
+    const std::map<std::string, float>& float_parameters,
+    const std::string&                  prefix);
+
+// Window radius in whole pixels from relief_window_radius_metres: 0 gives
+// default_cells; otherwise the nearest whole number of cells, at least 1.
+// Throws std::invalid_argument on a negative or non-finite radius.
+[[nodiscard]] int relief_window_radius_pixels(double radius_metres,
+                                              double cell_size,
+                                              int    default_cells);
+
+// Conversions for compatibility aliases (lsdtt_deprecated_compatibility_alias),
+// applied by the CLI after parsing. Each throws std::invalid_argument naming
+// old_key when the stored text is not a valid old value.
+//
+// gradient_from_legacy_degrees: tan of an angle in [0, 90); 0 stays exactly 0.
+// relief_threshold_choice_from_legacy_bool: true -> cdf_divergence,
+//   false -> fixed, accepting the parser's boolean spellings.
+[[nodiscard]] double gradient_from_legacy_degrees(const std::string& text,
+                                                  const std::string& old_key);
+[[nodiscard]] std::string relief_threshold_choice_from_legacy_bool(
+    const std::string& text, const std::string& old_key);
 
 // -----------------------------------------------------------------------------
 // Output formats. Declare only the capabilities a CLI actually exposes.

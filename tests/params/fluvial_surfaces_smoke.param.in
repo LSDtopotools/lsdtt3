@@ -16,10 +16,10 @@ write_output_format: gtiff
 # No flat_mask_fname: this run exercises the built-in fallback admission, so
 # the tool is proven to work on its own as well as downstream of
 # lsdtt-flat-surface-finder.
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 5
-fallback_relief_threshold_metres: 2.0
-min_component_pixels: 50
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
 
 reference_field_algorithm_choice: hand
 ladder_break_algorithm_choice: jenks
@@ -28,7 +28,7 @@ vertical_accuracy_metres: 0.5
 ladder_resolvability_kappa: 3.0
 
 threshold_contributing_pixels: 500
-floodplain_max_height_metres: 5.0
-terrace_min_height_metres: 5.0
+max_floodplain_hand_metres: 5.0
+min_terrace_hand_metres: 5.0
 
 write_hand_raster: true

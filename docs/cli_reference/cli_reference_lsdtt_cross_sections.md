@@ -2,7 +2,7 @@
 
 Builds a channel network from user-supplied source points and extracts orthogonal cross sections along that network. Each cross section is drawn perpendicular to a locally fitted channel bearing direction. Optionally computes and samples vertical excess curvature.
 
-`source_points_path` is required. All three output types (channel network lines, cross-section lines, and sampled points) are written by default.
+`source_points_fname` is required. All three output types (channel network lines, cross-section lines, and sampled points) are written by default.
 
 ## Usage
 
@@ -76,7 +76,7 @@ Source points define where channel sources are placed. CSV files are interpreted
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_points_path` | string | `` | **Required.** Path to the source-point input file. |
+| `source_points_fname` | string | `` | **Required.** Source-point input file, in `read_path` (an absolute path is used as given). Renamed from `source_points_path` on 2026-10-26; the old key still runs, with a warning. |
 | `source_points_input_format` | string | `auto_detect` | Format hint. Options: `auto_detect`, `csv_latitude_longitude_epsg4326`, `ogr_vector_layer`. |
 | `source_points_layer_name` | string | `` | Optional layer name for vector inputs. If empty, uses the only layer or the first layer. |
 | `source_points_latitude_field_name` | string | `latitude` | Latitude field name for CSV inputs. |
@@ -136,7 +136,7 @@ raster_is_filled:    false
 fill_min_slope:      0.0001
 boundary_conditions: oooo
 
-source_points_path:         /data/sources/channel_sources.csv
+source_points_fname:         /data/sources/channel_sources.csv
 source_points_input_format: csv_latitude_longitude_epsg4326
 
 cross_section_half_length_metres:    100.0
@@ -205,7 +205,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `source_points_path` | `string` | - | `param` | - | Path to the source-point input file. | CSV input is interpreted as latitude/longitude in EPSG:4326 using the configured latitude/longitude field names. Georeferenced vector input such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR and transformed into the raster CRS before mapping to pixels. |
+| `source_points_fname` | `string` | - | `param` | - | Source-point input file, in read_path (an absolute path is used as given). | CSV input is interpreted as latitude/longitude in EPSG:4326 using the configured latitude/longitude field names. Georeferenced vector input such as GeoPackage (.gpkg) and FlatGeobuf (.fgb) is read through OGR and transformed into the raster CRS before mapping to pixels. |
 | `source_points_layer_name` | `string` | - | `param` | - | Optional layer name for source-point vector input. | Used only for georeferenced vector inputs. If empty, the point-input loader uses the only layer if present, otherwise the first layer. |
 | `source_points_input_format` | `string` | `auto_detect` | `param` | - | Format hint for the source-point input. | Allowed values: auto_detect, csv_latitude_longitude_epsg4326, ogr_vector_layer. |
 | `source_points_latitude_field_name` | `string` | `latitude` | `param` | - | Latitude field name for CSV source-point input. | Used only when the source-point input is CSV. |

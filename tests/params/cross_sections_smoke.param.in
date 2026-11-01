@@ -12,7 +12,7 @@ write_fname: xsec
 
 n_threads: 1
 write_output_format: gtiff
-source_points_path: __READ_PATH__/cross_sections_source.csv
+source_points_fname: __READ_PATH__/cross_sections_source.csv
 
 cross_section_half_length_metres: 160
 cross_section_sample_spacing_metres: 2

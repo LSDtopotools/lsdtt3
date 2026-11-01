@@ -1,0 +1,27 @@
+# Fluvial-surface methods phase 4: Clubb et al. (2017) through the CLI, on the
+# linear-range surface - a branching network (Strahler order up to 5 at a
+# 50-pixel threshold) draining rough mountains onto a flat piedmont.
+#
+# Every stage comes from the preset: admission floodplain_thresholds, bounds by
+# qq_gaussian, channel = Strahler order >= 3, level fixed_thresholds, terraces
+# on the swath baseline. min_band_component_pixels is lowered from the legacy
+# minimum_patch_size of 1000 because the grid is only 200 x 200.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: clubb
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: clubb2017
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+
+write_banded_labels_raster: true
+write_band_index_raster: true
+write_surface_class_raster: true
+write_floodplain_mask_raster: true
+write_surface_patches_csv: true
+write_reference_field_profile_csv: true
+write_terrace_field_raster: true

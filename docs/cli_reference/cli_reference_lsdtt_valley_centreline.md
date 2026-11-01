@@ -47,7 +47,7 @@ Parameter file lines are `key: value`; `#` starts a comment.
 | 10 | Write rasters, tables and vectors |
 
 **One centreline per resolved source.** There is no threshold-only all-channel
-mode; `source_points_path` is required.
+mode; `source_points_fname` is required.
 
 ---
 
@@ -74,28 +74,29 @@ which classifies the downstream points as outlets. Point files may be CSV
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `source_points_path` | string | | **Required.** Vector or CSV file with source points. |
+| `source_points_fname` | string | | **Required.** Vector or CSV file with source points, in `read_path` (an absolute path is used as given). |
 | `source_points_input_format` | string | `auto_detect` | `auto_detect`, `csv_latitude_longitude_epsg4326`, `ogr_vector_layer`. |
 | `source_points_layer_name` | string | | Optional layer name for vector input. |
 | `source_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
 | `source_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
-| `outlet_points_path` | string | | Optional outlet points file, to truncate channels. |
+| `outlet_points_fname` | string | | Optional outlet points file, to truncate channels. |
 | `outlet_points_input_format` | string | `auto_detect` | As the source format. |
 | `outlet_points_layer_name` | string | | Optional layer name. |
 | `outlet_points_latitude_field_name` | string | `latitude` | CSV latitude column. |
 | `outlet_points_longitude_field_name` | string | `longitude` | CSV longitude column. |
 
-> **Naming note.** This tool still spells these `source_points_path` /
-> `outlet_points_path`, while `lsdtt-fluvial-surfaces` spells the same concept
-> `source_points_fname` / `outlet_points_fname`. The two are not interchangeable;
-> use the spelling of the tool you are running.
+> **Renamed 2026-10-26.** These were `source_points_path` /
+> `outlet_points_path`, taken relative to the working directory. They are now
+> `source_points_fname` / `outlet_points_fname`, resolved against `read_path`
+> as in `lsdtt-fluvial-surfaces`. The old keys still run, with a warning; an
+> absolute path behaves as before.
 
 ## Channel scope
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining channel cells for source snapping. |
-| `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_path` into sources and outlets. Disabled when an explicit outlet file is given. |
+| `auto_detect_outlet_points` | bool | `true` | Classify points in `source_points_fname` into sources and outlets. Disabled when an explicit outlet file is given. |
 | `snap_sources_to_channel_threshold` | bool | `true` | Snap source points to the nearest cell meeting the threshold. |
 | `source_snap_max_search_radius_pixels` | int | `25` | Maximum expanding-square search radius for snapping. |
 | `outlet_snap_max_distance_metres` | float | `0` | Maximum distance between a raw outlet point and its traced-path node. `0` = unlimited. |
@@ -207,6 +208,10 @@ through bends like the grid lines of a boundary-fitted mesh.
 | `<write_fname>_valley_cross_section_hydraulics.csv` | Stage / width / area / wetted perimeter / hydraulic depth |
 | `<write_fname>_valley_cross_section_hydraulic_breaks.csv` | Breakpoints in the hydraulic-depth curve |
 | `<write_fname>_valley_mask.tif` | The mask used, per channel |
+| `<write_fname>_relative_elevation.tif`, `_relative_elevation_owner.tif` | Relative elevation (RER) and the centreline that owns each cell (`write_relative_elevation_raster`) |
+| `<write_fname>_terrace_profile.csv`, `<write_fname>_terrace_patches.csv` | Surface patches binned along the centreline (`write_terrace_profile_csv`) |
+| `<write_fname>_cross_section_levels.csv` | Levels clustered from section hydraulic breaks (`write_cross_section_levels_csv`); read by `lsdtt-fluvial-surfaces` |
+| `<write_fname>_valley_segments.csv`, `_valley_segment_channels.fgb`, `_valley_widths.csv` | Valley width network (`run_valley_width_network`) |
 | `<write_fname>_cross_section_informed_valley_mask.tif` | Hydraulic-break valley mask, when enabled |
 | `<write_fname>_hillshade.tif`, `_multidirectional_hillshade.tif` | Backdrops |
 | `<write_fname>_README.csv` / `.html` | The resolved parameters for that run |
@@ -268,27 +273,44 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `source_points_path` | `string` | - | - | - | Vector or CSV file with source points. | REQUIRED. Each source defines one channel (traced downstream); one valley + centreline is produced per channel. A combined file may also contain outlets (see auto_detect_outlet_points). |
+| `source_points_fname` | `string` | - | - | - | Vector or CSV file with source points, in read_path (an absolute path is used as given). | REQUIRED. Each source defines one channel (traced downstream); one valley + centreline is produced per channel. A combined file may also contain outlets (see auto_detect_outlet_points). |
 | `source_points_input_format` | `string` | `auto_detect` | - | - | Point input format. | auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer. |
 | `source_points_layer_name` | `string` | - | - | - | Optional layer name for source-point vector input. | - |
 | `source_points_latitude_field_name` | `string` | `latitude` | - | - | Latitude column for CSV source points. | - |
 | `source_points_longitude_field_name` | `string` | `longitude` | - | - | Longitude column for CSV source points. | - |
-| `outlet_points_path` | `string` | - | - | - | Vector or CSV file with outlet points. | Optional. Bounds each traced channel at the matched outlet. |
+| `outlet_points_fname` | `string` | - | - | - | Vector or CSV file with outlet points, in read_path (an absolute path is used as given). | Optional. Bounds each traced channel at the matched outlet. |
 | `outlet_points_input_format` | `string` | `auto_detect` | - | - | Point input format. | auto_detect, csv_latitude_longitude_epsg4326, or ogr_vector_layer. |
 | `outlet_points_layer_name` | `string` | - | - | - | Optional layer name for outlet-point vector input. | - |
 | `outlet_points_latitude_field_name` | `string` | `latitude` | - | - | Latitude column for CSV outlet points. | - |
 | `outlet_points_longitude_field_name` | `string` | `longitude` | - | - | Longitude column for CSV outlet points. | - |
 
+### Channel scope
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `auto_detect_outlet_points` | `bool` | `true` | `param` | - | Auto-classify points in source_points_fname into sources and outlets. | A point downstream of another supplied point becomes an outlet. Disabled when an explicit outlet_points_fname is given. |
+
 ### Channel scope (mirrors lsdtt-flat-surface-finder)
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `auto_detect_outlet_points` | `bool` | `true` | `param` | - | Auto-classify points in source_points_path into sources and outlets. | A point downstream of another supplied point becomes an outlet. Disabled when an explicit outlet_points_path is given. |
 | `snap_sources_to_channel_threshold` | `bool` | `true` | `param` | - | Snap source points to the nearest cell meeting the channel threshold. | - |
 | `source_snap_max_search_radius_pixels` | `int` | `25` | `param` | - | Maximum expanding-square search radius for source snapping. | - |
 | `outlet_snap_max_distance_metres` | `float` | `0` | `param` | - | Maximum distance between a raw outlet point and its traced-path node. | 0 = unlimited. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Flow boundary conditions (N,E,S,W). | - |
 | `fill_min_slope_for_routing` | `float` | `0.0001` | `param` | - | Minimum slope (m/m) used when pit-filling the DEM for flow routing. | inline_gradient (default): imposed during the Priority-Flood fill. barnes2014b_gradient: the minimum gradient across flats. barnes2014b_float_step: ignored. Separate from trough_fill_min_slope. |
+
+### Valley width network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_valley_width_network` | `bool` | `false` | `switch` | - | Measure valley widths on every channel from the channel threshold instead of on supplied source points. | The network mode of LSDTopoTools2's lsdtt-valley-metrics (extract_all_channels). Channel heads are traced downstream longest-first and each stops where it meets an earlier trace, so the trunk of each basin is its longest flow path and every tributary segment ends at its parent's channel: each valley is measured once. source_points_fname must be empty. Writes _valley_segments.csv, _valley_segment_channels.fgb (each segment's D8 channel), _valley_widths.csv (one row per station, with drainage area at the station's channel pixel, matched in downstream order so it never decreases), and adds segment_id, parent_segment_id, nesting_depth and excluded_reason to the cross-section outputs. |
+| `run_tributary_stop_at_parent` | `bool` | `true` | `switch` | `run_valley_width_network` | Stop each tributary's sections where they reach the parent valley. | Going downstream, a tributary's stations stop at the first one whose centre is within tributary_stop_width_fraction x the parent's local half-width of the parent's centreline. The local half-width is judged per tributary station: the median of the parent's kept sections' offset on the side that station lies, over the parent stations within tributary_parent_width_window_multiple x the tributary's valley width of the one nearest it. A station whose width line crosses the parent's centreline also stops it. Stopped stations are kept with excluded_reason near_parent_channel. |
+| `tributary_stop_width_fraction` | `float` | `1` | `param` | `run_tributary_stop_at_parent` | Fraction of the parent's local half-width at which a tributary's sections stop. | 1 = at the parent's valley wall. |
+| `tributary_parent_width_window_multiple` | `float` | `2` | `param` | `run_tributary_stop_at_parent` | Half-length of the along-parent window whose median offset is the parent's local half-width, as a multiple of the tributary's valley width. | The parent sections at the tributary's mouth are widened by it; the window is kept longer than the mouth (and never fewer than the nearest parent station and its two neighbours) so they stay a minority of the median at any station spacing. Valley width = 2 x the 90th percentile of distance-to-wall over the tributary's channel pixels. |
+| `run_tributary_crossing_removal` | `bool` | `true` | `switch` | `run_valley_width_network` | Exclude parent sections that cross a tributary's kept sections. | A parent section whose width line (left side to right side) crosses the width line of a kept section of one of its direct tributaries has run up that tributary's valley, which makes it anomalously wide. Applied to every parent against its own tributaries, so it nests down the tree. Excluded sections are kept with excluded_reason tributary_crossing. |
+| `channel_definition_algorithm_choice` | `string` | `contributing_pixels` | `param` | `run_valley_width_network` | What counts as a channel: contributing_pixels or stream_order. | contributing_pixels: the whole network down from heads at threshold_contributing_pixels. stream_order: only its pixels of Strahler order &gt;= min_channel_stream_order (Clubb et al. 2017 used third order). Only used with run_valley_width_network. |
+| `min_channel_stream_order` | `int` | `3` | `param` | `channel_definition_algorithm_choice` | Lowest Strahler order counted as channel (stream_order only). | LSDTopoTools2 called this threshold_SO. |
 
 ### Pit filling
 
@@ -301,6 +323,37 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `valley_mask_fname` | `string` | - | `io` | - | Valley mask raster from lsdtt-fluvial-surfaces, in read_path. | Cells &gt; 0.5 are valley. Normally &lt;stem&gt;_valley_mask.tif from lsdtt-fluvial-surfaces, which is band 0 of its reference-field ladder. When supplied, this tool does NOT identify the valley: it skips the corridor HAND break search entirely and goes straight to the medial-axis centreline, the trough carve and the pinned baseline, which are the parts that are genuinely its own. Every valley_* break parameter is then ignored, and each channel reports no break rather than a fabricated one. Leave empty to derive the valley here as before (deprecated: that path moves out entirely at the next step). |
+| `valley_mask_closing_radius_metres` | `float` | `0.0` | `param` | - | Seal narrow gaps in the valley mask with a morphological closing [m]. 0 = off. | A dilation followed by an erosion of the same radius. It removes thin non-valley features that reach into the valley - a road, a riser, a levee, scroll bars, a field boundary a little above the floor - which hole filling cannot touch, because a finger open at one end is not an enclosed hole. Because the erosion undoes the dilation, the outer extent stays about where it was. Set it to roughly half the width of the widest intrusion to close; too large and it bridges a genuine terrace riser. Applied before the opening and the hole filling. |
+| `valley_mask_opening_radius_metres` | `float` | `0.0` | `param` | - | Remove narrow tendrils of the valley mask with a morphological opening [m]. 0 = off. | An erosion followed by a dilation of the same radius: valley that is narrower than about twice the radius - a thread running up a gully or along a ditch - disappears and the rest is restored to its extent. The converse of the closing, which removes thin NON-valley features. Applied after the closing and before the hole filling. A reach of real valley narrower than twice the radius is removed too. |
+| `fill_valley_mask_holes` | `bool` | `false` | `switch` | - | Fill enclosed holes in the valley mask. | A background region not connected to the outside of the valid DEM is a hole. Applied last, so holes the closing has sealed off are filled too. |
+
+### Relative elevation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_relative_elevation_raster` | `bool` | `false` | `switch` | - | Write the relative elevation raster (RER): elevation above a valley centreline's baseline. | Output file: &lt;stem&gt;_relative_elevation.tif. Like HAND, but measured against the centreline's baseline (centreline_baseline_algorithm_choice) rather than the channel the cell's flow reaches, so a meandering or wall-hugging channel does not imprint itself on the field (LSDTopoTools2 lsdtt-basic-metrics get_relative_elevation_raster). The centrelines run through the valley mask, which should be the valley FLOOR; the field covers relative_elevation_domain_algorithm_choice. The larger channel wins: on the floor, each centreline node owns the disc of radius its distance to the floor's edge, and a cell covered by several centrelines' discs takes the one whose nearest covering node has the largest drainage area, then its nearest node (nodes inside a larger centreline's discs are dropped, so a tributary's reference stops where it enters its parent's floor). Elsewhere in the domain a cell takes the node nearest along the ground, distance counted in units of each node's floor half-width (at least a cell), so a wide main valley reaches far up its terraces and a floorless gully stream claims only the ground beside it. Cell elevations are the DEM's; the baseline's are the routing (filled) DEM's channel elevations. Works with source points and with run_valley_width_network. |
+| `write_relative_elevation_owner_raster` | `bool` | `false` | `switch` | `write_relative_elevation_raster` | Write which centreline each relative-elevation pixel is measured against. | Output file: &lt;stem&gt;_relative_elevation_owner.tif (source_id / segment_id; nodata outside the valley). For checking where the larger channel takes over. |
+| `relative_elevation_domain_algorithm_choice` | `string` | `valley_mask` | `param` | `write_relative_elevation_raster` | Where the relative elevation raster is computed: valley_mask, supplied or whole_dem. | valley_mask: the (cleaned) valley mask the centrelines run through. supplied: relative_elevation_domain_fname, e.g. a mask that takes in the terraces above the floor. whole_dem: every valid cell, normally with relative_elevation_max_distance_metres. In every case the centrelines are traced through the valley mask, which should be the valley FLOOR (a floodplain mask): traced through a mask that includes the terraces, a medial centreline runs across the terrace plain instead of down the valley. Outside the floor a cell is measured against the node nearest along the ground, with ground distance counted in units of each node's floor half-width, so a wide main valley reaches far up its terraces and a floorless gully stream claims only the ground beside it. |
+| `relative_elevation_domain_fname` | `string` | - | `io` | `relative_elevation_domain_algorithm_choice` | Mask of where to compute the relative elevation (cells &gt; 0.5), for relative_elevation_domain_algorithm_choice supplied. | Same grid as the DEM. The valley mask is always included. |
+
+### Centreline and relative elevation
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `network_centreline_algorithm_choice` | `string` | `medial_path` | `param` | - | Line each channel segment's valley centreline follows: medial_path or smoothed_channel. | Not the raw D8 channel: sections cast from a meandering channel swing with every bend and cross one another, and a baseline tied to its planform imprints the meanders on the relative elevation. medial_path: the least-cost walk along the valley's medial axis (cost = largest distance-to-wall minus distance-to-wall), head to confluence, confined to the valley mask plus the segment's own channel pixels. smoothed_channel: the D8 channel smoothed by a Gaussian-smoothed cubic spline whose sigma scales with the valley width; it may not leave the valley mask, so where it would, it runs along the mask edge until it comes back in. |
+| `network_centreline_window_margin_multiple` | `float` | `3` | `param` | `network_centreline_algorithm_choice` | medial_path: each walk runs in the segment's bounding box padded by this multiple of its largest distance-to-wall (plus 10 cells). | Bounds the work per segment. The medial axis lies within a valley width of the channel, so 3 leaves room on both sides. |
+| `network_centreline_smoothing_width_multiple` | `float` | `1` | `param` | `network_centreline_algorithm_choice` | smoothed_channel: Gaussian sigma (along-channel metres) as a multiple of the segment's valley width. | Valley width = 2 x the 90th percentile of distance-to-wall over the segment's channel pixels; sigma is never below two cells. Larger values remove longer meanders but cut more corners. |
+| `centreline_baseline_algorithm_choice` | `string` | `projected_monotonic` | `param` | - | How a centreline's baseline is pinned to its channel: projected_monotonic or channel_crossings. | projected_monotonic: every channel pixel pins the centreline node nearest it (the lowest elevation winning on a shared node), then each pin is lowered to the lowest pin upstream of it and the baseline is linear between pins - it never rises downstream and is never above the channel. channel_crossings (LSDTopoTools2): pins only where the channel crosses the centreline in plan view, at the channel elevation interpolated at the crossing (and at centreline nodes that are channel pixels), linear between crossings and flat beyond the first and last, with no other constraint. |
+| `relative_elevation_max_distance_metres` | `float` | `0` | `param` | - | Farthest a cell may be, along the ground, from the centreline node it is measured against [m]. 0 = no limit. | Ground distance through the relative-elevation domain, in metres (not the floor-width-scaled distance that decides which node a cell belongs to). Cells farther away are left out. Use it to keep a whole-DEM domain to the valley sides. |
+
+### Terrace profile
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_terrace_profile_csv` | `bool` | `false` | `switch` | - | Write labelled surface patches binned along the valley centreline they belong to. | Output files: &lt;stem&gt;_terrace_profile.csv (one row per patch per bin: centreline_id, patch_label, band, class, bin_centre_m, n_pixels, and the minimum / 25th percentile / median / 75th percentile / maximum of the elevation and of the relative elevation) and &lt;stem&gt;_terrace_patches.csv (one row per patch). Every pixel of every patch in surface_patch_labels_fname is tied to a centreline node by the relative-elevation ownership (the larger channel wins on the floor, floor-width-scaled ground distance elsewhere); each patch is profiled against the centreline owning most of its pixels, its other pixels tied to that centreline's nearest node; pixels beyond relative_elevation_max_distance_metres are left out (set it to keep flats far up the valley sides off the profile). Bins are terrace_profile_bin_metres along the centreline from its head. Port of LSDTopoTools2 make_swaths_from_categorised (lsdtt-valley-metrics get_terraces). The ownership is then computed over the whole DEM, so a patch that does not touch the valley mask still reaches a node; the relative elevation raster stays clipped to its domain. |
+| `surface_patch_labels_fname` | `string` | - | `io` | `write_terrace_profile_csv` | Patch label raster for write_terrace_profile_csv (0 = no patch). | Normally &lt;stem&gt;_banded_labels.tif from lsdtt-fluvial-surfaces (or &lt;stem&gt;_&lt;method&gt;_banded_labels.tif from a several-method run). Same grid as the DEM. |
+| `surface_patches_fname` | `string` | - | `io` | `write_terrace_profile_csv` | Patch table giving each label's band and class, for write_terrace_profile_csv. | Normally &lt;stem&gt;_surface_patches.csv from lsdtt-fluvial-surfaces (columns label, band, class). Optional: without it band and class are left blank. |
+| `terrace_profile_bin_metres` | `float` | `100` | `param` | `write_terrace_profile_csv` | Bin width along the centreline for write_terrace_profile_csv [m]. | - |
 
 ### Valley identification
 
@@ -347,10 +400,21 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `min_section_reach_fraction` | `float` | `0.35` | `param` | - | Drop a station if the clipped transect length is below this fraction of the nominal full length. | Avoids tiny degenerate sections in tight hairpins. |
 | `write_cross_section_features` | `bool` | `true` | `switch` | - | Along each cross section, detect and write features: D8 channel crossings, left/right valley walls, hydraulic-step boundaries, maximum-curvature peaks and multidirectional-hillshade peaks. | Outputs _valley_cross_section_features.csv (one row per feature) and adds curvature / hillshade / is_channel columns to the per-sample CSV. Needs the DEM to derive curvature and hillshade; the channel mask comes from the resolved channel scope. |
 | `write_cross_section_hydraulics` | `bool` | `false` | `switch` | - | For every cross section, write the BankfullMapper-style hydraulic depth function: the profile is flooded stage by stage and, at each stage, the flow width, wetted area, wetted perimeter and hydraulic depth (area-to-width ratio A/W) are recorded. Breakpoints in the hydraulic depth vs elevation-above-thalweg curve mark bankfull / inset flat-surface levels (Delchiaro et al. 2025, Computers &amp; Geosciences, doi:10.1016/j.cageo.2025.106001). | Outputs _valley_cross_section_hydraulics.csv (one row per stage per station: stage_m, depth_above_thalweg_m, width_m, area_m2, wetted_perimeter_m, hydraulic_depth_m). |
+| `write_cross_section_levels_csv` | `bool` | `false` | `output` | - | Cluster every section's hydraulic breaks into levels per channel and write them. | Output file: &lt;stem&gt;_cross_section_levels.csv (source_id, level_hand_m, n_sections, spread_m, status, ...). The breaks of all sections on a channel are pooled and split by the ladder's own rule: the largest number of levels whose medians are at least ladder_resolvability_kappa * vertical_accuracy_metres apart. Feed the file to lsdtt-fluvial-surfaces as supplied_levels_fname (fluvial_surface_algorithm_choice cross_section_levels), with the same source points and threshold so the source ids match. Needs write_cross_section_features (the breaks come from that path). |
+| `cross_section_level_min_section_fraction` | `float` | `0.5` | `param` | `write_cross_section_levels_csv` | Fraction of a channel's sections a level must appear on to be kept. | A tread is crossed by most sections; a step only a few sections see - one running up a riser gap's ramp, or onto a valley wall - is not a level of the channel. Dropped levels are listed in the run log. |
 | `write_cross_section_informed_valley_mask_raster` | `bool` | `false` | `switch` | - | Build a valley-floor mask from the cross sections' HYDRAULIC BREAKS instead of the corridor HAND histogram: each corridor pixel's height above the nearest centreline node's thalweg baseline is compared with the channel's MEDIAN lowest hydraulic break (a single robust floodplain level, so an anomalous section cannot streak or leak onto the plateau). Needs write_cross_section_features (the breaks come from that path). | Outputs _cross_section_informed_valley_mask.tif (Byte; 0 = above the break, 1 = at/below the median lowest break [floodplain]) plus per-channel _cross_section_informed_valley_mask_ch&lt;sid&gt;.tif. |
 | `cross_section_curvature_radius_metres` | `float` | `30` | `param` | - | Polynomial-fit window radius (m) for the maximum-curvature raster used to find slope-break peaks along the cross sections. | Larger smooths over fine breaks (fewer, coarser peaks); smaller resolves finer risers but is noisier. |
 | `cross_section_feature_prominence_fraction` | `float` | `0.15` | `param` | - | Minimum prominence of a curvature / hillshade peak as a fraction of that profile's value range over the transect, for it to be reported. | Raise to keep only the strongest breaks; lower to catch subtler ones. |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | Allowed values: cog (default), gtiff, same_as_input. Set gtiff explicitly to retain plain GeoTIFF output. |
+
+### Ladder
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `ladder_max_level_count` | `int` | `12` | `param` | - | Ceiling on the level count considered under auto selection. | A ceiling on what one reach can plausibly carry, not a storage limit. A reach resolving more than a dozen distinct fluvial levels is more likely over-fitting noise than recording twelve terraces. Raise it freely for a genuine long Quaternary staircase; there is no numeric cliff behind it. |
+| `ladder_break_algorithm_choice` | `string` | `antimode` | `param` | - | Break finder: gap, antimode or jenks. | antimode finds dips in a smoothed log10 density. jenks is Fisher-Jenks on the linear values; it takes the level count directly and is the source of the reported goodness-of-variance fit. gap finds empty spans between clusters. |
+| `vertical_accuracy_metres` | `float` | `0.0` | `param` | - | Vertical accuracy of the DEM, E_v [m]. 0 disables the floor. | Two levels are only claimed as distinct when their band centres are at least ladder_resolvability_kappa * E_v apart. This is metadata you must supply: it cannot be derived from the DEM. 0 disables the check and every window then reports resolved, carrying no instrument guarantee at all. Note that a DEM whose vertical units are feet on a metre grid has an effective E_v 3.28 times larger than you think. |
+| `ladder_resolvability_kappa` | `float` | `3.0` | `param` | - | Multiplier on E_v in the resolvability floor. | Required band-centre gap = kappa * vertical_accuracy_metres. |
 
 ### Interior nodata
 

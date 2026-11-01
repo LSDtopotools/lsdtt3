@@ -34,13 +34,13 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 | Step | What happens | Controlled by |
 |---|---|---|
 | 1 | Load DEM, check it is projected in metres | — |
-| 2 | Local relief (max − min) in a square window | `relief_window_side_pixels` |
-| 3 | Threshold relief, fixed or adaptive | `relief_threshold_metres`, `adaptive_relief_threshold` |
-| 4 | Optional gradient cap from a fitted polynomial surface | `admission_slope_cap_degrees`, `admission_slope_window_radius_metres` |
-| 5 | Combine the two tests | `admission_mode` |
+| 2 | Local relief (max − min) in a square window | `relief_window_radius_metres` |
+| 3 | Bound relief, fixed or chosen from the data | `max_relief_metres`, `relief_threshold_algorithm_choice` |
+| 4 | Optional gradient bound from a fitted polynomial surface | `max_admission_gradient`, `admission_gradient_window_radius_metres` |
+| 5 | Combine the two tests | `admission_algorithm_choice` |
 | 6 | Morphological opening / closing | `flat_opening_radius_metres`, `flat_closing_radius_metres`, `open_then_close` |
 | 7 | Optional directional closing of the non-flat mask | `directional_close_line_length_pixels` |
-| 8 | Optional VEC break-of-slope skeleton | `vec_adaptive_*`, `slope_break_*` |
+| 8 | (Riser / break-of-slope search moved to `lsdtt-feature-finder`, `feature_type: find_risers`) | — |
 | 9 | Component filtering and labelling | `min_component_pixels` |
 | 10 | Optional plane fitting per label | `run_plane_analysis` |
 | 11 | Write masks, rasters and CSVs | the `write_*` switches |
@@ -64,12 +64,12 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `relief_window_side_pixels` | int | `5` | Full window **side length** in pixels for local relief (max − min). Not a radius: must be odd and ≥ 3, so `5` is a 5×5 neighbourhood. `lsdtt-fluvial-surfaces` spells its equivalent `fallback_relief_window_radius_pixels`, which is a **radius**, so the same number means a different window there. The old name `relief_window_pixels` is accepted as a deprecated alias. |
-| `relief_threshold_metres` | float | `1.0` | Local relief (m) below which a pixel is classed flat. |
-| `adaptive_relief_threshold` | bool | `false` | Choose the relief threshold automatically, at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF. Ignores `relief_threshold_metres`. |
-| `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to the adaptively chosen threshold. |
+| `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window local relief (max − min) is measured over, converted to the nearest whole number of cells. `0` = 2 cells, a 5×5 window. The same name and meaning as in `lsdtt-fluvial-surfaces` and `lsdtt-mountain-front`. |
+| `max_relief_metres` | float | `1.0` | Local relief (m) below which a pixel is admitted as flat. |
+| `relief_threshold_algorithm_choice` | string | `fixed` | `fixed` uses `max_relief_metres`; `cdf_divergence` chooses the bound at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF; `qq_gaussian` chooses it from a quantile-quantile plot against a Gaussian (Clubb et al. 2017). |
+| `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to a bound chosen by `cdf_divergence`. |
 
-`adaptive_relief_threshold` writes `<write_fname>_relief_adaptive_cdf.csv` — the
+`relief_threshold_algorithm_choice: cdf_divergence` writes `<write_fname>_relief_adaptive_cdf.csv` — the
 whole curve, so you can see the break the run relied on rather than only the
 number it picked.
 
@@ -79,23 +79,24 @@ number it picked.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `admission_mode` | string | `relief` | Which test admits a pixel: `relief`, `slope`, `relief_and_slope`, `relief_or_slope`. |
-| `admission_slope_cap_degrees` | float | `0` | Gradient (degrees) below which a pixel is admitted. **Required** by every mode that names slope. |
-| `admission_slope_window_radius_metres` | float | `0` | Window radius (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
-| `write_admission_slope_raster` | bool | `false` | Write the gradient raster the cap was applied to. |
+| `admission_algorithm_choice` | string | `relief` | Which test admits a pixel: `relief`, `gradient`, `relief_and_gradient`, `relief_or_gradient`. |
+| `max_admission_gradient` | float | `0` | Gradient (m/m) below which a pixel is admitted. **Required** by every choice that names gradient. |
+| `admission_gradient_window_radius_metres` | float | `0` | Window radius (m) of the polynomial fit the gradient is measured over. `0` = match the relief window. |
+| `write_admission_gradient_raster` | bool | `false` | Write the gradient raster (m/m) the bound was applied to. |
 
-**Relief and slope are different tests and reject different ground.** Relief
+**Relief and gradient are different tests and reject different ground.** Relief
 charges a surface for its own tilt, so a smooth tread that slopes downvalley
-fails it while a rough level surface passes; a gradient cap does the opposite. On
-steep terrain the two admit nearly disjoint sets. Use `relief_or_slope` when the
-point is to find every candidate surface and let `lsdtt-fluvial-surfaces` sort
+fails it while a rough level surface passes; a gradient bound does the opposite.
+On steep terrain the two admit nearly disjoint sets. Use `relief_or_gradient` when
+the point is to find every candidate surface and let `lsdtt-fluvial-surfaces` sort
 them.
 
 The gradient comes from a polynomial surface fitted over
-`admission_slope_window_radius_metres`, not a 3×3 difference: a three-cell operator on a
-30 m DEM measures pixel noise. There is no default cap worth guessing — about
-5 degrees is a valley floor, 15 degrees admits fan and pediment — so run the
-census at more than one cap and report the sensitivity.
+`admission_gradient_window_radius_metres`, not a 3×3 difference: a three-cell
+operator on a 30 m DEM measures pixel noise. Gradients are m/m, not angles. There
+is no default bound worth guessing — about 0.087 m/m is a valley floor,
+0.27 m/m admits fan and pediment — so run the census at more than one
+bound and report the sensitivity.
 
 ---
 
@@ -127,49 +128,20 @@ Note that `min_component_pixels` filters components of the **whole mask** here.
 
 ---
 
-## Slope-break skeleton (VEC) — diagnostic
+## Slope-break skeleton — moved to `lsdtt-feature-finder`
 
-A break-of-slope skeleton derived by adaptive thresholding of vertical excess
-curvature. It is a morphometric product worth having in its own right; it is
-**not** part of the flat-surface admission and does not break the mask unless you
-ask it to.
+The break-of-slope (VEC) skeleton and its endpoint bridging are now
+`lsdtt-feature-finder` `feature_type: find_risers`, which writes open riser
+segments with a step height. Its centreline can split surfaces in
+`lsdtt-fluvial-surfaces` (`segmentation_algorithm_choice: whole_mask`,
+`riser_mask_fname`).
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `apply_slope_breaks_to_labels` | bool | `false` | Break the flat mask with the skeleton before labelling. |
-| `polyfit_lambda_metres` | float | `100` | Window half-wavelength (m) for the direct polyfit curvature computation. |
-| `vec_adaptive_method` | string | `gaussian` | Adaptive thresholding method applied to vertical excess curvature. |
-| `vec_adaptive_block_size_pixels` | int | `51` | Neighbourhood block size (pixels) for adaptive thresholding. |
-| `vec_adaptive_C` | float | `0.0` | Constant subtracted from the local neighbourhood mean before thresholding. |
-| `vec_adaptive_gaussian_sigma` | float | `0.0` | Sigma for an optional Gaussian pre-blur. |
-| `slope_break_closing_radius_metres` | float | `0` | Closing radius (m) on the adaptive binary mask before skeletonisation. |
-| `slope_break_binary_min_component_pixels` | int | `1` | Minimum component size retained in the adaptive binary mask. |
-| `slope_break_centreline_max_spur_pixels` | int | `10` | Maximum endpoint-rooted spur length pruned from the skeleton. |
-| `slope_break_centreline_max_terminal_loop_pixels` | int | `10` | Maximum endpoint-rooted terminal loop length pruned. |
-| `slope_break_centreline_min_component_pixels` | int | `1` | Minimum component size retained in the skeleton. |
-| `write_slope_break_centreline_raster` | bool | `true` | Write the 1-pixel skeleton. |
+Old keys in a parameter file here:
 
-### Endpoint bridging — deprecated
-
-Bridging existed to re-close gaps in the riser network so that two treads at
-different heights could not merge into one label. `lsdtt-fluvial-surfaces` labels
-**within** height bands, which makes that merge impossible rather than
-detectable, so the job is gone. Bridging is also the only route by which the
-skeleton ever broke the flat mask, and it is off by default
-(`slope_break_connect_search_radius_metres: 0`). **These five are scheduled for
-deletion one release after the release that first ships them as deprecated.**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `slope_break_connect_search_radius_metres` | float | `0` | Search radius (m) for elevation-based endpoint connection. `0` = off. |
-| `slope_break_connect_elevation_tolerance_metres` | float | `2` | Maximum elevation difference (m) between two bridged endpoints. |
-| `slope_break_connect_corridor_half_width_pixels` | float | `12` | Half-width (pixels) of the A\* corridor for contour-routed bridges. |
-| `slope_break_connect_same_component` | bool | `false` | Allow bridging between endpoints on the same skeleton component. |
-| `write_slope_break_endpoints` | bool | `false` | Write skeleton endpoints and their elevations to FlatGeobuf. |
-| `write_slope_break_bridge_mask_raster` | bool | `true` | Write the raster of newly inserted bridge pixels. |
-| `write_slope_break_centreline_connected_raster` | bool | `true` | Write the connected skeleton after accepted bridge routing. |
-
----
+| Old key | Now |
+|---|---|
+| `write_slope_break_centreline_raster`, `write_slope_break_centreline_connected_raster`, `write_slope_break_bridge_mask_raster`, `write_slope_break_endpoints` (and their older spellings), `apply_slope_breaks_to_labels` | **Stop the run**, naming the replacement: they turned an output or a mask cut on. |
+| `polyfit_lambda_metres`, `vec_adaptive_method`, `vec_adaptive_block_size_pixels`, `vec_adaptive_C`, `vec_adaptive_gaussian_sigma`, `slope_break_closing_radius_metres`, `slope_break_binary_min_component_pixels`, `slope_break_centreline_max_spur_pixels`, `slope_break_centreline_max_terminal_loop_pixels`, `slope_break_centreline_min_component_pixels`, `slope_break_connect_search_radius_metres`, `slope_break_connect_elevation_tolerance_metres`, `slope_break_connect_corridor_half_width_pixels`, `slope_break_connect_same_component` | Warn and are ignored; each message names its `riser_*` key in `lsdtt-feature-finder`. |
 
 ## Plane analysis
 
@@ -226,9 +198,9 @@ separation without a second labelling pass over the whole raster.
 | `<write_fname>_combined_flat_mask.tif` | `write_combined_flat_mask_raster` (default on) — **the input to `lsdtt-fluvial-surfaces`** |
 | `<write_fname>_labelled_flat_mask.tif` | always |
 | `<write_fname>_relief.tif`, `_relief_flat_mask.tif` | `write_metric_flat_mask_rasters` |
-| `<write_fname>_admission_slope_degrees.tif` | `write_admission_slope_raster` |
+| `<write_fname>_admission_gradient.tif` | `write_admission_gradient_raster` |
 | `<write_fname>_relief_cdf.csv`, `_dist_fits.csv` | always |
-| `<write_fname>_relief_adaptive_cdf.csv` | `adaptive_relief_threshold` |
+| `<write_fname>_relief_adaptive_cdf.csv` | `relief_threshold_algorithm_choice: cdf_divergence` |
 | `<write_fname>_flat_vertical_excess_curvature.tif`, `_slope_break_*` | the slope-break switches |
 | `<write_fname>_plane_fits.csv`, `_plane_residual.tif`, `_residual_relief*.tif` | `run_plane_analysis` |
 | `<write_fname>_README.csv` / `.html` | every successful run — the resolved parameters for that run |
@@ -253,7 +225,14 @@ rather than being ignored, so a stale parameter file cannot silently do nothing.
 | `write_residual_relief_labelled_mask` | `write_residual_relief_labelled_mask_raster` |
 | `write_residual_relief_skeleton` | `write_residual_relief_skeleton_raster` |
 | `test_surface_vector_file` | `test_surface_polygon_fname` |
-| `floodplain_max_height_metres`, `terrace_min_height_metres`, `channel_adjacency_radius_metres`, `terrace_max_hand_spread_metres`, `terrace_corridor_per_pixel`, `band_reach_window_metres`, `terrace_max_distance_to_channel_metres` | moved to `lsdtt-fluvial-surfaces` |
+| `relief_window_side_pixels`, `relief_window_pixels` | `relief_window_radius_metres` — the full side in cells is converted to a radius in metres with the cell size |
+| `relief_threshold_metres` | `max_relief_metres` |
+| `adaptive_relief_threshold` | `relief_threshold_algorithm_choice` — `true` is `cdf_divergence`, `false` is `fixed` |
+| `admission_mode` | `admission_algorithm_choice`; its values `slope`, `relief_and_slope`, `relief_or_slope` are now `gradient`, `relief_and_gradient`, `relief_or_gradient` |
+| `admission_slope_cap_degrees` | `max_admission_gradient` — converted with gradient = tan(angle) |
+| `admission_slope_window_radius_metres` | `admission_gradient_window_radius_metres` |
+| `write_admission_slope_raster` | `write_admission_gradient_raster`; the file is now `_admission_gradient.tif`, in m/m |
+| `floodplain_max_height_metres`, `terrace_min_height_metres`, `channel_adjacency_radius_metres`, `terrace_max_hand_spread_metres`, `terrace_corridor_per_pixel`, `band_reach_window_metres`, `terrace_max_distance_to_channel_metres` | moved to `lsdtt-fluvial-surfaces` (where the first two are now `max_floodplain_hand_metres` and `min_terrace_hand_metres`) |
 | every `source_points_*`, `outlet_points_*`, `write_channel_*`, `break_flats_with_channels`, `fill_before_routing`, `connect_flat_surfaces_to_channels` | moved to `lsdtt-fluvial-surfaces` — this tool no longer does flow routing |
 
 ---
@@ -288,23 +267,26 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `n_threads` | `int` | `0` | `io` | - | OpenMP thread count. | 0 = all hardware threads. |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | cog, gtiff, or same_as_input. |
 
-### Relief (always on)
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `relief_window_side_pixels` | `int` | `5` | `param` | - | Full window SIDE LENGTH (pixels) for local relief (max - min). | This is the side of the square window, not a radius: must be odd and &gt;= 3, and 5 means a 5x5 neighbourhood. Note that lsdtt-fluvial-surfaces spells its equivalent fallback_relief_window_radius_pixels, which is a RADIUS and so means something different for the same number. |
-| `relief_threshold_metres` | `float` | `1.0` | `param` | - | Local relief value (m) below which a pixel is classed flat. | Read the threshold directly off the _relief_cdf.csv output. Only used when adaptive_relief_threshold = false. |
-| `adaptive_relief_threshold` | `bool` | `false` | `param` | - | Automatically select the relief threshold using CDF divergence. | Computes the relief CDF in 500 bins, fits the best parametric distribution, and picks the x-value where the empirical CDF most exceeds the fitted CDF (flat pixels inflate the empirical distribution at low relief values, causing a positive deviation). Prints the chosen threshold and writes the CDF to file. Overrides relief_threshold_metres. |
-| `relief_threshold_multiplier` | `float` | `1.0` | `param` | - | Multiplier applied to the adaptively chosen relief threshold. | Allows leeway around the auto-detected threshold. Values &gt; 1 loosen the criterion (more flat pixels); values &lt; 1 tighten it. Only used when adaptive_relief_threshold = true. |
-
 ### Admission
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `admission_mode` | `string` | `relief` | `param` | - | Which test admits a pixel as flat: relief, slope, relief_and_slope or relief_or_slope. | Local relief is not a gradient test and the two reject different ground. Relief charges a surface for its own tilt, so a smooth tread that slopes downvalley fails it while a rough level surface passes; a gradient cap does the opposite. On a Himalayan gorge the two select nearly disjoint sets. `relief` is the historical behaviour. `slope` uses the gradient cap alone. `relief_and_slope` requires both, which is the strictest reading of flat. `relief_or_slope` admits either, which is the one to use when the point is to find every candidate surface and let the ladder sort them. |
-| `admission_slope_cap_degrees` | `float` | `0` | `param` | - | Gradient (degrees) below which a pixel is admitted. Required by every admission_mode that names slope. | Measured from a polynomial surface fitted over admission_slope_window_radius_metres, not from a 3x3 difference: a 3-cell operator on a 30 m DEM measures pixel noise, and the cap has to be read at the scale of the surface being admitted. There is no default worth guessing - 5 degrees is a valley floor, 15 degrees admits fan and pediment - so run the census at more than one cap and report the sensitivity rather than defending one number. |
-| `admission_slope_window_radius_metres` | `float` | `0` | `param` | - | Window radius (m) of the polynomial fit the admission gradient is measured over. 0 = match the relief window. | Defaulting to relief_window_side_pixels x cell size keeps the two admission tests commensurate: they then disagree about the ground, not about the scale they are looking at. |
-| `write_admission_slope_raster` | `bool` | `false` | `output` | - | Write the gradient raster the slope cap was applied to. | Write it the first time you set a cap on a new DEM. The cap is only meaningful against the gradient distribution it is cutting, and that distribution is not knowable in advance. |
+| `relief_window_radius_metres` | `float` | `0` | `param` | - | Radius (m) of the square window local relief (max - min) is measured over. 0 = 2 cells. | Converted to the nearest whole number of cells, at least one; the run log states the radius actually used. A radius r cells is a (2r+1) x (2r+1) window, so the default is a 5 x 5 window. Replaces relief_window_side_pixels (a full side) and fallback_relief_window_radius_pixels (a radius in cells), which spelled the same idea two ways. |
+| `max_relief_metres` | `float` | `1` | `param` | - | Local relief (m) below which a pixel is admitted as flat. | Read a value off the relief CDF the tool writes. Where the tool has relief_threshold_algorithm_choice, this is the value used by `fixed`. |
+| `relief_threshold_algorithm_choice` | `string` | `fixed` | `param` | - | How the relief bound is chosen: fixed, cdf_divergence or qq_gaussian. | fixed uses max_relief_metres. cdf_divergence computes the relief CDF, fits the best of a family of parametric distributions (normal, exponential, Weibull, Pareto) and takes the relief at which the empirical CDF most exceeds the fit: flat pixels inflate the empirical distribution at low relief. qq_gaussian is the Clubb et al. (2017) rule: the lowest relief at which the quantiles rejoin a Gaussian drawn through two percentiles of the QQ plot (relief_qq_*) and stay on it. The table and the chosen value are written out. Replaces the boolean adaptive_relief_threshold. |
+| `relief_threshold_multiplier` | `float` | `1.0` | `param` | `relief_threshold_algorithm_choice` | Multiplier applied to an automatically chosen relief bound. | Allows leeway around the auto-detected value. Values &gt; 1 loosen the criterion (more flat pixels); values &lt; 1 tighten it. Not used when relief_threshold_algorithm_choice is fixed. |
+| `admission_algorithm_choice` | `string` | `relief` | `param` | - | Which test admits a pixel as flat: relief, gradient, relief_and_gradient or relief_or_gradient. | Local relief is not a gradient test and the two reject different ground. Relief charges a surface for its own tilt, so a smooth tread that slopes downvalley fails it while a rough level surface passes; a gradient bound does the opposite. On a Himalayan gorge the two select nearly disjoint sets. `relief` is the historical behaviour. `gradient` uses max_admission_gradient alone. `relief_and_gradient` requires both, which is the strictest reading of flat. `relief_or_gradient` admits either, which is the one to use when the point is to find every candidate surface and let the ladder sort them. Replaces admission_mode (whose `slope` values are now `gradient`). |
+| `max_admission_gradient` | `float` | `0` | `param` | `admission_algorithm_choice` | Gradient (m/m) below which a pixel is admitted as flat. | A gradient, not an angle: 0.087 is 5 degrees, 0.176 is 10, 0.268 is 15 (gradient = tan(angle)). Measured from a fitted polynomial surface rather than a 3x3 difference. Required by every admission_algorithm_choice that names gradient; there is no default worth guessing - 0.087 (5 degrees) is a valley floor, 0.27 (15 degrees) admits fan and pediment - so run the census at more than one bound and report the sensitivity rather than defending one number. Replaces admission_slope_cap_degrees; an old value is converted with gradient = tan(angle). |
+| `admission_gradient_window_radius_metres` | `float` | `0` | `param` | `admission_algorithm_choice` | Window radius (m) of the polynomial fit the admission gradient is measured over. 0 = match the relief window. | Defaulting to the relief window keeps the two admission tests commensurate: they then disagree about the ground, not about the scale they are looking at. |
+| `write_admission_gradient_raster` | `bool` | `false` | `output` | - | Write the gradient raster (m/m) the admission bound was applied to. | Output file: &lt;stem&gt;_admission_gradient.tif. Write it the first time you set a bound on a new DEM. The bound is only meaningful against the gradient distribution it is cutting, and that distribution is not knowable in advance. |
+
+### Threshold selection
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `relief_qq_lower_percentile` | `float` | `25` | `param` | `relief_threshold_algorithm_choice` | Lower percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | 25 and 75 (the IQR) are the values Clubb et al. (2017) used. |
+| `relief_qq_upper_percentile` | `float` | `75` | `param` | `relief_threshold_algorithm_choice` | Upper percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | Must be above the lower percentile. |
+| `relief_qq_threshold_fraction` | `float` | `0.01` | `param` | `relief_threshold_algorithm_choice` | Fraction of the data range within which a quantile counts as on the Gaussian line (qq_gaussian). | 0.01 (1%) is the paper's value. The threshold is the lowest quantile that is on the line and stays on it for the next 200 quantiles of 10000. Larger values admit more ground. |
 
 ### Morphological post-processing of relief mask
 
@@ -313,35 +295,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `flat_closing_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological closing of the relief flat mask. | Closing (dilation then erosion) seals small holes and narrow gaps inside flat blobs without expanding their outer boundary. 0 = disabled. |
 | `flat_opening_radius_metres` | `float` | `0` | `param` | - | Radius (m) for morphological opening of the relief flat mask. | Opening (erosion then dilation) removes thin connections between blobs that should be separate flat surfaces, while restoring the size of the surviving blobs. 0 or negative = disabled. |
 | `open_then_close` | `bool` | `false` | `param` | - | Apply opening before closing instead of closing before opening. | false (default): closing first, then opening. true: opening first, then closing. Has no effect when either radius is 0. |
-
-### Slope break finder (VEC adaptive threshold skeleton)
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `polyfit_lambda_metres` | `float` | `100` | `param` | - | Window half-wavelength (m) for the direct polyfit curvature computation. | Controls the scale of the fitted surface. Larger values smooth more. |
-| `vec_adaptive_method` | `string` | `gaussian` | `param` | - | Adaptive thresholding method applied to vertical_excess_curvature. | gaussian: Gaussian-weighted local mean (smoother threshold surface). mean: unweighted local mean. |
-| `vec_adaptive_block_size_pixels` | `int` | `51` | `param` | - | Neighbourhood block size (pixels) for adaptive VEC thresholding. | Must be odd and &gt;= 3. Should be larger than a typical slope-break feature width but smaller than the between-feature spacing. |
-| `vec_adaptive_C` | `float` | `0.0` | `param` | - | Constant subtracted from the local neighbourhood mean before thresholding. | Threshold = local_mean - C. 0 = foreground where VEC is above the local mean. Negative (e.g. -5) = stricter, retains only pixels well above the local mean. |
-| `vec_adaptive_gaussian_sigma` | `float` | `0.0` | `param` | - | Sigma for an optional Gaussian pre-blur before adaptive thresholding. | 0 = no blur. A small value (e.g. 1.0) suppresses pixel-scale noise. |
-| `slope_break_closing_radius_metres` | `float` | `0` | `param` | - | Closing radius (m) applied to the adaptive binary mask before skeletonisation. | Seals small gaps in the detected slope-break regions. 0 = disabled. |
-| `slope_break_binary_min_component_pixels` | `int` | `1` | `param` | - | Minimum connected-component size (pixels) retained in the adaptive binary mask. | Applied before skeletonisation. 1 = keep all components. |
-| `write_slope_break_centreline_raster` | `bool` | `true` | `switch` | - | Write the 1-pixel slope-break skeleton. | Output suffix: _slope_break_centreline.tif |
-| `slope_break_centreline_max_spur_pixels` | `int` | `10` | `param` | - | Maximum endpoint-rooted spur length (pixels) removed from the skeleton. | 0 = skip spur pruning. |
-| `slope_break_centreline_max_terminal_loop_pixels` | `int` | `10` | `param` | - | Maximum endpoint-rooted terminal loop length (pixels) removed from the skeleton. | 0 = skip terminal loop pruning. |
-| `slope_break_centreline_min_component_pixels` | `int` | `1` | `param` | - | Minimum component size (pixels) retained in the skeleton. | Applied after thinning and spur pruning. |
-| `slope_break_connect_search_radius_metres` | `float` | `0` | `param` | - | Search radius (m) for elevation-based skeleton endpoint connection. | Bridges nearby endpoints on the same contour. 0 = disabled. |
-| `slope_break_connect_elevation_tolerance_metres` | `float` | `2` | `param` | - | Maximum elevation difference (m) allowed between two bridged endpoints. | - |
-| `slope_break_connect_corridor_half_width_pixels` | `float` | `12` | `param` | - | Half-width (pixels) of the A* corridor for contour-routed bridges. | - |
-| `slope_break_connect_same_component` | `bool` | `false` | `param` | - | Allow bridging between endpoints on the same skeleton component. | Default false: only bridge endpoints from different components. |
-| `write_slope_break_endpoints` | `bool` | `false` | `switch` | - | Write skeleton endpoints and their DEM elevations to a FlatGeobuf point layer. | Output suffix: _slope_break_endpoints.fgb Fields: row, col, elev_m, comp_size. |
-| `write_slope_break_bridge_mask_raster` | `bool` | `true` | `switch` | - | Write the raster of newly inserted bridge pixels from skeleton reconnection. | Output suffix: _slope_break_bridge_mask.tif |
-| `write_slope_break_centreline_connected_raster` | `bool` | `true` | `switch` | - | Write the connected skeleton after accepted bridge routing. | Output suffix: _slope_break_centreline_connected.tif |
-
-### Slope break finder
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `apply_slope_breaks_to_labels` | `bool` | `false` | `switch` | - | Break the flat mask with the slope-break skeleton before labelling. | Default false. The skeleton is still detected and still written; this only controls whether it cuts the mask before connected-component labelling. Separating surfaces at different heights is now done by lsdtt-fluvial-surfaces, which labels within height bands, so a break here is no longer needed to keep two treads apart. |
 
 ### Component filtering
 

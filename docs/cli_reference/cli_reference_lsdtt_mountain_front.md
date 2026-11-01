@@ -38,7 +38,7 @@ The pipeline runs all stages unconditionally. Output writing is controlled by th
 | 9 | Valley infilling via morphological closing (optional) |
 | 10 | Identify mountain front outlet points (optional) |
 
-The `_relief_cdf.csv` file is always written when `adaptive_relief_threshold` is true. It contains the 500-bin empirical CDF and the best-fit parametric CDF, and is the primary tool for choosing a manual threshold if the adaptive result is not satisfactory.
+The `_relief_cdf.csv` file is always written when `relief_threshold_algorithm_choice` is `cdf_divergence` (the default). It contains the 500-bin empirical CDF and the best-fit parametric CDF, and is the primary tool for choosing a manual threshold if the adaptive result is not satisfactory.
 
 ---
 
@@ -66,7 +66,7 @@ The `_relief_cdf.csv` file is always written when `adaptive_relief_threshold` is
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `relief_window_side_pixels` | int | `5` | Full window **side length** in pixels for local relief (max − min). Not a radius: must be odd and ≥ 3, so `5` is a 5×5 neighbourhood. `lsdtt-fluvial-surfaces` spells its equivalent `fallback_relief_window_radius_pixels`, which is a **radius**, so the same number means a different window there. The old name `relief_window_pixels` is accepted as a deprecated alias. |
+| `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window local relief (max − min) is measured over, converted to the nearest whole number of cells. `0` = 2 cells, a 5×5 window. The same name and meaning as in `lsdtt-flat-surface-finder` and `lsdtt-fluvial-surfaces`. Replaces `relief_window_side_pixels` (a full side in cells), which is still accepted and converted. |
 
 ---
 
@@ -74,8 +74,8 @@ The `_relief_cdf.csv` file is always written when `adaptive_relief_threshold` is
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `adaptive_relief_threshold` | bool | `true` | If true, automatically select the relief threshold using CDF divergence. Computes a 500-bin empirical CDF, fits the best parametric distribution, and picks the x-value where the empirical CDF most exceeds the fitted CDF. Set to false to supply a fixed threshold instead. |
-| `relief_threshold_metres` | float | `1.0` | Fixed local-relief threshold in metres below which a pixel is classed flat. Only used when `adaptive_relief_threshold` is false. Read a good value directly from the `_relief_cdf.csv` output by running the tool once with adaptive thresholding enabled. |
+| `relief_threshold_algorithm_choice` | string | `cdf_divergence` | `cdf_divergence` computes a 500-bin empirical CDF, fits the best parametric distribution, and picks the x-value where the empirical CDF most exceeds the fitted CDF. `fixed` uses `max_relief_metres`. Replaces the boolean `adaptive_relief_threshold` (`true` = `cdf_divergence`). |
+| `max_relief_metres` | float | `1.0` | Fixed local-relief bound in metres below which a pixel is classed flat. Only used when `relief_threshold_algorithm_choice` is `fixed`. Read a good value from the `_relief_cdf.csv` of a `cdf_divergence` run. Replaces `relief_threshold_metres`. |
 
 ---
 
@@ -132,11 +132,11 @@ read_fname: my_dem
 write_path: /data/output/
 write_fname: my_dem_mountain
 
-# Relief window
-relief_window_side_pixels: 5
+# Relief window: radius in metres (0 = 2 cells, a 5 x 5 window)
+relief_window_radius_metres: 0
 
-# Adaptive threshold (inspect _relief_cdf.csv to tune)
-adaptive_relief_threshold: true
+# Bound chosen from the relief CDF (inspect _relief_cdf.csv to tune)
+relief_threshold_algorithm_choice: cdf_divergence
 
 # Flat mask filtering
 min_flat_component_pixels:    500
@@ -177,18 +177,21 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `n_threads` | `int` | `0` | `io` | - | OpenMP thread count. | 0 = all hardware threads. |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format. | cog, gtiff, or same_as_input. |
 
-### Stage 1: relief
+### Admission
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `relief_window_side_pixels` | `int` | `5` | `param` | - | Full window SIDE LENGTH (pixels) for local relief (max - min). | This is the side of the square window, not a radius: must be odd and &gt;= 3, and 5 means a 5x5 neighbourhood. Note that lsdtt-fluvial-surfaces spells its equivalent fallback_relief_window_radius_pixels, which is a RADIUS and so means something different for the same number. |
+| `relief_window_radius_metres` | `float` | `0` | `param` | - | Radius (m) of the square window local relief (max - min) is measured over. 0 = 2 cells. | Converted to the nearest whole number of cells, at least one; the run log states the radius actually used. A radius r cells is a (2r+1) x (2r+1) window, so the default is a 5 x 5 window. Replaces relief_window_side_pixels (a full side) and fallback_relief_window_radius_pixels (a radius in cells), which spelled the same idea two ways. |
+| `relief_threshold_algorithm_choice` | `string` | `cdf_divergence` | `param` | - | How the relief bound is chosen: fixed, cdf_divergence or qq_gaussian. | fixed uses max_relief_metres. cdf_divergence computes the relief CDF, fits the best of a family of parametric distributions (normal, exponential, Weibull, Pareto) and takes the relief at which the empirical CDF most exceeds the fit: flat pixels inflate the empirical distribution at low relief. qq_gaussian is the Clubb et al. (2017) rule: the lowest relief at which the quantiles rejoin a Gaussian drawn through two percentiles of the QQ plot (relief_qq_*) and stay on it. The table and the chosen value are written out. Replaces the boolean adaptive_relief_threshold. |
+| `max_relief_metres` | `float` | `1` | `param` | `relief_threshold_algorithm_choice` | Local relief (m) below which a pixel is admitted as flat. | Read a value off the relief CDF the tool writes. Where the tool has relief_threshold_algorithm_choice, this is the value used by `fixed`. |
 
-### Stage 2: relief threshold
+### Threshold selection
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `adaptive_relief_threshold` | `bool` | `true` | `param` | - | Automatically select the relief threshold using CDF divergence. | Computes a 500-bin empirical CDF, fits the best parametric distribution, and picks the x-value where the empirical CDF most exceeds the fitted CDF. Set to false to use relief_threshold_metres instead. |
-| `relief_threshold_metres` | `float` | `1.0` | `param` | - | Local relief value (m) below which a pixel is classed flat. | Read the threshold directly off the _relief_cdf.csv output. Only used when adaptive_relief_threshold = false. |
+| `relief_qq_lower_percentile` | `float` | `25` | `param` | `relief_threshold_algorithm_choice` | Lower percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | 25 and 75 (the IQR) are the values Clubb et al. (2017) used. |
+| `relief_qq_upper_percentile` | `float` | `75` | `param` | `relief_threshold_algorithm_choice` | Upper percentile of the QQ cloud the Gaussian reference line is drawn through (qq_gaussian). | Must be above the lower percentile. |
+| `relief_qq_threshold_fraction` | `float` | `0.01` | `param` | `relief_threshold_algorithm_choice` | Fraction of the data range within which a quantile counts as on the Gaussian line (qq_gaussian). | 0.01 (1%) is the paper's value. The threshold is the lowest quantile that is on the line and stays on it for the next 200 quantiles of 10000. Larger values admit more ground. |
 
 ### Stages 4-7: flat mask post-processing
 

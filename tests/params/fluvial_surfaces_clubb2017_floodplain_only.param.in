@@ -1,0 +1,21 @@
+# clubb2017 with run_terrace_classification false: the floodplain alone, as
+# LSDTopoTools2 allowed. Otherwise identical to fluvial_surfaces_clubb2017,
+# so the floodplain mask and the QQ tables must match that test's pins, and
+# no terrace field or terrace class may appear (write_terrace_field_raster is
+# left on to show it is skipped).
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: clubbfp
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: clubb2017
+run_terrace_classification: false
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+
+write_band_index_raster: true
+write_floodplain_mask_raster: true
+write_terrace_field_raster: true

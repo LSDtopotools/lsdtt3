@@ -1,0 +1,35 @@
+# Training polygons on the dissected staircase: tread 1 drawn as "fp", tread 2 as "t1", tread 3 as "T5" (the
+# number is wrong on purpose - numbers are ignored, levels come from HAND).
+# Treads sit 8, 16, 24, 32 m above the channel. Both methods in one run:
+#   ladder     the trained breaks (about 12 and 20 m) are the lowest breaks;
+#              the ladder's own search runs above 20 m;
+#   clubb2017  the floodplain / terrace HAND bound is the trained one (about
+#              12 m) and the second pass is skipped.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: trn
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder,clubb2017
+training_surfaces_fname: staircase_training.fgb
+floodplain_second_pass_algorithm_choice: qq_upper_departure
+
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
+ladder_break_algorithm_choice: jenks
+vertical_accuracy_metres: 0.5
+threshold_contributing_pixels: 50
+# Relief admission leaves the ground beside the channel notch out, so the
+# nearest tread-1 patches are 60 m from the channel; 100 m lets them count as
+# touching it, and the ladder's floodplain is the lowest level touching the
+# channel in each reach window.
+channel_adjacency_radius_metres: 100
+source_points_fname: staircase_sources.fgb
+
+write_surface_class_raster: true
+write_band_index_raster: true
+write_ladder_windows_csv: true

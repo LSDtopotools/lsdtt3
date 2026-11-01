@@ -2,7 +2,7 @@
 
 Estimates bankfull channel width and depth from a high-resolution DEM with Manning's equation. It builds a single-source channel network from user-supplied source points, extracts cross sections along it, measures the along-channel slope and drainage area at each section, and then, per section, finds the water depth whose Manning discharge matches a target discharge.
 
-`source_points_path` is required. Manning widths need `run_manning_widths: true` and a reach table (`reach_manning_parameters_path`) giving Manning's n and the target discharge for each stretch of channel. The tool does not derive either.
+`source_points_fname` is required. Manning widths need `run_manning_widths: true` and a reach table (`reach_manning_parameters_path`) giving Manning's n and the target discharge for each stretch of channel. The tool does not derive either.
 
 ## Usage
 
@@ -152,7 +152,7 @@ write_path: /data/output/
 write_fname: bf
 
 n_threads: 1
-source_points_path:            /data/sources/channel_sources.csv
+source_points_fname:            /data/sources/channel_sources.csv
 reach_manning_parameters_path: /data/reaches.csv
 
 cross_section_half_length_metres:    160
@@ -208,7 +208,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `source_points_path` | `string` | - | `io` | - | Path to the source-point input file (exactly one point). | CSV: latitude/longitude in EPSG:4326. Vector (.gpkg/.fgb): read through OGR and transformed to the raster CRS. Required. When write_channel_profile_csv is true it must resolve to a single source (a single mainstem channel). |
+| `source_points_fname` | `string` | - | `io` | - | Source-point input file (exactly one point), in read_path (an absolute path is used as given). | CSV: latitude/longitude in EPSG:4326. Vector (.gpkg/.fgb): read through OGR and transformed to the raster CRS. Required. When write_channel_profile_csv is true it must resolve to a single source (a single mainstem channel). |
 | `source_points_layer_name` | `string` | - | `param` | - | Optional layer name for vector source-point input. | Only used for vector input. Empty means the first layer. |
 | `source_points_input_format` | `string` | `auto_detect` | `param` | - | Source-point file format. | auto_detect / csv_latitude_longitude_epsg4326 / ogr_vector_layer. |
 | `source_points_latitude_field_name` | `string` | `latitude` | `param` | - | Latitude column name for CSV source-point input. | Only used for CSV input. |
@@ -237,7 +237,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `write_channel_profile_csv` | `bool` | `true` | `switch` | - | Write distance from source, drainage area, thalweg elevation and slope per cross section. | Requires source_points_path to resolve to exactly one source point. Output: &lt;write_fname&gt;_channel_profile.csv. Its distance and slope columns drive the Manning solve. If run_manning_widths is also set in the same run, the in-memory profile is used and channel_profile_csv_path is ignored. |
+| `write_channel_profile_csv` | `bool` | `true` | `switch` | - | Write distance from source, drainage area, thalweg elevation and slope per cross section. | Requires source_points_fname to resolve to exactly one source point. Output: &lt;write_fname&gt;_channel_profile.csv. Its distance and slope columns drive the Manning solve. If run_manning_widths is also set in the same run, the in-memory profile is used and channel_profile_csv_path is ignored. |
 | `slope_window_half_length_metres` | `float` | `25.0` | `param` | `write_channel_profile_csv` | Half-length of the along-channel slope-fit window [m]. | Slope is the least-squares slope of pit-filled elevation against along-channel distance over +/- this distance, so it has no cross-channel component. Must be at least two cell sizes; use roughly 5-10 channel widths. Near the source or outlet a one-sided window is accepted only if the valid cells span at least this distance, otherwise slope_valid is 0. |
 | `write_cross_section_sample_points` | `bool` | `true` | `switch` | - | Write the full sampled elevation profile per cross section. | Fields: cross_section_id, offset_metres, x, y, elevation, valid. Output: &lt;write_fname&gt;_cross_section_sample_points.fgb (or .gpkg). |
 

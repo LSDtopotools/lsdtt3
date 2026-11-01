@@ -1,0 +1,24 @@
+# flat_surface_finder_smoke with the relief bound from the Clubb et al. (2017)
+# QQ rule. lsdtt-mountain-front reads the same relief from the same DEM in
+# mountain_front_relief_qq.param.in, and the two QQ tables must be identical.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fsf
+
+n_threads: 1
+write_output_format: gtiff
+
+relief_window_radius_metres: 20
+max_relief_metres: 2.0
+relief_threshold_algorithm_choice: qq_gaussian
+
+flat_closing_radius_metres: 0
+flat_opening_radius_metres: 0
+min_component_pixels: 100
+
+run_plane_analysis: false
+
+write_combined_flat_mask_raster: true
+write_metric_flat_mask_rasters: false
+write_texture_rasters: false

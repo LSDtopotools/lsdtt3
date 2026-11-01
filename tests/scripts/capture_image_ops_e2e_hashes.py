@@ -60,9 +60,9 @@ write_fname: fsf
 n_threads: 1
 write_output_format: gtiff
 
-relief_window_side_pixels: 5
-relief_threshold_metres: 2.0
-adaptive_relief_threshold: false
+relief_window_radius_metres: 20
+max_relief_metres: 2.0
+relief_threshold_algorithm_choice: fixed
 flat_closing_radius_metres: 0
 flat_opening_radius_metres: 0
 min_component_pixels: 100

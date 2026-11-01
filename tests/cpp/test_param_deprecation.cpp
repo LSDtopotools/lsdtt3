@@ -53,6 +53,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/core/lsdtt_common_parameters.hpp"
 #include "../../src/core/lsdtt_param_parser.hpp"
 
 namespace
@@ -120,7 +121,12 @@ int run_child(const std::string& path, const std::string& fname)
         {"old_points_format",
          {"legacy_points_format", "write_vector_format"}},
         {"old_lines_format",
-         {"legacy_lines_format", "write_vector_format"}} });
+         {"legacy_lines_format", "write_vector_format"}},
+        // A compatibility alias whose value the caller converts after parsing,
+        // with its own warning note (the degrees -> gradient pattern).
+        {"old_cap_degrees",
+         {"legacy_cap_degrees", "max_cap_gradient",
+          "Converted with gradient = tan(angle)."}} });
 
     std::map<std::string, float>       ff;
     std::map<std::string, int>         ii;
@@ -144,9 +150,35 @@ int run_child(const std::string& path, const std::string& fname)
     ss["write_vector_format"]               = "flatgeobuf";
     ss["legacy_points_format"]              = "same_as_write_vector_format";
     ss["legacy_lines_format"]               = "same_as_write_vector_format";
+    ss["legacy_cap_degrees"]                = "";
+    ff["max_cap_gradient"]                  = 0.0f;
     dd["precision_radius_metres"]            = -1.0;
 
     pp.parse_all_parameters(ff, ii, bb, ss, dd);
+
+    // Convert a legacy angle the way the CLIs do, and record the value so the
+    // ingested-parameters file reproduces the run.
+    float cap_gradient = pp.get_float_parameters().at("max_cap_gradient");
+    {
+        const std::string legacy = pp.get_string_parameters().at("legacy_cap_degrees");
+        if (!legacy.empty() && !pp.parameter_supplied("max_cap_gradient"))
+        {
+            try
+            {
+                cap_gradient = static_cast<float>(
+                    lsdtt::gradient_from_legacy_degrees(legacy, "old_cap_degrees"));
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+            std::ostringstream os;
+            os.precision(9);
+            os << cap_gradient;
+            pp.record_resolved_parameter("max_cap_gradient", os.str());
+        }
+    }
 
     lsdtt::lsdtt_help_registry empty_help;
     pp.print_help(empty_help, pp.get_write_fname() + "_parser_io",
@@ -193,6 +225,8 @@ int run_child(const std::string& path, const std::string& fname)
               << s.at("legacy_points_format")
               << "\nCHILD legacy_lines_format="
               << s.at("legacy_lines_format") << "\n";
+    std::cout << std::setprecision(9) << "CHILD max_cap_gradient="
+              << cap_gradient << "\n";
     std::cout << "CHILD_COMPLETED\n";
     return 0;
 }
@@ -557,6 +591,47 @@ int run_parent(const std::string& self, const std::filesystem::path& dir)
                   !contains(html_text.str(), "legacy_points_format") &&
                   !contains(html_text.str(), "legacy_lines_format"),
               "  compatibility read/default storage is absent from CSV and HTML help");
+    }
+
+    {
+        std::cout << "\n-- compatibility alias converted after parsing --\n";
+        const child_run r = run_case(
+            self, dir, "compat_degrees.param",
+            k_clean_params + "old_cap_degrees: 5\n");
+        check(r.exit_code == 0 &&
+                  contains(r.output, "CHILD max_cap_gradient=0.0874886662"),
+              "an old angle arrives as its tangent under the new key");
+        check(contains(r.output, "'old_cap_degrees' is deprecated; use "
+                                 "'max_cap_gradient'. Converted with "
+                                 "gradient = tan(angle).") &&
+                  !contains(r.output, "consolidated format settings"),
+              "  the warning carries the alias's own note, not the format text");
+
+        std::ifstream params(dir / "dep_parser_params.param");
+        std::ostringstream params_text;
+        params_text << params.rdbuf();
+        const std::string t = params_text.str();
+        const std::size_t read_at = t.find("# Parameters read from file");
+        const std::size_t dflt_at = t.find("# Default parameters used");
+        const std::size_t key_at  = t.find("max_cap_gradient: 0.0874886662");
+        check(key_at != std::string::npos && read_at < key_at && key_at < dflt_at,
+              "  record_resolved_parameter puts the converted value in the "
+              "parameters-read section of the ingested file");
+        check(t.find("max_cap_gradient: 0\n") == std::string::npos &&
+                  !contains(t, "legacy_cap_degrees") &&
+                  !contains(t, "old_cap_degrees"),
+              "  and the default and the hidden storage key are not written");
+    }
+
+    {
+        std::cout << "\n-- compatibility value that cannot be converted --\n";
+        const child_run r = run_case(
+            self, dir, "compat_degrees_bad.param",
+            k_clean_params + "old_cap_degrees: 95\n");
+        check(r.exit_code == 1 && !contains(r.output, "CHILD_COMPLETED") &&
+                  contains(r.output, "'old_cap_degrees' must be an angle in "
+                                     "[0, 90) degrees"),
+              "an angle outside [0, 90) stops the run, naming the old key");
     }
 
     {

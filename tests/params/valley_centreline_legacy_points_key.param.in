@@ -1,0 +1,21 @@
+# valley_centreline_smoke under the pre-2026-10-26 point-file key: it must
+# still run, warning that source_points_path is now source_points_fname.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vcold
+
+n_threads: 1
+write_output_format: gtiff
+
+source_points_path: __READ_PATH__/fluvsurf_sources.fgb
+source_points_input_format: ogr_vector_layer
+threshold_contributing_pixels: 200
+
+
+
+write_valley_mask_raster: true
+write_valley_centreline: true
+write_valley_cross_sections: false
+
+valley_mask_fname: vcin_valley_mask.tif

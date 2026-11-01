@@ -1,0 +1,19 @@
+# floodplain_bound_algorithm_choice on the staircase: 0.709 of its floodplain
+# gradient is below 0.1, so with the switch lowered to 0.7 auto drops the
+# gradient bound (hand_only). The auto and the explicit hand_only run must
+# give the same floodplain mask.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: lr_auto
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: clubb2017
+floodplain_bound_algorithm_choice: auto
+low_relief_min_area_fraction: 0.7
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+source_points_fname: staircase_sources.fgb
+write_floodplain_mask_raster: true

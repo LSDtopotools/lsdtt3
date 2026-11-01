@@ -1,0 +1,26 @@
+# lsdtt-feature-finder find_risers with astar gap closing at a long search
+# radius, on the fluvial-surfaces fixture DEM (a ridge with piedmont).
+#
+# Moved from lsdtt-flat-surface-finder's slope_break_connect smoke test on
+# 2026-10-26 with the riser finder. It is the only test that drives the
+# bridging's component labelling (label_components, which keeps a bridge from
+# joining two ends of the same skeleton component) over many endpoints at
+# once; the counts it pins are the endpoint pairing, not riser geometry.
+# The 8-bit gaussian threshold is set explicitly (the default before
+# 2026-10-31, now mean_std): it gives the many endpoints this test needs.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ffrc
+
+n_threads: 1
+write_output_format: gtiff
+
+feature_type: find_risers
+riser_gap_closing_algorithm_choice: astar
+riser_vec_adaptive_method: gaussian
+riser_connect_search_radius_metres: 1500
+riser_connect_elevation_tolerance_metres: 10
+write_riser_centreline_raster: true
+write_riser_segments: false
+write_riser_diagnostic_rasters: true

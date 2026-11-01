@@ -11,10 +11,10 @@ write_fname: vcin
 n_threads: 1
 write_output_format: gtiff
 
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 5
-fallback_relief_threshold_metres: 2.0
-min_component_pixels: 50
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
 
 reference_field_algorithm_choice: hand
 ladder_break_algorithm_choice: jenks

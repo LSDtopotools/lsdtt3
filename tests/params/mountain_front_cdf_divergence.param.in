@@ -1,0 +1,22 @@
+# mountain_front_smoke with the relief bound chosen by CDF divergence (this
+# tool's default), pinned before that code moves into the shared
+# threshold-selection utility.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: mf
+
+write_output_format: gtiff
+write_vector_format: csv
+
+relief_window_radius_metres: 1
+relief_threshold_algorithm_choice: cdf_divergence
+max_relief_metres: 8
+min_flat_component_pixels: 1
+flat_closing_radius_metres: 0
+erosion_radius_metres: 0
+min_component_pixels: 1
+basin_minimum_contributing_pixels: 1
+
+write_relief_raster: true
+write_mountain_front_outlets: true

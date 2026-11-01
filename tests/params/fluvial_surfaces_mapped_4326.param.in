@@ -1,0 +1,22 @@
+# As fluvial_surfaces_mapped, the same polygons in EPSG:4326 (densified every
+# 10 m before transforming): reprojected on read, the burned
+# mapped_surface_class.tif must be byte-identical.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: map4326
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder
+mapped_surfaces_fname: staircase_mapped_4326.gpkg
+
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
+ladder_break_algorithm_choice: jenks
+vertical_accuracy_metres: 0.5
+threshold_contributing_pixels: 50
+source_points_fname: staircase_sources.fgb
+channel_adjacency_radius_metres: 100

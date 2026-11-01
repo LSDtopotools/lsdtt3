@@ -1,0 +1,27 @@
+# The ladder preset with a clubb2017-only parameter set: the run must say the
+# setting does nothing rather than let it pass silently.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: unused
+
+n_threads: 1
+write_output_format: gtiff
+
+admission_algorithm_choice: relief
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
+
+reference_field_algorithm_choice: hand
+ladder_break_algorithm_choice: jenks
+ladder_level_count: 4
+vertical_accuracy_metres: 0.5
+ladder_resolvability_kappa: 3.0
+
+threshold_contributing_pixels: 500
+max_floodplain_hand_metres: 5.0
+min_terrace_hand_metres: 5.0
+
+write_hand_raster: true
+min_channel_stream_order: 4

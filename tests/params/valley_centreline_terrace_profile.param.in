@@ -1,0 +1,21 @@
+# Terrace profile on the staircase: the tread id raster as the patch labels
+# (treads 1-4, each flank of a tread sharing its label), tied to the network
+# centrelines traced through the valley floor by the relative-elevation
+# ownership, binned every 200 m along the centreline.
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: vctp
+
+n_threads: 1
+write_output_format: gtiff
+
+valley_mask_fname: staircase_floor_mask.tif
+threshold_contributing_pixels: 500
+run_valley_width_network: true
+write_valley_cross_sections: false
+write_valley_mask_raster: false
+
+write_terrace_profile_csv: true
+surface_patch_labels_fname: staircase_tread_id.tif
+terrace_profile_bin_metres: 200

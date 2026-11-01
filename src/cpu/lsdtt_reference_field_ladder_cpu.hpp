@@ -58,6 +58,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,7 @@
 #include "lsdtt_raster_cpu.hpp"
 #include "../core/lsdtt_true_north.hpp"
 #include "lsdtt_raster_surface_fitting_cpu.hpp" // plane / poly2 coefficients
+#include "lsdtt_surface_training_cpu.hpp"        // training polygons (7i)
 
 namespace lsdtt
 {
@@ -319,7 +321,10 @@ enum class ladder_status : std::uint8_t
     resolved   = 0,   // an admissible k >= 2 was found
     unresolved = 1,   // no admissible k; one band emitted, levels not claimable
     forced     = 2,   // an explicit level_count was requested and honoured
-    degenerate = 3    // window population too small, or the field is constant
+    degenerate = 3,   // window population too small, or the field is constant
+    supplied   = 4    // breaks given by the caller (ladder_request::supplied_
+                      // breaks), not found; centres and the gap are still
+                      // measured, so a set below the floor is visible
 };
 
 // =============================================================================
@@ -340,6 +345,40 @@ struct ladder_request
     // labels are a global running counter, so nothing here is constrained by
     // the raster's float32 backing store until 2^24 patches.
     int    max_level_count = 12;
+
+    // Breaks supplied by the caller instead of found, per channel source id
+    // (the window's source). Empty = find them (the normal ladder). When set,
+    // every window uses its source's breaks as given (status supplied) and a
+    // source with no entry throws std::invalid_argument naming it. A global
+    // ladder (no windows) uses key -1, or the only entry when there is one.
+    // Band centres and the tightest centre gap are still measured on each
+    // window's own values and reported beside required_gap_m, so a supplied
+    // set the DEM cannot resolve is flagged rather than hidden.
+    std::map<std::int32_t, std::vector<double>> supplied_breaks;
+
+    // Training polygons (see lsdtt_surface_training_cpu).
+    // When set, a window's lower breaks come from
+    // the training cells pooled over the same windows as its values (k-1..k+1):
+    // floodplain / terrace and terrace / terrace breaks by best separation.
+    // Above the top trained break the ladder's own search runs on the values
+    // above it. A window whose training has no floodplain level or no break
+    // takes the fit over all training cells; when that has none either, the
+    // ladder searches as usual. Polygon statistics are measured here, on the
+    // field banded; a polygon whose p75 - p25 exceeds both
+    // training_spread_factor x the global required gap and
+    // training_relative_spread x its median is flagged (not a single level).
+    // Ignored with supplied_breaks set. Not owned.
+    const training_set* training = nullptr;
+
+    // An unresolved window (no admissible k >= 2, no explicit level_count)
+    // bands everything as one level. true: it borrows the breaks of the nearest window on the same
+    // channel source that found levels, so band 0 means a comparable HAND
+    // range along the channel. Status stays unresolved; the window lent from
+    // is in ladder_window::breaks_from_window_m.
+    bool unresolved_borrow_breaks = false;
+    double training_spread_factor       = 3.0;
+    double training_relative_spread     = 0.25;
+    int    training_min_cells_per_class = 20;
 
     // Resolvability floor. Admissible iff
     //   min over j of (centre_j - centre_{j-1})  >=  kappa * E_v.
@@ -382,9 +421,9 @@ struct ladder_request
         vertical_accuracy_choice::fixed;
     double vertical_accuracy_gentle_metres = 0.0;
     double vertical_accuracy_steep_metres  = 0.0;
-    // Default 11.31 degrees is a 20 percent grade - the figure the TanDEM-X
-    // accuracy specification splits on.
-    double vertical_accuracy_break_degrees = 11.31;
+    // Gradient (m/m) at which the steep value takes over. Default 0.20 - a 20
+    // percent grade, the figure the TanDEM-X accuracy specification splits on.
+    double vertical_accuracy_break_gradient = 0.20;
 
     // Reach-relative windowing. The breaks are found per along-channel window,
     // so a break level can track downstream changes in incision rather than
@@ -487,6 +526,15 @@ struct ladder_window
     int           k_selected      = 1;
     ladder_status status          = ladder_status::degenerate;
     bool          used_global_breaks = false;
+    // Training: how many of the lowest breaks came from it, and from where
+    // ("window", "global", or "" when not trained). training_fit is this
+    // window's own fit, whether or not it was used.
+    // Centre of the window whose breaks an unresolved window borrowed
+    // (ladder_request::unresolved_borrow_breaks); -1 = its own.
+    double              breaks_from_window_m = -1.0;
+    int                 n_trained_breaks = 0;
+    std::string         training_source;
+    training_window_fit training_fit;
 
     std::vector<double> breaks_m;         // k-1 breaks, ascending
 
@@ -524,7 +572,7 @@ struct ladder_window
     // from. Under vertical_accuracy_choice::fixed the gradient is NaN and E_v
     // is the single supplied value.
     double vertical_accuracy_m      = 0.0;
-    double median_slope_degrees     = std::numeric_limits<double>::quiet_NaN();
+    double median_gradient          = std::numeric_limits<double>::quiet_NaN();
     double goodness_of_variance_fit = 0.0;   // reported only, never scored
 
     // -------------------------------------------------------------------------
@@ -595,7 +643,18 @@ struct ladder_result
     std::int64_t n_windows_resolved   = 0;
     std::int64_t n_windows_unresolved = 0;
     std::int64_t n_windows_degenerate = 0;
+    // Supplied breaks: how many windows used them, and how many of those have
+    // band centres closer than the resolvability floor.
+    std::int64_t n_windows_supplied             = 0;
+    std::int64_t n_windows_supplied_below_floor = 0;
     int          max_band_index       = 0;
+
+    // Training (ladder_request::training): the polygons with the statistics
+    // measured on the banded field, the fit over all training cells, and how
+    // many windows took trained breaks.
+    std::vector<training_polygon> training_polygons;
+    training_window_fit           training_global_fit;
+    std::int64_t n_windows_trained = 0;
 
     // Anything the run did that the caller asked for but could not get, in
     // words. A caller should print these: a request that silently degrades is
@@ -611,7 +670,7 @@ struct ladder_result
 // admitted_mask    : > 0.5 where a pixel may take part
 // window_source_id : per-pixel channel source id, full grid, -1 where none
 // window_coordinate: per-pixel along-channel coordinate (m), co-registered
-// slope_degrees    : per-pixel gradient, co-registered. Only read under
+// gradient         : per-pixel gradient (m/m), co-registered. Only read under
 //                    vertical_accuracy_choice::slope_dependent; a null pointer
 //                    there falls back to vertical_accuracy_metres and says so
 //                    in ladder_result::notes.
@@ -619,13 +678,36 @@ struct ladder_result
 // All three trailing arguments are optional. Supply no window arguments and the
 // ladder is global.
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// partition_population
+//
+// The ladder's rule on a plain list of values, with no raster and no windows:
+// candidate breaks from request.break_algorithm, then the largest k whose band
+// centres (medians) are at least kappa * E_v apart. Used by
+// lsdtt-valley-centreline to turn the break heights of many cross sections
+// into a few levels by exactly the rule the ladder applies to HAND.
+// -----------------------------------------------------------------------------
+struct population_partition
+{
+    int                 k      = 1;
+    ladder_status       status = ladder_status::degenerate;
+    std::vector<double> breaks;         // k - 1, ascending
+    std::vector<double> band_centres;   // k medians
+    double              min_band_centre_gap = 0.0;
+    double              required_gap        = 0.0;   // kappa * E_v
+};
+
+[[nodiscard]] population_partition partition_population(
+    const std::vector<double>& values,
+    const ladder_request&      request);
+
 [[nodiscard]] ladder_result build_reference_field_ladder(
     const lsdtt_raster_cpu&          reference_field,
     const lsdtt_raster_cpu&          admitted_mask,
     const ladder_request&            request,
     const std::vector<std::int32_t>* window_source_id  = nullptr,
     const lsdtt_raster_cpu*          window_coordinate = nullptr,
-    const lsdtt_raster_cpu*          slope_degrees     = nullptr
+    const lsdtt_raster_cpu*          gradient          = nullptr
 );
 
 // =============================================================================
@@ -705,5 +787,38 @@ struct banded_label_result
     // centroid (lsdtt_true_north.hpp). Not owned.
     const lsdtt_grid_convergence* true_north = nullptr
 );
+
+// -----------------------------------------------------------------------------
+// segment_whole_mask
+//
+// segmentation_algorithm_choice whole_mask: the riser segmentation, kept selectable so it can be compared
+// with band-then-label rather than argued about.
+//
+// The admitted mask minus the barrier (normally a riser centreline from
+// lsdtt-feature-finder find_risers) is labelled ONCE over the whole raster,
+// and every pixel of a component is given that component's majority band
+// (ties to the lower band; -1 if none of its pixels has a band). Feed the
+// result to label_components_within_bands: two components of one labelling
+// are never adjacent, so labelling within the reassigned bands returns
+// exactly these components, with the usual patch records.
+//
+// The failure this exposes is deliberate: where a riser is broken, two treads
+// at different heights join into one component and take one band.
+// -----------------------------------------------------------------------------
+struct whole_mask_segmentation
+{
+    lsdtt_raster_cpu band_index;   // per pixel: its component's majority band
+    lsdtt_raster_cpu admitted;     // admitted minus barrier (1/0)
+    std::int64_t n_components      = 0;
+    std::int64_t n_barrier_pixels  = 0;   // admitted cells removed
+    std::int64_t n_reassigned_pixels = 0; // cells whose band changed
+};
+
+// barrier may be null (no barrier: components of the whole admitted mask).
+[[nodiscard]] whole_mask_segmentation segment_whole_mask(
+    const lsdtt_raster_cpu& band_index,
+    const lsdtt_raster_cpu& admitted_mask,
+    const lsdtt_raster_cpu* barrier,
+    pixel_connectivity      connectivity = pixel_connectivity::d4);
 
 } // namespace lsdtt

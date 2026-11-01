@@ -1,0 +1,22 @@
+# fluvial_surfaces_clubb2017 with every channel pixel counted (order >= 1):
+# pins that the Strahler definition reaches the scope and changes the result.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: clubb
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: clubb2017
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+
+write_banded_labels_raster: true
+write_band_index_raster: true
+write_surface_class_raster: true
+write_floodplain_mask_raster: true
+write_surface_patches_csv: true
+write_reference_field_profile_csv: true
+write_terrace_field_raster: true
+min_channel_stream_order: 1

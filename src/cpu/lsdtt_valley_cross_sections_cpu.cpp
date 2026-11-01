@@ -17,11 +17,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <limits>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_proximity_cpu.hpp"
+#include "../core/lsdtt_csv_table.hpp"
 
 namespace lsdtt
 {
@@ -782,7 +786,10 @@ valley_cross_section_result extract_curved_impl(
     for (const valley_channel_centreline& ch : centrelines.channels)
     {
         if (ch.centreline_flats.size() < 2) continue;
-        const std::vector<float>& vmask = ch.valley_mask.get_data();
+        const std::vector<float>& vmask =
+            centrelines.channels_share_valley_mask
+                ? centrelines.valley_mask.get_data()
+                : ch.valley_mask.get_data();
         if (vmask.empty()) continue;
         if (vmask.size() != elev.size())
             throw std::invalid_argument(
@@ -1226,7 +1233,10 @@ valley_cross_section_result extract_valley_cross_sections(
     for (const valley_channel_centreline& ch : centrelines.channels)
     {
         if (ch.centreline_flats.size() < 2) continue;
-        const std::vector<float>& vmask = ch.valley_mask.get_data();
+        const std::vector<float>& vmask =
+            centrelines.channels_share_valley_mask
+                ? centrelines.valley_mask.get_data()
+                : ch.valley_mask.get_data();
         if (vmask.empty()) continue;
         if (vmask.size() != elev.size())
             throw std::invalid_argument(
@@ -1597,4 +1607,166 @@ cross_section_informed_valley_result cross_section_informed_valley_mask(
     return result;
 }
 
+namespace
+{
+const char* level_status_name(ladder_status st)
+{
+    switch (st)
+    {
+        case ladder_status::resolved:   return "resolved";
+        case ladder_status::unresolved: return "unresolved";
+        case ladder_status::forced:     return "forced";
+        case ladder_status::supplied:   return "supplied";
+        default:                        return "degenerate";
+    }
+}
+
+double percentile_of_sorted(const std::vector<double>& v, double p)
+{
+    if (v.empty()) return 0.0;
+    const double h = (static_cast<double>(v.size()) - 1.0) * p / 100.0;
+    const std::size_t lo = static_cast<std::size_t>(h);
+    const std::size_t hi = std::min(lo + 1, v.size() - 1);
+    return v[lo] + (v[hi] - v[lo]) * (h - static_cast<double>(lo));
+}
+} // namespace
+
+cross_section_levels_result cluster_cross_section_levels(
+    const valley_cross_section_result& sections,
+    const ladder_request&              request,
+    double                             min_section_fraction)
+{
+    // source -> (break height, section index)
+    std::map<std::int32_t, std::vector<std::pair<double, std::size_t>>> by_src;
+    cross_section_levels_result result;
+    for (std::size_t si = 0; si < sections.sections.size(); ++si)
+    {
+        const valley_cross_section& xs = sections.sections[si];
+        ++result.n_sections_per_channel[xs.source_id];
+        const std::vector<double>& bs = xs.hydraulic_break_stages;
+        for (std::size_t k = 1; k < bs.size(); ++k)
+        {
+            const double h = bs[k] - bs[0];
+            if (std::isfinite(h)) by_src[xs.source_id].push_back({h, si});
+        }
+    }
+
+    for (const auto& [src, hv] : by_src)
+    {
+        std::vector<double> values;
+        values.reserve(hv.size());
+        for (const auto& p : hv) values.push_back(p.first);
+        const population_partition pp = partition_population(values, request);
+
+        const std::size_t k = static_cast<std::size_t>(std::max(1, pp.k));
+        std::vector<std::vector<double>> band_values(k);
+        std::vector<std::set<std::size_t>> band_sections(k);
+        for (const auto& [h, si] : hv)
+        {
+            std::size_t b = 0;
+            while (b < pp.breaks.size() && h > pp.breaks[b]) ++b;
+            band_values[b].push_back(h);
+            band_sections[b].insert(si);
+        }
+        const double needed = min_section_fraction *
+            static_cast<double>(result.n_sections_per_channel[src]);
+        std::vector<cross_section_level> kept;
+        for (std::size_t b = 0; b < k; ++b)
+        {
+            std::vector<double>& bv = band_values[b];
+            if (bv.empty()) continue;
+            std::sort(bv.begin(), bv.end());
+            cross_section_level row;
+            row.source_id       = src;
+            row.level_hand_m    = (b < pp.band_centres.size())
+                                      ? pp.band_centres[b]
+                                      : percentile_of_sorted(bv, 50.0);
+            row.n_breaks        = static_cast<std::int64_t>(bv.size());
+            row.n_sections      = static_cast<std::int64_t>(band_sections[b].size());
+            row.spread_m        = percentile_of_sorted(bv, 90.0) -
+                                  percentile_of_sorted(bv, 10.0);
+            row.status          = pp.status;
+            row.required_gap_m  = pp.required_gap;
+            if (static_cast<double>(row.n_sections) < needed)
+                result.dropped.push_back(row);
+            else
+                kept.push_back(row);
+        }
+        double min_gap = 0.0;
+        for (std::size_t i = 0; i < kept.size(); ++i)
+        {
+            kept[i].level_index = static_cast<int>(i);
+            if (i > 0)
+            {
+                const double g = kept[i].level_hand_m - kept[i - 1].level_hand_m;
+                min_gap = (i == 1) ? g : std::min(min_gap, g);
+            }
+        }
+        for (cross_section_level& r : kept)
+        {
+            r.min_level_gap_m = min_gap;
+            result.levels.push_back(r);
+        }
+    }
+    return result;
+}
+
+void write_cross_section_levels_csv(
+    const std::string&                      path,
+    const std::vector<cross_section_level>& levels)
+{
+    std::ofstream f(path);
+    if (!f) throw std::runtime_error("write_cross_section_levels_csv: cannot open " + path);
+    f << "source_id,window_centre_m,level_index,level_hand_m,n_breaks,"
+         "n_sections,spread_m,status,required_gap_m,min_level_gap_m\n";
+    f.precision(9);
+    for (const cross_section_level& r : levels)
+        f << r.source_id << ',' << r.window_centre_m << ',' << r.level_index
+          << ',' << r.level_hand_m << ',' << r.n_breaks << ',' << r.n_sections
+          << ',' << r.spread_m << ',' << level_status_name(r.status) << ','
+          << r.required_gap_m << ',' << r.min_level_gap_m << '\n';
+}
+
+std::map<std::int32_t, std::vector<double>>
+read_cross_section_levels_csv(const std::string& path)
+{
+    const lsdtt_csv_table t = load_csv_table(path);
+    for (const char* key : {"source_id", "level_hand_m"})
+        if (!csv_has_column(t, key))
+            throw std::runtime_error(path + ": the levels file has no '" +
+                                     std::string(key) + "' column.");
+    std::map<std::int32_t, std::vector<double>> out;
+    for (std::size_t i = 0; i < t.rows.size(); ++i)
+    {
+        const int row = static_cast<int>(i) + 2;   // 1-based, after the header
+        const double sid = csv_row_double_required(t.rows[i], "source_id", path, row);
+        if (sid != std::floor(sid))
+            throw std::runtime_error(path + ": row " + std::to_string(row) +
+                                     ": source_id must be a whole number.");
+        out[static_cast<std::int32_t>(sid)].push_back(
+            csv_row_double_required(t.rows[i], "level_hand_m", path, row));
+    }
+    for (auto& [sid, v] : out)
+    {
+        (void)sid;
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
+    }
+    return out;
+}
+
+std::map<std::int32_t, std::vector<double>>
+breaks_from_levels(const std::map<std::int32_t, std::vector<double>>& levels)
+{
+    std::map<std::int32_t, std::vector<double>> out;
+    for (const auto& [sid, v] : levels)
+    {
+        std::vector<double>& b = out[sid];
+        for (std::size_t i = 1; i < v.size(); ++i)
+            b.push_back(0.5 * (v[i - 1] + v[i]));
+    }
+    return out;
+}
+
 } // namespace lsdtt
+

@@ -78,6 +78,48 @@ enum class channel_scope_mode
 };
 
 // -----------------------------------------------------------------------------
+// channel_definition_choice
+//
+// What counts as a channel pixel once the scope is resolved.
+//
+//   contributing_pixels - every traced pixel (the network down from heads at
+//                         threshold_contributing_pixels). The default and the
+//                         historical behaviour.
+//   stream_order        - only traced pixels whose Strahler order on that
+//                         network is at least min_stream_order. Clubb et al.
+//                         (2017) define the channel as order >= 3 at all eight
+//                         of their sites. The contributing-pixel threshold
+//                         still decides which first-order channels exist, and
+//                         so the order every pixel reaches.
+// -----------------------------------------------------------------------------
+enum class channel_definition_choice
+{
+    contributing_pixels,
+    stream_order
+};
+
+// "contributing_pixels" | "stream_order". Throws std::invalid_argument naming
+// the valid values.
+[[nodiscard]] channel_definition_choice parse_channel_definition_choice(
+    const std::string& name);
+
+// -----------------------------------------------------------------------------
+// channel_strahler_order
+//
+// Strahler order of every pixel of the D8 channel network whose heads are at
+// threshold_contributing_pixels (contributing pixels, include-self, >= the
+// threshold), full grid; 0 off the network. A pixel with no channel donor is
+// order 1; otherwise it takes the highest order among its channel donors, plus
+// one when two or more donors share that highest order. This is the order the
+// junction network and LSDTopoTools2's StreamOrderArray assign.
+//
+// Requires a flow object built with an s_vector.
+// -----------------------------------------------------------------------------
+[[nodiscard]] std::vector<std::int32_t> channel_strahler_order(
+    const lsdtt_flow_base& flow,
+    int                    threshold_contributing_pixels);
+
+// -----------------------------------------------------------------------------
 // channel_scope_request
 //
 // threshold_contributing_pixels
@@ -117,6 +159,15 @@ struct channel_scope_request
     // membership (see "Auto role detection" above). Requires outlet_flats to be
     // empty. Sources are always snapped when this is set.
     bool   auto_detect_roles               = false;
+
+    // What counts as a channel pixel (see channel_definition_choice). Under
+    // stream_order the resolved scope is filtered AFTER tracing and outlet
+    // truncation, in every mode: pixels below min_stream_order leave
+    // channel_mask, channel_source_id and the node lists. A node list can then
+    // be empty (a source whose whole trace is below the order).
+    channel_definition_choice channel_definition =
+        channel_definition_choice::contributing_pixels;
+    int    min_stream_order                = 3;
 };
 
 // -----------------------------------------------------------------------------
@@ -167,6 +218,10 @@ struct channel_scope_result
 
     std::vector<std::int32_t> outlet_matched_source;
     std::vector<double>       outlet_snap_distance_metres;
+
+    // stream_order definition only: channel_strahler_order on the
+    // threshold network (full grid, 0 off it). Empty otherwise.
+    std::vector<std::int32_t> stream_order;
 
     // Auto role detection only: per *input* source point, the inferred role -
     // 0 = source, 1 = outlet, -1 = snap failed. Aligned with source_snaps.

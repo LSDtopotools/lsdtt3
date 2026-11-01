@@ -1945,6 +1945,35 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_bankfull_width PROPERTIES
     FIXTURES_REQUIRED cross_sections_fixture)
 
+# The point-file key renamed 2026-10-26 (source_points_path ->
+# source_points_fname, resolved against read_path as in lsdtt-fluvial-surfaces):
+# an old file must still run, to the same result, with a warning.
+add_lsdtt_cli_smoke_test(
+    rigorous_cross_sections_legacy_points_key
+    lsdtt-cross-sections
+    cross_sections_legacy_points_key.param.in
+    xsec_cross_sections.fgb
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --stdout-contains "Cross sections written from 14 channel centres."
+    --stderr-contains "'source_points_path' is deprecated"
+    --stderr-contains "use 'source_points_fname'"
+)
+lsdtt_set_tests_properties(rigorous_cross_sections_legacy_points_key PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_bankfull_width_legacy_points_key
+    lsdtt-bankfull-width
+    bankfull_width_legacy_points_key.param.in
+    bf_manning_widths.csv
+    --read-path "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}/out"
+    --stdout-contains "Manning widths: 14 valid out of 14 sections matched to a reach by distance."
+    --stderr-contains "'source_points_path' is deprecated"
+    --stderr-contains "use 'source_points_fname'"
+)
+lsdtt_set_tests_properties(rigorous_bankfull_width_legacy_points_key PROPERTIES
+    FIXTURES_REQUIRED cross_sections_fixture)
+
 if(LSDTT_ENABLE_PYTHON_TESTS)
     add_test(NAME fixture_marsh_topography_dem
         COMMAND ${Python3_EXECUTABLE}
@@ -1967,6 +1996,8 @@ add_lsdtt_cli_smoke_test(
     --expect marsh_marsh_platform_labels.tif
     --expect marsh_marsh_scarp_mask.tif
     --expect marsh_marsh_platforms.fgb
+    --expect-vector-feature-min marsh_marsh_platforms.fgb:1
+    --expect-vector-feature-min marsh_tidal_channel_polygons.fgb:1
     --expect marsh_tidal_channel_mask.tif
     --expect marsh_tidal_channel_skeleton.tif
     --expect marsh_tidal_upl.tif
@@ -2472,12 +2503,118 @@ add_lsdtt_cli_smoke_test(
     --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
 )
 
+# mountain_front_smoke under the names used before 2026-10-26 (a window side in
+# cells, adaptive_relief_threshold, relief_threshold_metres): the same outlets.
+add_lsdtt_cli_smoke_test(
+    rigorous_mountain_front_legacy_keys
+    lsdtt-mountain-front
+    mountain_front_legacy_keys.param.in
+    mf_relief.tif
+    --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
+    --stderr-contains "'relief_window_side_pixels' is deprecated"
+    --stderr-contains "use 'relief_window_radius_metres'"
+    --stderr-contains "'adaptive_relief_threshold' is deprecated"
+    --stderr-contains "use 'relief_threshold_algorithm_choice'"
+    --stderr-contains "'relief_threshold_metres' is deprecated"
+    --stderr-contains "use 'max_relief_metres'"
+    --expect-file-contains "mf_ingested_params.param:relief_window_radius_metres: 1"
+    --expect-file-contains "mf_ingested_params.param:relief_threshold_algorithm_choice: fixed"
+)
+
+# The CDF-divergence relief bound, pinned 2026-10-26 before its code moved into
+# the shared threshold-selection utility (lsdtt_threshold_selection). The smoke
+# test above uses a fixed bound, so nothing else exercises this path.
+add_lsdtt_cli_smoke_test(
+    rigorous_mountain_front_cdf_divergence
+    lsdtt-mountain-front
+    mountain_front_cdf_divergence.param.in
+    mf_relief.tif
+    --stdout-contains "Best-fit distribution: normal"
+    --expect-raster-checksum mf_mountain_mask.tif:21
+    --expect-sha256 mf_relief_cdf.csv:ded637956d805c709491cfb3ac9e22eae6729a193e4b6b05ec6aa7ca4b843c43
+    --expect-sha256 mf_mountain_front_outlets.csv:5367371b46baac70a366d9bf1648293f5aaf665aa27ebfcc41f5341661780c56
+)
+
+# The Wiener source extraction's QQ table: the only pin on compute_qq, which
+# the threshold-selection utility extends with percentile arguments. Pinned
+# 2026-10-26 before that change.
+add_lsdtt_cli_smoke_test(
+    rigorous_channel_extraction_wiener_qq
+    lsdtt-channel-extraction
+    channel_extraction_wiener_qq.param.in
+    wq_wiener_qq.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Number of source pixels: 1"
+    --expect-sha256 wq_wiener_qq.csv:6ceabf0a02d502387331ab90dcfce254e68db44b4c3b446dcacc63030356ab35
+)
+lsdtt_set_tests_properties(rigorous_channel_extraction_wiener_qq PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     smoke_feature_finder
     lsdtt-feature-finder
     feature_finder_smoke.param.in
     ff_channel_candidate_score.tif
 )
+
+# feature_type find_risers on the dissected staircase (fluvial-surface methods
+# plan, phase 6). With astar the six risers come back bridged across the graded
+# gaps, plus twelve short segments on the gaps' up- and down-valley edges,
+# which are real across-valley scarps in this fixture (step 8.7-8.9 m).
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_staircase
+    lsdtt-feature-finder
+    feature_finder_risers_staircase.param.in
+    ffr_riser_centreline.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect ffr_riser_segments.fgb
+    --expect ffr_riser_endpoints.fgb
+    --expect ffr_riser_gap_closing.tif
+    --expect ffr_riser_edge_field.tif
+    --expect-raster-values ffr_riser_centreline.tif:0,1
+    --expect-vector-feature-min ffr_riser_segments.fgb:18
+    --stdout-contains "Risers kept          : 18"
+    --expect-file-contains "ffr_ingested_params.param:riser_gap_closing_algorithm_choice: astar"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_staircase PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# mapped_risers_fname on the same staircase: the six tread boundaries as
+# mapped lines, scored in the northern half (staircase_mapped_extent_north).
+# The finder's line sits 2-3 cells (20-30 m) down onto the lower tread, at the
+# foot of the riser where the 100 m polyfit puts the curvature peak, and the
+# boundary line burns on one side of the step. The unmatched detections are
+# the graded gaps' real up- and down-valley scarps, which the map does not
+# draw. Pinned 2026-10-31 for the mean_std threshold (k = 0.5), the new
+# default: 788 detected cells (905 under the 8-bit gaussian threshold);
+# at 20 m precision 307/788, recall 307/600 (gaussian: 297/905, 297/600); at
+# 30 m precision 423/788, recall 444/600 (gaussian: 513/905, 537/600). The
+# narrower binary puts the skeleton nearer the curvature peak, further from
+# the mapped line on the 30 m flank.
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_mapped
+    lsdtt-feature-finder
+    feature_finder_risers_mapped.param.in
+    ffrm_mapped_riser_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect ffrm_mapped_risers.tif
+    --expect-raster-values ffrm_mapped_risers.tif:0,1
+    --stdout-contains "Mapped risers (extent, 20 m): precision 0.389594 (307/788 cells), recall 0.511667 (307/600 cells)"
+    --expect-file-contains "ffrm_mapped_riser_scores.csv:extent,20,10,30000,788,307,600,307,"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_feature_finder_risers_mapped_30m
+    lsdtt-feature-finder
+    feature_finder_risers_mapped_30m.param.in
+    ffrm30_mapped_riser_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Mapped risers (extent, 30 m): precision 0.536802 (423/788 cells), recall 0.74 (444/600 cells)"
+)
+lsdtt_set_tests_properties(rigorous_feature_finder_risers_mapped_30m PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(
     rigorous_feature_finder_flow_discrimination_canonical
@@ -4558,6 +4695,18 @@ target_link_libraries(lsdtt-test-common-parameters PRIVATE lsdtt3_core)
 add_test(NAME unit_common_parameters COMMAND lsdtt-test-common-parameters)
 lsdtt_set_tests_properties(unit_common_parameters PROPERTIES LABELS "unit;core;parameters")
 
+# The shared threshold picker (fixed | qq_gaussian | cdf_divergence): the
+# Clubb et al. (2017) QQ rule against samples with a known answer, and the
+# persistence rule on written QQ tables. cdf_divergence is pinned end to end by
+# rigorous_flat_surface_finder_cdf_divergence and
+# rigorous_mountain_front_cdf_divergence.
+add_executable(lsdtt-test-threshold-selection cpp/test_threshold_selection.cpp)
+target_link_libraries(lsdtt-test-threshold-selection PRIVATE lsdtt3_utils)
+add_test(NAME unit_fluvial_surface_threshold_selection
+         COMMAND lsdtt-test-threshold-selection)
+lsdtt_set_tests_properties(unit_fluvial_surface_threshold_selection PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 # Cosmogenic physics driver (docs/developer_notes/testing_and_benchmarking.md).  Writes its
 # plottable CSVs into the test working directory.
 add_executable(lsdtt-test-cosmo-physics cpp/test_cosmo_physics.cpp)
@@ -4999,6 +5148,14 @@ lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
     LABELS "unit;gdal")
 
 # Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
+# trace_labelled_polygons: written polygons read back and compared with their
+# pixels (area, bounding box). Every file it wrote was empty until 2026-10-27.
+add_executable(lsdtt-test-raster-vectorise cpp/test_raster_vectorise.cpp)
+target_link_libraries(lsdtt-test-raster-vectorise PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_vectorise_polygons COMMAND lsdtt-test-raster-vectorise)
+lsdtt_set_tests_properties(unit_raster_vectorise_polygons PROPERTIES
+    LABELS "unit;raster")
+
 add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
 target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
 add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
@@ -5436,6 +5593,44 @@ add_hilltop_coupling_cli_test(
     hcc_hilltop_points.csv
     --expect hcc_ridgelines.fgb
     --stdout-contains "never traced (DEM border)")
+
+# The simple floodplain detector, pinned under its 2026-10-26 names and under
+# the old ones. Phase 4 of the fluvial-surface consolidation moves it onto the
+# shared floodplain engine; the mask must not move.
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_floodplain
+    hillslope_channel_coupling_floodplain.param.in
+    hccfp_floodplain_mask.tif
+    --expect-raster-checksum hccfp_floodplain_mask.tif:448)
+
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_floodplain_legacy_keys
+    hillslope_channel_coupling_floodplain_legacy_keys.param.in
+    hccfp_floodplain_mask.tif
+    --expect-raster-checksum hccfp_floodplain_mask.tif:448
+    --stderr-contains "'floodplain_hand_threshold' is deprecated"
+    --stderr-contains "use 'max_floodplain_hand_metres'"
+    --stderr-contains "'floodplain_gradient_threshold' is deprecated"
+    --stderr-contains "use 'max_floodplain_gradient'")
+
+# The floodplain bounds chosen from the data through the shared threshold
+# picker: CDF divergence finds both and the chosen values are recorded; the QQ
+# rule finds no HAND bound on this small DEM and must stop, not return an
+# empty floodplain.
+add_hilltop_coupling_cli_test(
+    rigorous_hillslope_channel_coupling_floodplain_cdf
+    hillslope_channel_coupling_floodplain_cdf.param.in
+    hcccdf_floodplain_mask.tif
+    --stdout-contains "Floodplain bounds (cdf_divergence): HAND < 5.81376123 m, gradient < 0.452985913"
+    --expect-raster-checksum hcccdf_floodplain_mask.tif:1208
+    --expect-file-contains "hcccdf_ingested_params.param:max_floodplain_hand_metres: 5.81376123")
+
+add_hilltop_coupling_cli_test(
+    failure_hillslope_channel_coupling_floodplain_qq_not_found
+    hillslope_channel_coupling_floodplain_qq.param.in
+    unused.tif
+    --expect-failure
+    --stderr-contains "found no HAND bound")
 
 add_hilltop_coupling_cli_test(
     rigorous_hillslope_channel_coupling_legacy_threshold
@@ -8815,6 +9010,111 @@ endif()
 # and both CLIs refuse it via check_projected_metres()).
 # =============================================================================
 
+# find_risers (lsdtt_riser_finder_cpu), behind lsdtt-feature-finder
+# feature_type find_risers: staircase risers recovered at their true 7.4 m
+# step, astar gap closing across a road cut out of the search mask, no
+# segments on a ramp or a noisy flat.
+add_executable(lsdtt-test-riser-finder cpp/test_riser_finder.cpp)
+target_link_libraries(lsdtt-test-riser-finder PRIVATE lsdtt3_cpu)
+add_test(NAME unit_feature_finder_risers COMMAND lsdtt-test-riser-finder)
+lsdtt_set_tests_properties(unit_feature_finder_risers PROPERTIES
+    LABELS "unit;surface_metrics")
+
+# compare_surface_classes / agreement bits: the comparison behind running
+# several methods in one lsdtt-fluvial-surfaces call, on class maps
+# small enough to check by hand.
+add_executable(lsdtt-test-surface-method-comparison cpp/test_surface_method_comparison.cpp)
+target_link_libraries(lsdtt-test-surface-method-comparison PRIVATE lsdtt3_cpu)
+add_test(NAME unit_fluvial_surface_method_comparison COMMAND lsdtt-test-surface-method-comparison)
+lsdtt_set_tests_properties(unit_fluvial_surface_method_comparison PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Valley widths for every channel (plan_valley_width_network): the channel
+# tree, both centreline choices, the tributary stop and the tributary-crossing
+# exclusion, nested, on synthetic valleys of known floor width.
+add_executable(lsdtt-test-valley-width-network cpp/test_valley_width_network.cpp)
+target_link_libraries(lsdtt-test-valley-width-network PRIVATE lsdtt3_cpu)
+add_test(NAME unit_valley_width_network COMMAND lsdtt-test-valley-width-network)
+lsdtt_set_tests_properties(unit_valley_width_network PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Relative elevation raster (lsdtt_valley_relative_elevation_cpu): the two
+# centreline baselines on a hand-built zigzag channel, and the larger channel
+# winning the pixels its valley discs cover.
+add_executable(lsdtt-test-valley-relative-elevation cpp/test_valley_relative_elevation.cpp)
+target_link_libraries(lsdtt-test-valley-relative-elevation PRIVATE lsdtt3_cpu)
+add_test(NAME unit_valley_relative_elevation COMMAND lsdtt-test-valley-relative-elevation)
+lsdtt_set_tests_properties(unit_valley_relative_elevation PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Perimeter sources (lsdtt_perimeter_sources_cpu, plan phases P1-P4): the
+# trace on rectangles, frames, a rotated square, a neck, components and holes;
+# gentle runs, gap closing, the low-spot test and the seam; outlet runs and
+# sources on valley, tributary, perched-notch, basin-clipped, two-network
+# and coast DEMs.
+add_executable(lsdtt-test-perimeter-sources cpp/test_perimeter_sources.cpp)
+target_link_libraries(lsdtt-test-perimeter-sources PRIVATE lsdtt3_cpu)
+add_test(NAME unit_perimeter_sources COMMAND lsdtt-test-perimeter-sources)
+lsdtt_set_tests_properties(unit_perimeter_sources PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# CLI pins on the trunk-and-tributary and two-network shapes the unit
+# driver writes: 2 sources and 1 source, and boundary conditions other than
+# oooo refused.
+set(LSDTT_PERIMETER_SOURCES_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/perimeter_sources_fixture")
+add_test(NAME fixture_perimeter_sources_cli
+         COMMAND lsdtt-test-perimeter-sources --write-cli-fixture
+                 ${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR})
+lsdtt_set_tests_properties(fixture_perimeter_sources_cli PROPERTIES
+    LABELS "fixture"
+    FIXTURES_SETUP perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_perimeter_sources_tributary
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_tributary.param.in
+    pst_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --expect pst_perimeter_outlets.fgb
+    --expect pst_perimeter_crossings.fgb
+    --expect pst_perimeter_profile.csv
+    --stdout-contains "Sources found                 : 2"
+    --stdout-contains "Gentle runs by verdict        : outlet_crossing 1"
+)
+lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_tributary PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_perimeter_sources_two_network
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_two_network.param.in
+    pss_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --stdout-contains "Sources found                 : 1"
+    --stdout-contains "outlet rank 1 (selected)"
+)
+lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_two_network PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    failure_channel_extraction_perimeter_sources_boundary
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_boundary.param.in
+    psb_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: run_perimeter_sources requires boundary_conditions: oooo (got bbbb)."
+)
+lsdtt_set_tests_properties(failure_channel_extraction_perimeter_sources_boundary PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+
+# Training polygons: class labels, best separation, a window fit
+# with a mislabelled terrace number, a flagged polygon and a shared level, and
+# the reach windows, on populations small enough to check by hand.
+add_executable(lsdtt-test-surface-training cpp/test_surface_training.cpp)
+target_link_libraries(lsdtt-test-surface-training PRIVATE lsdtt3_cpu)
+add_test(NAME unit_fluvial_surface_training COMMAND lsdtt-test-surface-training)
+lsdtt_set_tests_properties(unit_fluvial_surface_training PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
 target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
 
@@ -8884,6 +9184,33 @@ add_test(NAME unit_fluvial_surface_slope_dependent_ev
 lsdtt_set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Fluvial-surface methods phase 3: the Strahler channel definition (orders
+# against a brute-force recursion, the scope filter in mode 1 and a user-source
+# mode, HAND on that channel against a receiver walk including the undefined
+# case) and the swath-baseline relief against an all-pairs nearest search.
+add_test(NAME unit_fluvial_surface_channel_order_swath
+         COMMAND lsdtt-test-fluvial-surfaces --channel-order-swath)
+lsdtt_set_tests_properties(unit_fluvial_surface_channel_order_swath PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Phase 4: the floodplain / terrace engine on a hand-built grid where every
+# count is known - channel contact, size, seeding, holes, the gradient bound,
+# the terrace window, the D2 overlap refusals, and the hillslope-coupling rule.
+add_test(NAME unit_fluvial_surface_floodplain_thresholds
+         COMMAND lsdtt-test-fluvial-surfaces --floodplain-thresholds)
+lsdtt_set_tests_properties(unit_fluvial_surface_floodplain_thresholds PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Phase 5: cross-section levels - the ladder's rule on a population
+# (partition_population), clustering section breaks with the support filter,
+# the levels file, and the ladder banding on supplied breaks (status supplied,
+# the floor still measured, an empty band, a missing channel, source_id -1).
+add_test(NAME unit_fluvial_surface_cross_section_levels
+         COMMAND lsdtt-test-fluvial-surfaces --cross-section-levels
+                 "${CMAKE_CURRENT_BINARY_DIR}/unit_fluvial_surface_cross_section_levels")
+lsdtt_set_tests_properties(unit_fluvial_surface_cross_section_levels PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
 add_test(NAME unit_fluvial_surface_coherence_diffusion
          COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
 lsdtt_set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
@@ -8917,7 +9244,7 @@ add_test(NAME smoke_flat_surface_finder_help
          COMMAND lsdtt-flat-surface-finder -h)
 lsdtt_set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
     LABELS "smoke;cli"
-    PASS_REGULAR_EXPRESSION "relief_threshold_metres")
+    PASS_REGULAR_EXPRESSION "max_relief_metres")
 
 add_test(NAME smoke_valley_centreline_help
          COMMAND lsdtt-valley-centreline -h)
@@ -8937,20 +9264,21 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_flat_surface_finder PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Slope-break skeleton connection: the only test that runs the slope-break
-# finder's component labelling. See the parameter file.
+# Riser bridging over many endpoints at once: moved from
+# smoke_flat_surface_finder_slope_break_connect with the riser finder
+# (2026-10-26). See the parameter file.
 add_lsdtt_cli_smoke_test(
-    smoke_flat_surface_finder_slope_break_connect
-    lsdtt-flat-surface-finder
-    flat_surface_finder_slope_break_connect.param.in
-    fsfsb_slope_break_centreline_connected.tif
+    smoke_feature_finder_risers_connect
+    lsdtt-feature-finder
+    feature_finder_risers_connect.param.in
+    ffrc_riser_centreline.tif
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
-    --expect fsfsb_slope_break_bridge_mask.tif
-    --stdout-contains "endpoints found : 7"
-    --stdout-contains "candidates      : 6"
-    --stdout-contains "bridges accepted: 2"
+    --expect ffrc_riser_gap_closing.tif
+    --stdout-contains "endpoints found : 39"
+    --stdout-contains "candidates      : 27"
+    --stdout-contains "bridges accepted: 12"
 )
-lsdtt_set_tests_properties(smoke_flat_surface_finder_slope_break_connect PROPERTIES
+lsdtt_set_tests_properties(smoke_feature_finder_risers_connect PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # Phase 1. The reordering through the CLI: the ladder must resolve the flight,
@@ -8969,7 +9297,7 @@ add_lsdtt_cli_smoke_test(
     --expect btl_surface_class.tif
     --stdout-contains "Ladder and band-then-label"
     --expect-raster-values "btl_band_index.tif:0,1,2,3"
-    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "btl_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_gradient,goodness_of_variance_fit,separation_ratio"
     --expect-file-contains "btl_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
 )
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_band_then_label PROPERTIES
@@ -9002,6 +9330,25 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_label_band_identity PROPERT
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# The same join checks on clubb2017 output: the fixed_thresholds path builds its
+# own patch and class records, and they must join exactly as the ladder's do.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    add_test(NAME rigorous_fluvial_surfaces_clubb2017_joins
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_fluvial_surface_joins.py"
+            --exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/fluvial_surfaces_clubb2017.param.in"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_clubb2017_joins"
+            --stem clubb)
+    lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_clubb2017_joins)
+else()
+    lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_clubb2017_joins)
+endif()
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_joins PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # A table with no rows and a table that was never written look identical to a
 # downstream reader. This pins that the empty result is the former.
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
@@ -9022,21 +9369,23 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Phase 7a. `admission_mode` exists because local relief and a gradient cap
-# reject different ground; if a refactor ever collapsed them into one test, or
-# wired relief_or_slope back to the relief mask alone, every count would still
-# look plausible. The synthetic DEM is built to make the two disagree - a smooth
-# 8 percent ramp that only the cap admits, a rough flat that only relief could,
-# a smooth flat that both take and a 45 degree slope that neither does - and the
-# assertions are on the SET RELATIONS between the four modes, which survive the
-# morphological post-processing that the raw counts do not.
+# Phase 7a. `admission_algorithm_choice` exists because local relief and a
+# gradient bound reject different ground; if a refactor ever collapsed them into
+# one test, or wired relief_or_gradient back to the relief mask alone, every
+# count would still look plausible. The synthetic DEM is built to make the two
+# disagree - a smooth 8 percent ramp that only the gradient bound admits, a
+# rough flat that only relief could, a smooth flat that both take and a
+# gradient-1 slope that neither does - and the assertions are on the SET
+# RELATIONS between the four modes, which survive the morphological
+# post-processing that the raw counts do not. It also runs the pre-2026-10-26
+# admission keys and requires byte-identical output to the canonical ones.
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
     add_test(NAME rigorous_flat_surface_finder_admission_modes
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_admission_modes.py"
             --exe "$<TARGET_FILE:lsdtt-flat-surface-finder>"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_flat_surface_finder_admission_modes"
-            --cap 15.0)
+            --cap-degrees 15.0)
     lsdtt_mark_test_runtime(python rigorous_flat_surface_finder_admission_modes)
 else()
     lsdtt_mark_test_unregistered(python_geo rigorous_flat_surface_finder_admission_modes)
@@ -9077,6 +9426,34 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "find_floodplain has moved to lsdtt-fluvial-surfaces"
 )
 lsdtt_set_tests_properties(failure_flat_surface_finder_removed_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The riser finder's keys after its move to lsdtt-feature-finder: an output
+# switch stops the run naming the new home, a tuning key warns and continues.
+add_lsdtt_cli_smoke_test(
+    failure_flat_surface_finder_removed_riser_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_removed_riser_parameter.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "write_slope_break_centreline_raster has moved"
+    --stderr-contains "lsdtt-feature-finder (feature_type: find_risers)"
+)
+lsdtt_set_tests_properties(failure_flat_surface_finder_removed_riser_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_flat_surface_finder_ignored_riser_parameter
+    lsdtt-flat-surface-finder
+    flat_surface_finder_ignored_riser_parameter.param.in
+    ignr_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stderr-contains "vec_adaptive_C is ignored"
+    --stderr-contains "where it is riser_vec_adaptive_C"
+    --stderr-contains "where it is riser_connect_search_radius_metres"
+)
+lsdtt_set_tests_properties(smoke_flat_surface_finder_ignored_riser_parameter PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -9199,7 +9576,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "window(s) resolved"
     --expect-raster-values "fsurf_band_index.tif:0,1,2,3"
     --expect-file-contains "fsurf_surface_patches.csv:label,band,class,source_id,n_pixels,area_m2,median_field_m,aspect_degrees,terrain_aspect_degrees,aspect_r_bar,window_centre_m"
-    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_slope_degrees,goodness_of_variance_fit,separation_ratio"
+    --expect-file-contains "fsurf_ladder_windows.csv:source_id,window_centre_m,n_pixels,k_selected,status,used_global_breaks,breaks_m,band_centres_m,min_band_centre_gap_m,required_gap_m,k_bootstrap_mode,k_stability,k_ci_lo,k_ci_hi,n_bootstrap,vertical_accuracy_m,median_gradient,goodness_of_variance_fit,separation_ratio"
 )
 lsdtt_set_tests_properties(smoke_fluvial_surfaces PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -9265,6 +9642,633 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_fitted_surface PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# Output pins for lsdtt-fluvial-surfaces, recorded 2026-10-26 before the method
+# consolidation (Clubb 2017, threshold pickers, parameter renames) touches the
+# CLI. The smoke tests above pin schemas and band VALUES; these pin the numbers,
+# so a later change can show it moved nothing it did not mean to. Each run was
+# checked identical at n_threads 1 and 8 before pinning.
+#
+# A moved pin is not automatically a regression, but it must be explained
+# before it is re-blessed. The float outputs (HAND, the fitted residual, the
+# CSV medians and gaps) are the ones a different compiler or libm could move by
+# an ulp; the integer rasters (band, label, class, valley mask) should not move
+# unless a decision moved. The README is not pinned: it carries a timestamp.
+#
+# Re-blessed once, 2026-10-26: the three _ladder_windows.csv hashes, for the
+# column rename median_slope_degrees -> median_gradient (gradients in m/m). With
+# the header renamed back each file is byte-identical to its first pin; no
+# raster moved.
+
+# Fallback admission, HAND ladder, the staircase. Same template as
+# smoke_fluvial_surfaces.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_checksums
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_smoke.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsurf_band_index.tif:57493
+    --expect-raster-checksum fsurf_banded_labels.tif:55857
+    --expect-raster-checksum fsurf_surface_class.tif:37966
+    --expect-raster-checksum fsurf_valley_mask.tif:972
+    --expect-raster-checksum fsurf_hand.tif:57881
+    --expect-raster-checksum fsurf_reference_field.tif:57881
+    --expect-sha256 fsurf_ladder_windows.csv:b8113840463e5647c5b3b289de66fad93fa267c33e04ba47b042289bfff92cf1
+    --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
+    --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_checksums PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Fitted-surface (cone) reference field on the fan. Same template as
+# smoke_fluvial_surfaces_fitted_surface.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_fitted_surface_checksums
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fitted_surface.param.in
+    fsfan_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsfan_band_index.tif:6394
+    --expect-raster-checksum fsfan_banded_labels.tif:26071
+    --expect-raster-checksum fsfan_valley_mask.tif:24826
+    --expect-raster-checksum fsfan_reference_field.tif:2938
+    --expect-sha256 fsfan_ladder_windows.csv:e98845c4c205158dc633b3f7f067a3295736abff2b3c18b20bc13027eba4e120
+    --expect-sha256 fsfan_surface_patches.csv:ec68e8291333913c801c26b7ec251decaa0c374e1478857c58f9dced03ceb0c3
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fitted_surface_checksums PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The two-step workflow: lsdtt-flat-surface-finder writes the flat mask, then
+# lsdtt-fluvial-surfaces bands it. This is the default admission path
+# (flat_mask_fname set), which no other test reaches. Stage 1 is a fixture of
+# stage 2, so `ctest -R rigorous_fluvial_surfaces_flat_mask_input` runs both.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_staircase_mask
+    lsdtt-flat-surface-finder
+    flat_surface_finder_staircase_mask.param.in
+    fsfst_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsfst_combined_flat_mask.tif:21440
+)
+lsdtt_set_tests_properties(rigorous_flat_surface_finder_staircase_mask PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture
+    FIXTURES_SETUP fluvial_surfaces_staircase_flat_mask)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_flat_mask_input
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_flat_mask_input.param.in
+    fsfm_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Loading flat mask"
+    --expect-raster-checksum fsfm_band_index.tif:55597
+    --expect-raster-checksum fsfm_banded_labels.tif:57592
+    --expect-raster-checksum fsfm_surface_class.tif:37252
+    --expect-raster-checksum fsfm_valley_mask.tif:1128
+    --expect-raster-checksum fsfm_reference_field.tif:57881
+    --expect-sha256 fsfm_ladder_windows.csv:e8986691f8cbbd2c50f3cff34009f57c603d8a6fd30d510cc9129120da304b96
+    --expect-sha256 fsfm_surface_patches.csv:20dae3570717df72dfb17d6b40086a6df84d5afff05b470fc1f2323d4a600e3b
+    --expect-sha256 fsfm_surface_class.csv:dbf403d3098b67472eefb257cfd05bf9937ad39688d584c57978eabc86a7b9bb
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_flat_mask_input PROPERTIES
+    FIXTURES_REQUIRED "fluvial_surfaces_fixture;fluvial_surfaces_staircase_flat_mask")
+
+# The renames of 2026-10-26 must carry every value: fluvial_surfaces_smoke under
+# the old names, held to exactly the pins of rigorous_fluvial_surfaces_checksums,
+# with the converted values recorded in the ingested file so a rerun from it
+# reproduces the run without the old keys.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_legacy_keys
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_legacy_keys.param.in
+    fsurf_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-raster-checksum fsurf_band_index.tif:57493
+    --expect-raster-checksum fsurf_banded_labels.tif:55857
+    --expect-raster-checksum fsurf_surface_class.tif:37966
+    --expect-raster-checksum fsurf_valley_mask.tif:972
+    --expect-raster-checksum fsurf_hand.tif:57881
+    --expect-sha256 fsurf_ladder_windows.csv:b8113840463e5647c5b3b289de66fad93fa267c33e04ba47b042289bfff92cf1
+    --expect-sha256 fsurf_surface_patches.csv:8a259c130ce3da3b69756e48c300e6059fc0b80348d0b7b29b4e753bdce4008f
+    --expect-sha256 fsurf_surface_class.csv:e6f63f2c5908ed0a36a1e30a61224b1ee3a23da7e1630a3913d817ef495e0cf4
+    --stderr-contains "'fallback_admission_algorithm_choice' is deprecated"
+    --stderr-contains "use 'admission_algorithm_choice'"
+    --stderr-contains "'fallback_relief_window_radius_pixels' is deprecated"
+    --stderr-contains "use 'relief_window_radius_metres'"
+    --stderr-contains "'vertical_accuracy_break_degrees' is deprecated"
+    --stderr-contains "use 'vertical_accuracy_break_gradient'. Converted with gradient = tan(angle)."
+    --stderr-contains "'min_component_pixels' is deprecated"
+    --stderr-contains "use 'min_band_component_pixels'"
+    --stdout-contains "vertical_accuracy_break_degrees 11.31 -> vertical_accuracy_break_gradient 0.200001225"
+    --expect-file-contains "fsurf_ingested_params.param:relief_window_radius_metres: 50"
+    --expect-file-contains "fsurf_ingested_params.param:admission_algorithm_choice: relief"
+    --expect-file-contains "fsurf_ingested_params.param:vertical_accuracy_break_gradient: 0.200001225"
+    --expect-file-not-contains "fsurf_ingested_params.param:fallback_"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_relief_window_radius_pixels"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_vertical_accuracy_break_degrees"
+    --expect-file-not-contains "fsurf_ingested_params.param:legacy_fallback_admission_algorithm_choice"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_legacy_keys PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# ---- Fluvial-surface methods phase 4: Clubb et al. (2017) as clubb2017 ------
+# On the linear-range surface: a branching network (order up to 5 at 50 px)
+# draining rough mountains onto a flat piedmont. Pins recorded 2026-10-26,
+# identical at n_threads 1 and 8. The run log's stage table is asserted so a
+# preset that silently stopped applying would fail here.
+# Re-blessed 2026-10-27: fill_floodplain_holes became true under the preset;
+# 10 enclosed cells join the floodplain (mask 8344 -> 8354, the valley mask's
+# value). The QQ tables, HAND and the terrace field did not move.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017.param.in
+    clubb_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "floodplain_thresholds   (preset clubb2017)"
+    --stdout-contains "fixed_thresholds   (preset clubb2017)"
+    --stdout-contains "true   (preset clubb2017)"
+    --stdout-contains "low relief test: 0.383436 of the DEM's floodplain gradient is below 0.1 (switch above 0.8) -> hand_and_gradient"
+    --expect-file-contains "clubb_ingested_params.param:fill_floodplain_holes: true"
+    --stdout-contains "channel = Strahler order >= 3: 669 channel pixel(s)"
+    --stdout-contains "HAND: quantile 2379 of 10000"
+    --stdout-contains "gradient: quantile 2396 of 10000"
+    --stdout-contains "kept 3 component(s), dropped 1 small and 0 not touching the channel"
+    --expect-raster-values "clubb_band_index.tif:0,1"
+    --expect-raster-checksum clubb_band_index.tif:34254
+    --expect-raster-checksum clubb_banded_labels.tif:18367
+    --expect-raster-checksum clubb_surface_class.tif:8718
+    --expect-raster-checksum clubb_floodplain_mask.tif:8354
+    --expect-raster-checksum clubb_valley_mask.tif:8354
+    --expect-raster-checksum clubb_terrace_field.tif:45462
+    --expect-raster-checksum clubb_reference_field.tif:14348
+    --expect-sha256 clubb_surface_patches.csv:66ea47fdfaa5eecb8853e65ebd0ff7e485ff248c7c661c9e1050ce8dcf626bea
+    --expect-sha256 clubb_surface_class.csv:207af4fac576515f48c55a72590f0cecf05ac2290661272ffaf3fbffe438bc91
+    --expect-sha256 clubb_floodplain_hand_qq.csv:a67f79bbbc740d057f0f8021d3db835fa29154deb6b62051d2980c219084939d
+    --expect-sha256 clubb_floodplain_gradient_qq.csv:58535ca9625e09c762d14a9af6aa693ea1c37dab381e295426901c5bdffc498c
+    --expect-file-contains "clubb_ingested_params.param:max_floodplain_hand_metres: 0.667831123"
+    --expect-file-contains "clubb_ingested_params.param:max_floodplain_gradient: 0.0158595201"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017 PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# run_terrace_classification false: the floodplain alone. Same run otherwise,
+# so the floodplain mask and the QQ tables carry the pins above; no terrace
+# field is built or written and no cell is classed terrace.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_floodplain_only
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_floodplain_only.param.in
+    clubbfp_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "run_terrace_classification false: floodplain only"
+    --expect-raster-checksum clubbfp_floodplain_mask.tif:8354
+    --expect-raster-values "clubbfp_band_index.tif:0"
+    --expect-absent clubbfp_terrace_field.tif
+    --expect-sha256 clubbfp_floodplain_hand_qq.csv:a67f79bbbc740d057f0f8021d3db835fa29154deb6b62051d2980c219084939d
+    --expect-sha256 clubbfp_floodplain_gradient_qq.csv:58535ca9625e09c762d14a9af6aa693ea1c37dab381e295426901c5bdffc498c
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_floodplain_only PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# floodplain_second_pass_algorithm_choice qq_upper_departure: a second HAND
+# bound from the upper departure of the QQ over the first-pass floodplain, the
+# floodplain rebuilt at it and filled. The first-pass mask keeps the clubb2017
+# floodplain pin (8354); the pass and polygon counts were recorded 2026-10-27.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_second_pass
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_second_pass.param.in
+    clubbsp_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "second pass (qq_upper_departure): HAND bound 0.310797 m (quantile 7710 of 10000 over 8354 first-pass floodplain cell(s))"
+    --expect-raster-checksum clubbsp_floodplain_first_pass_mask.tif:8354
+    --expect-raster-checksum clubbsp_floodplain_mask.tif:6472
+    --expect-sha256 clubbsp_floodplain_hand_qq_second_pass.csv:f21f44785d1893a4a4df38845a88833ee2e39fc4b435daf2a8e657e0eb7b2475
+    --expect-vector-feature-min clubbsp_floodplain_polygons.fgb:4
+    --expect-vector-feature-min clubbsp_floodplain_first_pass_polygons.fgb:3
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_second_pass PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# reference_field_algorithm_choice relative_elevation on the staircase: the
+# centrelines run through staircase_floor_mask.tif (channel + lowest tread) and
+# the field reaches the treads above. HAND there is ~9 m on treads 2-4 alike
+# (they drain sideways into small channels); the relative elevation puts them at
+# 15.6 / 23.7 / 31.8 m (checked 2026-10-30). Pinned by the assignment line.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_relative_elevation
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_relative_elevation.param.in
+    fsrer_reference_field.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "--- Reference field: relative elevation ---"
+    --stdout-contains "9 channel segment(s), 8 centreline(s)"
+    --stdout-contains "8349 floor cell(s) by the larger-channel discs, 51651 by floor-width-scaled ground distance, 0 left out"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_relative_elevation PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# lsdtt-valley-centreline relative elevation over the whole DEM (1500 m cap):
+# centrelines through the staircase's valley floor, the field on the treads.
+add_lsdtt_cli_smoke_test(
+    rigorous_valley_centreline_relative_elevation_whole_dem
+    lsdtt-valley-centreline
+    valley_centreline_relative_elevation_whole_dem.param.in
+    vcrer_relative_elevation.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "domain (whole_dem): 60000 pixel(s): 8349 on the floor by the larger-channel discs, 46780 by floor-width-scaled ground distance, 4871 reaching no centreline"
+)
+lsdtt_set_tests_properties(rigorous_valley_centreline_relative_elevation_whole_dem PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Terrace profile on the staircase: tread ids as patch labels, each tread
+# profiled against the trunk centreline (median relative elevations 7.7 / 15.8
+# / 23.8 / 31.8 m, checked 2026-10-30), binned every 200 m.
+add_lsdtt_cli_smoke_test(
+    rigorous_valley_centreline_terrace_profile
+    lsdtt-valley-centreline
+    valley_centreline_terrace_profile.param.in
+    vctp_terrace_profile.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "4 patch(es) in 41 bin(s)"
+    --expect-file-contains "vctp_terrace_patches.csv:4,,,0,9840,612,0.000000,2825.563492,129.699997,31.840004"
+)
+lsdtt_set_tests_properties(rigorous_valley_centreline_terrace_profile PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# floodplain_bound_algorithm_choice: the staircase has 0.709 of its floodplain
+# gradient below 0.1; with the switch at 0.7 auto takes hand_only, records it
+# for a rerun, and gives exactly the explicit hand_only mask (4068 cells).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_low_relief_auto
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_low_relief_auto.param.in
+    lr_auto_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "low relief test: 0.709447 of the DEM's floodplain gradient is below 0.1 (switch above 0.7) -> hand_only"
+    --stdout-contains "floodplain gradient bound : none (hand_only)"
+    --expect-raster-checksum lr_auto_floodplain_mask.tif:4068
+    --expect-file-contains "lr_auto_ingested_params.param:floodplain_bound_algorithm_choice: hand_only"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_low_relief_auto PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_low_relief_hand_only
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_low_relief_hand_only.param.in
+    lr_hand_only_floodplain_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "floodplain gradient bound : none (hand_only)"
+    --expect-raster-checksum lr_hand_only_floodplain_mask.tif:4068
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_low_relief_hand_only PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# write_surface_patch_polygons: one polygon per labelled patch with its band.
+# Four jenks levels on the staircase give 32 patches (8 per level), as many
+# polygons as rows in _surface_patches.csv.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_patch_polygons
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_patch_polygons.param.in
+    fspp_surface_patch_polygons.fgb
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-vector-feature-min fspp_surface_patch_polygons.fgb:32
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_patch_polygons PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Several methods in one run: ladder,clubb2017 with the settings
+# of rigorous_fluvial_surfaces_clubb2017. The clubb2017 class raster carries
+# that test's pin (8718), i.e. running inside a list changes nothing; verified
+# 2026-10-27 that every per-method raster and CSV is byte-identical to its
+# single-method run. Comparison outputs pinned; class polygons 3 floodplain +
+# 4 terrace areas.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_methods_list
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_methods_list.param.in
+    ml_method_comparison.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "method 2 of 2: clubb2017"
+    --stdout-contains "bit k = method k in this order: 0=ladder 1=clubb2017"
+    --expect ml_ladder_method_record.csv
+    --expect ml_clubb2017_method_record.csv
+    --expect-raster-checksum ml_clubb2017_surface_class.tif:8718
+    --expect-raster-checksum ml_ladder_surface_class.tif:8735
+    --expect-raster-checksum ml_method_agreement_floodplain.tif:25443
+    --expect-raster-checksum ml_method_agreement_terrace.tif:364
+    --expect-sha256 ml_method_comparison.csv:80188349e53db8c72137a0dfb895607809ef3f0e39a1d0ad4d4159bca5dbaa7a
+    --expect-sha256 ml_method_summary.csv:1c5f0a5c749491d8da02c796adb3f3f620516a50133cbbc4265aed44c2458937
+    --expect-vector-feature-min ml_clubb2017_surface_class_polygons.fgb:7
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_methods_list PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# fill_admitted_holes: the one enclosed gap a strict relief admission leaves
+# on the linear-range surface is admitted (11966 -> 11967 cells).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_fill_admitted_holes
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_fill_admitted_holes.param.in
+    fah_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "fill_admitted_holes: 1 enclosed cell(s) admitted"
+    --stdout-contains "11967 admitted cell(s)"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fill_admitted_holes PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Training polygons on the staircase: fp / t1 / T5 drawn on treads
+# 1-3. The trained breaks fall midway between the polygon cores, p25..p75
+# (8.14 | 15.88 m and 16.40 | 23.88 m); the ladder's own search adds the break above them (k 4,
+# the third break 24.88 m in the ladder windows CSV); under
+# clubb2017 the trained bound replaces the QQ bound and the second pass is
+# skipped. Ladder floodplain = the lowest level touching the channel: the six
+# band-0 patches within 100 m of it; two band-0 patches 286 m away stay terrace.
+# Patch level clustering finds the four treads (p at its 0.001 floor).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_training
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training.param.in
+    trn_ladder_training_levels.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect trn_ladder_training_fit.csv
+    --expect trn_ladder_training_polygons.csv
+    --expect trn_clubb2017_training_fit.csv
+    --expect trn_clubb2017_training_levels.tif
+    --stdout-contains "training: 2 of 2 window(s) banded with trained breaks"
+    --stdout-contains "over all training: 12.01 20.14 m"
+    --stdout-contains "floodplain / terrace HAND bound 12.01 m over all training (J 1)"
+    --stdout-contains "the second pass is skipped"
+    --stdout-contains "6 floodplain, 26 terrace surface(s)"
+    --expect-file-contains "trn_ladder_ladder_windows.csv:0,500.000000,21458,4,resolved,0,12.009998"
+    --expect-file-contains "trn_ladder_training_fit.csv:window,0,500,window,break_2,20.1399956,1,809,820,809,820,"
+    --expect-file-contains "trn_ladder_patch_level_clusters.csv:all,-1,0,32,1.5,4,0.906580494,0.430937805,0.001,7.94000244 16.2199936 24.2399979 32.2499962,8 8 8 8"
+    --stdout-contains "per window (>= 5 patches): 2 of 2 window(s) at p <= 0.05"
+    --expect-file-contains "trn_ladder_training_polygons.csv:2,T5,terrace,5,1600,1600,24.1999969"
+    --expect-file-contains "trn_ladder_training_polygons.csv:0.559997559,0,0,500,2,0"
+    --expect-file-contains "trn_clubb2017_training_polygons.csv:0.519996643,0,0,500,1,0"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# Mapped surfaces on the staircase, scored against its own tread map
+# (tread 1 floodplain, treads 2-4 terrace, full valley length on both flanks).
+# The burn equals the generator's tread map outside the three riser-gap ramps;
+# FlatGeobuf, GeoPackage and EPSG:4326 copies burn byte-identically (one sha);
+# a surveyed extent over the northern half scores 30000 of 60000 cells; an
+# unknown class stops the run before any method. Scores are pinned as
+# measured: the ladder's floodplain precision 1, recall 0.364 (the relief
+# admission leaves the tread margins and gaps out); clubb2017 scores 0 here
+# (its gradient bound admits almost none of the treads).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped.param.in
+    map_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect map_mapped_surface_scores.csv
+    --expect-sha256 map_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+    --stdout-contains "2 floodplain, 6 terrace polygon(s)"
+    --stdout-contains "the whole DEM counts as surveyed"
+    --expect-file-contains "map_mapped_surface_scores.csv:ladder,60000,100,1,0.36362069,0.36362069,0.949250958,0.454111111,0.443347616,12400,0,0,6508,4218,874,19652,0,16348"
+    --expect-file-contains "map_mapped_surface_scores.csv:clubb2017,60000,100,0,0,0,nan,0,0,12243,157,0,11600,0,0,36000,0,0"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_gpkg
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_gpkg.param.in
+    mapgp_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-sha256 mapgp_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_gpkg PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_4326
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_4326.param.in
+    map4326_mapped_surface_class.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-sha256 map4326_mapped_surface_class.tif:a2addfd5238435bb7ecdb64295fed92b1f4dd8d70287ddcaab527b58cc29ff29
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_4326 PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_extent
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_extent.param.in
+    mapext_mapped_surface_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "30000 cell(s) scored"
+    --stdout-contains "ladder vs mapped (30000 cells)"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_extent PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_mapped_extent_multi
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_extent_multi.param.in
+    mapextm_mapped_surface_scores.csv
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "47600 cell(s) scored"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_mapped_extent_multi PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_mapped_bad_class
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_mapped_bad_class.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "'bench'"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_mapped_bad_class PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_training_bad_class
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training_bad_class.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "training polygons: surface polygons: class field 'class' has values that are neither"
+    --stderr-contains "'bench'"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_training_bad_class PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_training_bad_field
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_training_bad_field.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "field 'kind' not found"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_training_bad_field PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_methods_list_duplicate
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_methods_list_duplicate.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "lists 'ladder' twice"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_methods_list_duplicate PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The same, counting every channel pixel: the Strahler definition must reach
+# the scope (9627 pixels at order >= 1 against 669 at order >= 3).
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_clubb2017_order1
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_order1.param.in
+    clubb_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "channel = Strahler order >= 1: 9627 channel pixel(s)"
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_order1 PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# One stage overridden: the named stage wins and is reported as such; the rest
+# still come from the preset.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_clubb2017_ladder_override
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_ladder.param.in
+    clubb_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "ladder   (parameter file)"
+    --stdout-contains "floodplain_thresholds   (preset clubb2017)"
+    --stdout-contains "Ladder and band-then-label"
+)
+lsdtt_set_tests_properties(smoke_fluvial_surfaces_clubb2017_ladder_override PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# A clubb2017-only parameter under the ladder preset is reported, not ignored.
+add_lsdtt_cli_smoke_test(
+    smoke_fluvial_surfaces_unused_parameter
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_unused_parameter.param.in
+    unused_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stderr-contains "min_channel_stream_order is set but the resolved method stages do not use it"
+)
+lsdtt_set_tests_properties(smoke_fluvial_surfaces_unused_parameter PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_clubb2017_fitted_surface
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_fitted.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "needs reference_field_algorithm_choice hand"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_clubb2017_fitted_surface PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_clubb2017_negative_terrace_height
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_clubb2017_negative_terrace.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "min_terrace_height_above_floodplain_metres must be >= 0"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_clubb2017_negative_terrace_height PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# ---- Fluvial-surface methods phase 5: cross-section levels ------------------
+# The three-stage workflow on the staircase, checked against the known treads:
+# levels within 1 m of 8/16/24/32 m, every window on the supplied levels, and
+# each band at least 95 % the tread it should be.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    add_test(NAME rigorous_fluvial_surfaces_cross_section_levels_workflow
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_cross_section_levels_workflow.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+            --param-dir "${LSDTT_TEST_PARAM_DIR}"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_cross_section_levels_workflow")
+    lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_cross_section_levels_workflow)
+else()
+    lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_cross_section_levels_workflow)
+endif()
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_cross_section_levels_workflow PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# segmentation_algorithm_choice whole_mask against within_bands on the staircase
+# With closed risers whole_mask keeps
+# every patch on one tread; with the find_risers centreline, open at the graded
+# gaps, treads join into one patch - the documented failure, asserted.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    add_test(NAME rigorous_fluvial_surfaces_whole_mask_segmentation
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_whole_mask_segmentation.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --feature-finder-exe "$<TARGET_FILE:lsdtt-feature-finder>"
+            --param-dir "${LSDTT_TEST_PARAM_DIR}"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_fluvial_surfaces_whole_mask_segmentation")
+    lsdtt_mark_test_runtime(python rigorous_fluvial_surfaces_whole_mask_segmentation)
+else()
+    lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_whole_mask_segmentation)
+endif()
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_whole_mask_segmentation PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# A levels file written by hand (the survey route, no valley-centreline run):
+# source_id -1 applies to every channel. Pinned 2026-10-26; the same banding
+# as the cross-section route gives on this fixture.
+add_lsdtt_cli_smoke_test(
+    rigorous_fluvial_surfaces_levels_hand
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_levels_hand.param.in
+    xsh_band_index.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "supplied_levels   (preset cross_section_levels)"
+    --stdout-contains "2 with supplied levels (0 below the resolvability floor)"
+    --expect-raster-values "xsh_band_index.tif:0,1,2,3"
+    --expect-raster-checksum xsh_band_index.tif:59958
+)
+lsdtt_set_tests_properties(rigorous_fluvial_surfaces_levels_hand PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    failure_fluvial_surfaces_levels_wrong_source
+    lsdtt-fluvial-surfaces
+    fluvial_surfaces_levels_wrong_source.param.in
+    unused.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "the supplied levels have no entry for channel source_id 0"
+)
+lsdtt_set_tests_properties(failure_fluvial_surfaces_levels_wrong_source PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 add_lsdtt_cli_smoke_test(
     failure_fluvial_surfaces_bad_reference_field
     lsdtt-fluvial-surfaces
@@ -9272,7 +10276,7 @@ add_lsdtt_cli_smoke_test(
     unused.tif
     --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
     --expect-failure
-    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, fitted_surface."
+    --stderr-contains "unknown reference_field_algorithm_choice 'elevation'. Valid: hand, relative_elevation, fitted_surface."
 )
 lsdtt_set_tests_properties(failure_fluvial_surfaces_bad_reference_field PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
@@ -9327,6 +10331,30 @@ lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_threshold PROPERTIE
     LABELS "rigorous;cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
+# The point-file key renamed 2026-10-26 (source_points_path ->
+# source_points_fname, the same name and read_path resolution as
+# lsdtt-fluvial-surfaces): an old file must still run, with a warning.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME rigorous_valley_centreline_legacy_points_key
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fluvial_pipeline.py"
+            --surfaces-exe "$<TARGET_FILE:lsdtt-fluvial-surfaces>"
+            --centreline-exe "$<TARGET_FILE:lsdtt-valley-centreline>"
+            --surfaces-param "${LSDTT_TEST_PARAM_DIR}/fluvial_pipeline_surfaces.param.in"
+            --centreline-param "${LSDTT_TEST_PARAM_DIR}/valley_centreline_legacy_points_key.param.in"
+            --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/rigorous_valley_centreline_legacy_points_key"
+            --expect vcold_valley_centreline.fgb
+            --stage2-stderr-contains "'source_points_path' is deprecated"
+            --stage2-stderr-contains "use 'source_points_fname'")
+    lsdtt_mark_test_runtime(python rigorous_valley_centreline_legacy_points_key)
+else()
+    lsdtt_mark_test_unregistered(python rigorous_valley_centreline_legacy_points_key)
+endif()
+lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_points_key PROPERTIES
+    LABELS "rigorous;cli"
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
 # The valley is now a required input, and the message must name where it comes
 # from - a user with an old parameter file needs to be told the tool, not just
 # that something is missing.
@@ -9369,6 +10397,51 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum fsf_combined_flat_mask.tif:13879
 )
 lsdtt_set_tests_properties(rigorous_flat_surface_finder_label_baseline PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The CDF-divergence relief bound in this tool, pinned 2026-10-26 before its
+# code moved into the shared threshold-selection utility.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_cdf_divergence
+    lsdtt-flat-surface-finder
+    flat_surface_finder_cdf_divergence.param.in
+    fsf_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "Final threshold   : 8.56527 m"
+    --expect-raster-checksum fsf_combined_flat_mask.tif:18337
+    --expect-sha256 fsf_relief_adaptive_cdf.csv:22a90923f965f5084afb8a07772ac094e910554aad93425fce2155b434b6817c
+)
+lsdtt_set_tests_properties(rigorous_flat_surface_finder_cdf_divergence PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+# The relief bound from the Clubb et al. (2017) QQ rule, in both tools that
+# admit flat ground by relief. Same DEM, same 5 x 5 relief window: the two QQ
+# tables carry the same hash, because the name, the aim and the code are shared.
+add_lsdtt_cli_smoke_test(
+    rigorous_flat_surface_finder_relief_qq
+    lsdtt-flat-surface-finder
+    flat_surface_finder_relief_qq.param.in
+    fsf_combined_flat_mask.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "QQ quantile       : 2400 of 10000"
+    --stdout-contains "Final threshold   : 0.420538 m"
+    --expect-raster-checksum fsf_combined_flat_mask.tif:9602
+    --expect-sha256 fsf_relief_qq.csv:a74a5824fd5f2c3f10c6cf442cdbbd95dee0b8a109e088fba522a822a850590f
+)
+lsdtt_set_tests_properties(rigorous_flat_surface_finder_relief_qq PROPERTIES
+    FIXTURES_REQUIRED fluvial_surfaces_fixture)
+
+add_lsdtt_cli_smoke_test(
+    rigorous_mountain_front_relief_qq
+    lsdtt-mountain-front
+    mountain_front_relief_qq.param.in
+    mf_relief.tif
+    --read-path "${LSDTT_FLUVIAL_SURFACES_FIXTURE_DIR}"
+    --stdout-contains "QQ quantile 2400 of 10000: threshold 0.420538 m"
+    --expect-raster-checksum mf_mountain_mask.tif:30398
+    --expect-sha256 mf_relief_qq.csv:a74a5824fd5f2c3f10c6cf442cdbbd95dee0b8a109e088fba522a822a850590f
+)
+lsdtt_set_tests_properties(rigorous_mountain_front_relief_qq PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The durable guard on parameter naming. Walks every built lsdtt-* CLI, reads its declared
@@ -9547,7 +10620,7 @@ set(LSDTT_DOMAIN_RULES
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
-    "fluvial_surface|flat_surface|valley_centreline" "fluvial_surfaces"
+    "fluvial_surface|flat_surface|valley_centreline|valley_width|valley_relative|perimeter_sources" "fluvial_surfaces"
     # The shared Topographic Wetness Index,
     # pointed at "network" ON PURPOSE rather than given its own domain: the
     # existing TWI/STI tests already live in the network compartment, and
@@ -9940,6 +11013,9 @@ set(LSDTT_PYTHON_GEO_TESTS
     rigorous_fluvial_surfaces_label_band_identity   # osgeo
     rigorous_fluvial_surfaces_empty_result          # osgeo
     rigorous_flat_surface_finder_admission_modes    # osgeo, in build_dem()
+    rigorous_fluvial_surfaces_clubb2017_joins       # osgeo
+    rigorous_fluvial_surfaces_cross_section_levels_workflow  # osgeo
+    rigorous_fluvial_surfaces_whole_mask_segmentation        # osgeo
 )
 
 # Scripts other than run_cli_smoke.py that run GDAL's command-line programs.

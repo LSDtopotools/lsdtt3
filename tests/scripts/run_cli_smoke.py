@@ -458,6 +458,11 @@ def assert_sha256(file_path: pathlib.Path, expected_hex: str) -> None:
 # write_path, or record the run itself.
 RERUN_DIFFERENT_BY_DESIGN = ("_README.csv", "_README.html",
                              "_ingested_params.param", "_run_summary.json",
+                             # lsdtt-fluvial-surfaces provenance: its source
+                             # column says "preset" on the first run and
+                             # "parameter file" on the rerun, which reads the
+                             # resolved values back from the ingested file
+                             "_method_record.csv",
                              # GDAL statistics sidecars, written by this
                              # script's own raster checks after the run
                              ".aux.xml")

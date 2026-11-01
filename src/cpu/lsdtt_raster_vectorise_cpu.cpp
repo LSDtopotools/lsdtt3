@@ -153,7 +153,7 @@ void trace_labelled_polygons(
     };
     if (has_source_id)
     {
-        schema.field_names.push_back("source_id");
+        schema.field_names.push_back(options.label_attribute_name);
         schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
     }
 
@@ -217,19 +217,24 @@ void trace_labelled_polygons(
 
         if (boundary.empty()) continue;
 
-        // --- Keep only odd-row x odd-col pixels (original pixel corners) ---
+        // --- Keep only even-row x even-col pixels (original pixel corners) ---
+        // Each pixel is stamped as the 3x3 block centred on (odd, odd), so its
+        // corners are at (even, even) and the traced boundary runs along even
+        // rows and columns. (This kept (odd, odd) until 2026-10-27 - pixel
+        // centres, which almost never lie on the boundary - so every ring was
+        // dropped as degenerate and every polygon file was written empty.)
         std::vector<lsdtt_xy> ring;
         ring.reserve(boundary.size() / 2 + 1);
 
         for (const lsdtt_pixel_rc& bp : boundary)
         {
-            if ((bp.row & 1) == 0 || (bp.col & 1) == 0) continue;
+            if ((bp.row & 1) != 0 || (bp.col & 1) != 0) continue;
 
             // Map double-res corner to projected coordinates.
             // row_off and col_off are integer offsets from (min_r, min_c)
             // in original pixel units.
-            const int row_off = (bp.row - 1) / 2;  // in [0, height]
-            const int col_off = (bp.col - 1) / 2;  // in [0, width]
+            const int row_off = bp.row / 2;  // in [0, height]
+            const int col_off = bp.col / 2;  // in [0, width]
 
             const double px =
                 meta.x_min + static_cast<double>(min_c + col_off) * cs;

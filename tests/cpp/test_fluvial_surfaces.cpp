@@ -62,8 +62,10 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <set>
@@ -71,6 +73,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <ogr_spatialref.h>
 
 #include "lsdtt_data_loader.hpp"
 #include "lsdtt_flow_base.hpp"
@@ -84,6 +88,9 @@
 #include "lsdtt_valley_centreline_cpu.hpp"
 #include "lsdtt_channel_scope_cpu.hpp"
 #include "lsdtt_flat_surface_channel_classify_cpu.hpp"
+#include "lsdtt_proximity_cpu.hpp"
+#include "lsdtt_floodplain_thresholds_cpu.hpp"
+#include "lsdtt_valley_cross_sections_cpu.hpp"
 
 namespace
 {
@@ -779,6 +786,202 @@ void write_phase0b_fixtures(const std::string& output_dir)
     loader.write_full(st.channel_mask.get_data(), st.channel_mask.get_meta(),
                       output_dir + "/staircase_channel_mask.tif",
                       lsdtt::raster_output_format::gtiff);
+    // The valley floor (channel + the lowest tread), for the relative
+    // elevation's centrelines (relative_elevation_floor_mask_fname,
+    // lsdtt-valley-centreline valley_mask_fname).
+    {
+        const std::vector<float>& tid = st.tread_id.get_data();
+        const std::vector<float>& cm = st.channel_mask.get_data();
+        std::vector<float> floor(tid.size(), 0.0f);
+        for (std::size_t i = 0; i < tid.size(); ++i)
+            if (cm[i] > 0.5f || std::lround(tid[i]) == 1) floor[i] = 1.0f;
+        loader.write_full(floor, st.dem.get_meta(),
+                          output_dir + "/staircase_floor_mask.tif",
+                          lsdtt::raster_output_format::gtiff);
+    }
+
+    // A channel cell a quarter of the way down the valley as a source point,
+    // so lsdtt-valley-centreline can trace the staircase's valley (the cross-
+    // section levels workflow). Not the head: the treads drain sideways into
+    // the channel, so a quarter of the way down it already carries thousands
+    // of contributing cells and snaps at any sensible threshold.
+    {
+        const int src_row = k_st_n_rows / 4;
+        const std::vector<float>& cm = st.channel_mask.get_data();
+        int head_col = -1;
+        for (int c = 0; c < k_st_n_cols; ++c)
+            if (cm[static_cast<std::size_t>(src_row) * k_st_n_cols + c] > 0.5f)
+            { head_col = c; break; }
+        if (head_col < 0)
+            throw std::runtime_error("staircase fixture: no channel cell in the "
+                                     "source row");
+        const lsdtt::lsdtt_xy xy =
+            lsdtt::cell_center_from_row_col(st.dem.get_meta(), src_row, head_col);
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"source_id"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::int64_type};
+        loader.begin_vector_write(
+            output_dir + "/staircase_sources.fgb", "staircase_sources",
+            schema, st.dem.get_meta().crs_wkt,
+            lsdtt::vector_output_format::flatgeobuf, /*spatial_index=*/false);
+        loader.write_point(xy.x, xy.y, {static_cast<std::int64_t>(0)});
+        loader.finish_vector_write();
+    }
+
+    // Training polygons (training_surfaces_fname) on the east flank,
+    // inset 50 m from each tread's edges, rows 60..140: tread 1 labelled
+    // "fp", tread 2 "t1", tread 3 "T5" (a wrong number - numbers are ignored).
+    // Tread 4 is left for the ladder's own search above the trained breaks.
+    {
+        const lsdtt::lsdtt_raster_meta& m = st.dem.get_meta();
+        const double x_channel = m.x_min + (k_st_n_cols / 2 + 0.5) * k_st_cell_size;
+        const double y_top = m.y_max() - 60.0 * k_st_cell_size;
+        const double y_bot = m.y_max() - 140.0 * k_st_cell_size;
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"class"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+        loader.begin_vector_write(
+            output_dir + "/staircase_training.fgb", "staircase_training",
+            schema, m.crs_wkt, lsdtt::vector_output_format::flatgeobuf, false);
+        const char* labels[3] = {"fp", "t1", "T5"};
+        for (int j = 1; j <= 3; ++j)
+        {
+            const double x0 = x_channel + (j - 1) * k_st_tread_width + 50.0;
+            const double x1 = x_channel + j * k_st_tread_width - 50.0;
+            loader.write_polygon({{x0, y_bot}, {x1, y_bot}, {x1, y_top},
+                                  {x0, y_top}, {x0, y_bot}},
+                                 {std::string(labels[j - 1])});
+        }
+        loader.finish_vector_write();
+    }
+
+    // Mapped surfaces (mapped_surfaces_fname): the staircase's own
+    // tread map as polygons - tread 1 "floodplain", treads 2-4 "terrace" - on
+    // both flanks, edges half a cell off the cell centres so no centre sits on
+    // an edge. The polygons run the full valley length, across the three
+    // riser gaps (ramps, tread id 0 in the generator) as a mapper would. The same polygons as FlatGeobuf, GeoPackage and GeoPackage in
+    // EPSG:4326 (densified every 10 m before transforming, so the reprojected
+    // edges stay within millimetres); a file with an unknown class ("bench");
+    // and a surveyed extent covering the northern half of the grid.
+    {
+        const lsdtt::lsdtt_raster_meta& m = st.dem.get_meta();
+        const double cs = k_st_cell_size;
+        // The generator's channel is column (n_cols - 1) / 2.
+        const double xc = m.x_min + ((k_st_n_cols - 1) / 2 + 0.5) * cs;
+        const double y0 = m.y_min, y1 = m.y_max();
+        const int per_tread = static_cast<int>(k_st_tread_width / cs);
+        struct rect { double x0, x1, ya, yb; std::string cls; };
+        std::vector<rect> rects;
+        for (int j = 1; j <= k_st_n_terraces; ++j)
+        {
+            const int k0 = std::max(1, per_tread * (j - 1));
+            const int k1 = per_tread * j - 1;
+            const std::string c = (j == 1) ? "floodplain" : "terrace";
+            rects.push_back({xc + (k0 - 0.5) * cs, xc + (k1 + 0.5) * cs, y0, y1, c});
+            rects.push_back({xc - (k1 + 0.5) * cs, xc - (k0 - 0.5) * cs, y0, y1, c});
+        }
+        auto ring = [](const rect& r)
+        {
+            std::vector<lsdtt::lsdtt_xy> pts;
+            auto edge = [&](double xa, double ya, double xb, double yb)
+            {
+                const int n = std::max(1, static_cast<int>(
+                    std::hypot(xb - xa, yb - ya) / 10.0));
+                for (int i = 0; i < n; ++i)
+                    pts.push_back({xa + (xb - xa) * i / n, ya + (yb - ya) * i / n});
+            };
+            edge(r.x0, r.ya, r.x1, r.ya);
+            edge(r.x1, r.ya, r.x1, r.yb);
+            edge(r.x1, r.yb, r.x0, r.yb);
+            edge(r.x0, r.yb, r.x0, r.ya);
+            pts.push_back(pts.front());
+            return pts;
+        };
+        lsdtt::lsdtt_vector_schema schema;
+        schema.field_names = {"class"};
+        schema.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+        auto write_set = [&](const std::string& path, const std::string& layer,
+                             lsdtt::vector_output_format fmt,
+                             const std::string& wkt, const std::vector<rect>& rs,
+                             OGRCoordinateTransformation* ct)
+        {
+            loader.begin_vector_write(path, layer, schema, wkt, fmt, false);
+            for (const rect& r : rs)
+            {
+                std::vector<lsdtt::lsdtt_xy> pts = ring(r);
+                if (ct != nullptr)
+                    for (lsdtt::lsdtt_xy& p : pts)
+                        if (!ct->Transform(1, &p.x, &p.y))
+                            throw std::runtime_error("mapped fixture: transform failed");
+                loader.write_polygon(pts, {r.cls});
+            }
+            loader.finish_vector_write();
+        };
+        write_set(output_dir + "/staircase_mapped.fgb", "staircase_mapped",
+                  lsdtt::vector_output_format::flatgeobuf, m.crs_wkt, rects, nullptr);
+        write_set(output_dir + "/staircase_mapped.gpkg", "staircase_mapped",
+                  lsdtt::vector_output_format::gpkg, m.crs_wkt, rects, nullptr);
+        {
+            OGRSpatialReference src, dst;
+            src.importFromWkt(m.crs_wkt.c_str());
+            dst.importFromEPSG(4326);
+            src.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            dst.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            std::unique_ptr<OGRCoordinateTransformation> ct(
+                OGRCreateCoordinateTransformation(&src, &dst));
+            if (!ct) throw std::runtime_error("mapped fixture: no transform to 4326");
+            char* wkt = nullptr;
+            dst.exportToWkt(&wkt);
+            const std::string dst_wkt(wkt);
+            CPLFree(wkt);
+            write_set(output_dir + "/staircase_mapped_4326.gpkg", "staircase_mapped",
+                      lsdtt::vector_output_format::gpkg, dst_wkt, rects, ct.get());
+        }
+        {
+            std::vector<rect> bad = {rects.front()};
+            bad.front().cls = "bench";
+            write_set(output_dir + "/staircase_mapped_bad_class.fgb",
+                      "staircase_mapped", lsdtt::vector_output_format::flatgeobuf,
+                      m.crs_wkt, bad, nullptr);
+        }
+        {
+            const double ymid = m.y_min + 0.5 * k_st_n_rows * cs;
+            write_set(output_dir + "/staircase_mapped_extent_north.fgb", "extent",
+                      lsdtt::vector_output_format::flatgeobuf, m.crs_wkt,
+                      {{m.x_min, m.x_max(), ymid, m.y_max(), "extent"}}, nullptr);
+        }
+        // Mapped risers (lsdtt-feature-finder mapped_risers_fname): the three
+        // tread boundaries on each flank, the edges of the mapped polygons
+        // above, as lines down the full valley length - across the riser
+        // gaps, as a mapper would draw them.
+        {
+            lsdtt::lsdtt_vector_schema ls;
+            ls.field_names = {"kind"};
+            ls.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+            loader.begin_vector_write(output_dir + "/staircase_mapped_risers.fgb",
+                                      "staircase_mapped_risers", ls, m.crs_wkt,
+                                      lsdtt::vector_output_format::flatgeobuf, false);
+            for (int j = 1; j < k_st_n_terraces; ++j)
+            {
+                const double off = (per_tread * j - 0.5) * cs;
+                for (const double x : {xc + off, xc - off})
+                    loader.write_line({{x, y0}, {x, y1}}, {std::string("terrace edge")});
+            }
+            loader.finish_vector_write();
+        }
+    }
+
+    // Levels files for level_algorithm_choice supplied_levels, written by hand
+    // as a user would from survey: the four tread heights for every channel
+    // (source_id -1), and the same keyed to a channel that does not exist.
+    {
+        std::ofstream f(output_dir + "/staircase_levels_hand.csv");
+        f << "source_id,level_hand_m\n";
+        for (int j = 1; j <= k_st_n_terraces; ++j)
+            f << "-1," << j * k_st_riser << "\n";
+        std::ofstream g(output_dir + "/staircase_levels_wrong_source.csv");
+        g << "source_id,level_hand_m\n7,8\n7,16\n";
+    }
 
     const lsdtt::lsdtt_alluvial_fan_surface fan =
         lsdtt::generate_alluvial_fan_surface(
@@ -2283,6 +2486,675 @@ void run_coherence_diffusion_checks()
 // fall back to the fixed value AND say so, rather than silently using whatever
 // vertical_accuracy_metres happened to be left at.
 // =============================================================================
+// =============================================================================
+// Strahler channel definition and swath-baseline relief - the two reference-field pieces Clubb et al. (2017)
+// need that lsdtt3 did not have.
+//
+// Every check compares against a brute-force evaluation of the same definition
+// on the same flow object, over a real branching network (the linear-range
+// surface), rather than against a hand-drawn network: the brute force walks the
+// network differently (recursion over donors, receiver walks, an all-pairs
+// nearest search), so agreement everywhere says the fast path implements the
+// definition, and the network is large enough to contain every case.
+// =============================================================================
+void run_channel_order_and_swath_checks()
+{
+    std::cout << "\n--- Strahler channel definition and swath relief ---\n";
+    const lsdtt::lsdtt_mountain_range_surface range = make_range_surface();
+    const lsdtt::lsdtt_raster_cpu filled =
+        lsdtt::fill_pits(range.dem, 0.0001f, /*n_threads=*/1);
+
+    lsdtt::lsdtt_flowinfo_options fo;
+    fo.boundary_conditions     = "oooo";
+    fo.build_topological_order = true;
+    fo.build_s_vector          = true;
+    fo.n_threads               = 1;
+    const std::unique_ptr<lsdtt::lsdtt_flow_base> flow = lsdtt::make_flow_base(
+        filled.get_data_array(), filled.get_mask_array(), filled.get_meta(), fo);
+
+    const int thr = 50;
+    const std::size_t n = flow->full_grid_size();
+    const std::vector<std::int32_t> order =
+        lsdtt::channel_strahler_order(*flow, thr);
+
+    // ---- brute-force Strahler: donors from receivers, then memoised DFS ----
+    std::vector<char> on_net(n, 0);
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (flow->is_valid_cell(flat) &&
+            flow->s_vector_size_unchecked(flat) >= static_cast<std::uint64_t>(thr))
+            on_net[f] = 1;
+    }
+    std::vector<std::vector<std::int64_t>> donors(n);
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        if (!on_net[f]) continue;
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (flow->is_outlet_unchecked(flat)) continue;
+        const std::int64_t r = flow->receiver_of_unchecked(flat);
+        if (r != flat) donors[static_cast<std::size_t>(r)].push_back(flat);
+    }
+    std::vector<std::int32_t> brute(n, 0);
+    for (std::size_t start = 0; start < n; ++start)
+    {
+        if (!on_net[start] || brute[start] != 0) continue;
+        std::vector<std::pair<std::int64_t, bool>> stack = {
+            {static_cast<std::int64_t>(start), false}};
+        while (!stack.empty())
+        {
+            auto [flat, expanded] = stack.back();
+            stack.pop_back();
+            const std::size_t f = static_cast<std::size_t>(flat);
+            if (brute[f] != 0) continue;
+            if (!expanded)
+            {
+                stack.push_back({flat, true});
+                for (std::int64_t d : donors[f])
+                    if (brute[static_cast<std::size_t>(d)] == 0)
+                        stack.push_back({d, false});
+                continue;
+            }
+            std::int32_t top = 0, n_top = 0;
+            for (std::int64_t d : donors[f])
+            {
+                const std::int32_t o = brute[static_cast<std::size_t>(d)];
+                if (o > top) { top = o; n_top = 1; }
+                else if (o == top) ++n_top;
+            }
+            brute[f] = (top == 0) ? 1 : (n_top >= 2 ? top + 1 : top);
+        }
+    }
+
+    std::size_t n_net = 0, n_mismatch = 0;
+    std::int32_t max_order = 0;
+    bool off_net_zero = true, monotone = true;
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        if (!on_net[f]) { if (order[f] != 0) off_net_zero = false; continue; }
+        ++n_net;
+        if (order[f] != brute[f]) ++n_mismatch;
+        max_order = std::max(max_order, order[f]);
+        const std::int64_t flat = static_cast<std::int64_t>(f);
+        if (!flow->is_outlet_unchecked(flat))
+        {
+            const std::int64_t r = flow->receiver_of_unchecked(flat);
+            if (r != flat && order[static_cast<std::size_t>(r)] < order[f])
+                monotone = false;
+        }
+    }
+    std::cout << "  network " << n_net << " pixels, highest order " << max_order
+              << ", " << n_mismatch << " mismatch(es)\n";
+    check(max_order >= 3,
+          "SO1: the test network reaches order 3 or more (the case is real)");
+    check(n_mismatch == 0,
+          "SO2: Strahler order equals a brute-force recursive evaluation at "
+          "every network pixel");
+    check(off_net_zero, "SO3: off the network the order is 0");
+    check(monotone, "SO4: order never decreases downstream");
+    bool heads_first = true;
+    for (std::int64_t h : flow->get_sources_index_threshold(thr))
+        if (order[static_cast<std::size_t>(h)] != 1) heads_first = false;
+    check(heads_first, "SO5: every channel head is order 1");
+
+    // ---- the scope filter ----
+    lsdtt::channel_scope_request req;
+    req.threshold_contributing_pixels = thr;
+    const lsdtt::channel_scope_result plain = lsdtt::resolve_channel_scope(*flow, req);
+
+    req.channel_definition = lsdtt::channel_definition_choice::stream_order;
+    req.min_stream_order   = 1;
+    const lsdtt::channel_scope_result so1 = lsdtt::resolve_channel_scope(*flow, req);
+    check(so1.channel_mask == plain.channel_mask &&
+              so1.channel_source_id == plain.channel_source_id,
+          "SO6: stream_order with min 1 is exactly the contributing-pixel scope");
+
+    req.min_stream_order = 3;
+    const lsdtt::channel_scope_result so3 = lsdtt::resolve_channel_scope(*flow, req);
+    bool mask_ok = true, ids_ok = true, nodes_ok = true;
+    std::size_t n_kept = 0;
+    for (std::size_t f = 0; f < n; ++f)
+    {
+        const bool want = plain.channel_mask[f] && order[f] >= 3;
+        if (static_cast<bool>(so3.channel_mask[f]) != want) mask_ok = false;
+        if (!want && so3.channel_source_id[f] != -1) ids_ok = false;
+        if (want && so3.channel_source_id[f] != plain.channel_source_id[f]) ids_ok = false;
+        if (want) ++n_kept;
+    }
+    for (const auto& nodes : so3.channel_node_lists)
+        for (std::int64_t f : nodes)
+            if (order[static_cast<std::size_t>(f)] < 3) nodes_ok = false;
+    std::cout << "  order >= 3 keeps " << n_kept << " channel pixel(s)\n";
+    check(n_kept > 0 && mask_ok,
+          "SO7: min order 3 keeps exactly the scope pixels of order >= 3");
+    check(ids_ok, "SO8: removed pixels lose their source id; kept ones keep it");
+    check(nodes_ok, "SO9: no node list keeps a pixel below the minimum order");
+
+    // A user-source scope: the same filter applied after tracing.
+    {
+        lsdtt::channel_scope_request ur;
+        ur.threshold_contributing_pixels = thr;
+        ur.snap_sources = false;
+        ur.source_flats = {flow->get_sources_index_threshold(thr).front()};
+        const lsdtt::channel_scope_result u_plain = lsdtt::resolve_channel_scope(*flow, ur);
+        ur.channel_definition = lsdtt::channel_definition_choice::stream_order;
+        ur.min_stream_order   = 2;
+        const lsdtt::channel_scope_result u_so = lsdtt::resolve_channel_scope(*flow, ur);
+        std::vector<std::int64_t> expect;
+        for (std::int64_t f : u_plain.channel_node_lists[0])
+            if (order[static_cast<std::size_t>(f)] >= 2) expect.push_back(f);
+        check(u_so.channel_node_lists[0] == expect,
+              "SO10: in a user-source scope the node list is the traced path "
+              "with the low-order pixels removed, order preserved");
+    }
+
+    bool threw = false;
+    try
+    {
+        lsdtt::channel_scope_request bad = req;
+        bad.min_stream_order = 0;
+        (void)lsdtt::resolve_channel_scope(*flow, bad);
+    }
+    catch (const std::invalid_argument&) { threw = true; }
+    check(threw, "SO11: min_stream_order below 1 is rejected");
+
+    // ---- HAND on the order >= 3 channel against a receiver walk ----
+    {
+        const std::vector<float>& z = filled.get_data();
+        const lsdtt::lsdtt_raster_result hand =
+            flow->get_height_above_channel_mask_raster(
+                z, filled.get_mask(), so3.channel_mask);
+        std::size_t n_bad = 0, n_undefined = 0;
+        for (std::size_t f = 0; f < n; ++f)
+        {
+            const std::int64_t flat = static_cast<std::int64_t>(f);
+            if (!flow->is_valid_cell(flat)) continue;
+            // Walk receivers to the first channel pixel; reaching base level
+            // without one leaves the relief undefined.
+            std::int64_t cur = flat;
+            bool reached = false;
+            while (true)
+            {
+                if (so3.channel_mask[static_cast<std::size_t>(cur)]) { reached = true; break; }
+                if (flow->is_outlet_unchecked(cur)) break;
+                const std::int64_t r = flow->receiver_of_unchecked(cur);
+                if (r == cur) break;
+                cur = r;
+            }
+            if (!reached)
+            {
+                ++n_undefined;
+                if (hand.mask[f]) ++n_bad;
+                continue;
+            }
+            const float want = z[f] - z[static_cast<std::size_t>(cur)];
+            if (!hand.mask[f] || std::fabs(hand.data[f] - want) > 1e-4f) ++n_bad;
+        }
+        std::cout << "  HAND: " << n_undefined
+                  << " pixel(s) reach base level without an order-3 channel\n";
+        check(n_undefined > 0,
+              "SO12: some pixels drain to base level without meeting the "
+              "channel (the undefined case is exercised)");
+        check(n_bad == 0,
+              "SO13: HAND on the stream-order channel equals a receiver walk, "
+              "and is undefined exactly where the walk finds no channel");
+    }
+
+    // ---- swath-baseline relief against an all-pairs nearest search ----
+    {
+        std::vector<std::int64_t> baseline;
+        for (std::size_t f = 0; f < n; ++f)
+            if (so3.channel_mask[f]) baseline.push_back(static_cast<std::int64_t>(f));
+        const double half_width = 300.0;
+        const lsdtt::baseline_relief_result br =
+            lsdtt::relief_above_nearest_baseline(filled, baseline, half_width, 1);
+
+        const std::vector<float>& z  = filled.get_data();
+        const int nc = filled.get_meta().n_cols;
+        const double cell = filled.get_meta().cell_size;
+        std::size_t n_bad_nearest = 0, n_bad_relief = 0, n_bad_extent = 0;
+        std::size_t n_inside = 0, n_outside = 0;
+        for (std::size_t f = 0; f < n; ++f)
+        {
+            if (!filled.get_mask()[f]) continue;
+            const int r = static_cast<int>(f / nc), c = static_cast<int>(f % nc);
+            double dmin = std::numeric_limits<double>::infinity();
+            for (std::int64_t b : baseline)
+            {
+                const double dr = static_cast<int>(b / nc) - r;
+                const double dc = static_cast<int>(b % nc) - c;
+                dmin = std::min(dmin, std::sqrt(dr * dr + dc * dc) * cell);
+            }
+            const bool inside = dmin <= half_width + 1e-9;
+            const bool got    = br.relief.get_mask()[f] != 0;
+            if (inside) ++n_inside; else ++n_outside;
+            if (inside != got) { ++n_bad_extent; continue; }
+            if (!got) continue;
+            const std::int64_t nb = br.nearest_baseline_flat[f];
+            const double dr = static_cast<int>(nb / nc) - r;
+            const double dc = static_cast<int>(nb % nc) - c;
+            // Ties between equidistant nodes may go either way; the chosen node
+            // must be at the minimum distance, and the relief must be its own.
+            if (std::fabs(std::sqrt(dr * dr + dc * dc) * cell - dmin) > 1e-6)
+                ++n_bad_nearest;
+            if (std::fabs(br.relief.get_data()[f] -
+                          (z[f] - z[static_cast<std::size_t>(nb)])) > 1e-4f)
+                ++n_bad_relief;
+        }
+        std::cout << "  swath: " << baseline.size() << " baseline node(s), "
+                  << n_inside << " pixel(s) within " << half_width << " m, "
+                  << n_outside << " beyond\n";
+        check(n_inside > 0 && n_outside > 0,
+              "SW1: the half-width cuts the grid (both cases exercised)");
+        check(n_bad_extent == 0,
+              "SW2: relief is defined exactly within the half-width");
+        check(n_bad_nearest == 0,
+              "SW3: every pixel is referenced to a nearest baseline node");
+        check(n_bad_relief == 0,
+              "SW4: relief is the elevation above that node");
+
+        const lsdtt::baseline_relief_result all =
+            lsdtt::relief_above_nearest_baseline(filled, baseline, 0.0, 1);
+        bool all_defined = true;
+        for (std::size_t f = 0; f < n; ++f)
+            if (filled.get_mask()[f] && !all.relief.get_mask()[f]) all_defined = false;
+        check(all_defined, "SW5: a half-width of 0 means no limit");
+        const lsdtt::baseline_relief_result none =
+            lsdtt::relief_above_nearest_baseline(filled, {}, 300.0, 1);
+        bool none_defined = true;
+        for (std::uint8_t m : none.relief.get_mask()) if (m) none_defined = false;
+        check(none_defined, "SW6: an empty baseline leaves everything nodata");
+    }
+}
+
+// =============================================================================
+// Floodplain and terraces from two bounds - classify_floodplain_terraces_by_thresholds, the engine behind
+// lsdtt-fluvial-surfaces' fixed_thresholds and lsdtt-hillslope-channel-
+// coupling's simple floodplain.
+//
+// A 20 x 20 grid built so every count can be written down: a channel down
+// column 10, HAND = 0.5 m per cell of distance from it, so the floodplain
+// bound selects whole columns. Departures from that layout are placed one at a
+// time, each to exercise one rule.
+// =============================================================================
+namespace ft {
+
+constexpr int N = 20;
+
+lsdtt::lsdtt_raster_meta meta()
+{
+    lsdtt::lsdtt_raster_meta m;
+    m.n_rows = N; m.n_cols = N; m.cell_size = 10.0;
+    m.x_min = 0.0; m.y_min = 0.0; m.no_data_value = -9999.0;
+    return m;
+}
+std::size_t at(int r, int c) { return static_cast<std::size_t>(r) * N + c; }
+
+lsdtt::lsdtt_raster_cpu raster(const std::vector<float>& v)
+{
+    std::vector<uint8_t> m(v.size(), 1);
+    for (std::size_t i = 0; i < v.size(); ++i)
+        if (v[i] == -9999.0f) m[i] = 0;
+    return lsdtt::lsdtt_raster_cpu(std::vector<float>(v), std::move(m), meta());
+}
+std::int64_t count(const lsdtt::lsdtt_raster_cpu& r)
+{
+    std::int64_t n = 0;
+    for (float v : r.get_data()) if (v > 0.5f) ++n;
+    return n;
+}
+
+} // namespace ft
+
+void run_floodplain_threshold_checks()
+{
+    std::cout << "\n--- floodplain and terraces from two bounds ---\n";
+    using namespace ft;
+    const std::size_t n = static_cast<std::size_t>(N) * N;
+
+    std::vector<float> hand(n), grad(n, 0.01f), all(n, 1.0f);
+    std::vector<std::uint8_t> chan(n, 0);
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < N; ++c)
+        {
+            hand[at(r, c)] = 0.5f * static_cast<float>(std::abs(c - 10));
+            if (c == 10) chan[at(r, c)] = 1;
+        }
+    // An isolated low hollow far from the channel: 3 x 3 at the top left.
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) hand[at(r, c)] = 0.1f;
+
+    lsdtt::floodplain_threshold_request base;
+    base.max_floodplain_hand_metres = 1.2;   // |c - 10| <= 2: columns 8..12
+    base.seed_channel_pixels        = true;
+    base.require_channel_contact    = true;
+
+    // FT1: the floodplain is the five columns next to the channel; the hollow
+    // is low and flat but does not touch the channel, so it is not floodplain.
+    {
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, base);
+        check(count(res.floodplain_mask) == 5 * N &&
+                  res.n_floodplain_dropped_no_channel == 1,
+              "FT1: floodplain = the 5 columns by the channel; the hollow is "
+              "dropped for not touching the channel");
+        auto b = base; b.require_channel_contact = false;
+        const auto res2 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, b);
+        check(count(res2.floodplain_mask) == 5 * N + 9,
+              "FT2: without the contact test the hollow is kept");
+        b.min_component_pixels = 10;
+        const auto res3 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, nullptr, b);
+        check(count(res3.floodplain_mask) == 5 * N &&
+                  res3.n_floodplain_dropped_small == 1,
+              "FT3: a component of 9 pixels is dropped at a minimum of 10");
+    }
+
+    // FT4: a channel pixel with no HAND is still floodplain when seeded, and a
+    // hole in the floodplain when not; hole filling closes it.
+    {
+        std::vector<float> h = hand;
+        h[at(5, 10)] = -9999.0f;
+        const auto seeded = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, base);
+        check(seeded.floodplain_mask.get_data()[at(5, 10)] > 0.5f,
+              "FT4: a seeded channel pixel is floodplain even without a HAND");
+        auto b = base; b.seed_channel_pixels = false;
+        const auto unseeded = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, b);
+        b.fill_holes = true;
+        const auto filled = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(h), raster(grad), chan, nullptr, b);
+        check(unseeded.floodplain_mask.get_data()[at(5, 10)] < 0.5f &&
+                  filled.floodplain_mask.get_data()[at(5, 10)] > 0.5f,
+              "FT5: unseeded it is a hole, and fill_holes closes it");
+    }
+
+    // FT6: the gradient bound removes a steep column from the floodplain.
+    {
+        std::vector<float> g = grad;
+        for (int r = 0; r < N; ++r) g[at(r, 8)] = 0.5f;
+        auto b = base; b.max_floodplain_gradient = 0.1;
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(g), chan, nullptr, b);
+        check(count(res.floodplain_mask) == 4 * N,
+              "FT6: the gradient bound removes the steep column");
+    }
+
+    // Terraces on the HAND field: above 1.2 + 1.0 = 2.2 m and at most 3.0 m,
+    // so |c - 10| in {5, 6}: columns 4, 5, 15, 16.
+    {
+        auto b = base;
+        b.find_terraces = true;
+        b.min_terrace_height_above_floodplain_metres = 1.0;
+        b.max_terrace_height_metres = 3.0;
+        const lsdtt::lsdtt_raster_cpu tf = raster(hand);
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, &tf, b);
+        check(count(res.terrace_mask) == 4 * N && res.n_terrace_components == 2,
+              "FT7: terraces are the columns between 2.2 and 3.0 m (two strips)");
+        bool disjoint = true, above = true, banded = true;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const bool f = res.floodplain_mask.get_data()[i] > 0.5f;
+            const bool t = res.terrace_mask.get_data()[i] > 0.5f;
+            if (f && t) disjoint = false;
+            if (t && !(hand[i] > 2.2f)) above = false;
+            const float bi = res.band_index.get_data()[i];
+            if ((f && bi != 0.0f) || (t && bi != 1.0f) || (!f && !t && bi != -1.0f))
+                banded = false;
+        }
+        check(disjoint && above,
+              "FT8: no cell is both, and every terrace cell is above the start");
+        check(banded, "FT9: band index is 0 floodplain, 1 terrace, -1 neither");
+
+        // With no gap above the floodplain and no ceiling, terraces start at
+        // the first column above it and run to the edge (the hollow is low).
+        b.min_terrace_height_above_floodplain_metres = 0.0;
+        b.max_terrace_height_metres = 0.0;
+        const auto res2 = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(grad), chan, &tf, b);
+        check(count(res2.terrace_mask) == (N - 5) * N - 9,
+              "FT10: with no gap and no ceiling every non-floodplain column is "
+              "terrace, except the low hollow");
+    }
+
+    // FT11-12: the overlap D2 forbids is refused rather than produced.
+    {
+        const lsdtt::lsdtt_raster_cpu tf = raster(hand);
+        auto b = base; b.find_terraces = true;
+        b.min_terrace_height_above_floodplain_metres = -0.5;
+        bool threw = false;
+        try { (void)lsdtt::classify_floodplain_terraces_by_thresholds(
+                  raster(all), raster(hand), raster(grad), chan, &tf, b); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "FT11: a negative height above the floodplain is refused");
+        b.min_terrace_height_above_floodplain_metres = 1.0;
+        b.max_terrace_height_metres = 2.0;
+        threw = false;
+        try { (void)lsdtt::classify_floodplain_terraces_by_thresholds(
+                  raster(all), raster(hand), raster(grad), chan, &tf, b); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check(threw, "FT12: a ceiling at or below where terraces start is refused");
+    }
+
+    // FT13: the hillslope-coupling configuration is the plain rule - HAND and
+    // gradient below their bounds - with holes filled.
+    {
+        std::vector<float> g = grad;
+        for (int r = 0; r < N; ++r) g[at(r, 12)] = 0.5f;
+        lsdtt::floodplain_threshold_request h;
+        h.max_floodplain_hand_metres = 1.2;
+        h.max_floodplain_gradient    = 0.1;
+        h.seed_channel_pixels        = false;
+        h.require_channel_contact    = false;
+        h.min_component_pixels       = 0;
+        h.fill_holes                 = true;
+        const auto res = lsdtt::classify_floodplain_terraces_by_thresholds(
+            raster(all), raster(hand), raster(g), chan, nullptr, h);
+        std::vector<float> rule(n, 0.0f);
+        for (std::size_t i = 0; i < n; ++i)
+            if (hand[i] < 1.2f && g[i] < 0.1f) rule[i] = 1.0f;
+        const lsdtt::lsdtt_raster_cpu want =
+            lsdtt::binary_fill_holes(raster(rule));
+        check(res.floodplain_mask.get_data() == want.get_data(),
+              "FT13: with the filters off it is HAND and gradient below their "
+              "bounds, holes filled - hillslope-coupling's rule");
+    }
+}
+
+// =============================================================================
+// Cross-section levels and supplied breaks: partition_population, cluster_cross_section_levels with its
+// support filter, the levels file, breaks_from_levels, and
+// build_reference_field_ladder with supplied breaks.
+// =============================================================================
+void run_cross_section_levels_checks(const std::string& work_dir)
+{
+    std::cout << "\n--- cross-section levels and supplied breaks ---\n";
+    std::filesystem::create_directories(work_dir);
+
+    // A population with three levels, 30 values each, spread +/- 0.25 m.
+    auto three_levels = [](double a, double b, double c)
+    {
+        std::vector<double> v;
+        for (int i = 0; i < 30; ++i)
+        {
+            const double d = -0.25 + 0.5 * (i / 29.0);
+            v.push_back(a + d); v.push_back(b + d); v.push_back(c + d);
+        }
+        return v;
+    };
+    lsdtt::ladder_request lr;
+    lr.break_algorithm          = lsdtt::ladder_break_choice::jenks;
+    lr.vertical_accuracy_metres = 0.5;
+    lr.resolvability_kappa      = 3.0;
+    {
+        const lsdtt::population_partition pp =
+            lsdtt::partition_population(three_levels(3.0, 8.0, 14.0), lr);
+        const bool centres_ok = pp.band_centres.size() == 3 &&
+            std::fabs(pp.band_centres[0] - 3.0) < 0.2 &&
+            std::fabs(pp.band_centres[1] - 8.0) < 0.2 &&
+            std::fabs(pp.band_centres[2] - 14.0) < 0.2;
+        check(pp.k == 3 && pp.status == lsdtt::ladder_status::resolved && centres_ok,
+              "XL1: three levels 5-6 m apart resolve as three, centres within 0.2 m");
+        const lsdtt::population_partition close =
+            lsdtt::partition_population(three_levels(3.0, 3.8, 4.6), lr);
+        check(close.k == 1 && close.status == lsdtt::ladder_status::unresolved,
+              "XL2: levels 0.8 m apart against a 1.5 m floor give one level, "
+              "unresolved");
+    }
+
+    // Sections: ten with breaks at 8 and 16 m above their thalweg, two of
+    // which also have one at 12 m (a riser-gap ramp).
+    lsdtt::valley_cross_section_result xr;
+    for (int i = 0; i < 10; ++i)
+    {
+        lsdtt::valley_cross_section xs;
+        xs.source_id   = 0;
+        xs.station_seq = i;
+        const double thalweg = 100.0 - i;
+        xs.hydraulic_break_stages = {thalweg, thalweg + 8.0 + 0.05 * i,
+                                     thalweg + 16.0 - 0.05 * i};
+        if (i < 2) xs.hydraulic_break_stages.push_back(thalweg + 12.0);
+        xr.sections.push_back(xs);
+    }
+    {
+        lsdtt::ladder_request gr = lr;
+        gr.break_algorithm = lsdtt::ladder_break_choice::gap;
+        const lsdtt::cross_section_levels_result half =
+            lsdtt::cluster_cross_section_levels(xr, gr, 0.5);
+        bool two = half.levels.size() == 2 &&
+                   std::fabs(half.levels[0].level_hand_m - 8.2) < 0.3 &&
+                   std::fabs(half.levels[1].level_hand_m - 15.8) < 0.3 &&
+                   half.levels[0].n_sections == 10 && half.levels[1].n_sections == 10;
+        check(two, "XL3: the two levels every section crosses are kept, each on "
+                   "10 of 10 sections");
+        check(half.dropped.size() == 1 &&
+                  std::fabs(half.dropped[0].level_hand_m - 12.0) < 0.01 &&
+                  half.dropped[0].n_sections == 2,
+              "XL4: the level only 2 of 10 sections see is dropped and listed");
+        const lsdtt::cross_section_levels_result all =
+            lsdtt::cluster_cross_section_levels(xr, gr, 0.1);
+        check(all.levels.size() == 3 && all.dropped.empty(),
+              "XL5: at a support fraction of 0.1 it is kept");
+        check(half.levels[1].min_level_gap_m > 7.0,
+              "XL6: the reported gap is between the KEPT levels");
+
+        // The levels file round-trips, and breaks are the midpoints.
+        const std::string path = work_dir + "/xl_levels.csv";
+        lsdtt::write_cross_section_levels_csv(path, half.levels);
+        const auto back = lsdtt::read_cross_section_levels_csv(path);
+        check(back.size() == 1 && back.at(0).size() == 2 &&
+                  std::fabs(back.at(0)[0] - half.levels[0].level_hand_m) < 1e-6,
+              "XL7: the levels file reads back to the levels written");
+        const auto brk = lsdtt::breaks_from_levels({{0, {2.0, 8.0, 14.0}}, {3, {5.0}}});
+        check(brk.at(0) == std::vector<double>({5.0, 11.0}) && brk.at(3).empty(),
+              "XL8: breaks are the midpoints; one level gives no break");
+    }
+    {
+        const std::string bad = work_dir + "/xl_bad.csv";
+        { std::ofstream f(bad); f << "source_id,level_hand_m\n0,8\n0,abc\n"; }
+        bool threw = false;
+        try { (void)lsdtt::read_cross_section_levels_csv(bad); }
+        catch (const std::runtime_error& e)
+        {
+            const std::string w = e.what();
+            threw = w.find("xl_bad.csv") != std::string::npos;
+        }
+        check(threw, "XL9: a non-numeric level stops the read, naming the file");
+        const std::string nocol = work_dir + "/xl_nocol.csv";
+        { std::ofstream f(nocol); f << "source_id,height\n0,8\n"; }
+        threw = false;
+        try { (void)lsdtt::read_cross_section_levels_csv(nocol); }
+        catch (const std::runtime_error& e)
+        {
+            threw = std::string(e.what()).find("level_hand_m") != std::string::npos;
+        }
+        check(threw, "XL10: a file without level_hand_m is refused, naming the column");
+    }
+
+    // Supplied breaks in the ladder: a field with two clusters, windowed by
+    // one source along the columns.
+    {
+        lsdtt::lsdtt_raster_meta m;
+        m.n_rows = 20; m.n_cols = 50; m.cell_size = 10.0;
+        m.x_min = 0.0; m.y_min = 0.0; m.no_data_value = -9999.0;
+        const std::size_t n = 20 * 50;
+        std::vector<float> fv(n), cv(n);
+        for (int r = 0; r < 20; ++r)
+            for (int c = 0; c < 50; ++c)
+            {
+                fv[static_cast<std::size_t>(r) * 50 + c] = (r < 10) ? 2.0f : 9.0f;
+                cv[static_cast<std::size_t>(r) * 50 + c] = static_cast<float>(c * 10);
+            }
+        const lsdtt::lsdtt_raster_cpu field(std::vector<float>(fv),
+                                            std::vector<uint8_t>(n, 1), m);
+        const lsdtt::lsdtt_raster_cpu adm(std::vector<float>(n, 1.0f),
+                                          std::vector<uint8_t>(n, 1), m);
+        const lsdtt::lsdtt_raster_cpu coord(std::vector<float>(cv),
+                                            std::vector<uint8_t>(n, 1), m);
+        const std::vector<std::int32_t> src(n, 0);
+        lsdtt::ladder_request sr = lr;
+        sr.reach_window_metres = 200.0;
+        sr.min_window_pixels   = 10;
+        sr.supplied_breaks     = {{0, {5.5}}};
+        const lsdtt::ladder_result res =
+            lsdtt::build_reference_field_ladder(field, adm, sr, &src, &coord);
+        bool all_supplied = !res.windows.empty();
+        for (const auto& w : res.windows)
+            if (w.status != lsdtt::ladder_status::supplied || w.k_selected != 2)
+                all_supplied = false;
+        bool bands_ok = true;
+        const std::vector<float>& bi = res.band_index.get_data();
+        for (std::size_t i = 0; i < n; ++i)
+            if (bi[i] != (fv[i] < 5.0f ? 0.0f : 1.0f)) bands_ok = false;
+        check(all_supplied && res.n_windows_supplied ==
+                  static_cast<std::int64_t>(res.windows.size()),
+              "XL11: every window takes the supplied breaks (status supplied)");
+        check(bands_ok, "XL12: the band index is the supplied break applied");
+
+        lsdtt::ladder_request tight = sr;
+        tight.vertical_accuracy_metres = 5.0;   // floor 15 m > the 7 m gap
+        const lsdtt::ladder_result low =
+            lsdtt::build_reference_field_ladder(field, adm, tight, &src, &coord);
+        check(low.n_windows_supplied_below_floor == low.n_windows_supplied &&
+                  low.n_windows_supplied > 0,
+              "XL13: supplied levels the DEM cannot resolve are flagged, not "
+              "dropped");
+
+        lsdtt::ladder_request three = sr;
+        three.supplied_breaks = {{0, {5.5, 20.0}}};   // band 2 is empty
+        const lsdtt::ladder_result emp =
+            lsdtt::build_reference_field_ladder(field, adm, three, &src, &coord);
+        bool nan_last = !emp.windows.empty();
+        for (const auto& w : emp.windows)
+            if (w.band_centres_m.size() != 3 || !std::isnan(w.band_centres_m[2]) ||
+                !(std::fabs(w.min_band_centre_gap_m - 7.0) < 1e-6))
+                nan_last = false;
+        check(nan_last && emp.n_windows_supplied_below_floor == 0,
+              "XL14: an empty supplied band has no centre and does not trip "
+              "the floor");
+
+        lsdtt::ladder_request wrong = sr;
+        wrong.supplied_breaks = {{7, {5.5}}};
+        bool threw = false;
+        try { (void)lsdtt::build_reference_field_ladder(field, adm, wrong, &src, &coord); }
+        catch (const std::invalid_argument& e)
+        {
+            threw = std::string(e.what()).find("source_id 0") != std::string::npos;
+        }
+        check(threw, "XL15: a channel with no supplied levels stops the run, "
+                     "naming its source_id");
+
+        lsdtt::ladder_request every = sr;
+        every.supplied_breaks = {{-1, {5.5}}};
+        const lsdtt::ladder_result ev =
+            lsdtt::build_reference_field_ladder(field, adm, every, &src, &coord);
+        check(ev.n_windows_supplied == static_cast<std::int64_t>(ev.windows.size()),
+              "XL16: source_id -1 supplies every channel");
+    }
+}
+
 void run_slope_dependent_ev_checks()
 {
     std::cout << "\n--- slope-dependent E_v (7d) ---\n";
@@ -2316,7 +3188,7 @@ void run_slope_dependent_ev_checks()
             ad[i]  = 1.0f;
             cdv[i] = static_cast<float>(c * cell);
             // Gentle over the first half of the channel, steep over the second.
-            sd[i]  = (c < n_cols / 2) ? 4.0f : 25.0f;
+            sd[i]  = (c < n_cols / 2) ? 0.07f : 0.47f;   // gradient, m/m
         }
     }
 
@@ -2337,7 +3209,7 @@ void run_slope_dependent_ev_checks()
         lsdtt::vertical_accuracy_choice::slope_dependent;
     req.vertical_accuracy_gentle_metres = 2.0;
     req.vertical_accuracy_steep_metres  = 4.0;
-    req.vertical_accuracy_break_degrees = 11.31;
+    req.vertical_accuracy_break_gradient = 0.20;
 
     const lsdtt::ladder_result res = lsdtt::build_reference_field_ladder(
         field, admitted, req, &src, &coord, &slope);
@@ -2684,6 +3556,33 @@ int main(int argc, char* argv[])
         if (argc == 2 && std::string(argv[1]) == "--perona-malik")
         {
             run_perona_malik_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 3 && std::string(argv[1]) == "--cross-section-levels")
+        {
+            run_cross_section_levels_checks(argv[2]);
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--floodplain-thresholds")
+        {
+            run_floodplain_threshold_checks();
+            std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
+                      << " checks passed\n"
+                      << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";
+            return g_n_failed == 0 ? 0 : 1;
+        }
+
+        if (argc == 2 && std::string(argv[1]) == "--channel-order-swath")
+        {
+            run_channel_order_and_swath_checks();
             std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks
                       << " checks passed\n"
                       << "RESULT: " << (g_n_failed == 0 ? "PASS" : "FAIL") << "\n";

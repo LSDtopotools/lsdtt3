@@ -1,0 +1,16 @@
+# fill_admitted_holes: a strict relief admission (1 m over 20 m) on the
+# linear-range surface leaves one enclosed gap; filled, the admitted count
+# rises from 11966 to 11967 cells.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: fah
+
+n_threads: 1
+write_output_format: gtiff
+
+admission_algorithm_choice: relief
+relief_window_radius_metres: 20
+max_relief_metres: 1.0
+threshold_contributing_pixels: 50
+fill_admitted_holes: true

@@ -982,8 +982,16 @@ lsdtt_smoothed_cdf compute_smoothed_cdf(
 // =============================================================================
 lsdtt_qq_data compute_qq(
     const std::vector<double>& valid_values,
-    std::size_t                n_points)
+    std::size_t                n_points,
+    double                     lower_percentile,
+    double                     upper_percentile)
 {
+    if (!(lower_percentile >= 0.0 && lower_percentile < upper_percentile &&
+          upper_percentile <= 100.0))
+        throw std::invalid_argument(
+            "lsdtt::compute_qq: percentiles must satisfy "
+            "0 <= lower < upper <= 100");
+
     lsdtt_qq_data out;
     if (valid_values.empty() || n_points < 2) return out;
 
@@ -1007,13 +1015,14 @@ lsdtt_qq_data compute_qq(
         out.data_quantile.push_back(dq);
     }
 
-    // Fit a straight reference line through the IQR of the QQ cloud.
-    // Both vectors are already sorted, so Q25/Q75 can be read directly
-    // via linear interpolation of the sorted sequence.
-    const double z25 = compute_percentile(out.standard_normal_variate, 25.0);
-    const double z75 = compute_percentile(out.standard_normal_variate, 75.0);
-    const double q25 = compute_percentile(out.data_quantile,           25.0);
-    const double q75 = compute_percentile(out.data_quantile,           75.0);
+    // Fit a straight reference line through two percentiles of the QQ cloud
+    // (the IQR by default). Both vectors are already sorted, so the
+    // percentiles can be read directly via linear interpolation of the sorted
+    // sequence.
+    const double z25 = compute_percentile(out.standard_normal_variate, lower_percentile);
+    const double z75 = compute_percentile(out.standard_normal_variate, upper_percentile);
+    const double q25 = compute_percentile(out.data_quantile,           lower_percentile);
+    const double q75 = compute_percentile(out.data_quantile,           upper_percentile);
 
     const double dz = z75 - z25;
     const double slope     = (dz == 0.0) ? 0.0 : (q75 - q25) / dz;

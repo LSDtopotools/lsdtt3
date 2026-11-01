@@ -16,6 +16,9 @@
 //   channel_candidates - multiscale curvature persistence + Hessian elongation
 //   find_drains        - Frangi ridge/valley filter for narrow drainage ditches
 //   relief_ratio       - local relief ratio at two moving-window radii
+//   find_risers        - short steep steps between gentler surfaces (terrace
+//                        risers, shorelines, scarps) as open line segments
+//                        with a step height
 //
 // Usage:
 //   lsdtt-feature-finder <path> <parameter_file>
@@ -26,7 +29,9 @@
 // -----------------------------------------------------------------------------
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -47,6 +52,9 @@
 #include "../src/cpu/lsdtt_raster_feature_finder_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_skeleton_graph_cpu.hpp"
+#include "../src/cpu/lsdtt_riser_finder_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_spectral_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
@@ -183,7 +191,7 @@ int main(int argc, char* argv[])
         "relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
         "flow_road_discrimination, path_opening, structure_tensor, diffusion, "
         "ridge_lines, track_spacing, extract_roads, extract_roads_smooth, "
-        "roughness, thin_lines.",
+        "roughness, thin_lines, find_risers.",
         "General", "param", ""};
 
     int_default_map["n_threads"] = 0;
@@ -1368,6 +1376,245 @@ int main(int argc, char* argv[])
         "Output: <write_fname>_diffused.<ext>.",
         "Coherence-enhancing diffusion", "switch", ""};
 
+    // --- Riser finder (find_risers) ---
+    // Moved here from lsdtt-flat-surface-finder's slope-break block: risers are a morphometric question with
+    // no channel in it. Same machinery, riser_ prefix like valley_ and road_.
+    string_default_map["riser_search_mask_fname"] = "";
+    help_map["riser_search_mask_fname"] = {"string","",
+        "Raster restricting where risers are looked for (cells > 0.5).",
+        "Empty (default) = every valid DEM cell. Typically the flat mask from "
+        "lsdtt-flat-surface-finder, so risers are only sought between "
+        "surfaces. Must be on the DEM grid. Gap-closing bridges may cross "
+        "ground outside the mask - a road cut out of it is exactly the gap a "
+        "riser needs closing across.",
+        "Riser finder (find_risers)", "param", ""};
+
+    string_default_map["riser_edge_metric"] = "vertical_excess_curvature";
+    help_map["riser_edge_metric"] = {"string","vertical_excess_curvature",
+        "Edge field the riser lines are drawn on: vertical_excess_curvature, "
+        "curvedness, maximum_curvature or multidirectional_hillshade.",
+        "All are high on a riser and low on a tread. The first three come from "
+        "the polyfit (riser_polyfit_lambda_metres): vertical_excess_curvature "
+        "is k_v - k_min, curvedness sqrt((k_max^2 + k_min^2) / 2), "
+        "maximum_curvature |k_max|. multidirectional_hillshade is the mean "
+        "hillshade over multidirectional_hillshade_n_directions azimuths, "
+        "negated so steep is high (3x3 on the DEM, no polyfit). Whichever is "
+        "chosen goes through the same threshold, skeleton and step-height "
+        "filter, so a gully wall with no tread either side is still dropped.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["multidirectional_hillshade_n_directions"] = 8;
+    help_map["multidirectional_hillshade_n_directions"] = {"int","8",
+        "Number of evenly spaced azimuths for riser_edge_metric "
+        "multidirectional_hillshade.",
+        "Same meaning as in lsdtt-raster-preprocessing.",
+        "Riser finder (find_risers)", "param", "riser_edge_metric"};
+
+    float_default_map["riser_polyfit_lambda_metres"] = 100.0f;
+    help_map["riser_polyfit_lambda_metres"] = {"float","100",
+        "Polyfit half-wavelength (m) for the polyfit edge metrics "
+        "(riser_edge_metric), and the default step window.",
+        "Larger values smooth more and move the detected line further off the "
+        "step itself; the step window follows it (riser_step_window_radius_metres).",
+        "Riser finder (find_risers)", "param", ""};
+
+    string_default_map["riser_vec_adaptive_method"] = "mean_std";
+    help_map["riser_vec_adaptive_method"] = {"string","mean_std",
+        "Adaptive threshold applied to the edge field (riser_edge_metric): "
+        "mean_std, mean or gaussian.",
+        "mean_std: foreground where the field exceeds the local mean plus "
+        "riser_vec_adaptive_std_factor local standard deviations over the "
+        "block, in the field's own units (the standard deviation floored at "
+        "1/255 of the field's range, so a smooth tread's noise does not "
+        "pass). mean / gaussian: the field rescaled "
+        "to 0-255 grey levels between its minimum and maximum, foreground "
+        "above the local box / Gaussian mean minus riser_vec_adaptive_C "
+        "(cv::adaptiveThreshold). With a heavy upper tail the rescaling "
+        "squeezes the treads into a few grey levels and 'above the local mean' "
+        "picks up noise across them, which breaks risers into short pieces.",
+        "Riser finder (find_risers)", "param", ""};
+
+    float_default_map["riser_vec_adaptive_std_factor"] = 0.5f;
+    help_map["riser_vec_adaptive_std_factor"] = {"float","0.5",
+        "Local standard deviations above the local mean for the mean_std "
+        "threshold.",
+        "Larger is stricter.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
+
+    int_default_map["riser_vec_adaptive_block_size_pixels"] = 51;
+    help_map["riser_vec_adaptive_block_size_pixels"] = {"int","51",
+        "Neighbourhood block size (pixels) for adaptive thresholding.",
+        "Must be odd and >= 3. Larger than a riser's width, smaller than the "
+        "spacing between risers.",
+        "Riser finder (find_risers)", "param", ""};
+
+    float_default_map["riser_vec_adaptive_C"] = 0.0f;
+    help_map["riser_vec_adaptive_C"] = {"float","0.0",
+        "Offset (grey levels) for the mean and gaussian thresholds.",
+        "In grey levels of the field rescaled to 0-255 between its minimum and "
+        "maximum, rounded up to an integer: foreground where grey level > "
+        "local mean - ceil(C). Negative = stricter; any C in (-1, 0] acts as "
+        "0. Not used by mean_std.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
+
+    float_default_map["riser_vec_adaptive_gaussian_sigma"] = 0.0f;
+    help_map["riser_vec_adaptive_gaussian_sigma"] = {"float","0.0",
+        "Sigma (pixels) of an optional Gaussian pre-blur before the mean and "
+        "gaussian thresholds.",
+        "0 = no blur. Applied to the 8-bit image; not used by mean_std.",
+        "Riser finder (find_risers)", "param", "riser_vec_adaptive_method"};
+
+    float_default_map["riser_closing_radius_metres"] = 0.0f;
+    help_map["riser_closing_radius_metres"] = {"float","0",
+        "Closing radius (m) applied to the thresholded mask before thinning.",
+        "Seals small gaps in the detected regions. 0 = disabled.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["riser_binary_min_component_pixels"] = 1;
+    help_map["riser_binary_min_component_pixels"] = {"int","1",
+        "Minimum component size (pixels) kept in the thresholded mask.",
+        "Applied before thinning. 1 = keep all.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["riser_max_spur_pixels"] = 10;
+    help_map["riser_max_spur_pixels"] = {"int","10",
+        "Longest endpoint-rooted spur (pixels) pruned from the skeleton.",
+        "0 = no spur pruning. Pruning also trims this much off every free "
+        "end, so gaps open by about twice this before gap closing sees them.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["riser_max_terminal_loop_pixels"] = 10;
+    help_map["riser_max_terminal_loop_pixels"] = {"int","10",
+        "Longest terminal loop (pixels) pruned from the skeleton.",
+        "0 = no loop pruning.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["riser_min_component_pixels"] = 1;
+    help_map["riser_min_component_pixels"] = {"int","1",
+        "Minimum skeleton component size (pixels) kept after pruning.", "",
+        "Riser finder (find_risers)", "param", ""};
+
+    string_default_map["riser_gap_closing_algorithm_choice"] = "none";
+    help_map["riser_gap_closing_algorithm_choice"] = {"string","none",
+        "How broken risers are joined: none or astar.",
+        "astar routes a least-cost bridge along the contour between two "
+        "skeleton endpoints within riser_connect_search_radius_metres whose "
+        "elevations differ by at most riser_connect_elevation_tolerance_metres.",
+        "Riser finder (find_risers)", "param", ""};
+
+    float_default_map["riser_connect_search_radius_metres"] = 200.0f;
+    help_map["riser_connect_search_radius_metres"] = {"float","200",
+        "Longest straight-line gap (m) an astar bridge may close.", "",
+        "Riser finder (find_risers)", "param", "riser_gap_closing_algorithm_choice"};
+
+    float_default_map["riser_connect_elevation_tolerance_metres"] = 2.0f;
+    help_map["riser_connect_elevation_tolerance_metres"] = {"float","2",
+        "Largest elevation difference (m) between two bridged endpoints.",
+        "Also the contour band the bridge is routed in. Keep it below the "
+        "smallest riser height, or a bridge can join risers at different "
+        "heights.",
+        "Riser finder (find_risers)", "param", "riser_gap_closing_algorithm_choice"};
+
+    float_default_map["riser_connect_corridor_half_width_pixels"] = 12.0f;
+    help_map["riser_connect_corridor_half_width_pixels"] = {"float","12",
+        "Half-width (pixels) of the corridor an astar bridge is routed in.", "",
+        "Riser finder (find_risers)", "param", "riser_gap_closing_algorithm_choice"};
+
+    bool_default_map["riser_connect_same_component"] = false;
+    help_map["riser_connect_same_component"] = {"bool","false",
+        "Allow bridges between two endpoints of the same skeleton component.",
+        "Default false: only between different components.",
+        "Riser finder (find_risers)", "param", "riser_gap_closing_algorithm_choice"};
+
+    float_default_map["riser_step_window_radius_metres"] = 0.0f;
+    help_map["riser_step_window_radius_metres"] = {"float","0",
+        "Step window d (m) for the step height across each segment.",
+        "step = |2 dz(d) - dz(2d)|, dz(r) the elevation difference between r "
+        "either side along the normal: 0 on any planar slope, the step H "
+        "across a riser between two treads of the same tilt. 0 (default) = "
+        "half riser_polyfit_lambda_metres, at least three cells: the line "
+        "sits on the curvature maximum, which the polyfit moves off the step, "
+        "and d must reach past it to both treads.",
+        "Riser finder (find_risers)", "param", ""};
+
+    float_default_map["riser_min_step_height_metres"] = 1.0f;
+    help_map["riser_min_step_height_metres"] = {"float","1",
+        "Segments with a smaller median step height (m) are dropped.",
+        "Without a height floor an adaptive threshold finds a line in any "
+        "noise.",
+        "Riser finder (find_risers)", "param", ""};
+
+    int_default_map["riser_min_segment_pixels"] = 5;
+    help_map["riser_min_segment_pixels"] = {"int","5",
+        "Segments with fewer pixels are dropped.", "",
+        "Riser finder (find_risers)", "param", ""};
+
+    bool_default_map["write_riser_centreline_raster"] = true;
+    help_map["write_riser_centreline_raster"] = {"bool","true",
+        "Write the kept riser segments as a 1/0 raster.",
+        "Output: <write_fname>_riser_centreline.<ext>. Feed it to "
+        "lsdtt-fluvial-surfaces riser_mask_fname.",
+        "Riser finder (find_risers)", "switch", ""};
+
+    bool_default_map["write_riser_segments"] = true;
+    help_map["write_riser_segments"] = {"bool","true",
+        "Write the kept riser segments as a line layer.",
+        "Output: <write_fname>_riser_segments.<fgb|gpkg>. Fields: segment_id, "
+        "n_pixels, length_m, step_height_m (median step), face_gradient "
+        "(median steepest gradient across the riser, m/m, as the grid "
+        "resolves it), mean_elevation_m, is_loop. Risers rarely close: these "
+        "are open lines, not polygons.",
+        "Riser finder (find_risers)", "switch", ""};
+
+    bool_default_map["write_riser_endpoints"] = false;
+    help_map["write_riser_endpoints"] = {"bool","false",
+        "Write the free ends of the kept riser segments as a point layer.",
+        "Output: <write_fname>_riser_endpoints.<fgb|gpkg>. Fields: row, col, "
+        "elevation_m.",
+        "Riser finder (find_risers)", "switch", ""};
+
+    bool_default_map["write_riser_diagnostic_rasters"] = false;
+    help_map["write_riser_diagnostic_rasters"] = {"bool","false",
+        "Write the riser finder's intermediate rasters.",
+        "Outputs: <write_fname>_riser_edge_field (the riser_edge_metric field), "
+        "_riser_adaptive_binary, _riser_skeleton and, under astar, "
+        "_riser_gap_closing (pixels added by bridges).",
+        "Riser finder (find_risers)", "switch", ""};
+
+    // Mapped terrace edges to score the detected risers against (the line
+    // counterpart of lsdtt-fluvial-surfaces mapped_surfaces_fname).
+    string_default_map["mapped_risers_fname"] = "";
+    help_map["mapped_risers_fname"] = {"string","",
+        "Mapped terrace edges / risers (lines; gpkg, fgb, shp) to score the "
+        "detected risers against.",
+        "Burned into the DEM grid by every cell a line touches, reprojected to "
+        "the DEM CRS. A detected riser cell counts as found when a mapped cell "
+        "lies within mapped_risers_tolerance_metres of it, and a mapped cell as "
+        "recovered when a detected cell does. Writes "
+        "<write_fname>_mapped_risers.tif (the burned lines) and "
+        "<write_fname>_mapped_riser_scores.csv: per scope the cell counts, "
+        "precision (detected cells near a mapped edge), recall (mapped cells near "
+        "a detected riser) and F1. Scope 'extent' is every valid cell inside "
+        "mapped_risers_extent_fname; scope 'search_mask' (only with "
+        "riser_search_mask_fname) is those cells inside the search mask too, "
+        "where a riser could have been found at all.",
+        "Riser finder (find_risers)", "param", ""};
+    string_default_map["mapped_risers_extent_fname"] = "";
+    help_map["mapped_risers_extent_fname"] = {"string","",
+        "Polygon(s) of the area the mapper actually surveyed.",
+        "Cells whose centre is outside are not scored, so a riser where nobody "
+        "mapped is not a false detection. Empty: the whole DEM counts as "
+        "surveyed (the log says so).",
+        "Riser finder (find_risers)", "param", "mapped_risers_fname"};
+    float_default_map["mapped_risers_tolerance_metres"] = 20.0f;
+    help_map["mapped_risers_tolerance_metres"] = {"float","20",
+        "Largest distance (m) between a detected riser cell and a mapped edge "
+        "cell for them to count as the same line.",
+        "Centre to centre. Covers the digitising error of the map and the "
+        "finder's own offset from the step (riser_polyfit_lambda_metres moves "
+        "the line off the face); two cells on a 10 m grid is a strict start.",
+        "Riser finder (find_risers)", "param", "mapped_risers_fname"};
+
     // -------------------------------------------------------------------------
     // Parse parameters
     // -------------------------------------------------------------------------
@@ -1377,6 +1624,7 @@ int main(int argc, char* argv[])
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
     lsdtt::declare_true_north_bearing_parameters(bool_default_map, help_map);
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     if (cli_args.help_requested)
     {
@@ -1629,7 +1877,8 @@ int main(int argc, char* argv[])
         feature_type != "extract_roads" &&
         feature_type != "extract_roads_smooth" &&
         feature_type != "roughness" &&
-        feature_type != "thin_lines"
+        feature_type != "thin_lines" &&
+        feature_type != "find_risers"
     )
     {
         std::cerr << "Error: unsupported feature_type '" << feature_type
@@ -1637,7 +1886,7 @@ int main(int argc, char* argv[])
                      "relief_ratio, relative_path_impact, local_median_relative_elevation, find_valleys, find_roads, "
                      "flow_road_discrimination, path_opening, structure_tensor, "
                      "diffusion, ridge_lines, track_spacing, extract_roads, "
-                     "extract_roads_smooth, roughness, thin_lines.\n";
+                     "extract_roads_smooth, roughness, thin_lines, find_risers.\n";
         return 1;
     }
 
@@ -3144,6 +3393,234 @@ int main(int argc, char* argv[])
                 loader.write_full(result.binary.get_data(), result.binary.get_meta(), o1, out_fmt);
                 std::cout << "Writing: " << o2 << "\n";
                 loader.write_full(result.blob_free.get_data(), result.blob_free.get_meta(), o2, out_fmt);
+            }
+        }
+        else if (feature_type == "find_risers")
+        {
+            lsdtt::riser_request rq;
+            lsdtt::vec_skeleton_request& vsr = rq.skeleton;
+            vsr.edge_metric = lsdtt::parse_skeleton_edge_metric(sf.at("riser_edge_metric"));
+            vsr.hillshade_n_directions      = ifs.at("multidirectional_hillshade_n_directions");
+            vsr.polyfit_lambda_metres       = static_cast<double>(ff.at("riser_polyfit_lambda_metres"));
+            vsr.adaptive_method             = sf.at("riser_vec_adaptive_method");
+            vsr.adaptive_std_factor         = static_cast<double>(ff.at("riser_vec_adaptive_std_factor"));
+            vsr.adaptive_block_size         = ifs.at("riser_vec_adaptive_block_size_pixels");
+            vsr.adaptive_C                  = static_cast<double>(ff.at("riser_vec_adaptive_C"));
+            vsr.adaptive_gaussian_sigma     = static_cast<double>(ff.at("riser_vec_adaptive_gaussian_sigma"));
+            vsr.closing_radius_metres       = static_cast<double>(ff.at("riser_closing_radius_metres"));
+            vsr.binary_min_component_pixels = ifs.at("riser_binary_min_component_pixels");
+            vsr.spur_max_pixels             = ifs.at("riser_max_spur_pixels");
+            vsr.terminal_loop_max_pixels    = ifs.at("riser_max_terminal_loop_pixels");
+            vsr.min_component_pixels        = ifs.at("riser_min_component_pixels");
+            vsr.elevation_connect.search_radius_metres =
+                static_cast<double>(ff.at("riser_connect_search_radius_metres"));
+            vsr.elevation_connect.elevation_tolerance_metres =
+                static_cast<double>(ff.at("riser_connect_elevation_tolerance_metres"));
+            vsr.elevation_connect.corridor_half_width_pixels =
+                static_cast<double>(ff.at("riser_connect_corridor_half_width_pixels"));
+            vsr.elevation_connect.connect_same_component =
+                bf.at("riser_connect_same_component");
+            rq.gap_closing = lsdtt::parse_riser_gap_closing_choice(
+                sf.at("riser_gap_closing_algorithm_choice"));
+            rq.step_window_radius_metres =
+                static_cast<double>(ff.at("riser_step_window_radius_metres"));
+            rq.min_step_height_metres =
+                static_cast<double>(ff.at("riser_min_step_height_metres"));
+            rq.min_segment_pixels = ifs.at("riser_min_segment_pixels");
+            rq.n_threads          = n_threads;
+            const lsdtt::vector_output_format vec_fmt =
+                lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
+
+            const lsdtt::lsdtt_raster_meta& meta = dem.get_meta();
+            lsdtt::lsdtt_raster_cpu search_mask;   // empty = every valid cell
+            if (!sf.at("riser_search_mask_fname").empty())
+            {
+                const std::string path =
+                    pp.add_read_path_if_needed(sf.at("riser_search_mask_fname"));
+                std::cout << "Loading riser search mask: " << path << "\n";
+                lsdtt::lsdtt_data_loader mask_loader;
+                mask_loader.open_raster(path);
+                search_mask = lsdtt::lsdtt_raster_cpu(mask_loader);
+                const lsdtt::lsdtt_raster_meta& mm = search_mask.get_meta();
+                if (mm.n_rows != meta.n_rows || mm.n_cols != meta.n_cols)
+                    throw std::runtime_error(
+                        "riser_search_mask_fname is " + std::to_string(mm.n_rows) +
+                        "x" + std::to_string(mm.n_cols) + " but the DEM is " +
+                        std::to_string(meta.n_rows) + "x" +
+                        std::to_string(meta.n_cols));
+                // Cells outside the mask's own valid area are not searched.
+                std::vector<float> md(search_mask.get_data().size(), 0.0f);
+                for (std::size_t i = 0; i < md.size(); ++i)
+                    if (search_mask.get_mask()[i] && search_mask.get_data()[i] > 0.5f)
+                        md[i] = 1.0f;
+                search_mask = lsdtt::lsdtt_raster_cpu(
+                    std::move(md), std::vector<uint8_t>(dem.get_mask()), meta);
+            }
+
+            // Mapped terrace edges are burned BEFORE the finder runs, so a bad
+            // file fails fast.
+            lsdtt::lsdtt_raster_cpu mapped_risers;
+            std::vector<std::uint8_t> mapped_scored;
+            const bool score_mapped = !sf.at("mapped_risers_fname").empty();
+            if (score_mapped)
+            {
+                const std::string mp =
+                    pp.add_read_path_if_needed(sf.at("mapped_risers_fname"));
+                std::cout << "Loading mapped risers: " << mp << "\n";
+                mapped_risers = lsdtt::rasterise_polylines(dem, mp);
+                mapped_scored.assign(dem.get_mask().begin(), dem.get_mask().end());
+                if (!sf.at("mapped_risers_extent_fname").empty())
+                {
+                    const std::string ep =
+                        pp.add_read_path_if_needed(sf.at("mapped_risers_extent_fname"));
+                    const lsdtt::lsdtt_raster_cpu ext = lsdtt::rasterise_polygons(
+                        dem, ep, lsdtt::polygon_rasterise_rule::majority_coverage);
+                    for (std::size_t i = 0; i < mapped_scored.size(); ++i)
+                        if (!(ext.get_data()[i] > 0.5f)) mapped_scored[i] = 0;
+                    std::cout << "Surveyed extent      : " << ep << "\n";
+                }
+                else
+                    std::cout << "Surveyed extent      : none given, the whole DEM "
+                                 "counts as surveyed\n";
+            }
+
+            std::cout << "\n--- Riser finder ---\n";
+            std::cout << "Polyfit lambda       : " << vsr.polyfit_lambda_metres << " m\n";
+            std::cout << "Gap closing          : "
+                      << sf.at("riser_gap_closing_algorithm_choice") << "\n";
+            std::cout << "Min step height      : " << rq.min_step_height_metres << " m\n";
+
+            const lsdtt::riser_result result =
+                lsdtt::find_risers(dem, search_mask, rq);
+
+            std::cout << "Segments found       : " << result.n_segments_found
+                      << " (dropped " << result.n_dropped_short << " short, "
+                      << result.n_dropped_low_step << " below the step floor)\n"
+                      << "Risers kept          : " << result.segments.size() << "\n";
+
+            if (score_mapped)
+            {
+                const double tol =
+                    static_cast<double>(ff.at("mapped_risers_tolerance_metres"));
+                std::vector<std::pair<std::string, lsdtt::riser_mapped_score>> rows;
+                rows.emplace_back("extent", lsdtt::score_risers_against_mapped(
+                    result.centreline, mapped_risers, mapped_scored, tol, n_threads));
+                if (!search_mask.get_data().empty())
+                {
+                    std::vector<std::uint8_t> in_search(mapped_scored);
+                    for (std::size_t i = 0; i < in_search.size(); ++i)
+                        if (!(search_mask.get_data()[i] > 0.5f)) in_search[i] = 0;
+                    rows.emplace_back("search_mask", lsdtt::score_risers_against_mapped(
+                        result.centreline, mapped_risers, in_search, tol, n_threads));
+                }
+
+                const std::string mo = pp.make_output_path("_mapped_risers" + output_ext);
+                std::cout << "Writing: " << mo << "\n";
+                loader.write_full(mapped_risers.get_data(), mapped_risers.get_meta(),
+                                  mo, out_fmt);
+
+                const std::string co = pp.make_output_path("_mapped_riser_scores.csv");
+                std::ofstream csv(co);
+                if (!csv)
+                    throw std::runtime_error("cannot write " + co);
+                csv << "scope,tolerance_m,cell_size_m,n_scored_cells,n_detected,"
+                       "n_detected_matched,n_mapped,n_mapped_matched,precision,"
+                       "recall,f1\n";
+                for (const auto& [scope, s] : rows)
+                {
+                    csv << scope << "," << s.tolerance_m << "," << meta.cell_size << ","
+                        << s.n_scored_cells << "," << s.n_detected << ","
+                        << s.n_detected_matched << "," << s.n_mapped << ","
+                        << s.n_mapped_matched << "," << s.precision << ","
+                        << s.recall << "," << s.f1 << "\n";
+                    std::cout << "Mapped risers (" << scope << ", " << tol
+                              << " m): precision " << s.precision << " ("
+                              << s.n_detected_matched << "/" << s.n_detected
+                              << " cells), recall " << s.recall << " ("
+                              << s.n_mapped_matched << "/" << s.n_mapped
+                              << " cells), F1 " << s.f1 << "\n";
+                }
+                std::cout << "Writing: " << co << "\n";
+            }
+
+            if (bf.at("write_riser_centreline_raster"))
+            {
+                const std::string o = pp.make_output_path("_riser_centreline" + output_ext);
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(result.centreline.get_data(),
+                                  result.centreline.get_meta(), o, out_fmt);
+            }
+            if (bf.at("write_riser_segments"))
+            {
+                const std::string o = pp.make_output_path(
+                    "_riser_segments" + lsdtt::output_extension(vec_fmt));
+                std::cout << "Writing " << result.segments.size()
+                          << " riser segments: " << o << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"segment_id", "n_pixels", "length_m",
+                                      "step_height_m", "face_gradient",
+                                      "mean_elevation_m", "is_loop"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::double_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type};
+                loader.begin_vector_write(o, "riser_segments", schema,
+                                          meta.crs_wkt, vec_fmt, false);
+                for (const lsdtt::riser_segment& rs : result.segments)
+                    loader.write_line(rs.polyline, {
+                        static_cast<std::int64_t>(rs.id),
+                        static_cast<std::int64_t>(rs.n_pixels),
+                        rs.length_m, rs.step_height_m, rs.face_gradient,
+                        rs.mean_elevation_m,
+                        static_cast<std::int64_t>(rs.is_loop ? 1 : 0)});
+                loader.finish_vector_write();
+            }
+            if (bf.at("write_riser_endpoints"))
+            {
+                const lsdtt::skeleton_node_result nodes =
+                    lsdtt::classify_skeleton_nodes(result.centreline);
+                const std::string o = pp.make_output_path(
+                    "_riser_endpoints" + lsdtt::output_extension(vec_fmt));
+                std::cout << "Writing " << nodes.endpoints.size()
+                          << " riser endpoints: " << o << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"row", "col", "elevation_m"};
+                schema.field_types = {
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::int64_type,
+                    lsdtt::lsdtt_vector_field_type::double_type};
+                loader.begin_vector_write(o, "riser_endpoints", schema,
+                                          meta.crs_wkt, vec_fmt, false);
+                for (const lsdtt::skeleton_node& nd : nodes.endpoints)
+                {
+                    const lsdtt::lsdtt_xy xy =
+                        lsdtt::cell_center_from_row_col(meta, nd.row, nd.col);
+                    loader.write_point(xy.x, xy.y, {
+                        static_cast<std::int64_t>(nd.row),
+                        static_cast<std::int64_t>(nd.col),
+                        static_cast<double>(dem.get_data()[
+                            static_cast<std::size_t>(nd.row) * meta.n_cols + nd.col])});
+                }
+                loader.finish_vector_write();
+            }
+            if (bf.at("write_riser_diagnostic_rasters"))
+            {
+                auto write = [&](const lsdtt::lsdtt_raster_cpu& r, const std::string& suffix)
+                {
+                    if (r.get_data().empty()) return;
+                    const std::string o = pp.make_output_path(suffix + output_ext);
+                    std::cout << "Writing: " << o << "\n";
+                    loader.write_full(r.get_data(), r.get_meta(), o, out_fmt);
+                };
+                write(result.skeleton.edge_field, "_riser_edge_field");
+                write(result.skeleton.adaptive_binary, "_riser_adaptive_binary");
+                write(result.skeleton.skeleton, "_riser_skeleton");
+                if (rq.gap_closing == lsdtt::riser_gap_closing_choice::astar)
+                    write(result.gap_closing_mask, "_riser_gap_closing");
             }
         }
         else

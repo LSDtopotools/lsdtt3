@@ -309,11 +309,11 @@ lsdtt_smoothed_cdf compute_smoothed_cdf(
 // Columns:
 //   standard_normal_variate  - z = Phi^-^1(p_k); the x-axis of a standard QQ plot
 //   data_quantile            - empirical quantile of the input data at p_k
-//   normal_reference         - fitted normal reference line at p_k, derived by
-//                              regressing through the IQR of the QQ cloud
-//                              (Q25 and Q75 of the empirical distribution).
-//                              A perfectly normal dataset would lie exactly on
-//                              this line; deviations reveal non-normality.
+//   normal_reference         - fitted normal reference line at p_k, the straight
+//                              line through two percentiles of the QQ cloud
+//                              (by default Q25 and Q75, the IQR). A perfectly
+//                              normal dataset would lie exactly on this line;
+//                              deviations reveal non-normality.
 //
 // Plotting position: p_k = (k - 0.5) / n_points,  k = 1 ... n_points
 // Data quantile:     R type-7 linear interpolation on the sorted sample
@@ -327,9 +327,15 @@ struct lsdtt_qq_data
 
 // Quantile-quantile analysis against the standard normal distribution.
 // Returns an empty struct if valid_values is empty or n_points < 2.
+//
+// lower_percentile / upper_percentile: the two percentiles of the QQ cloud the
+// reference line is drawn through. Clubb et al. (2017) expose them; 25 / 75 is
+// the IQR. Throws std::invalid_argument unless 0 <= lower < upper <= 100.
 lsdtt_qq_data compute_qq(
     const std::vector<double>& valid_values,
-    std::size_t n_points = 100
+    std::size_t n_points = 100,
+    double      lower_percentile = 25.0,
+    double      upper_percentile = 75.0
 );
 
 // -----------------------------------------------------------------------------

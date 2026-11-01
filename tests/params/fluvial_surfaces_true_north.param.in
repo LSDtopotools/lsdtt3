@@ -6,10 +6,10 @@ write_path: __WRITE_PATH__
 write_fname: tnfs
 n_threads: 1
 write_output_format: gtiff
-fallback_admission_algorithm_choice: relief
-fallback_relief_window_radius_pixels: 3
-fallback_relief_threshold_metres: 8.0
-min_component_pixels: 10
+admission_algorithm_choice: relief
+relief_window_radius_metres: 90
+max_relief_metres: 8.0
+min_band_component_pixels: 10
 reference_field_algorithm_choice: hand
 ladder_break_algorithm_choice: jenks
 ladder_level_count: 3

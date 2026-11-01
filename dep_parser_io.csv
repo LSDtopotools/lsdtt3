@@ -1,0 +1,22 @@
+name,type,default,description,guidance,group,role,parent
+version,"0.7.1-dev, git v0.7.1-37-ga332987-dirty",citation,"test",see code output for additional algorithm citations,status,"test",
+"basin_minimum_contributing_pixels",not available,not available,not available,not available,,,
+"big_channel_threshold_contributing_pixels",not available,not available,not available,not available,,,
+"channel_mask_threshold_specific_area",not available,not available,not available,not available,,,
+"fill_before_routing",not available,not available,not available,not available,,,
+"incision_threshold_specific_area",not available,not available,not available,not available,,,
+"ladder_level_count",not available,not available,not available,not available,,,
+"ladder_reach_window_metres",not available,not available,not available,not available,,,
+"max_cap_gradient",not available,not available,not available,not available,,,
+"precision_radius_metres",not available,not available,not available,not available,,,
+"raster_is_filled",not available,not available,not available,not available,,,
+"read_fname","string","nonexistent.tif","Resolved input filename, including its extension.","Read from read_path; defaults to the parameter filename stem when omitted.","File I/O","io",""
+"read_path","string","./","Resolved directory from which input files are read.","Defaults to the directory holding the parameter file.","File I/O","io",""
+"reference_field_algorithm_choice",not available,not available,not available,not available,,,
+"smoothing_window_radius_metres",not available,not available,not available,not available,,,
+"threshold_contributing_pixels",not available,not available,not available,not available,,,
+"valley_corridor_half_width_metres",not available,not available,not available,not available,,,
+"write_band_index_raster",not available,not available,not available,not available,,,
+"write_fname","string","dep","Resolved output filename prefix (no path or extension).","Defaults to the stem of read_fname when omitted.","File I/O","io",""
+"write_path","string","./","Resolved directory to which output files are written.","Defaults to read_path when omitted.","File I/O","io",""
+"write_vector_format",not available,not available,not available,not available,,,

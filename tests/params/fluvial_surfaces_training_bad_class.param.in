@@ -1,0 +1,31 @@
+# A training class value that is neither floodplain nor terrace ('bench')
+# stops the run naming it ('terrace' and 'terrace0' are accepted: numbers are
+# ignored).
+read_path: __READ_PATH__
+read_fname: staircase_dem.tif
+write_path: __WRITE_PATH__
+write_fname: trnclass
+
+n_threads: 1
+write_output_format: gtiff
+
+fluvial_surface_algorithm_choice: ladder,clubb2017
+training_surfaces_fname: staircase_mapped_bad_class.fgb
+floodplain_second_pass_algorithm_choice: qq_upper_departure
+
+relief_window_radius_metres: 50
+max_relief_metres: 2.0
+min_band_component_pixels: 50
+ladder_break_algorithm_choice: jenks
+vertical_accuracy_metres: 0.5
+threshold_contributing_pixels: 50
+# Relief admission leaves the ground beside the channel notch out, so the
+# nearest tread-1 patches are 60 m from the channel; 100 m lets them count as
+# touching it, and the ladder's floodplain is the lowest level touching the
+# channel in each reach window.
+channel_adjacency_radius_metres: 100
+source_points_fname: staircase_sources.fgb
+
+write_surface_class_raster: true
+write_band_index_raster: true
+write_ladder_windows_csv: true

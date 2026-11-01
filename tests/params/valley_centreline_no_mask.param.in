@@ -9,7 +9,7 @@ write_fname: vc
 n_threads: 1
 write_output_format: gtiff
 
-source_points_path: __READ_PATH__/fluvsurf_sources.fgb
+source_points_fname: __READ_PATH__/fluvsurf_sources.fgb
 source_points_input_format: ogr_vector_layer
 threshold_contributing_pixels: 200
 

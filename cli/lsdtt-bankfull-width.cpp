@@ -130,9 +130,10 @@ int main(int argc, char* argv[])
     lsdtt::declare_fill_flat_resolution_parameter(string_default_map, help_map);
 
     // --- Source points ---
-    string_default_map["source_points_path"] = "";
-    help_map["source_points_path"] = {"string", "",
-        "Path to the source-point input file (exactly one point).",
+    string_default_map["source_points_fname"] = "";
+    help_map["source_points_fname"] = {"string", "",
+        "Source-point input file (exactly one point), in read_path (an "
+        "absolute path is used as given).",
         "CSV: latitude/longitude in EPSG:4326. Vector (.gpkg/.fgb): read "
         "through OGR and transformed to the raster CRS. Required. When "
         "write_channel_profile_csv is true it must resolve to a single "
@@ -229,7 +230,7 @@ int main(int argc, char* argv[])
     help_map["write_channel_profile_csv"] = {"bool", "true",
         "Write distance from source, drainage area, thalweg elevation and "
         "slope per cross section.",
-        "Requires source_points_path to resolve to exactly one source point. "
+        "Requires source_points_fname to resolve to exactly one source point. "
         "Output: <write_fname>_channel_profile.csv. Its distance and slope "
         "columns drive the Manning solve. If run_manning_widths is also set "
         "in the same run, the in-memory profile is used and "
@@ -408,7 +409,10 @@ int main(int argc, char* argv[])
     }
 
     pp.set_deprecated_aliases({
-        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"} });
+        {"minimum_bearing_window_pixels", "min_bearing_window_pixels"},
+        // 2026-10-26: the same name, and read_path resolution, as
+        // lsdtt-fluvial-surfaces and lsdtt-valley-centreline.
+        {"source_points_path", "source_points_fname"} });
     pp.set_deprecated_compatibility_aliases({
         {"cross_section_sample_points_output_format",
          {"legacy_cross_section_sample_points_write_vector_format", "write_vector_format"}},
@@ -432,9 +436,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Cross-parameter validation (before any expensive work)
     // -------------------------------------------------------------------------
-    if (sf["source_points_path"].empty())
+    if (sf["source_points_fname"].empty())
     {
-        std::cerr << "FATAL: source_points_path must be set.\n";
+        std::cerr << "FATAL: source_points_fname must be set.\n";
         return 1;
     }
     if (!bf["write_channel_profile_csv"] &&
@@ -720,7 +724,8 @@ int main(int argc, char* argv[])
     // Source points
     // -------------------------------------------------------------------------
     std::cout << "\n--- Source-point input ---\n";
-    std::cout << "Source file: " << sf["source_points_path"] << "\n";
+    std::cout << "Source file: "
+              << pp.add_read_path_if_needed(sf["source_points_fname"]) << "\n";
 
     lsdtt::lsdtt_point_input_options point_opts;
     point_opts.input_format =
@@ -741,7 +746,8 @@ int main(int argc, char* argv[])
     try
     {
         input_points = lsdtt::load_points_in_raster_crs(
-            sf["source_points_path"], routed_dem.get_meta(), point_opts);
+            pp.add_read_path_if_needed(sf["source_points_fname"]),
+            routed_dem.get_meta(), point_opts);
     }
     catch (const std::exception& e)
     {
@@ -769,7 +775,7 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: write_channel_profile_csv=true requires exactly "
                   << "one source point (a single mainstem channel). Got "
                   << source_flats.size() << " unique source points. Either "
-                  << "supply a source_points_path with one point, or set "
+                  << "supply a source_points_fname with one point, or set "
                   << "write_channel_profile_csv=false.\n";
         return 1;
     }

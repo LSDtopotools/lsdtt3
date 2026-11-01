@@ -742,11 +742,11 @@ int main(int argc, char* argv[])
 
     float_default_map["vec_adaptive_C"] = 0.0f;
     help_map["vec_adaptive_C"] = {"float","0.0",
-        "Constant subtracted from the local neighbourhood mean before VEC thresholding.",
-        "Threshold = local_mean - C. "
-        "0 = threshold at the local mean (foreground = above-average pixels). "
-        "Negative (e.g. -5) = stricter, retains only pixels well above the local mean. "
-        "Positive = looser.",
+        "Offset (grey levels) subtracted from the local neighbourhood mean before VEC thresholding.",
+        "The VEC is rescaled to 0-255 grey levels between its minimum and "
+        "maximum and C is rounded up to an integer: foreground where grey level "
+        "> local mean - ceil(C). 0 = above the local mean. Negative (e.g. -5) = "
+        "stricter; any C in (-1, 0] acts as 0. Positive = looser.",
         "VEC adaptive thresholding", "param", ""};
 
     float_default_map["vec_adaptive_gaussian_sigma"] = 0.0f;

@@ -19,7 +19,7 @@ n_threads: 1
 raster_is_filled: false
 fill_min_slope: 0.0001
 fill_flat_resolution_choice: barnes2014b_float_step
-source_points_path: __READ_PATH__/flat_valley_source.csv
+source_points_fname: __READ_PATH__/flat_valley_source.csv
 cross_section_half_length_metres: 40
 cross_section_sample_spacing_metres: 2
 bearing_window_length_metres: 30

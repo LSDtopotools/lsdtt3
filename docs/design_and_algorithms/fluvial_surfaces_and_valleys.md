@@ -136,16 +136,16 @@ next three sections say why.
 Pure morphometry. No flow routing, no channel network, no height reference — the
 program does not link against the flow layer at all.
 
-### Admission: relief, slope, or both
+### Admission: relief, gradient, or both
 
-`admission_mode` selects the test that admits a pixel:
+`admission_algorithm_choice` selects the test that admits a pixel:
 
-| mode | test |
+| choice | test |
 |---|---|
-| `relief` (default) | local relief in a moving window below `relief_threshold_metres` |
-| `slope` | gradient below `admission_slope_cap_degrees` |
-| `relief_and_slope` | both |
-| `relief_or_slope` | either |
+| `relief` (default) | local relief in a window of radius `relief_window_radius_metres` below `max_relief_metres` |
+| `gradient` | gradient (m/m) below `max_admission_gradient` |
+| `relief_and_gradient` | both |
+| `relief_or_gradient` | either |
 
 **These are not the same test and they reject different ground.** Local relief
 charges a surface for its own tilt, so a smooth terrace tread that slopes downvalley
@@ -153,21 +153,22 @@ fails a relief test while a rough but level surface passes it; a gradient cap do
 the opposite. On steep terrain the two admit nearly disjoint sets. Clubb et al.
 (2017) used gradient; the historical lsdtt3 behaviour used relief; offering both,
 and their conjunction and disjunction, is the honest resolution. Use
-`relief_or_slope` when the point is to find every candidate surface and let the
+`relief_or_gradient` when the point is to find every candidate surface and let the
 ladder in the next tool sort them out.
 
 The admission gradient is measured from a polynomial surface fitted over
-`admission_slope_window_radius_metres` rather than from a 3×3 difference, following the
-same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures pixel
-noise, and the cap has to be read at the scale of the surface being admitted. There
-is no default cap worth guessing — 5 degrees is a valley floor, 15 degrees admits
-fan and pediment — so run the census at more than one cap and report the
-sensitivity rather than defending one number.
+`admission_gradient_window_radius_metres` rather than from a 3×3 difference, following
+the same reasoning as the 2017 paper: a three-cell operator on a 30 m DEM measures
+pixel noise, and the bound has to be read at the scale of the surface being admitted.
+There is no default bound worth guessing — a gradient of 0.087 m/m is a
+valley floor, 0.27 m/m admits fan and pediment — so run the census at more
+than one bound and report the sensitivity rather than defending one number.
 
-### Choosing the threshold: CDF divergence, not the QQ plot
+### Choosing the threshold: QQ plot or CDF divergence
 
-`adaptive_relief_threshold` picks the relief threshold from the data, by finding
-where the empirical CDF diverges most from a fitted parametric distribution, and
+`relief_threshold_algorithm_choice` takes `fixed`, `cdf_divergence` or `qq_gaussian`. `qq_gaussian` is the QQ rule of Clubb et al. (2017), described under [The clubb2017 method](#the-clubb2017-method). `cdf_divergence` picks the relief bound from the
+data, by finding where the empirical CDF diverges most from a fitted parametric
+distribution, and
 writes the whole curve to `<stem>_relief_adaptive_cdf.csv` so you can see the break
 you are relying on. `relief_threshold_multiplier` scales the result.
 
@@ -190,18 +191,17 @@ source.
 
 Morphological opening and closing (`flat_opening_radius_metres`,
 `flat_closing_radius_metres`, `open_then_close`) clean the mask; components below
-`min_component_pixels` are dropped; the survivors are labelled. Optional and
-diagnostic on top of that: a break-of-slope (VEC) skeleton, and plane fitting to
-each labelled surface.
+`min_component_pixels` are dropped; the survivors are labelled. Plane fitting to
+each labelled surface is optional on top of that.
 
-Two things that were once mechanisms here are now off by default, and it is worth
-knowing why. The VEC skeleton could be used to *break* the flat mask before
-labelling (`apply_slope_breaks_to_labels`, default false), and endpoint bridging
-existed to re-close gaps in that skeleton. Both existed to stop two terrace treads
-merging into one component through a dissected riser. The band-then-label ordering
-in the next tool makes that merge impossible, so the skeleton survives as what it
-always genuinely was — a morphometric product worth having on its own — rather than
-as a repair.
+The break-of-slope (VEC) skeleton that once lived here could *break* the flat mask
+before labelling, with endpoint bridging to re-close gaps in it. Both existed to
+stop two terrace treads merging into one component through a dissected riser. The
+band-then-label ordering in the next tool makes that merge impossible, so riser
+search is now a morphometric product of its own: `lsdtt-feature-finder`
+`feature_type: find_risers`, which writes open riser segments with a step height.
+Its old keys stop the run (output switches) or warn (tuning keys) with the new
+`riser_*` name.
 
 The headline output is `<stem>_combined_flat_mask.tif`, which is
 `lsdtt-fluvial-surfaces`' `flat_mask_fname`.
@@ -212,6 +212,36 @@ The headline output is `<stem>_combined_flat_mask.tif`, which is
 
 This is where a channel becomes necessary, and where lsdtt3 departs furthest from
 the legacy implementation.
+
+### Method presets and the four stages
+
+`lsdtt-fluvial-surfaces` classifies the ground in four stages. Each stage has its own parameter, and a method preset (`fluvial_surface_algorithm_choice`) sets all of them at once.
+
+| Stage | Parameter | What it decides |
+|---|---|---|
+| 1. Admission | `admission_algorithm_choice` | Which ground is considered at all: `flat_mask`, `relief`, `gradient`, or `floodplain_thresholds` (the floodplain bounds on HAND and gradient) |
+| 2. Reference field | `reference_field_algorithm_choice` | The height the ground is measured from: `hand`, `relative_elevation` or `fitted_surface` |
+| 3. Levels | `level_algorithm_choice` | How the admitted ground is split into levels: `ladder` (breaks found in the data), `fixed_thresholds` (a floodplain bound and a terrace bound) or `supplied_levels` (read from a file) |
+| 4. Segmentation | `segmentation_algorithm_choice` | How the admitted ground becomes patches: `within_bands` or `whole_mask` |
+
+Two more stage parameters sit beside these. `channel_definition_algorithm_choice` says which pixels count as channel (`contributing_pixels`, or `stream_order` with `min_channel_stream_order`). `terrace_reference_field_algorithm_choice` says what a terrace's height is measured from (`same` as the reference field, or `swath_baseline`). The floodplain bounds are chosen by `floodplain_threshold_algorithm_choice` (`fixed` or `qq_gaussian`).
+
+The three presets set these stages as follows. The reference field is not set by a preset, so it is `hand` unless `reference_field_algorithm_choice` says otherwise.
+
+| Stage | `ladder` (default) | `clubb2017` | `cross_section_levels` |
+|---|---|---|---|
+| Admission | `flat_mask` | `floodplain_thresholds` | `flat_mask` |
+| Floodplain bounds | `fixed` | `qq_gaussian` | `fixed` |
+| Channel definition | `contributing_pixels` | `stream_order` | `contributing_pixels` |
+| Levels | `ladder` | `fixed_thresholds` | `supplied_levels` |
+| Terrace field | `same` | `swath_baseline` | `same` |
+| Segmentation | `within_bands` | `whole_mask` | `within_bands` |
+
+- `ladder` is the data-driven method described in the sections that follow. It needs a flat mask (`flat_mask_fname`, from `lsdtt-flat-surface-finder`) or the built-in relief admission.
+- `clubb2017` is the method of Clubb et al. (2017), with the bounds chosen from quantile-quantile plots. See [The clubb2017 method](#the-clubb2017-method) below.
+- `cross_section_levels` is the ladder, but with the levels read from `supplied_levels_fname`, normally the `<stem>_cross_section_levels.csv` written by `lsdtt-valley-centreline` (see below).
+
+Any stage named explicitly in the parameter file overrides the preset, so `clubb2017` with `level_algorithm_choice: ladder` bands the Clubb admission with the ladder. Several presets can run in one go by listing them comma-separated with no spaces (`ladder,clubb2017`). Each writes under `<write_fname>_<preset>`, and the comparison outputs are written as well (see [Method records and comparison outputs](#method-records-and-comparison-outputs)).
 
 ### The reference field
 
@@ -408,10 +438,10 @@ from the DEM. Leaving it at 0 disables the floor, and then every window reports
 you do. (A DEM whose vertical units are feet on a metre grid has an effective
 accuracy 3.28 times larger than it looks, and nothing in the file will tell you.)
 
-`vertical_accuracy_mode: slope_dependent` reads a gentle value below a break
-gradient and a steep value above it, because photogrammetric and InSAR DEMs degrade
+`vertical_accuracy_algorithm_choice: slope_dependent` reads a gentle value below a
+break gradient (`vertical_accuracy_break_gradient`, m/m) and a steep value above it, because photogrammetric and InSAR DEMs degrade
 on slopes — TanDEM-X relative LE90 is roughly 2 m on gentle ground and 4 m on steep,
-and one number for a raster spanning a valley floor and a 40-degree wall is wrong in
+and one number for a raster spanning a valley floor and a steep valley wall is wrong in
 both places. `E_v` is resolved **per along-channel window, not per pixel**: the floor
 constrains the separation between band *centres*, and a band centre is a property of
 a partition rather than of a place, so it has no slope of its own. Each window takes
@@ -451,8 +481,8 @@ which is pinned by a test.
 ### Classification, and where it sits relative to Clubb 2017
 
 For the `hand` field only, patches are classified as floodplain or terrace and
-written to `_surface_class.tif` and `_surface_class.csv`. `floodplain_max_height_metres`
-and `terrace_min_height_metres` are the direct descendants of the 2017 paper's single
+written to `_surface_class.tif` and `_surface_class.csv`. `max_floodplain_hand_metres`
+and `min_terrace_hand_metres` are the direct descendants of the 2017 paper's single
 "threshold height above the modern river channel", but they are **demoted from
 mechanism to optional override**: under band-then-label the ladder has already
 decided where one level ends and the next begins, and these are hard caps for cases
@@ -483,13 +513,80 @@ an island does not count as floor. About 0.2 is a reasonable starting point.
 valley floor from a neighbour across a broad col, where connectivity alone merges
 them. It defaults to **false**, because on a meandering floodplain a great deal of
 genuine valley floor has no straight line to the channel that stays inside the mask:
-on the Royalton 10 m DEM it removed 82 % of band 0 on its own with every other
+on a 10 m DEM it removed a large share of band 0 on its own with every other
 filter disabled, making the valley mask smaller than the floodplain class computed
 from the same field.
 
 Only the valley mask is affected by any of this. The band index, the labels and the
 patch table keep their holes and their speckle, because there a rise in the valley
 floor is a real observation.
+
+---
+
+### The clubb2017 method
+
+Clubb et al. (2017) classify floodplain and terrace from two per-pixel quantities, the gradient of the ground and the height above the nearest channel. Both bounds are read from the data, not set by hand, using quantile-quantile (QQ) plots. `clubb2017` implements that method with HAND as the height measure. The steps, in order:
+
+1. **Bounds from QQ plots (`floodplain_threshold_algorithm_choice: qq_gaussian`).** For each quantity, the data quantiles are compared with a Gaussian drawn through the 25th and 75th percentiles (`floodplain_qq_lower_percentile` and `floodplain_qq_upper_percentile`, the values Clubb et al. used). The bound is the lowest value at which the data rejoin that line and stay on it, to within `floodplain_qq_threshold_fraction` (0.01) of the data range. The chosen values are printed and written, with the QQ tables they came from (`<stem>_floodplain_hand_qq.csv` and `<stem>_floodplain_gradient_qq.csv`, from `write_floodplain_threshold_csv`).
+2. **Gradient bound or not (`floodplain_bound_algorithm_choice`).** `hand_and_gradient` applies both bounds, as in the paper. `hand_only` applies the HAND bound alone. `auto` (the default) measures the fraction of the DEM's floodplain-gradient cells below `low_relief_max_gradient` (0.1 m/m). When that fraction is more than `low_relief_min_area_fraction` (0.8), `auto` uses `hand_only`; otherwise it uses `hand_and_gradient`. The switch is for low-relief DEMs, where most ground already passes a gradient test. The measured fraction and the branch taken are written to the method record.
+3. **Admission.** A cell is admitted when its HAND is below the HAND bound (`max_floodplain_hand_metres`, once chosen) and, when the gradient test is in use, its gradient is below the gradient bound. The gradient is a polynomial-fit gradient over a window of radius `floodplain_gradient_window_radius_metres` (0 means three cells). See [Choosing a method](#choosing-a-method) for how to set that window.
+4. **Floodplain.** Admitted cells form 8-connected components. Components smaller than `min_component_pixels` are dropped. A component is kept only if it contains a channel pixel of the in-scope channel. That channel contact is what makes the patch a floodplain rather than any low, flat patch. Holes are filled (`fill_floodplain_holes`, which is on under `clubb2017`).
+5. **Terraces.** Terraces are admitted ground that is not floodplain, passes the gradient test (when in use), and has a terrace field above the HAND bound: `terrace_field > max_floodplain_hand_metres + min_terrace_height_above_floodplain_metres`. A `max_terrace_height_metres` above zero also caps it. Terraces need no channel contact. Under `clubb2017` the terrace field is `swath_baseline`: the relief above a baseline taken from the channel. Terraces further than `swath_half_width_metres` (500 m by default) from the channel are not measured. The terrace field can be written as `<stem>_terrace_field.tif` (`write_terrace_field_raster`).
+6. **Optional second pass (`floodplain_second_pass_algorithm_choice: qq_upper_departure`, default `none`).** This is not part of Clubb et al. (2017). The QQ plot of HAND is taken over the first-pass floodplain cells, against the same Gaussian line, and the highest quantile at which the data still agree with it is the second bound. The floodplain is rebuilt with that bound, with the same gradient bound, channel contact and size filter, and its holes are always filled. Terraces are then measured from the second-pass bound. The first pass is kept (`<stem>_floodplain_first_pass_mask.tif` and the first-pass polygons), and the second QQ table is `<stem>_floodplain_hand_qq_second_pass.csv`. The option is aimed at wide flats that stand above the valley floor, such as fans at tributary mouths.
+
+#### Differences from the LSDTopoTools2 legacy code
+
+The method descends from the LSDTopoTools2 floodplain and terrace code (LSDFloodplain and LSDTerrace). lsdtt3 departs from it in two deliberate places:
+
+- **Terrace window.** The legacy terrace window could overlap the floodplain whenever its minimum terrace height was below the floodplain bound. In lsdtt3 terraces start above the floodplain bound, so no cell is both.
+- **Channel seeds.** Only the pixels of the in-scope channel seed the floodplain (the channel selected by `channel_definition_algorithm_choice`), not every channel pixel of any Strahler order.
+
+The legacy `minimum_terrace_height` is `min_terrace_height_above_floodplain_metres` here, and the second pass (`qq_upper_departure`) is new. This page does not catalogue every other legacy behaviour.
+
+### The ladder: floodplain, unresolved windows and clamping
+
+The ladder (`level_algorithm_choice: ladder`) finds its breaks in the data, as described under "Finding the breaks" and "Reach-relative windowing". Three details matter when reading its output.
+
+- **Which level is the floodplain.** The floodplain is the lowest level that touches an in-scope channel, found in each reach window (`ladder_reach_window_metres`). Terraces are the levels above it.
+- **Unresolved windows.** A window where the ladder finds no admissible levels is unresolved. `ladder_unresolved_window_algorithm_choice` decides what it bands with. `nearest_resolved` (the default) borrows the breaks of the nearest resolved window on the same channel, so band numbers mean a comparable HAND range along the channel. `single_band` bands the whole window as one level, so the floodplain there can span a wide HAND range. In either case the window is still reported as unresolved in `<stem>_ladder_windows.csv`, and `breaks_from_window_m` names the window that lent its breaks. Read that file first.
+- **Negative HAND.** A cell whose flow reaches a channel cell higher than itself has a negative HAND. This comes from fill and flat-resolution artefacts. Those cells are set to 0 before banding and counted (`negative_hand_cells_set_to_0` in the method record). The antimode break finder works on the logarithm of the field, so it needs non-negative values.
+- **Patch clustering check.** `write_patch_level_clusters_csv` (on by default) tests whether the ladder's floodplain and terrace patches cluster in HAND. Each classified patch is one value, its median HAND, and the sorted values are split into clusters wherever neighbours are at least the required gap. The result is `<stem>_patch_level_clusters.csv`.
+
+### Training polygons: supervised thresholds
+
+`training_surfaces_fname` takes polygons (GeoPackage, FlatGeobuf or shapefile) of floodplain and terrace that you have drawn where you are sure of the surface, usually on a hillshade. The cells inside them are used to choose thresholds. `training_surfaces_layer_name` and `training_surfaces_class_field_name` (default `class`) select the layer and the class field.
+
+- **Classes.** `floodplain` or `fp` is floodplain. `terrace`, `terraceN`, `tN` or `terrace N` is terrace. Case and spaces are ignored, and the terrace number is ignored for the thresholds: every terrace polygon is simply terrace.
+- **Summary of each polygon.** Each polygon is summarised by its median field value and its core, the cells between its own 25th and 75th percentiles. A few cells off the surface, such as a gully crossed while drawing, therefore do not move it. The 10th and 90th percentiles are reported too.
+- **Flagging.** A polygon whose interquartile range exceeds both `training_spread_factor` (3.0) times the required gap and `training_max_relative_spread` (0.25) times its median is flagged as a sloping surface. It still counts as terrace for the floodplain and terrace bounds, but takes no part in the level breaks. The relative limit keeps high terraces, whose heights vary more in metres, as single levels.
+- **Thresholds.** Each threshold is the value that best separates the trimmed cores of the two populations it divides, by Youden's J (balanced accuracy). On a plateau it is the midpoint of the optimal interval. A population with fewer than `min_training_cells_per_class` (20) core cells in a window does not take part in that window. The window then falls back to the fit over all training cells, and if that is also too small, to the data-chosen threshold.
+
+Hand-drawn polygons do not separate HAND cleanly, so treat the chosen thresholds as something to check against the polygons. The cells used for training are the same cells a score against those polygons would use, so the two are not independent.
+
+### Mapped floodplains and terraces
+
+`mapped_surfaces_fname` takes mapped floodplain and terrace polygons (GeoPackage, FlatGeobuf or shapefile) to score each method against. `mapped_surfaces_layer_name` and `mapped_surfaces_class_field_name` (default `class`) select the layer and field. Class values follow the training rules above. Any other value stops the run before any work. Terrace levels are not scored separately: every terrace class is one class.
+
+The polygons are reprojected to the DEM's CRS and burned by cell centre only, with no growth to the edges. `mapped_surfaces_extent_fname` is a polygon of the area the mapper actually surveyed. A cell is scored only if it is inside that extent, the DEM is valid there, and the method used HAND.
+
+Outputs:
+
+- `<write_fname>_mapped_surface_class.tif`: 0 for surveyed cells that are neither class, 1 for floodplain, 2 for terrace.
+- `<write_fname>_mapped_surface_scores.csv`: for each method, the 3 × 3 confusion matrix (mapped class against method class, in cells), and floodplain and terrace precision, recall and intersection-over-union. Precision is the correctly classed cells divided by the cells the method put in that class. Recall is the same count divided by the cells mapped as that class. IoU is the correct count divided by the cells in either.
+
+### Method records and comparison outputs
+
+`write_method_record_csv` (on by default) writes `<stem>_method_record.csv`, with the columns method, item, value and source. It lists every stage, the source of each value (the preset, the parameter file, or a measurement), each data-chosen bound, and the counts. The record is the place to look when you need to say which parameters produced a result.
+
+When `fluvial_surface_algorithm_choice` lists several presets, each runs and writes its own outputs, and the comparison outputs are added:
+
+- `<write_fname>_method_summary.csv`: one summary per method.
+- `<write_fname>_method_comparison.csv`: for each pair of methods, the floodplain and terrace intersection-over-union, the agreement on cells that either method classed, and the 3 × 3 confusion in cells and in m².
+- `<write_fname>_method_agreement_floodplain.tif` and `<write_fname>_method_agreement_terrace.tif`: UInt8 rasters, where bit k is set if method k (in list order) gave that class. At most eight methods can be compared.
+
+### Relative elevation as the reference field
+
+`reference_field_algorithm_choice: relative_elevation` bands the relative elevation (RER) instead of HAND. Set `relative_elevation_floor_mask_fname` to the valley-floor mask the centrelines were traced through (cells above 0.5 count). RER is computed over the whole DEM. Each cell's donor is the channel pixel of the centreline node that owns it, so the reach windows, training and bounds work as they do for HAND. How RER is built is described under `lsdtt-valley-centreline` below.
 
 ---
 
@@ -566,8 +663,113 @@ centreline baseline and removes wedges referenced to a stale part of the channel
 It requires an explicit `refine_max_height_metres`, because this tool no longer
 derives a break of its own and a refinement run against a fabricated threshold would
 look like a result and be one only by accident. The refined mask is written for you
-and is **never fed back** to `lsdtt-fluvial-surfaces`: the dataflow between the three
-tools runs one way.
+and is **never fed back** to `lsdtt-fluvial-surfaces`. The dataflow between the three
+tools runs one way, with one exception: the cross-section levels file
+(`write_cross_section_levels_csv`) is read back by `lsdtt-fluvial-surfaces` as `supplied_levels_fname`.
+
+---
+
+## `lsdtt-valley-centreline`: relative elevation, terrace profiles and widths
+
+### Relative elevation (RER)
+
+`write_relative_elevation_raster` writes `<stem>_relative_elevation.tif`. Each cell's value is its elevation above the baseline of the centreline node that owns it. `write_relative_elevation_owner_raster` writes which centreline owns each cell. The raster differs from HAND in one respect: it is measured against the valley's own centreline baseline, not against the channel the cell's flow happens to reach. A meandering or wall-hugging channel therefore does not imprint itself on the surface.
+
+**Ownership.** Each cell belongs to one centreline node, by one of two rules:
+
+- On the valley floor (inside the floor mask), the larger channel wins. Each node claims a disc whose radius is its distance to the valley wall, and where discs overlap, the node with the larger drainage area takes the cell.
+- Off the floor, the cell belongs to the nearest node along the ground, with the ground distance scaled by that node's floor half-width.
+
+`relative_elevation_max_distance_metres` (0 means no limit) is applied after ownership is decided. It cuts cells that have an owner but are too far from it along the ground.
+
+**Domain.** `relative_elevation_domain_algorithm_choice` sets where RER is computed: `valley_mask` (the default), `supplied` (a raster given in `relative_elevation_domain_fname`), or `whole_dem`.
+
+**Baseline.** `centreline_baseline_algorithm_choice` sets how each node's baseline is pinned to the channel:
+
+- `projected_monotonic` (the default): each channel pixel pins the nearest centreline node, with the lowest elevation winning where several land on one node. The baseline is then made monotonic downstream and is never above any pin.
+- `channel_crossings`: the baseline is pinned where the centreline crosses the channel. A centreline node that is itself a channel pixel also pins.
+
+**Mask clean-up.** The valley mask is cleaned before RER with `valley_mask_closing_radius_metres`, `valley_mask_opening_radius_metres` (which removes narrow tendrils) and `fill_valley_mask_holes`. These are the same settings as in `lsdtt-fluvial-surfaces`.
+
+### Terrace profile
+
+`write_terrace_profile_csv` profiles the labelled surface patches along the valley centreline they belong to. It takes two inputs from `lsdtt-fluvial-surfaces`: `surface_patch_labels_fname` (the `<stem>_banded_labels.tif`) and `surface_patches_fname` (the `<stem>_surface_patches.csv`, which gives each label's band and class). Each labelled pixel is tied to a centreline node by the RER ownership rule. Each patch is profiled against the centreline that owns most of its pixels. Its pixels are then binned every `terrace_profile_bin_metres` (100 m by default) along that centreline.
+
+Outputs:
+
+- `<stem>_terrace_profile.csv`: one row per patch per bin, with the centreline, patch label, band, class, bin centre, pixel count, and the minimum, 25th percentile, median, 75th percentile and maximum of both the elevation and the relative elevation.
+- `<stem>_terrace_patches.csv`: one row per patch.
+
+### Cross-section levels
+
+`write_cross_section_levels_csv` clusters each channel's cross-section hydraulic breaks into levels and writes `<stem>_cross_section_levels.csv`. Its columns include `source_id`, `level_hand_m`, `n_sections`, `spread_m` and `status`. The breaks of all sections on one channel are pooled and split by the ladder's own rule. A level is kept only if it appears on at least `cross_section_level_min_section_fraction` (0.5) of that channel's sections. The file is written only when `write_cross_section_features` is on, which is its default.
+
+The file is read back by `lsdtt-fluvial-surfaces` through `supplied_levels_fname`, with `level_algorithm_choice: supplied_levels` or the `cross_section_levels` preset.
+
+### Valley width network
+
+`run_valley_width_network` (off by default) measures valley widths on every channel, from the channel threshold, instead of on supplied source points. It requires `source_points_fname` to be empty. Channel segments are defined with `channel_definition_algorithm_choice` (`contributing_pixels` by default). Two rules keep tributaries from measuring the parent valley:
+
+- `run_tributary_stop_at_parent` (on by default): a tributary's sections stop where they reach the parent's valley. `tributary_stop_width_fraction` (1, meaning the parent's valley wall) sets where that is.
+- `run_tributary_crossing_removal` (on by default): parent sections that cross a tributary's kept sections are excluded.
+
+Outputs: `<stem>_valley_segments.csv`, `<stem>_valley_segment_channels.fgb` (each segment's D8 channel), and `<stem>_valley_widths.csv`, with one row per station. Each station carries the drainage area at its channel pixel, which never decreases downstream. The cross-section outputs gain `segment_id`, `parent_segment_id`, `nesting_depth` and `excluded_reason`.
+
+---
+
+## `lsdtt-channel-extraction`: perimeter sources
+
+`run_perimeter_sources` (off by default) finds the channel sources where valley floors enter a DEM across its edge. It is for a DEM clipped around a few large valleys, where the valleys run in from outside the data. It needs open boundaries on every edge (`boundary_conditions: oooo`, the default). The method works from the DEM alone:
+
+1. The outer edge of the largest valid block is traced into a closed perimeter profile.
+2. A gradient is computed at each perimeter cell from a least-squares plane over `perimeter_gradient_radius_metres`. Cells below `perimeter_max_gradient` (0.05 m/m) are gentle. Steep gaps shorter than `perimeter_gap_closing_metres` inside a gentle run are absorbed, which handles channel banks.
+3. A gentle run is a valley crossing if it is at least `perimeter_min_valley_width_metres` long and is a low spot: the perimeter rises at least `perimeter_min_relief_metres` (5 m) above the run's lowest cell on both sides.
+4. Outlets are D8 outlets on the edge. The outlet cells of one low-spot run form one outlet run, with their drainage areas summed. The `n_perimeter_outlets` runs with the largest summed area are kept (one by default).
+5. A crossing is a source if a floor cell drains into the DEM, its flow path stays below `perimeter_inward_max_gradient` (0.1 m/m) for `perimeter_inward_check_distance_metres` (500 m), and the path ends in a kept outlet run.
+
+Negative values select the built-in defaults for the gradient radius (the larger of 5 cells and 10 m) and the inward gradient window (the larger of 5 cells and 25 m).
+
+Output: `<write_fname>_perimeter_profile.csv` (`write_perimeter_profile`, on by default), with one row per trace step. It records each step's position, elevation, gradient, whether it is gentle, and its run and outlet IDs.
+
+Guidance:
+
+- `perimeter_min_valley_width_metres` defaults to 300 m, which is set for 30 m global DEMs, where it is 10 cells. Lower it for a finer DEM. On lidar, set it in metres to the narrowest valley you want to count as a crossing, and check that the result is not picking up channel banks.
+- To feed the sources into `lsdtt-valley-centreline`, set `auto_detect_outlet_points: false`. In testing, automatic classification turned one of the perimeter sources into an outlet.
+
+---
+
+## `lsdtt-feature-finder`: riser finding
+
+`feature_type: find_risers` finds short, steep steps between gentler surfaces, such as terrace risers, shorelines and scarps. Each riser is returned as an open line segment with a step height and a face gradient. The steps are:
+
+1. **Edge field.** `riser_edge_metric` chooses the field the lines are drawn on: `vertical_excess_curvature` (the default), `curvedness`, `maximum_curvature` or `multidirectional_hillshade`. For the polyfit metrics, `riser_polyfit_lambda_metres` (100 m) sets the half-wavelength.
+2. **Adaptive threshold.** `riser_vec_adaptive_method: mean_std` (the default) marks a cell as riser when its edge value is more than `riser_vec_adaptive_std_factor` (0.5) local standard deviations above the local mean. The standard deviation is floored at 1/255 of the field's range, so the test stays defined on flat neighbourhoods. The `mean` and `gaussian` methods are also available. Their offset `riser_vec_adaptive_C` is in grey levels.
+3. **Clean-up and skeleton.** The mask is closed with `riser_closing_radius_metres` and small components are removed. The mask is then thinned to a skeleton, and spurs and terminal loops up to `riser_max_spur_pixels` and `riser_max_terminal_loop_pixels` (both 10) are pruned.
+4. **Gap closing (optional).** `riser_gap_closing_algorithm_choice: astar` bridges broken risers. Bridges are limited by `riser_connect_search_radius_metres` (200 m), `riser_connect_elevation_tolerance_metres` (2 m) and a corridor half-width.
+5. **Step height.** The step across each segment is measured over `riser_step_window_radius_metres`. Segments with a median step below `riser_min_step_height_metres` (1 m) or fewer than `riser_min_segment_pixels` (5) pixels are dropped.
+
+`riser_search_mask_fname` restricts where risers are looked for. It is empty by default, which means every valid cell.
+
+**Why the threshold changed.** The earlier threshold rescaled the edge field to 8-bit grey levels between its minimum and maximum, and worked in those levels. The offset was rounded to whole grey levels, so an offset between -1 and 0 had no effect, and the same parameter behaved differently as the field's range changed. `mean_std` works in the units of the field and does not depend on its range.
+
+**Pixel-counted parameters.** Several parameters count cells, not metres: `riser_vec_adaptive_block_size_pixels`, `riser_max_spur_pixels`, `riser_max_terminal_loop_pixels`, `riser_min_component_pixels`, `riser_binary_min_component_pixels`, `riser_min_segment_pixels` and `riser_connect_corridor_half_width_pixels`. Their meaning in metres is the count times the cell size, so they must be scaled when the grid spacing changes. A spur length of 10 cells is 10 m on a 1 m DEM and 100 m on a 10 m DEM. Choose them from the riser width and length in metres, divided by the cell size.
+
+**Scoring against mapped risers.** `mapped_risers_fname` takes mapped terrace edges or risers (lines). `mapped_risers_extent_fname` gives the surveyed area, and `mapped_risers_tolerance_metres` (20 m) sets how close a detected cell must be to a mapped edge to count. The outputs are `<write_fname>_mapped_risers.tif` and `<write_fname>_mapped_riser_scores.csv`, which give per scope the cell counts, precision, recall and F1. The `extent` scope covers every valid cell inside the extent. The `search_mask` scope covers those cells inside the search mask too.
+
+---
+
+## Choosing a method
+
+This section describes what each method does and what it is sensitive to. It does not rank the methods, because the right choice depends on the landscape and the data. Use the method record and the comparison outputs to see what each run did, and report the numbers together with the parameters that produced them.
+
+- **Start with the ladder if you have no terrace heights to start from.** The ladder finds its breaks in the data. Check `<stem>_ladder_windows.csv` first, because it shows which reach windows were resolved. Where many windows are unresolved, the levels are borrowed from other windows or left as one band, so the classes are less specific there.
+- **Use `clubb2017` for the published rule.** It returns a floodplain class and a single terrace class above the floodplain bound, with both bounds chosen from QQ plots. Its floodplain needs channel contact, so flat ground that is not connected to the channel in the admitted mask is not classed as floodplain. Check the measured gradient-bound fraction in the method record before deciding whether the gradient test is doing anything.
+- **Scale the gradient window to the grid.** `floodplain_gradient_window_radius_metres` is a radius in metres, and 0 means three cells. A window that is wide compared with the valley floor averages the valley walls into the floor. The gradient bound then cuts the floor at a fixed distance from the walls rather than at the edge of the floor. Set the radius from the valley floor width and the grid spacing, and check that the floodplain edge follows the floor.
+- **Expect the HAND reference to differ from RER where treads drain sideways.** HAND measures each cell against the channel its flow reaches. Where a tread drains into a different reach, HAND can give it the same height as the tread below. RER measures against the baseline of the centreline that owns the cell, so it separates such treads, but it needs floor centrelines and can leave more windows unresolved. The synthetic terrace staircase in `tests/cpp/test_fluvial_surfaces.cpp` has this structure.
+- **Use `fitted_surface` for fans**, which do not form steps in HAND.
+- **Scale the riser parameters to the grid.** The pixel-counted riser parameters need the cell size taken into account, as described above, on fine DEMs.
+- **Scale the perimeter width to the grid.** The 300 m default is for 30 m DEMs.
+- **Keep scoring polygons separate from training polygons.** A score against the polygons that trained the thresholds is not an independent test.
 
 ---
 
@@ -578,13 +780,13 @@ parameter has no successor, the reason is in the right-hand column.
 
 | `lsdtt-valley-metrics` | goes to | lsdtt3 |
 |---|---|---|
-| `surface_fitting_radius` | 1 | `admission_slope_window_radius_metres` |
-| `slope_threshold`, `use_absolute_thresholds` | 1 | `admission_slope_cap_degrees` with `admission_mode: slope` |
-| `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `adaptive_relief_threshold` + `relief_threshold_multiplier` — CDF divergence against fitted distributions, not a Gaussian QQ plot |
-| `minimum_patch_size` | 1, 2 | `min_component_pixels` (in tool 2 it is **per band**, not global) |
-| `threshold_SO` | 2 | replaced by the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `threshold_contributing_pixels` |
-| `relief_threshold` | 2 | replaced by the ladder; `floodplain_max_height_metres` is the optional hard cap |
-| `minimum_terrace_height` | 2 | `terrace_min_height_metres`, demoted to an override |
+| `surface_fitting_radius` | 1 | `admission_gradient_window_radius_metres` |
+| `slope_threshold`, `use_absolute_thresholds` | 1 | `max_admission_gradient` with `admission_algorithm_choice: gradient` |
+| `QQ_threshold`, `*_lower_percentile`, `*_upper_percentile` | 1 | `relief_threshold_algorithm_choice: qq_gaussian` with `relief_qq_lower_percentile`, `relief_qq_upper_percentile` and `relief_qq_threshold_fraction` (the Clubb et al. 2017 rule). In `lsdtt-fluvial-surfaces` the floodplain bounds use `floodplain_threshold_algorithm_choice: qq_gaussian`. `cdf_divergence` is the alternative, with `relief_threshold_multiplier` |
+| `minimum_patch_size` | 1, 2 | `min_component_pixels` in tool 1; `min_band_component_pixels` in tool 2, where it is **per band**, not global |
+| `threshold_SO` | 2 | `channel_definition_algorithm_choice: stream_order` with `min_channel_stream_order` (a Strahler order), or the channel-scope model: `source_points_fname` / `outlet_points_fname`, or `threshold_contributing_pixels`. Check that the Strahler order matches the legacy `threshold_SO` on your data |
+| `relief_threshold` | 2 | replaced by the ladder; `max_floodplain_hand_metres` is the optional hard cap |
+| `minimum_terrace_height` | 2 | `min_terrace_height_above_floodplain_metres`, the height above the floodplain bound at which terraces start. `min_terrace_hand_metres` is the separate, absolute lower bound of the ladder |
 | `get_terraces` | 2 | no switch — `ladder_level_count` is the only control, and terraces are bands 1..n |
 | `fill_floodplain` | 2 | `fill_valley_mask_holes` (default true) |
 | `get_valley_centreline` | 3 | the tool itself |
@@ -614,9 +816,9 @@ Two structural differences worth stating plainly:
 ```
 # 1. which ground is flat
 #    lsdtt-flat-surface-finder
-admission_mode: relief_or_slope
-admission_slope_cap_degrees: 10
-adaptive_relief_threshold: true
+admission_algorithm_choice: relief_or_gradient
+max_admission_gradient: 0.18
+relief_threshold_algorithm_choice: cdf_divergence
 write_combined_flat_mask_raster: true
 
 # 2. which level is it on

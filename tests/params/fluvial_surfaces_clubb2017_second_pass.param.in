@@ -1,0 +1,21 @@
+# clubb2017 with floodplain_second_pass_algorithm_choice qq_upper_departure:
+# the HAND QQ over the first-pass floodplain cells, its upper departure as a
+# second bound, and the floodplain rebuilt (and filled) at that bound. Same
+# run as fluvial_surfaces_clubb2017 otherwise, so the first-pass mask must
+# carry that test's floodplain pin. Both passes written as polygons.
+read_path: __READ_PATH__
+read_fname: fluvsurf_dem.tif
+write_path: __WRITE_PATH__
+write_fname: clubbsp
+
+n_threads: 1
+write_output_format: gtiff
+write_vector_format: flatgeobuf
+
+fluvial_surface_algorithm_choice: clubb2017
+floodplain_second_pass_algorithm_choice: qq_upper_departure
+threshold_contributing_pixels: 50
+min_band_component_pixels: 20
+
+write_floodplain_mask_raster: true
+write_floodplain_polygons: true
