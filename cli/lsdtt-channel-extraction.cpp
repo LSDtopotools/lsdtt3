@@ -28,6 +28,8 @@
 
 #include <cstdlib>
 #include <cctype>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -51,6 +53,8 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
+#include "../src/cpu/lsdtt_perimeter_sources_cpu.hpp"
+#include "../src/utils/lsdtt_raster_geometry.hpp"
 #include "../src/utils/lsdtt_string_utils.hpp"
 
 static const std::string k_status   = "stable";
@@ -374,6 +378,120 @@ int main(int argc, char* argv[])
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
+    // --- Perimeter sources ---
+    const std::string ps_group = "Perimeter sources";
+    bool_default_map["run_perimeter_sources"] = false;
+    help_map["run_perimeter_sources"] = {"bool","false",
+        "Find channel sources where valleys enter the DEM across its edge.",
+        "Traces the outer edge of the valid data, finds wide, gentle, low runs "
+        "along it (valley crossings), selects the n_perimeter_outlets outlet "
+        "runs with the largest summed drainage area, and keeps as sources the "
+        "crossings whose flow goes into the DEM, stays gentle for "
+        "perimeter_inward_check_distance_metres and reaches a selected outlet. "
+        "The sources file can be passed to the surface CLIs as "
+        "source_points_fname. Requires boundary_conditions: oooo. Interior "
+        "nodata holes are not traced.",
+        ps_group, "switch", ""};
+    int_default_map["n_perimeter_outlets"] = 1;
+    help_map["n_perimeter_outlets"] = {"int","1",
+        "Number of outlet runs kept, largest summed drainage area first.",
+        "Outlet cells inside one low-spot gentle run are summed (a wide "
+        "floodplain leaves through many parallel D8 outlets); every other "
+        "outlet cell is its own run. The run summary gives the ratio of the "
+        "n-th to the (n+1)-th area, to show near-ties.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_min_valley_width_metres"] = 300.0f;
+    help_map["perimeter_min_valley_width_metres"] = {"float","300",
+        "Minimum length of a gentle perimeter run for a valley crossing (m).",
+        "Set for 30 m global DEMs, where 300 m is 10 cells. Lower it for "
+        "better data: on 1 m lidar, valleys of about 100 m are resolved.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_max_gradient"] = 0.05f;
+    help_map["perimeter_max_gradient"] = {"float","0.05",
+        "Gradient (m/m) below which a perimeter cell is gentle.",
+        "Gradient from a least-squares plane through the valid cells within "
+        "perimeter_gradient_radius_metres.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_gradient_radius_metres"] = -1.0f;
+    help_map["perimeter_gradient_radius_metres"] = {"float","-1",
+        "Radius (m) of the plane fit giving the perimeter gradient.",
+        "Negative = max(5 cells, 10 m). Only valid cells are fitted, so a "
+        "window cut by nodata still gives a gradient.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_gap_closing_metres"] = -1.0f;
+    help_map["perimeter_gap_closing_metres"] = {"float","-1",
+        "Steep gaps up to this length (m) inside a gentle run are absorbed.",
+        "Negative = max(2 cells, 20 m); 0 = off. A valley floor holds its "
+        "channel, whose banks are steep for a few metres on lidar; without "
+        "this the floor splits at the channel.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_min_relief_metres"] = 5.0f;
+    help_map["perimeter_min_relief_metres"] = {"float","5",
+        "Low-spot test: rise (m) required on both sides of a crossing.",
+        "Measured from the run's lowest cell to the highest perimeter cell "
+        "within max(run width, perimeter_min_valley_width_metres) beyond "
+        "each end. Rejects gentle shoulders on side slopes.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_inward_check_distance_metres"] = 500.0f;
+    help_map["perimeter_inward_check_distance_metres"] = {"float","500",
+        "Flow-path length (m) checked inward from a crossing.",
+        "A crossing whose path steepens beyond perimeter_inward_max_gradient "
+        "within this distance is a flat divide or shoulder, not a valley.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_inward_max_gradient"] = 0.10f;
+    help_map["perimeter_inward_max_gradient"] = {"float","0.1",
+        "Maximum flow-path gradient (m/m) on the inward check.",
+        "Measured as drop over path length across "
+        "perimeter_inward_gradient_window_metres, on the routed DEM.",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_inward_gradient_window_metres"] = -1.0f;
+    help_map["perimeter_inward_gradient_window_metres"] = {"float","-1",
+        "Path length (m) over which the inward gradient is measured.",
+        "Negative = max(5 cells, 25 m).",
+        ps_group, "param", "run_perimeter_sources"};
+    float_default_map["perimeter_min_source_path_metres"] = -1.0f;
+    help_map["perimeter_min_source_path_metres"] = {"float","-1",
+        "Minimum flow-path length (m) from a source to its outlet.",
+        "Negative = 2 x perimeter_min_valley_width_metres. Guards against a "
+        "gentle strip beside an outlet that drains along the edge into it.",
+        ps_group, "param", "run_perimeter_sources"};
+    int_default_map["perimeter_trim_pixels"] = 0;
+    help_map["perimeter_trim_pixels"] = {"int","0",
+        "Erode the valid region by this many cells before tracing.",
+        "Reprojected DEMs carry interpolated values along their nodata "
+        "edges; trimming moves the traced perimeter onto clean data. "
+        "Trimmed cells still take part in flow routing.",
+        ps_group, "param", "run_perimeter_sources"};
+    bool_default_map["write_perimeter_sources"] = true;
+    help_map["write_perimeter_sources"] = {"bool","true",
+        "Write the perimeter sources (points).",
+        "Output: <write_fname>_perimeter_sources.<fgb|gpkg>. Fields: "
+        "source_id, outlet_id, row, col, elevation, crossing_width_m, "
+        "crossing_relief_m, path_length_to_outlet_m, drop_to_outlet_m.",
+        ps_group, "switch", "run_perimeter_sources"};
+    bool_default_map["write_perimeter_outlets"] = true;
+    help_map["write_perimeter_outlets"] = {"bool","true",
+        "Write the perimeter outlet runs (points at each run's largest-area cell).",
+        "Output: <write_fname>_perimeter_outlets.<fgb|gpkg>. Fields: "
+        "outlet_id, rank, summed_drainage_area_m2, n_cells, width_m, "
+        "on_crossing, selected.",
+        ps_group, "switch", "run_perimeter_sources"};
+    bool_default_map["write_perimeter_crossings"] = true;
+    help_map["write_perimeter_crossings"] = {"bool","true",
+        "Write every gentle perimeter run with its verdict (lines).",
+        "Output: <write_fname>_perimeter_crossings.<fgb|gpkg>. Verdicts: "
+        "source, outlet_crossing, failed_inward, drains_elsewhere, "
+        "too_close_to_outlet, not_low_spot, too_narrow. A missed valley "
+        "shows up here with the reason.",
+        ps_group, "switch", "run_perimeter_sources"};
+    bool_default_map["write_perimeter_profile"] = true;
+    help_map["write_perimeter_profile"] = {"bool","true",
+        "Write the perimeter profile as CSV.",
+        "Output: <write_fname>_perimeter_profile.csv, one row per trace "
+        "step: visit, s_m, row, col, x, y, elevation, gradient, gentle, "
+        "run_id, outlet_cell, outlet_run_id, repeated_visit.",
+        ps_group, "switch", "run_perimeter_sources"};
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(
@@ -461,6 +579,24 @@ int main(int argc, char* argv[])
         {
             std::cerr << "FATAL: wiener_connected_components_threshold_pixels "
                       << "must be >= 1.\n";
+            return 1;
+        }
+    }
+
+    if (bf["run_perimeter_sources"])
+    {
+        // The inward test needs an edge cell to drain into the grid when it
+        // has a lower in-grid neighbour: 'b' makes every edge cell an outlet,
+        // 'n' lets nothing leave, 'p' has no edge.
+        if (lsdtt::to_lower_ascii(sf["boundary_conditions"]) != "oooo")
+        {
+            std::cerr << "FATAL: run_perimeter_sources requires boundary_conditions: "
+                      << "oooo (got " << sf["boundary_conditions"] << ").\n";
+            return 1;
+        }
+        if (ifs["n_perimeter_outlets"] < 1)
+        {
+            std::cerr << "FATAL: n_perimeter_outlets must be >= 1.\n";
             return 1;
         }
     }
@@ -687,6 +823,205 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+
+    // -------------------------------------------------------------------------
+    // Perimeter sources
+    // -------------------------------------------------------------------------
+    if (bf["run_perimeter_sources"])
+    {
+        std::cout << "\n--- Perimeter sources ---\n";
+        lsdtt::perimeter_sources_request prq;
+        prq.n_outlets                     = ifs["n_perimeter_outlets"];
+        prq.min_valley_width_metres       = ff["perimeter_min_valley_width_metres"];
+        prq.max_gradient                  = ff["perimeter_max_gradient"];
+        prq.gradient_radius_metres        = ff["perimeter_gradient_radius_metres"];
+        prq.gap_closing_metres            = ff["perimeter_gap_closing_metres"];
+        prq.min_relief_metres             = ff["perimeter_min_relief_metres"];
+        prq.inward_check_distance_metres  = ff["perimeter_inward_check_distance_metres"];
+        prq.inward_max_gradient           = ff["perimeter_inward_max_gradient"];
+        prq.inward_gradient_window_metres = ff["perimeter_inward_gradient_window_metres"];
+        prq.min_source_path_metres        = ff["perimeter_min_source_path_metres"];
+        prq.trim_pixels                   = ifs["perimeter_trim_pixels"];
+
+        lsdtt::perimeter_sources_result pres;
+        try
+        {
+            pres = lsdtt::find_perimeter_sources(dem, routed_dem, *flow, prq);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: perimeter sources: " << e.what() << "\n";
+            return 1;
+        }
+        const lsdtt::perimeter_sources_report& pr = pres.report;
+        std::cout << "Resolved gradient radius      : " << pr.gradient_radius_metres << " m\n"
+                  << "Resolved gap closing          : " << pr.gap_closing_metres << " m\n"
+                  << "Resolved inward window        : " << pr.inward_gradient_window_metres << " m\n"
+                  << "Resolved min source path      : " << pr.min_source_path_metres << " m\n"
+                  << "Valid cells                   : " << pr.n_valid_cells << "\n"
+                  << "Traced component cells        : " << pr.n_traced_component_cells << "\n"
+                  << "Components dropped            : " << pr.n_components_dropped
+                  << " (" << pr.n_cells_dropped << " cells)\n"
+                  << "Interior holes (not traced)   : " << pr.n_holes << " ("
+                  << pr.n_hole_cells << " cells; " << pr.area_draining_to_holes_m2
+                  << " m2 drains into them)\n"
+                  << "Area draining to dropped parts: " << pr.area_draining_elsewhere_m2 << " m2\n"
+                  << "Perimeter visits              : " << pr.n_profile_visits << " ("
+                  << pr.n_repeated_visits << " repeated)\n"
+                  << "Perimeter length              : " << pr.profile_length_metres
+                  << " m (cell steps; up to 8% long on a staircase edge)\n"
+                  << "Gentle visits                 : " << pr.n_gentle_visits << "\n"
+                  << "Gradient filled from neighbours: " << pr.n_gradient_filled << "\n"
+                  << "Outer outlet cells            : " << pr.n_outer_outlet_cells << "\n"
+                  << "Outlet runs                   : " << pr.n_outlet_runs << "\n";
+        std::map<std::string, int> n_verdict;
+        for (const lsdtt::perimeter_run& r : pres.runs)
+            ++n_verdict[lsdtt::perimeter_run_verdict_name(r.verdict)];
+        std::cout << "Gentle runs by verdict        :";
+        for (const auto& [name, count] : n_verdict) std::cout << " " << name << " " << count << ";";
+        std::cout << "\n";
+        for (const lsdtt::perimeter_outlet_run& o : pres.outlet_runs)
+        {
+            if (o.rank > prq.n_outlets + 2) break;
+            std::cout << "  outlet rank " << o.rank << (o.selected ? " (selected)" : "")
+                      << ": area " << o.summed_drainage_area_m2 << " m2, " << o.n_cells
+                      << " cells, width " << o.width_metres << " m"
+                      << (o.on_crossing ? ", on a crossing" : "") << "\n";
+        }
+        if (pr.fewer_outlets_than_requested)
+            std::cout << "WARNING: only " << pr.n_outlet_runs << " outlet runs found; "
+                      << prq.n_outlets << " requested.\n";
+        if (pr.outlet_area_ratio > 0.0)
+            std::cout << "Outlet area ratio, rank " << prq.n_outlets << " / rank "
+                      << prq.n_outlets + 1 << ": " << pr.outlet_area_ratio << "\n";
+        std::cout << "Sources found                 : " << pres.sources.size() << "\n";
+
+        const lsdtt::lsdtt_raster_meta& pm = dem.get_meta();
+        const lsdtt::vector_output_format pfmt =
+            lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+        auto xy_of = [&](std::int64_t f) {
+            return lsdtt::cell_center_from_row_col(pm, static_cast<int>(f / pm.n_cols),
+                                                   static_cast<int>(f % pm.n_cols)); };
+        using ft = lsdtt::lsdtt_vector_field_type;
+        try
+        {
+            if (bf["write_perimeter_sources"])
+            {
+                const std::string o = pp.make_output_path(
+                    "_perimeter_sources" + lsdtt::output_extension(pfmt));
+                std::cout << "Writing: " << o << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"source_id", "outlet_id", "row", "col", "elevation",
+                                      "crossing_width_m", "crossing_relief_m",
+                                      "path_length_to_outlet_m", "drop_to_outlet_m"};
+                schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type,
+                                      ft::int64_type, ft::double_type, ft::double_type,
+                                      ft::double_type, ft::double_type, ft::double_type};
+                loader.begin_vector_write(o, "perimeter_sources", schema, pm.crs_wkt, pfmt, false);
+                for (const lsdtt::perimeter_source& ps : pres.sources)
+                {
+                    const lsdtt::lsdtt_xy xy = xy_of(ps.flat);
+                    loader.write_point(xy.x, xy.y, {
+                        static_cast<std::int64_t>(ps.id), static_cast<std::int64_t>(ps.outlet_run_id),
+                        static_cast<std::int64_t>(ps.row), static_cast<std::int64_t>(ps.col),
+                        static_cast<double>(ps.elevation), ps.crossing_width_metres,
+                        ps.crossing_relief_metres, ps.path_length_to_outlet_metres,
+                        ps.drop_to_outlet_metres});
+                }
+                loader.finish_vector_write();
+            }
+            if (bf["write_perimeter_outlets"])
+            {
+                const std::string o = pp.make_output_path(
+                    "_perimeter_outlets" + lsdtt::output_extension(pfmt));
+                std::cout << "Writing: " << o << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"outlet_id", "rank", "summed_drainage_area_m2", "n_cells",
+                                      "width_m", "on_crossing", "selected"};
+                schema.field_types = {ft::int64_type, ft::int64_type, ft::double_type,
+                                      ft::int64_type, ft::double_type, ft::int64_type,
+                                      ft::int64_type};
+                loader.begin_vector_write(o, "perimeter_outlets", schema, pm.crs_wkt, pfmt, false);
+                for (const lsdtt::perimeter_outlet_run& or_ : pres.outlet_runs)
+                {
+                    const lsdtt::lsdtt_xy xy = xy_of(or_.outlet_flat);
+                    loader.write_point(xy.x, xy.y, {
+                        static_cast<std::int64_t>(or_.id), static_cast<std::int64_t>(or_.rank),
+                        or_.summed_drainage_area_m2, or_.n_cells, or_.width_metres,
+                        static_cast<std::int64_t>(or_.on_crossing ? 1 : 0),
+                        static_cast<std::int64_t>(or_.selected ? 1 : 0)});
+                }
+                loader.finish_vector_write();
+            }
+            if (bf["write_perimeter_crossings"])
+            {
+                const std::string o = pp.make_output_path(
+                    "_perimeter_crossings" + lsdtt::output_extension(pfmt));
+                std::cout << "Writing: " << o << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = {"run_id", "verdict", "width_m", "min_elevation",
+                                      "relief_m", "relief_before_m", "relief_after_m",
+                                      "inward_checked_m", "inward_max_gradient",
+                                      "failure_x", "failure_y", "outlet_id",
+                                      "path_length_to_outlet_m"};
+                schema.field_types = {ft::int64_type, ft::string_type, ft::double_type,
+                                      ft::double_type, ft::double_type, ft::double_type,
+                                      ft::double_type, ft::double_type, ft::double_type,
+                                      ft::double_type, ft::double_type, ft::int64_type,
+                                      ft::double_type};
+                loader.begin_vector_write(o, "perimeter_crossings", schema, pm.crs_wkt, pfmt, false);
+                const std::size_t N = pres.profile.size();
+                for (const lsdtt::perimeter_run& r : pres.runs)
+                {
+                    std::vector<lsdtt::lsdtt_xy> line;
+                    for (std::size_t q = 0; q < r.n_visits; ++q)
+                        line.push_back(xy_of(pres.profile[(r.first_visit + q) % N].flat));
+                    if (line.size() == 1) line.push_back(line.front());
+                    lsdtt::lsdtt_vector_field_value fx = std::monostate{}, fy = std::monostate{};
+                    if (r.inward_failure_flat >= 0)
+                    {
+                        const lsdtt::lsdtt_xy f = xy_of(r.inward_failure_flat);
+                        fx = f.x;
+                        fy = f.y;
+                    }
+                    loader.write_line(line, {
+                        static_cast<std::int64_t>(r.id),
+                        lsdtt::perimeter_run_verdict_name(r.verdict), r.width_metres,
+                        static_cast<double>(r.min_elevation), r.relief_metres,
+                        r.relief_before_metres, r.relief_after_metres,
+                        r.inward_checked_metres, r.inward_max_gradient, fx, fy,
+                        static_cast<std::int64_t>(r.path_outlet_run_id),
+                        r.path_length_to_outlet_metres});
+                }
+                loader.finish_vector_write();
+            }
+            if (bf["write_perimeter_profile"])
+            {
+                const std::string o = pp.make_output_path("_perimeter_profile.csv");
+                std::cout << "Writing: " << o << "\n";
+                std::ofstream out(o);
+                if (!out) throw std::runtime_error("cannot open " + o);
+                out << "visit,s_m,row,col,x,y,elevation,gradient,gentle,run_id,outlet_cell,"
+                       "outlet_run_id,repeated_visit\n";
+                out << std::setprecision(10);
+                for (std::size_t k = 0; k < pres.profile.size(); ++k)
+                {
+                    const lsdtt::perimeter_profile_visit& v = pres.profile[k];
+                    const lsdtt::lsdtt_xy xy = xy_of(v.flat);
+                    out << k << ',' << v.s_metres << ',' << v.row << ',' << v.col << ','
+                        << xy.x << ',' << xy.y << ',' << v.elevation << ',' << v.gradient << ','
+                        << (v.gentle ? 1 : 0) << ',' << v.run_id << ','
+                        << (v.outlet_cell ? 1 : 0) << ',' << v.outlet_run_id << ','
+                        << (v.repeated_visit ? 1 : 0) << '\n';
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: writing perimeter sources: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Optional flow-routing visualisation outputs

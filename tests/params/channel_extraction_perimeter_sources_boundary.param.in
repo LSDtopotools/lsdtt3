@@ -1,0 +1,13 @@
+# run_perimeter_sources with boundary conditions other than oooo is an error.
+read_path: __READ_PATH__
+read_fname: ps_tributary_dem.tif
+write_path: __WRITE_PATH__
+write_fname: psb
+n_threads: 1
+run_perimeter_sources: true
+perimeter_min_valley_width_metres: 200
+write_channel_network_lines: false
+write_channel_network_points: false
+write_channel_network_junctions: false
+calculate_spatial_index: false
+boundary_conditions: bbbb

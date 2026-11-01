@@ -9047,6 +9047,65 @@ add_test(NAME unit_valley_relative_elevation COMMAND lsdtt-test-valley-relative-
 lsdtt_set_tests_properties(unit_valley_relative_elevation PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
+# Perimeter sources (lsdtt_perimeter_sources_cpu, plan phases P1-P4): the
+# trace on rectangles, frames, a rotated square, a neck, components and holes;
+# gentle runs, gap closing, the low-spot test and the seam; outlet runs and
+# sources on valley, tributary, perched-notch, basin-clipped, Salinas-shape
+# and coast DEMs.
+add_executable(lsdtt-test-perimeter-sources cpp/test_perimeter_sources.cpp)
+target_link_libraries(lsdtt-test-perimeter-sources PRIVATE lsdtt3_cpu)
+add_test(NAME unit_perimeter_sources COMMAND lsdtt-test-perimeter-sources)
+lsdtt_set_tests_properties(unit_perimeter_sources PROPERTIES
+    LABELS "unit;fluvial_surfaces")
+
+# Phase P5 CLI pins on the tributary (Carradale) and Salinas shapes the unit
+# driver writes: 2 sources and 1 source, and boundary conditions other than
+# oooo refused.
+set(LSDTT_PERIMETER_SOURCES_FIXTURE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/perimeter_sources_fixture")
+add_test(NAME fixture_perimeter_sources_cli
+         COMMAND lsdtt-test-perimeter-sources --write-cli-fixture
+                 ${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR})
+lsdtt_set_tests_properties(fixture_perimeter_sources_cli PROPERTIES
+    LABELS "fixture"
+    FIXTURES_SETUP perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_perimeter_sources_tributary
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_tributary.param.in
+    pst_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --expect pst_perimeter_outlets.fgb
+    --expect pst_perimeter_crossings.fgb
+    --expect pst_perimeter_profile.csv
+    --stdout-contains "Sources found                 : 2"
+    --stdout-contains "Gentle runs by verdict        : outlet_crossing 1"
+)
+lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_tributary PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_perimeter_sources_salinas
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_salinas.param.in
+    pss_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --stdout-contains "Sources found                 : 1"
+    --stdout-contains "outlet rank 1 (selected)"
+)
+lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_salinas PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+add_lsdtt_cli_smoke_test(
+    failure_channel_extraction_perimeter_sources_boundary
+    lsdtt-channel-extraction
+    channel_extraction_perimeter_sources_boundary.param.in
+    psb_perimeter_sources.fgb
+    --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
+    --expect-failure
+    --stderr-contains "FATAL: run_perimeter_sources requires boundary_conditions: oooo (got bbbb)."
+)
+lsdtt_set_tests_properties(failure_channel_extraction_perimeter_sources_boundary PROPERTIES
+    FIXTURES_REQUIRED perimeter_sources_fixture)
+
 # Training polygons (plan 7i): class labels, best separation, a window fit
 # with a mislabelled terrace number, a flagged polygon and a shared level, and
 # the reach windows, on populations small enough to check by hand.
@@ -10561,7 +10620,7 @@ set(LSDTT_DOMAIN_RULES
     # Ahead of the "channel" rule below on purpose: CLI 2 of the fluvial-surface
     # split writes a channel network, so tests named for that would otherwise be
     # claimed by "network" and disappear from a fluvial_surfaces compartment run.
-    "fluvial_surface|flat_surface|valley_centreline|valley_width|valley_relative" "fluvial_surfaces"
+    "fluvial_surface|flat_surface|valley_centreline|valley_width|valley_relative|perimeter_sources" "fluvial_surfaces"
     # The shared Topographic Wetness Index,
     # pointed at "network" ON PURPOSE rather than given its own domain: the
     # existing TWI/STI tests already live in the network compartment, and
