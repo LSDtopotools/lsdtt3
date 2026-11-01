@@ -722,8 +722,13 @@ void test_dem_source_catalogue()
         check("catalogue: " + info.name + " has a datum and metres",
               !info.vertical_datum.empty() && info.vertical_units == "metre");
         check("catalogue: " + info.name + " has its STAC access",
-              !info.stac_search_url.empty() && !info.stac_collection.empty() &&
-              !info.stac_asset.empty());
+              !info.stac_search_url.empty() && !info.stac_asset.empty());
+        bool every_resolution_searchable = true;
+        for (double r : info.native_resolutions_metres)
+            if (lsdtt::fetch_detail::catalogue_stac_collection(info, r).empty())
+                every_resolution_searchable = false;
+        check("catalogue: " + info.name + " has a STAC collection for every resolution",
+              every_resolution_searchable);
     }
     lsdtt::lsdtt_dem_source parsed;
     check("catalogue: cdse is still not a source", !lsdtt::parse_dem_source("cdse", parsed));
@@ -1007,6 +1012,231 @@ void test_catalogue_warp_offline()
         VSIUnlink(f);
 }
 
+// ArcticDEM and REMA: catalogue rows, the PGC search, the pre-flight checks.
+void test_polar_sources()
+{
+    namespace fd = lsdtt::fetch_detail;
+    using lsdtt::lsdtt_dem_source;
+    const auto& arc  = lsdtt::dem_source_info(lsdtt_dem_source::arctic_arcticdem);
+    const auto& rema = lsdtt::dem_source_info(lsdtt_dem_source::antarctic_rema);
+
+    for (const auto* info : {&arc, &rema})
+    {
+        check("polar: " + info->name + " is a DSM on the WGS84 ellipsoid, said in words",
+              info->surface_models == std::vector<std::string>{"dsm"} &&
+              info->vertical_datum == "WGS84 ellipsoid" &&
+              contains(info->description, "SURFACE MODEL") &&
+              contains(info->description, "ELLIPSOID"));
+        check("polar: " + info->name + " offers 2, 10, 32 m, default 10",
+              info->native_resolutions_metres == std::vector<double>{2.0, 10.0, 32.0} &&
+              info->default_resolution_metres == 10.0);
+    }
+    check("polar: ArcticDEM collections per resolution",
+          fd::catalogue_stac_collection(arc, 2.0) == "arcticdem-mosaics-v4.1-2m" &&
+          fd::catalogue_stac_collection(arc, 10.0) == "arcticdem-mosaics-v4.1-10m" &&
+          fd::catalogue_stac_collection(arc, 32.0) == "arcticdem-mosaics-v4.1-32m");
+    check("polar: REMA collections per resolution",
+          fd::catalogue_stac_collection(rema, 2.0) == "rema-mosaics-v2.0-2m" &&
+          fd::catalogue_stac_collection(rema, 10.0) == "rema-mosaics-v2.0-10m" &&
+          fd::catalogue_stac_collection(rema, 32.0) == "rema-mosaics-v2.0-32m");
+
+    lsdtt::lsdtt_fetch_options o;
+    o.west = 15.40; o.south = 78.20; o.east = 15.60; o.north = 78.25;
+    o.grid_spacing = 10.0;
+
+    // us_3dep's search body is the Planetary Computer body on its collection.
+    {
+        lsdtt::lsdtt_fetch_options d = o;
+        d.source = lsdtt_dem_source::us_3dep;
+        lsdtt::lsdtt_fetch_options pc = o;
+        pc.pc_collection = "3dep-seamless";
+        check("polar: us_3dep search body unchanged by the fields option",
+              fd::catalogue_stac_search_body(d) == fd::pc_stac_search_body(pc),
+              fd::catalogue_stac_search_body(d));
+    }
+    o.source = lsdtt_dem_source::arctic_arcticdem;
+    o.source_resolution_metres = 2.0;
+    const std::string body = fd::catalogue_stac_search_body(o);
+    check("polar: ArcticDEM 2 m search body",
+          body == "{\"collections\":[\"arcticdem-mosaics-v4.1-2m\"],"
+                  "\"bbox\":[15.4000000000,78.2000000000,15.6000000000,78.2500000000],"
+                  "\"limit\":100,\"fields\":{\"include\":[\"id\",\"bbox\","
+                  "\"properties.gsd\",\"properties.datetime\",\"assets.dem.href\"]}}",
+          body);
+    o.source_resolution_metres = 0.0;
+
+    // A PGC search response, trimmed (fields filter applied by the server).
+    const std::string json = R"({"type": "FeatureCollection",
+      "features": [{"id": "34_52_10m_v4.1",
+        "bbox": [12.522740954, 77.225277216, 18.44067821, 78.471965713],
+        "assets": {"dem": {"href": "https://pgc-opendata-dems.s3.us-west-2.amazonaws.com/arcticdem/mosaics/v4.1/10m/34_52/34_52_10m_v4.1_dem.tif"}},
+        "properties": {"gsd": 10, "datetime": "2010-03-29T00:00:00Z"}}],
+      "links": [{"rel": "root", "href": "https://stac.pgc.umn.edu/api/v1/"}]})";
+    std::vector<fd::stac_item> items;
+    std::vector<std::string> missing;
+    std::string next_href, next_body, error;
+    check("polar: PGC response parsed on the dem asset",
+          fd::parse_stac_items(json, "dem", items, missing, next_href, next_body, error) &&
+          items.size() == 1 && items[0].gsd == 10.0 && next_href.empty() &&
+          contains(items[0].href, "34_52_10m_v4.1_dem.tif"), error);
+
+    auto refused = [](const lsdtt::lsdtt_fetch_result& r, const std::string& part) {
+        return !r.ok && !r.skipped && contains(r.message, part);
+    };
+    lsdtt::lsdtt_fetch_options a = o;
+    a.west = 10.3; a.east = 10.4; a.south = 46.4; a.north = 46.5;
+    auto r = lsdtt::fetch_dem(a, "/vsimem/never_written.tif");
+    check("polar: ArcticDEM over the Alps is refused",
+          refused(r, "outside arctic_arcticdem coverage"), r.message);
+    a = o;
+    a.source = lsdtt_dem_source::antarctic_rema;
+    r = lsdtt::fetch_dem(a, "/vsimem/never_written.tif");
+    check("polar: REMA over Svalbard is refused",
+          refused(r, "outside antarctic_rema coverage"), r.message);
+    a = o;
+    a.surface_model_choice = "dtm";
+    r = lsdtt::fetch_dem(a, "/vsimem/never_written.tif");
+    check("polar: ArcticDEM has no terrain model", refused(r, "no dtm product"), r.message);
+    a = o;
+    a.source_resolution_metres = 5.0;
+    r = lsdtt::fetch_dem(a, "/vsimem/never_written.tif");
+    check("polar: ArcticDEM resolutions listed", refused(r, "offers 2, 10, 32 m"), r.message);
+
+    // Projected source grid: the download is counted by area. At 78 N a
+    // count in degrees would say about 5 MB for this box; by area it is
+    // about 1 MB (461 x 562 cells of 10 m, Float32).
+    a = o;
+    a.max_download_megabytes = 0.5;
+    r = lsdtt::fetch_dem(a, "/vsimem/never_written.tif");
+    check("polar: download estimated by area on a projected source grid",
+          refused(r, "estimated at 1.0 MB"), r.message);
+}
+
+// A synthetic EPSG:3413 GeoTIFF over a WGS84 box (10 m cells, 2 km margin)
+// holding the plane z = 100 + 0.01 (x - x0) + 0.02 (y - y0).
+std::string make_polar_plane_geotiff(const std::string& path, double west, double south,
+                                     double east, double north, double& x0, double& y0)
+{
+    OGRSpatialReferenceH geo = OSRNewSpatialReference(nullptr);
+    OGRSpatialReferenceH ps  = OSRNewSpatialReference(nullptr);
+    OSRImportFromEPSG(geo, 4326);
+    OSRImportFromEPSG(ps, 3413);
+    OSRSetAxisMappingStrategy(geo, OAMS_TRADITIONAL_GIS_ORDER);
+    OSRSetAxisMappingStrategy(ps, OAMS_TRADITIONAL_GIS_ORDER);
+    OGRCoordinateTransformationH ct = OCTNewCoordinateTransformation(geo, ps);
+    double xmin = 1e30, xmax = -1e30, ymin = 1e30, ymax = -1e30;
+    for (int j = 0; j <= 8; ++j)
+        for (int i = 0; i <= 8; ++i)
+        {
+            double x = west + i * (east - west) / 8.0, y = south + j * (north - south) / 8.0;
+            OCTTransform(ct, 1, &x, &y, nullptr);
+            xmin = std::min(xmin, x); xmax = std::max(xmax, x);
+            ymin = std::min(ymin, y); ymax = std::max(ymax, y);
+        }
+    OCTDestroyCoordinateTransformation(ct);
+    const double cell = 10.0;
+    x0 = std::floor((xmin - 2000.0) / cell) * cell;
+    y0 = std::ceil((ymax + 2000.0) / cell) * cell;
+    const int nx = static_cast<int>(std::ceil((xmax + 2000.0 - x0) / cell));
+    const int ny = static_cast<int>(std::ceil((y0 - (ymin - 2000.0)) / cell));
+
+    GDALDatasetH ds = GDALCreate(GDALGetDriverByName("GTiff"), path.c_str(), nx, ny, 1,
+                                 GDT_Float32, nullptr);
+    const double gt[6] = {x0, cell, 0.0, y0, 0.0, -cell};
+    GDALSetGeoTransform(ds, const_cast<double*>(gt));
+    char* wkt = nullptr;
+    OSRExportToWkt(ps, &wkt);
+    GDALSetProjection(ds, wkt);
+    CPLFree(wkt);
+    OSRDestroySpatialReference(geo);
+    OSRDestroySpatialReference(ps);
+    std::vector<float> z(static_cast<std::size_t>(nx) * ny);
+    for (int r = 0; r < ny; ++r)
+        for (int c = 0; c < nx; ++c)
+            z[static_cast<std::size_t>(r) * nx + c] =
+                static_cast<float>(100.0 + 0.01 * (c + 0.5) * cell - 0.02 * (r + 0.5) * cell);
+    GDALRasterBandH band = GDALGetRasterBand(ds, 1);
+    const CPLErr written =
+        GDALRasterIO(band, GF_Write, 0, 0, nx, ny, z.data(), nx, ny, GDT_Float32, 0, 0);
+    check("polar warp: synthetic EPSG:3413 plane written", written == CE_None, path);
+    GDALSetRasterNoDataValue(band, -9999.0);
+    GDALClose(ds);
+    return path;
+}
+
+void test_polar_warp_offline()
+{
+    namespace fd = lsdtt::fetch_detail;
+    lsdtt::lsdtt_fetch_options o;
+    o.source = lsdtt::lsdtt_dem_source::arctic_arcticdem;
+    o.west = 15.40; o.south = 78.20; o.east = 15.60; o.north = 78.25;
+    o.grid_spacing = 10.0;
+    double x0 = 0.0, y0 = 0.0;
+    const std::string src = make_polar_plane_geotiff("/vsimem/polar_3413.tif", o.west,
+                                                     o.south, o.east, o.north, x0, y0);
+    const std::string out = "/vsimem/polar_out.tif";
+    auto r = fd::warp_catalogue_files(o, {src}, out);
+    check("polar warp: EPSG:3413 source written to UTM 33N", r.ok && r.epsg == 32633,
+          r.message);
+    check("polar warp: no warning inside the UTM latitudes", r.warnings.empty());
+    const raster_content c = read_raster_content(out);
+    check("polar warp: square 10 m cells",
+          c.ok && c.geotransform[1] == 10.0 && c.geotransform[5] == -10.0 &&
+          c.geotransform[2] == 0.0 && c.geotransform[4] == 0.0);
+    check("polar warp: provenance says DSM, WGS84 ellipsoid",
+          metadata_item(out, "LSDTT_DEM_SOURCE") == "arctic_arcticdem" &&
+          metadata_item(out, "LSDTT_SURFACE_MODEL") == "DSM" &&
+          metadata_item(out, "LSDTT_VERTICAL_DATUM") == "WGS84 ellipsoid" &&
+          metadata_item(out, "LSDTT_VALID_PERCENT") == "100.0");
+    {
+        OGRSpatialReferenceH utm = OSRNewSpatialReference(nullptr);
+        OGRSpatialReferenceH ps  = OSRNewSpatialReference(nullptr);
+        OSRImportFromEPSG(utm, 32633);
+        OSRImportFromEPSG(ps, 3413);
+        OSRSetAxisMappingStrategy(utm, OAMS_TRADITIONAL_GIS_ORDER);
+        OSRSetAxisMappingStrategy(ps, OAMS_TRADITIONAL_GIS_ORDER);
+        OGRCoordinateTransformationH ct = OCTNewCoordinateTransformation(utm, ps);
+        double worst = 0.0;
+        int n_checked = 0;
+        for (int row = 20; row < c.rows - 20; row += 17)
+            for (int col = 20; col < c.cols - 20; col += 17)
+            {
+                double x = c.geotransform[0] + (col + 0.5) * c.geotransform[1];
+                double y = c.geotransform[3] + (row + 0.5) * c.geotransform[5];
+                OCTTransform(ct, 1, &x, &y, nullptr);
+                const double expected = 100.0 + 0.01 * (x - x0) + 0.02 * (y - y0);
+                const float got = c.values[static_cast<std::size_t>(row) * c.cols + col];
+                worst = std::max(worst, std::abs(got - expected));
+                ++n_checked;
+            }
+        OCTDestroyCoordinateTransformation(ct);
+        OSRDestroySpatialReference(utm);
+        OSRDestroySpatialReference(ps);
+        check("polar warp: a plane in polar stereographic survives the reprojection",
+              n_checked > 50 && worst < 1e-2,
+              "max |dz| = " + std::to_string(worst) + " over " + std::to_string(n_checked));
+    }
+
+    // Beyond 84 N the default UTM output is warned about; target_epsg 3413
+    // silences it.
+    lsdtt::lsdtt_fetch_options p = o;
+    p.west = 10.0; p.east = 12.0; p.south = 85.00; p.north = 85.05;
+    const std::string far = make_polar_plane_geotiff("/vsimem/polar_85.tif", p.west,
+                                                     p.south, p.east, p.north, x0, y0);
+    r = fd::warp_catalogue_files(p, {far}, "/vsimem/polar_85_out.tif");
+    check("polar warp: UTM beyond 84 N is warned about",
+          r.ok && r.warnings.size() == 1 && contains(r.warnings[0], "target_epsg"),
+          r.message);
+    p.target_epsg = 3413;
+    r = fd::warp_catalogue_files(p, {far}, "/vsimem/polar_85_out.tif");
+    check("polar warp: target_epsg 3413 is not warned about",
+          r.ok && r.epsg == 3413 && r.warnings.empty(), r.message);
+
+    for (const char* f : {"/vsimem/polar_3413.tif", "/vsimem/polar_out.tif",
+                          "/vsimem/polar_85.tif", "/vsimem/polar_85_out.tif"})
+        VSIUnlink(f);
+}
+
 // =============================================================================
 // Network mode
 // =============================================================================
@@ -1185,6 +1415,61 @@ int run_network_tests(const std::string& output_dir)
                   metadata_item(dep_path, "LSDTT_VERTICAL_DATUM") == "NAVD88");
         }
     }
+
+    // ---- ArcticDEM (Svalbard) and REMA (Antarctic Peninsula), 10 m ----------
+    struct polar_case
+    {
+        lsdtt::lsdtt_dem_source source;
+        const char* label;
+        double west, south, east, north;
+        int epsg;
+        const char* tile_suffix;
+        float lo, hi;   // plausible ellipsoidal heights for the window
+    };
+    const polar_case cases[] = {
+        {lsdtt::lsdtt_dem_source::arctic_arcticdem, "arctic_arcticdem",
+         15.40, 78.20, 15.60, 78.25, 32633, "_10m_v4.1", 0.0f, 1200.0f},
+        {lsdtt::lsdtt_dem_source::antarctic_rema, "antarctic_rema",
+         -63.80, -64.85, -63.60, -64.75, 32720, "_10m_v2.0", 0.0f, 2500.0f}};
+    for (const polar_case& pc : cases)
+    {
+        lsdtt::lsdtt_fetch_options po;
+        po.source = pc.source;
+        po.west = pc.west; po.south = pc.south; po.east = pc.east; po.north = pc.north;
+        po.grid_spacing = 10.0;
+        po.size_px = 256;
+        const std::string path = output_dir + "/fetch_" + pc.label + "_256.tif";
+        const auto p = lsdtt::fetch_dem(po, path);
+        const std::string name = pc.label;
+        if (p.skipped)
+        {
+            std::cout << "SKIP(" << name << "): " << p.message << "\n";
+            continue;
+        }
+        check("network: " + name + " fetch succeeded", p.ok, p.message);
+        bool right_tiles = !p.tiles.empty();
+        for (const std::string& t : p.tiles)
+            if (!contains(t, pc.tile_suffix)) right_tiles = false;
+        check("network: " + name + " used the 10 m mosaic tiles, UTM output",
+              right_tiles && p.epsg == pc.epsg, join(p.tiles));
+        const raster_content c = read_raster_content(path);
+        float lo = 1e30f, hi = -1e30f;
+        std::int64_t valid = 0;
+        for (float v : c.values)
+        {
+            if (v == -9999.0f) continue;
+            ++valid; lo = std::min(lo, v); hi = std::max(hi, v);
+        }
+        check("network: " + name + " 256 x 256 square 10 m cells, all valid",
+              c.ok && c.cols == 256 && c.rows == 256 && c.geotransform[1] == 10.0 &&
+              c.geotransform[5] == -10.0 && valid == 256 * 256);
+        check("network: " + name + " heights in a plausible band (metres)",
+              lo > pc.lo && hi < pc.hi,
+              "range [" + std::to_string(lo) + ", " + std::to_string(hi) + "]");
+        check("network: " + name + " provenance says DSM, WGS84 ellipsoid",
+              metadata_item(path, "LSDTT_SURFACE_MODEL") == "DSM" &&
+              metadata_item(path, "LSDTT_VERTICAL_DATUM") == "WGS84 ellipsoid");
+    }
     return 0;
 }
 
@@ -1251,6 +1536,10 @@ int main(int argc, char** argv)
     test_stac_parsing();
     std::cout << "\n";
     test_catalogue_warp_offline();
+    std::cout << "\n";
+    test_polar_sources();
+    std::cout << "\n";
+    test_polar_warp_offline();
 
     std::cout << "\n" << g_n_checks - g_n_failed << " / " << g_n_checks
               << " checks passed\n";

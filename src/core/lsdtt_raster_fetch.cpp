@@ -893,6 +893,37 @@ std::string pc_stac_search_body(const lsdtt_fetch_options& o)
 }
 
 
+std::string catalogue_stac_collection(const lsdtt_dem_source_info& info,
+                                      double                       resolution_metres)
+{
+    for (const auto& entry : info.stac_collection_by_resolution)
+    {
+        if (std::abs(entry.first - resolution_metres) <= 1e-6 * entry.first)
+            return entry.second;
+    }
+    return info.stac_collection;
+}
+
+
+std::string catalogue_stac_search_body(const lsdtt_fetch_options& o)
+{
+    const lsdtt_dem_source_info& info = dem_source_info(o.source);
+    const double res = o.source_resolution_metres > 0.0 ? o.source_resolution_metres
+                                                        : info.default_resolution_metres;
+    lsdtt_fetch_options search = o;
+    search.pc_collection = catalogue_stac_collection(info, res);
+    std::string body = pc_stac_search_body(search);
+    if (!info.stac_fields_include.empty())
+    {
+        std::string fields;
+        for (const std::string& f : info.stac_fields_include)
+            fields += (fields.empty() ? "\"" : ",\"") + f + "\"";
+        body.insert(body.size() - 1, ",\"fields\":{\"include\":[" + fields + "]}");
+    }
+    return body;
+}
+
+
 std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,
                                               int                        epsg,
                                               const fetch_extent*        explicit_extent)
@@ -1169,6 +1200,8 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::opentopography:     return "opentopography";
         case lsdtt_dem_source::planetary_computer: return "planetary_computer";
         case lsdtt_dem_source::us_3dep:            return "us_3dep";
+        case lsdtt_dem_source::arctic_arcticdem:   return "arctic_arcticdem";
+        case lsdtt_dem_source::antarctic_rema:     return "antarctic_rema";
     }
     return "unknown";
 }
@@ -1278,6 +1311,84 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         dep.stac_asset = "data";
         dep.stac_planetary_computer_signing = true;
         rows.push_back(dep);
+
+        // ArcticDEM and REMA: PGC's mosaics, searched through the PGC STAC API
+        // (one collection per resolution), read straight from the public
+        // pgc-opendata-dems bucket. No key, no signing.
+        const std::vector<std::string> pgc_fields = {
+            "id", "bbox", "properties.gsd", "properties.datetime", "assets.dem.href"};
+
+        lsdtt_dem_source_info arc;
+        arc.id = lsdtt_dem_source::arctic_arcticdem;
+        arc.name = "arctic_arcticdem";
+        arc.title = "ArcticDEM mosaic v4.1 (Polar Geospatial Center)";
+        arc.provider = "Polar Geospatial Center, University of Minnesota; hosted on "
+                       "the AWS Open Data registry";
+        arc.licence_attribution =
+            "ArcticDEM mosaic v4.1, Polar Geospatial Center, University of Minnesota "
+            "(Porter et al., 2023, doi:10.7910/DVN/3VDC4W), CC-BY-4.0. DEMs provided "
+            "by the Polar Geospatial Center under NSF-OPP awards 1043681, 1559691, "
+            "1542736, 1810976 and 2129685.";
+        arc.coverage_text = "land north of 60 N, plus Greenland, Alaska and Kamchatka";
+        arc.description =
+            "ArcticDEM mosaic v4.1 -- a DIGITAL SURFACE MODEL (canopy and buildings "
+            "included) from stereo satellite imagery, composited from scenes of "
+            "different dates. Nominal 10 m (the default), 2 m or 32 m on a polar "
+            "stereographic grid (EPSG:3413). Heights in metres above the WGS84 "
+            "ELLIPSOID, not a geoid: they differ from sea-level heights by tens "
+            "of metres.";
+        arc.accessed = "2026-11-01";
+        arc.native_resolutions_metres = {2.0, 10.0, 32.0};
+        arc.default_resolution_metres = 10.0;
+        arc.surface_models = {"dsm"};
+        arc.default_surface_model = "dsm";
+        arc.vertical_datum = "WGS84 ellipsoid";
+        arc.coverage_envelopes = {{-180.0, 50.0, 180.0, 90.0}};
+        arc.stac_search_url = "https://stac.pgc.umn.edu/api/v1/search";
+        arc.stac_asset = "dem";
+        arc.stac_collection_by_resolution = {
+            {2.0,  "arcticdem-mosaics-v4.1-2m"},
+            {10.0, "arcticdem-mosaics-v4.1-10m"},
+            {32.0, "arcticdem-mosaics-v4.1-32m"}};
+        arc.stac_fields_include = pgc_fields;
+        arc.native_grid_projected = true;
+        rows.push_back(arc);
+
+        lsdtt_dem_source_info rema;
+        rema.id = lsdtt_dem_source::antarctic_rema;
+        rema.name = "antarctic_rema";
+        rema.title = "REMA mosaic v2.0 (Polar Geospatial Center)";
+        rema.provider = "Polar Geospatial Center, University of Minnesota; hosted on "
+                        "the AWS Open Data registry";
+        rema.licence_attribution =
+            "Reference Elevation Model of Antarctica (REMA) mosaic v2.0, Polar "
+            "Geospatial Center, University of Minnesota (Howat et al., 2022, "
+            "doi:10.7910/DVN/EBW8UC), CC-BY-4.0. DEMs provided by the Polar "
+            "Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, "
+            "1559691, 1810976 and 2129685.";
+        rema.coverage_text = "Antarctica and its islands, south of 60 S";
+        rema.description =
+            "REMA mosaic v2.0 -- a DIGITAL SURFACE MODEL from stereo satellite "
+            "imagery, composited from scenes of different dates. Nominal 10 m "
+            "(the default), 2 m or 32 m on a polar stereographic grid "
+            "(EPSG:3031). Heights in metres above the WGS84 ELLIPSOID, not a "
+            "geoid: they differ from sea-level heights by tens of metres.";
+        rema.accessed = "2026-11-01";
+        rema.native_resolutions_metres = {2.0, 10.0, 32.0};
+        rema.default_resolution_metres = 10.0;
+        rema.surface_models = {"dsm"};
+        rema.default_surface_model = "dsm";
+        rema.vertical_datum = "WGS84 ellipsoid";
+        rema.coverage_envelopes = {{-180.0, -90.0, 180.0, -60.0}};
+        rema.stac_search_url = "https://stac.pgc.umn.edu/api/v1/search";
+        rema.stac_asset = "dem";
+        rema.stac_collection_by_resolution = {
+            {2.0,  "rema-mosaics-v2.0-2m"},
+            {10.0, "rema-mosaics-v2.0-10m"},
+            {32.0, "rema-mosaics-v2.0-32m"}};
+        rema.stac_fields_include = pgc_fields;
+        rema.native_grid_projected = true;
+        rows.push_back(rema);
 
         return rows;
     }();
@@ -1990,6 +2101,21 @@ double effective_read_resolution(double native, double grid_spacing)
     return r;
 }
 
+bool check_download_estimate(const lsdtt_fetch_options& o, double megabytes,
+                             std::string& error)
+{
+    if (o.max_download_megabytes > 0.0 && megabytes > o.max_download_megabytes)
+    {
+        error = "the download is estimated at " + format_double(megabytes, 1) +
+                " MB, more than max_download_megabytes (" +
+                format_double(o.max_download_megabytes, 1) + " MB); fetch a smaller "
+                "area, use a coarser grid_spacing or source_resolution_metres, or "
+                "raise max_download_megabytes";
+        return false;
+    }
+    return true;
+}
+
 // Output pixels and download size, before any request. The download estimate
 // assumes Float32 cells and ignores compression, so it errs high.
 bool preflight_size(const lsdtt_fetch_options& o, int epsg, std::string& error)
@@ -2025,6 +2151,17 @@ bool preflight_size(const lsdtt_fetch_options& o, int epsg, std::string& error)
 
     const lsdtt_dem_source_info& info = dem_source_info(o.source);
     double cell_degrees = 1.0 / 3600.0;   // GLO-30 and the 1 arc-second products
+    if (!info.legacy_path && info.native_grid_projected)
+    {
+        // Metre cells: count them over the output extent's area.
+        const double read_res = effective_read_resolution(
+            resolved_source_resolution(o, info), o.grid_spacing);
+        const double megabytes = fetch_detail::estimate_download_megabytes(
+            static_cast<double>(out_pixels) * (o.grid_spacing / read_res) *
+                (o.grid_spacing / read_res),
+            4.0);
+        return check_download_estimate(o, megabytes, error);
+    }
     if (!info.legacy_path)
     {
         const double read_res = effective_read_resolution(
@@ -2039,16 +2176,7 @@ bool preflight_size(const lsdtt_fetch_options& o, int epsg, std::string& error)
     const double megabytes = fetch_detail::estimate_download_megabytes(
         fetch_detail::geographic_cell_count(o.west, o.south, o.east, o.north, cell_degrees),
         4.0);
-    if (o.max_download_megabytes > 0.0 && megabytes > o.max_download_megabytes)
-    {
-        error = "the download is estimated at " + format_double(megabytes, 1) +
-                " MB, more than max_download_megabytes (" +
-                format_double(o.max_download_megabytes, 1) + " MB); fetch a smaller "
-                "area, use a coarser grid_spacing or source_resolution_metres, or "
-                "raise max_download_megabytes";
-        return false;
-    }
-    return true;
+    return check_download_estimate(o, megabytes, error);
 }
 
 // The LSDTT_* items for a legacy-path output.
@@ -2203,10 +2331,8 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
     std::vector<fetch_detail::stac_item> items;
     std::vector<std::string> missing_asset;
     {
-        lsdtt_fetch_options search = options;
-        search.pc_collection = info.stac_collection;
         std::string url  = info.stac_search_url;
-        std::string body = fetch_detail::pc_stac_search_body(search);
+        std::string body = fetch_detail::catalogue_stac_search_body(options);
         for (int page = 0; ; ++page)
         {
             std::string response, error, next_href, next_body;
@@ -2305,6 +2431,17 @@ lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
             return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
         }
     }
+    // UTM, the default output CRS, is not defined beyond 84 N and 80 S.
+    const double centre_lat = 0.5 * (options.south + options.north);
+    if (!options.use_frame && options.target_epsg <= 0 &&
+        (centre_lat > 84.0 || centre_lat < -80.0))
+    {
+        result.warnings.push_back(
+            "the area is centred beyond the UTM latitude limits (84 N / 80 S), so "
+            "the default UTM output is strongly distorted; set target_epsg to 3413 "
+            "(Arctic) or 3031 (Antarctic) for a polar stereographic grid");
+    }
+
     const std::vector<std::string>& item_names = result.tiles;
 
     std::vector<GDALDatasetH> datasets;

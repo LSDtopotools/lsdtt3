@@ -6774,7 +6774,7 @@ foreach(_ff_case IN ITEMS
     )
 endforeach()
 
-# Catalogue sources (us_3dep) and the size limits: refused before any
+# Catalogue sources (us_3dep, arctic_arcticdem, antarctic_rema) and the size limits: refused before any
 # request, so these run offline.
 add_lsdtt_cli_smoke_test(
     failure_fetch_raster_3dep_outside_coverage
@@ -6801,6 +6801,24 @@ add_lsdtt_cli_smoke_test(
     unused_expected_output
     --expect-failure
     --stderr-contains "us_3dep has no dsm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_arcticdem_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_arcticdem_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside arctic_arcticdem coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_rema_terrain_model
+    lsdtt-fetch-raster
+    fetch_raster_rema_terrain_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "antarctic_rema has no dtm product"
 )
 
 add_lsdtt_cli_smoke_test(
@@ -6835,6 +6853,12 @@ add_test(NAME smoke_fetch_raster_help_dem_source
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source PROPERTIES
     LABELS "smoke;cli;fetch"
     PASS_REGULAR_EXPRESSION "USGS 3DEP seamless DEM -- a DIGITAL TERRAIN MODEL")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_polar
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_polar PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "ArcticDEM mosaic v4.1 -- a DIGITAL SURFACE MODEL.*REMA mosaic v2.0 -- a DIGITAL SURFACE MODEL")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)

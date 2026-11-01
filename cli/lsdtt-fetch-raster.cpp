@@ -235,6 +235,9 @@ int main(int argc, char* argv[])
         "many other STAC collections (see pc_collection). "
         "us_3dep: USGS 3DEP seamless, a bare-earth terrain model at nominal "
         "10 m (default) or 30 m, keyless, US coverage only. "
+        "arctic_arcticdem / antarctic_rema: the Polar Geospatial Center "
+        "ArcticDEM and REMA mosaics, SURFACE models at nominal 10 m (default), "
+        "2 m or 32 m, keyless, heights above the WGS84 ellipsoid. "
         "Run -h dem_source for every source with its surface or terrain model, "
         "datum, resolutions and coverage. "
         "Any other value is an error rather than a silent substitution.",
@@ -252,7 +255,8 @@ int main(int argc, char* argv[])
     float_default_map["source_resolution_metres"] = 0.0f;
     help_map["source_resolution_metres"] = {"float","0",
         "Native resolution of the product to fetch (nominal metres).",
-        "0 takes the source's default product (us_3dep: 10 m). For "
+        "0 takes the source's default product (us_3dep, arctic_arcticdem, "
+        "antarctic_rema: 10 m). For "
         "planetary_computer, 0 uses every item the search returns and a value "
         "keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). "
         "A value the source does not offer is an error listing what it offers. "
@@ -549,7 +553,9 @@ int main(int argc, char* argv[])
         "EPSG code of the output projection.",
         "0 derives the UTM zone from the bounding box centre, which is "
         "normally what you want. Set explicitly to pin a projection, for "
-        "example when fetching several adjacent areas that must share a grid.",
+        "example when fetching several adjacent areas that must share a grid. "
+        "UTM is not defined beyond 84 N and 80 S: there use 3413 (Arctic) or "
+        "3031 (Antarctic) polar stereographic.",
         "Output grid", "param", ""};
 
     float_default_map["grid_spacing"] = 30.0f;
@@ -602,7 +608,8 @@ int main(int argc, char* argv[])
         "(Float32 cells, compression ignored, so the estimate errs high). Where "
         "lsdtt3 does the HTTP itself (opentopography) the transfer is also "
         "counted and stopped when it passes the limit; reads of cloud-optimised "
-        "GeoTIFFs (cop30_aws, planetary_computer, us_3dep) rely on the estimate. "
+        "GeoTIFFs (cop30_aws, planetary_computer and the catalogue sources) rely "
+        "on the estimate. "
         "0 disables the check.",
         "Size limits", "param", ""};
 

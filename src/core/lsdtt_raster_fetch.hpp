@@ -75,7 +75,9 @@ enum class lsdtt_dem_source
     // Catalogue sources (lsdtt_dem_source_info): national and polar DEMs,
     // named country first. New values are appended so existing ones keep
     // their meaning.
-    us_3dep               // USGS 3DEP seamless, via Planetary Computer. No key.
+    us_3dep,              // USGS 3DEP seamless, via Planetary Computer. No key.
+    arctic_arcticdem,     // PGC ArcticDEM mosaic v4.1. No key.
+    antarctic_rema        // PGC REMA mosaic v2.0. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -131,6 +133,16 @@ struct lsdtt_dem_source_info
     std::string stac_collection;
     std::string stac_asset;
     bool        stac_planetary_computer_signing = false;
+    // Hosts that publish one collection per resolution (PGC): the collection
+    // for each native resolution, used instead of stac_collection.
+    std::vector<std::pair<double, std::string>> stac_collection_by_resolution;
+    // STAC fields extension: return only these item fields. PGC items list
+    // every source scene, tens of kB each; the fetch needs none of it.
+    std::vector<std::string> stac_fields_include;
+
+    // The source grid is projected (metre cells), not geographic: the
+    // download estimate counts cells by area rather than by degrees.
+    bool native_grid_projected = false;
 };
 
 // The whole catalogue, in the order shown to users.

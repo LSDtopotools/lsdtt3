@@ -43,6 +43,16 @@ std::string fetch_cache_key(const lsdtt_fetch_options& options);
 // The JSON body of the Planetary Computer STAC search.
 std::string pc_stac_search_body(const lsdtt_fetch_options& options);
 
+// The JSON body of a catalogue source's STAC search: its collection for the
+// resolved resolution, the bbox, and the fields filter if the row has one.
+// For us_3dep (no fields filter) it equals pc_stac_search_body on that
+// collection.
+std::string catalogue_stac_search_body(const lsdtt_fetch_options& options);
+
+// The STAC collection a catalogue source searches at `resolution_metres`.
+std::string catalogue_stac_collection(const lsdtt_dem_source_info& info,
+                                      double                       resolution_metres);
+
 // The GDALWarp argument vector. explicit_extent (target CRS) replaces -tap
 // with -te on the snapped extent; nullptr gives the Copernicus arguments.
 std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,
