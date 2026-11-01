@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_3dep_too_big
+
+# An output grid over max_output_pixels is refused before download (offline).
+west: -105.30
+south: 39.95
+east: -105.25
+north: 40.00
+
+dem_source: us_3dep
+max_output_pixels: 1000

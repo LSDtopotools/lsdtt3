@@ -521,6 +521,16 @@ void declare_fetch_bounds_file_parameters(std::map<std::string, std::string>& st
 void declare_http_request_parameters(std::map<std::string, int>& int_default_map,
                                      lsdtt_help_registry&        help_map);
 
+// declare_fetch_request_limit_parameters: max_tiles (default 256) and
+//   request_delay_milliseconds (default 200), one meaning in every fetch CLI.
+//   `service` names who is being asked ("Macrostrat", "the OCTOPUS WFS", "the
+//   DEM source") and `group` is the help group.
+void declare_fetch_request_limit_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          service,
+                                            const std::string&          group,
+                                            bool                        with_max_tiles = true);
+
 // declare_linear_feature_fetch_parameters: fetch_from_linear_feature (the
 //   switch), fetch_feature_fname, fetch_feature_path, fetch_feature_layer,
 //   linear_feature_fetch_width, linear_feature_fetch_end_buffer,

@@ -10,14 +10,17 @@
 // See lsdtt_raster_fetch.hpp for full documentation.
 
 #include "lsdtt_raster_fetch.hpp"
+#include "lsdtt_raster_fetch_detail.hpp"
 #include "lsdtt_gdal_init.hpp"
 #include "lsdtt_secret.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -178,54 +181,9 @@ bool file_exists(const std::string& path)
 }
 
 
-// Cache key: everything that changes the pixels. Omitting any of these would
-// let a cached raster be reused for a request it does not answer.
 std::string cache_key_for(const lsdtt_fetch_options& o)
 {
-    std::ostringstream key;
-    key << dem_source_name(o.source)
-        << '_' << format_double(o.west,  6)
-        << '_' << format_double(o.south, 6)
-        << '_' << format_double(o.east,  6)
-        << '_' << format_double(o.north, 6)
-        << "_epsg" << o.target_epsg
-        << "_res"  << format_double(o.grid_spacing, 4)
-        << '_' << o.resampling
-        << "_px" << o.size_px
-        << "_nd" << format_double(o.no_data_value, 4);
-
-    // Which dataset was asked for changes the pixels just as much as the bbox
-    // does, so it has to be in the key: otherwise a COP30 fetch and a later
-    // SRTMGL1 fetch over the same area would collide and the second would
-    // silently return the first. Added per-source so keys for the single-dataset
-    // cop30_aws source are unaffected.
-    if (o.source == lsdtt_dem_source::opentopography)
-    {
-        key << '_' << (o.ot_dem_type.empty() ? "COP30" : o.ot_dem_type);
-    }
-    else if (o.source == lsdtt_dem_source::planetary_computer)
-    {
-        key << '_' << o.pc_collection << '_' << o.pc_asset;
-    }
-
-    // Frame mode: the frame defines the grid. Added only in frame mode so
-    // plain fetch keys are unaffected.
-    if (o.use_frame)
-    {
-        key << "_frame_" << format_double(o.frame.centre.longitude, 9)
-            << '_' << format_double(o.frame.centre.latitude, 9)
-            << '_' << format_double(o.frame.azimuth_degrees, 9)
-            << '_' << format_double(o.frame.x_min, 3) << '_' << format_double(o.frame.x_max, 3)
-            << '_' << format_double(o.frame.y_min, 3) << '_' << format_double(o.frame.y_max, 3);
-    }
-
-    // Keep it filesystem-safe.
-    std::string out = key.str();
-    for (char& c : out)
-    {
-        if (c == '.' || c == '-' || c == ' ') c = '_';
-    }
-    return out + ".tif";
+    return fetch_detail::fetch_cache_key(o);
 }
 
 
@@ -262,11 +220,45 @@ std::string opentopography_url(const lsdtt_fetch_options& o)
 // range-request advantage, and a failed request returns an error document that
 // must be inspected rather than handed to GDAL as if it were a raster.
 // -----------------------------------------------------------------------------
+// CPLHTTPDestroyResult frees pabyData; ours points into a capped_download,
+// so detach it first.
+void destroy_detached(CPLHTTPResult* response)
+{
+    response->pabyData = nullptr;
+    response->nDataLen = 0;
+    CPLHTTPDestroyResult(response);
+}
+
+// The body of a download, collected by a write callback so the byte limit
+// (max_download_megabytes) can stop the transfer as soon as it is passed.
+struct capped_download
+{
+    std::vector<unsigned char> data;
+    double max_bytes = 0.0;   // 0: no limit
+    bool   over_limit = false;
+};
+
+size_t capped_download_write(void* buffer, size_t size, size_t count, void* arg)
+{
+    auto* d = static_cast<capped_download*>(arg);
+    const size_t n = size * count;
+    if (d->max_bytes > 0.0 &&
+        static_cast<double>(d->data.size() + n) > d->max_bytes)
+    {
+        d->over_limit = true;
+        return 0;   // tells curl to abort the transfer
+    }
+    const unsigned char* p = static_cast<const unsigned char*>(buffer);
+    d->data.insert(d->data.end(), p, p + n);
+    return n;
+}
+
 bool download_to_vsimem(const std::string& url,
                         const std::string& secret,
                         const std::string& vsimem_path,
                         int timeout_seconds,
                         int max_retry,
+                        double max_download_megabytes,
                         std::string& error)
 {
     gdal_string_list_guard http_opts;
@@ -274,10 +266,29 @@ bool download_to_vsimem(const std::string& url,
     http_opts.add("MAX_RETRY=" + std::to_string(max_retry));
     http_opts.add("RETRY_DELAY=2");
 
+    capped_download body;
+    body.max_bytes = max_download_megabytes * 1.0e6;
+
     CPLHTTPResult* response = nullptr;
     {
         quiet_gdal_errors quiet;   // GDAL would otherwise print the keyed URL
-        response = CPLHTTPFetch(url.c_str(), http_opts.get());
+        response = CPLHTTPFetchEx(url.c_str(), http_opts.get(), nullptr, nullptr,
+                                  capped_download_write, &body);
+    }
+
+    if (body.over_limit)
+    {
+        if (response != nullptr) destroy_detached(response);
+        error = "the download passed max_download_megabytes (" +
+                format_double(max_download_megabytes, 1) + " MB) and was stopped; "
+                "raise max_download_megabytes, fetch a smaller area, or use a "
+                "coarser product";
+        return false;
+    }
+    if (response != nullptr)
+    {
+        response->pabyData = body.data.empty() ? nullptr : body.data.data();
+        response->nDataLen = static_cast<int>(body.data.size());
     }
 
     if (response == nullptr)
@@ -292,14 +303,14 @@ bool download_to_vsimem(const std::string& url,
                 mask_secret(response->pszErrBuf ? response->pszErrBuf
                                                 : "unknown transport error",
                             secret);
-        CPLHTTPDestroyResult(response);
+        destroy_detached(response);
         return false;
     }
 
     if (response->nDataLen <= 0 || response->pabyData == nullptr)
     {
         error = "the OpenTopography API returned an empty response";
-        CPLHTTPDestroyResult(response);
+        destroy_detached(response);
         return false;
     }
 
@@ -319,7 +330,7 @@ bool download_to_vsimem(const std::string& url,
         if (body.size() > 400) body = body.substr(0, 400) + "...";
         error = "the OpenTopography API returned an error: " +
                 mask_secret(body, secret);
-        CPLHTTPDestroyResult(response);
+        destroy_detached(response);
         return false;
     }
 
@@ -331,7 +342,7 @@ bool download_to_vsimem(const std::string& url,
     if (handle == nullptr)
     {
         error = "could not stage the downloaded raster in memory";
-        CPLHTTPDestroyResult(response);
+        destroy_detached(response);
         return false;
     }
     VSIFCloseL(handle);
@@ -346,7 +357,7 @@ bool download_to_vsimem(const std::string& url,
     if (!staged)
     {
         VSIUnlink(vsimem_path.c_str());
-        CPLHTTPDestroyResult(response);
+        destroy_detached(response);
         error = "the downloaded data is not a readable raster";
         return false;
     }
@@ -364,7 +375,7 @@ bool download_to_vsimem(const std::string& url,
     }
     staged.reset();
     VSIUnlink(vsimem_path.c_str());
-    CPLHTTPDestroyResult(response);
+    destroy_detached(response);
 
     if (!owned)
     {
@@ -381,6 +392,11 @@ bool download_to_vsimem(const std::string& url,
 
 lsdtt_fetch_result make_error(const std::string& message);
 lsdtt_fetch_result make_skip(const std::string& message);
+lsdtt_fetch_result warp_and_write_sources(const std::vector<GDALDatasetH>& sources,
+                                          const lsdtt_fetch_options& options,
+                                          lsdtt_fetch_result result,
+                                          const std::string& out_path,
+                                          const fetch_detail::fetch_extent* explicit_extent);
 
 
 // -----------------------------------------------------------------------------
@@ -444,6 +460,39 @@ bool pc_sign_href(const std::string& href, int timeout_seconds, int max_retry,
 
 
 // -----------------------------------------------------------------------------
+// pc_collection_token
+//
+// One SAS token for a whole Planetary Computer collection (anonymous, no key),
+// appended to every asset href. One request instead of one per file, which
+// the per-href signing endpoint sometimes refuses when called in quick
+// succession. The token is a short-lived credential: never log it.
+// -----------------------------------------------------------------------------
+bool pc_collection_token(const std::string& collection, int timeout_seconds, int max_retry,
+                         std::string& token, std::string& error)
+{
+    std::string body;
+    if (!http_request_body("https://planetarycomputer.microsoft.com/api/sas/v1/token/" +
+                           collection, "", timeout_seconds, max_retry, body, error))
+    {
+        return false;
+    }
+    CPLJSONDocument document;
+    if (!document.LoadMemory(body))
+    {
+        error = "could not parse the token response as JSON";
+        return false;
+    }
+    token = document.GetRoot().GetString("token", "");
+    if (token.empty())
+    {
+        error = "the token response contained no 'token' field";
+        return false;
+    }
+    return true;
+}
+
+
+// -----------------------------------------------------------------------------
 // pc_search_assets
 //
 // STAC search for items intersecting the bounding box, returning the signed
@@ -452,25 +501,20 @@ bool pc_sign_href(const std::string& href, int timeout_seconds, int max_retry,
 bool pc_search_assets(const lsdtt_fetch_options& o,
                       std::vector<std::string>& signed_hrefs,
                       std::vector<std::string>& item_ids,
+                      std::vector<std::string>& warnings,
+                      bool& is_error,
                       std::string& error)
 {
+    is_error = false;
     const std::string collection =
         o.pc_collection.empty() ? "cop-dem-glo-30" : o.pc_collection;
     const std::string asset_key =
         o.pc_asset.empty() ? "data" : o.pc_asset;
 
-    std::ostringstream request;
-    request << "{\"collections\":[\"" << collection << "\"],"
-            << "\"bbox\":[" << format_double(o.west,  10) << ','
-                            << format_double(o.south, 10) << ','
-                            << format_double(o.east,  10) << ','
-                            << format_double(o.north, 10) << "],"
-            << "\"limit\":100}";
-
     std::string body;
     if (!http_request_body(
             "https://planetarycomputer.microsoft.com/api/stac/v1/search",
-            request.str(), o.http_timeout_seconds, o.http_max_retry,
+            fetch_detail::pc_stac_search_body(o), o.http_timeout_seconds, o.http_max_retry,
             body, error))
     {
         return false;
@@ -491,10 +535,20 @@ bool pc_search_assets(const lsdtt_fetch_options& o,
         return false;
     }
 
+    // gsd of every item, for the source_resolution_metres filter and the
+    // mixed-resolution warning. With the filter at 0 every item is kept, in
+    // the order returned: the original behaviour.
+    const double wanted_gsd = o.source_resolution_metres;
+    std::vector<double> seen_gsd;
     for (int i = 0; i < features.Size(); ++i)
     {
         CPLJSONObject feature = features[i];
         const std::string id = feature.GetString("id", "");
+        const double gsd = feature.GetDouble("properties/gsd", 0.0);
+        if (std::find(seen_gsd.begin(), seen_gsd.end(), gsd) == seen_gsd.end())
+            seen_gsd.push_back(gsd);
+        if (wanted_gsd > 0.0 && std::abs(gsd - wanted_gsd) > 1e-6 * wanted_gsd)
+            continue;
 
         CPLJSONObject asset = feature.GetObj("assets/" + asset_key);
         if (!asset.IsValid())
@@ -521,6 +575,25 @@ bool pc_search_assets(const lsdtt_fetch_options& o,
         item_ids.push_back(id.empty() ? "(unnamed item)" : id);
     }
 
+    std::sort(seen_gsd.begin(), seen_gsd.end());
+    std::string seen_list;
+    for (double g : seen_gsd)
+        seen_list += (seen_list.empty() ? "" : ", ") + format_double(g, 1);
+    if (wanted_gsd > 0.0 && signed_hrefs.empty())
+    {
+        is_error = true;
+        error = "no item of collection '" + collection + "' over this area has gsd " +
+                format_double(wanted_gsd, 1) + " m (gsd values found: " + seen_list +
+                "); change source_resolution_metres";
+        return false;
+    }
+    if (!(wanted_gsd > 0.0) && seen_gsd.size() > 1)
+    {
+        warnings.push_back("collection '" + collection + "' returned items of "
+                           "several resolutions (gsd " + seen_list + " m) and all "
+                           "of them were mosaicked; set source_resolution_metres "
+                           "to use one");
+    }
     return true;
 }
 
@@ -531,44 +604,24 @@ bool pc_search_assets(const lsdtt_fetch_options& o,
 // target CRS at a fixed grid spacing, then optionally crop an exact square
 // from the centre. Sources differ only in how they obtain the input dataset.
 // -----------------------------------------------------------------------------
-lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
-                                  const lsdtt_fetch_options& options,
-                                  lsdtt_fetch_result result,
-                                  const std::string& out_path)
+lsdtt_fetch_result warp_and_write_sources(const std::vector<GDALDatasetH>& sources,
+                                          const lsdtt_fetch_options& options,
+                                          lsdtt_fetch_result result,
+                                          const std::string& out_path,
+                                          const fetch_detail::fetch_extent* explicit_extent)
 {
     // ---------------------------------------------------------------------
     // Step 3: warp to a metric CRS at a fixed grid spacing
     // ---------------------------------------------------------------------
-    const std::string spacing = format_double(options.grid_spacing, 6);
-
+    const std::string target_label = options.use_frame
+                                   ? std::string("the oblique frame")
+                                   : "EPSG:" + std::to_string(result.epsg);
     gdal_string_list_guard warp_args;
-    std::string target_label = "EPSG:" + std::to_string(result.epsg);
-    if (options.use_frame)
+    for (const std::string& arg :
+         fetch_detail::fetch_warp_arguments(options, result.epsg, explicit_extent))
     {
-        // Straight into the frame: its own extent and cell count, so the grid
-        // is exactly the frame's (no -tap, which would snap to the frame
-        // origin's multiples but not to the frame extent).
-        const lsdtt_oblique_frame& f = options.frame;
-        target_label = "the oblique frame";
-        warp_args.add("-t_srs");  warp_args.add(f.to_wkt());
-        warp_args.add("-te");
-        warp_args.add(format_double(f.x_min, 6)); warp_args.add(format_double(f.y_min, 6));
-        warp_args.add(format_double(f.x_max, 6)); warp_args.add(format_double(f.y_max, 6));
-        warp_args.add("-ts");
-        warp_args.add(std::to_string(f.n_cols())); warp_args.add(std::to_string(f.n_rows()));
-        warp_args.add("-r");      warp_args.add(options.resampling);
+        warp_args.add(arg);
     }
-    else
-    {
-        warp_args.add("-t_srs");     warp_args.add(target_label);
-        warp_args.add("-tr");        warp_args.add(spacing); warp_args.add(spacing);
-        warp_args.add("-r");         warp_args.add(options.resampling);
-        warp_args.add("-tap");
-    }
-    warp_args.add("-dstnodata"); warp_args.add(format_double(options.no_data_value, 6));
-    warp_args.add("-of");        warp_args.add("GTiff");
-    warp_args.add("-co");        warp_args.add("COMPRESS=DEFLATE");
-    warp_args.add("-co");        warp_args.add("TILED=YES");
 
     GDALWarpAppOptions* warp_opts = GDALWarpAppOptionsNew(warp_args.get(), nullptr);
     if (!warp_opts)
@@ -585,8 +638,9 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
     gdal_dataset_guard warped;
     {
         int usage_error = CE_None;
-        GDALDatasetH sources[1] = { source_ds.get() };
-        warped.reset(GDALWarp(warp_target.c_str(), nullptr, 1, sources,
+        std::vector<GDALDatasetH> inputs = sources;
+        warped.reset(GDALWarp(warp_target.c_str(), nullptr,
+                              static_cast<int>(inputs.size()), inputs.data(),
                               warp_opts, &usage_error));
         GDALWarpAppOptionsFree(warp_opts);
         if (!warped || usage_error != CE_None)
@@ -669,6 +723,16 @@ lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
 }
 
 
+// The single-source form every original source uses.
+lsdtt_fetch_result warp_and_write(gdal_dataset_guard& source_ds,
+                                  const lsdtt_fetch_options& options,
+                                  lsdtt_fetch_result result,
+                                  const std::string& out_path)
+{
+    return warp_and_write_sources({source_ds.get()}, options, result, out_path, nullptr);
+}
+
+
 lsdtt_fetch_result make_error(const std::string& message)
 {
     lsdtt_fetch_result result;
@@ -744,6 +808,341 @@ bool validate_options(const lsdtt_fetch_options& o, std::string& error)
 
 } // anonymous namespace
 
+// =============================================================================
+// fetch_detail: pure internals, pinned by the tests
+// =============================================================================
+namespace fetch_detail {
+
+// Cache key: everything that changes the pixels. Omitting any of these would
+// let a cached raster be reused for a request it does not answer.
+std::string fetch_cache_key(const lsdtt_fetch_options& o)
+{
+    std::ostringstream key;
+    key << dem_source_name(o.source)
+        << '_' << format_double(o.west,  6)
+        << '_' << format_double(o.south, 6)
+        << '_' << format_double(o.east,  6)
+        << '_' << format_double(o.north, 6)
+        << "_epsg" << o.target_epsg
+        << "_res"  << format_double(o.grid_spacing, 4)
+        << '_' << o.resampling
+        << "_px" << o.size_px
+        << "_nd" << format_double(o.no_data_value, 4);
+
+    // Which dataset was asked for changes the pixels just as much as the bbox
+    // does, so it has to be in the key: otherwise a COP30 fetch and a later
+    // SRTMGL1 fetch over the same area would collide and the second would
+    // silently return the first. Added per-source so keys for the single-dataset
+    // cop30_aws source are unaffected.
+    if (o.source == lsdtt_dem_source::opentopography)
+    {
+        key << '_' << (o.ot_dem_type.empty() ? "COP30" : o.ot_dem_type);
+    }
+    else if (o.source == lsdtt_dem_source::planetary_computer)
+    {
+        key << '_' << o.pc_collection << '_' << o.pc_asset;
+        // Only when filtering, so the default keys are unchanged.
+        if (o.source_resolution_metres > 0.0)
+            key << "_gsd" << format_double(o.source_resolution_metres, 3);
+    }
+    else if (!dem_source_info(o.source).legacy_path)
+    {
+        const lsdtt_dem_source_info& info = dem_source_info(o.source);
+        const double res = o.source_resolution_metres > 0.0
+                         ? o.source_resolution_metres : info.default_resolution_metres;
+        const std::string model = (o.surface_model_choice.empty() ||
+                                   o.surface_model_choice == "source_default")
+                                ? info.default_surface_model : o.surface_model_choice;
+        key << "_src" << format_double(res, 3) << '_' << model;
+    }
+
+    // Frame mode: the frame defines the grid. Added only in frame mode so
+    // plain fetch keys are unaffected.
+    if (o.use_frame)
+    {
+        key << "_frame_" << format_double(o.frame.centre.longitude, 9)
+            << '_' << format_double(o.frame.centre.latitude, 9)
+            << '_' << format_double(o.frame.azimuth_degrees, 9)
+            << '_' << format_double(o.frame.x_min, 3) << '_' << format_double(o.frame.x_max, 3)
+            << '_' << format_double(o.frame.y_min, 3) << '_' << format_double(o.frame.y_max, 3);
+    }
+
+    // Keep it filesystem-safe.
+    std::string out = key.str();
+    for (char& c : out)
+    {
+        if (c == '.' || c == '-' || c == ' ') c = '_';
+    }
+    return out + ".tif";
+}
+
+
+
+std::string pc_stac_search_body(const lsdtt_fetch_options& o)
+{
+    const std::string collection =
+        o.pc_collection.empty() ? "cop-dem-glo-30" : o.pc_collection;
+    std::ostringstream request;
+    request << "{\"collections\":[\"" << collection << "\"],"
+            << "\"bbox\":[" << format_double(o.west,  10) << ','
+                            << format_double(o.south, 10) << ','
+                            << format_double(o.east,  10) << ','
+                            << format_double(o.north, 10) << "],"
+            << "\"limit\":100}";
+    return request.str();
+}
+
+
+std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,
+                                              int                        epsg,
+                                              const fetch_extent*        explicit_extent)
+{
+    std::vector<std::string> args;
+    const std::string spacing = format_double(options.grid_spacing, 6);
+    if (options.use_frame)
+    {
+        // Straight into the frame: its own extent and cell count, so the grid
+        // is exactly the frame's (no -tap, which would snap to the frame
+        // origin's multiples but not to the frame extent).
+        const lsdtt_oblique_frame& f = options.frame;
+        args.insert(args.end(), {"-t_srs", f.to_wkt(), "-te",
+                                 format_double(f.x_min, 6), format_double(f.y_min, 6),
+                                 format_double(f.x_max, 6), format_double(f.y_max, 6),
+                                 "-ts", std::to_string(f.n_cols()), std::to_string(f.n_rows()),
+                                 "-r", options.resampling});
+    }
+    else if (explicit_extent != nullptr)
+    {
+        // The catalogue sources: the extent is already snapped to the grid
+        // (target_extent_for_bbox), which is what -tap would do, but -tap
+        // cannot be combined with -te.
+        args.insert(args.end(), {"-t_srs", "EPSG:" + std::to_string(epsg),
+                                 "-te",
+                                 format_double(explicit_extent->x_min, 6),
+                                 format_double(explicit_extent->y_min, 6),
+                                 format_double(explicit_extent->x_max, 6),
+                                 format_double(explicit_extent->y_max, 6),
+                                 "-tr", spacing, spacing,
+                                 "-r", options.resampling});
+    }
+    else
+    {
+        args.insert(args.end(), {"-t_srs", "EPSG:" + std::to_string(epsg),
+                                 "-tr", spacing, spacing,
+                                 "-r", options.resampling,
+                                 "-tap"});
+    }
+    args.insert(args.end(), {"-dstnodata", format_double(options.no_data_value, 6),
+                             "-of", "GTiff",
+                             "-co", "COMPRESS=DEFLATE",
+                             "-co", "TILED=YES"});
+    return args;
+}
+
+
+fetch_extent target_extent_for_bbox(double west, double south, double east, double north,
+                                    int epsg, double grid_spacing)
+{
+    OGRSpatialReferenceH wgs84  = OSRNewSpatialReference(nullptr);
+    OGRSpatialReferenceH target = OSRNewSpatialReference(nullptr);
+    OSRImportFromEPSG(wgs84, 4326);
+    OSRSetAxisMappingStrategy(wgs84, OAMS_TRADITIONAL_GIS_ORDER);
+    const OGRErr err = OSRImportFromEPSG(target, epsg);
+    OSRSetAxisMappingStrategy(target, OAMS_TRADITIONAL_GIS_ORDER);
+    OGRCoordinateTransformationH ct = nullptr;
+    if (err == OGRERR_NONE)
+    {
+        quiet_gdal_errors quiet;
+        ct = OCTNewCoordinateTransformation(wgs84, target);
+    }
+    if (ct == nullptr)
+    {
+        OSRDestroySpatialReference(wgs84);
+        OSRDestroySpatialReference(target);
+        throw std::runtime_error("cannot transform WGS84 to EPSG:" + std::to_string(epsg));
+    }
+
+    // Densify every edge: a projected box is not the image of the corners.
+    const int per_side = 64;
+    std::vector<double> xs, ys;
+    for (int side = 0; side < 4; ++side)
+    {
+        for (int i = 0; i <= per_side; ++i)
+        {
+            const double t = static_cast<double>(i) / per_side;
+            switch (side)
+            {
+                case 0: xs.push_back(west + t * (east - west)); ys.push_back(south); break;
+                case 1: xs.push_back(east); ys.push_back(south + t * (north - south)); break;
+                case 2: xs.push_back(east - t * (east - west)); ys.push_back(north); break;
+                default: xs.push_back(west); ys.push_back(north - t * (north - south)); break;
+            }
+        }
+    }
+    std::vector<int> ok(xs.size(), 0);
+    OCTTransformEx(ct, static_cast<int>(xs.size()), xs.data(), ys.data(), nullptr, ok.data());
+    OCTDestroyCoordinateTransformation(ct);
+    OSRDestroySpatialReference(wgs84);
+    OSRDestroySpatialReference(target);
+
+    fetch_extent e;
+    e.x_min = e.y_min = 1e300;
+    e.x_max = e.y_max = -1e300;
+    bool any = false;
+    for (std::size_t i = 0; i < xs.size(); ++i)
+    {
+        if (!ok[i]) continue;
+        any = true;
+        e.x_min = std::min(e.x_min, xs[i]); e.x_max = std::max(e.x_max, xs[i]);
+        e.y_min = std::min(e.y_min, ys[i]); e.y_max = std::max(e.y_max, ys[i]);
+    }
+    if (!any) throw std::runtime_error("no box edge point transforms to EPSG:" +
+                                       std::to_string(epsg));
+
+    // Snap outward to the grid: the -tap lattice.
+    e.x_min = std::floor(e.x_min / grid_spacing) * grid_spacing;
+    e.y_min = std::floor(e.y_min / grid_spacing) * grid_spacing;
+    e.x_max = std::ceil (e.x_max / grid_spacing) * grid_spacing;
+    e.y_max = std::ceil (e.y_max / grid_spacing) * grid_spacing;
+    return e;
+}
+
+
+bool parse_stac_items(const std::string&        json,
+                      const std::string&        asset_key,
+                      std::vector<stac_item>&   items,
+                      std::vector<std::string>& missing_asset,
+                      std::string&              next_href,
+                      std::string&              next_body,
+                      std::string&              error)
+{
+    next_href.clear();
+    next_body.clear();
+    CPLJSONDocument document;
+    if (!document.LoadMemory(json))
+    {
+        error = "could not parse the STAC search response as JSON";
+        return false;
+    }
+    const CPLJSONObject root = document.GetRoot();
+    const CPLJSONArray features = root.GetArray("features");
+    for (int i = 0; features.IsValid() && i < features.Size(); ++i)
+    {
+        const CPLJSONObject feature = features[i];
+        stac_item item;
+        item.id = feature.GetString("id", "");
+        item.gsd = feature.GetDouble("properties/gsd", 0.0);
+        item.datetime = feature.GetString("properties/datetime", "");
+        const CPLJSONArray bbox = feature.GetArray("bbox");
+        if (bbox.IsValid() && bbox.Size() >= 4)
+        {
+            for (int k = 0; k < 4; ++k) item.bbox[k] = bbox[k].ToDouble();
+        }
+        const CPLJSONObject asset = feature.GetObj("assets/" + asset_key);
+        item.href = asset.IsValid() ? asset.GetString("href", "") : "";
+        if (item.href.empty())
+        {
+            missing_asset.push_back(item.id.empty() ? "(unnamed item)" : item.id);
+            continue;
+        }
+        if (item.gsd <= 0.0 && asset.IsValid())
+            item.gsd = asset.GetDouble("gsd", 0.0);
+        items.push_back(item);
+    }
+    const CPLJSONArray links = root.GetArray("links");
+    for (int i = 0; links.IsValid() && i < links.Size(); ++i)
+    {
+        const CPLJSONObject link = links[i];
+        if (link.GetString("rel", "") != "next") continue;
+        next_href = link.GetString("href", "");
+        const CPLJSONObject body = link.GetObj("body");
+        if (body.IsValid()) next_body = body.Format(CPLJSONObject::PrettyFormat::Plain);
+    }
+    return true;
+}
+
+
+std::vector<stac_item> filter_stac_items_by_gsd(const std::vector<stac_item>& items,
+                                                double resolution_metres)
+{
+    if (!(resolution_metres > 0.0)) return items;
+    std::vector<stac_item> kept;
+    for (const stac_item& item : items)
+    {
+        // gsd is a nominal product resolution: compare with a tolerance so
+        // 10 and 10.0000001 are the same product.
+        if (std::abs(item.gsd - resolution_metres) <= 1e-6 * resolution_metres)
+            kept.push_back(item);
+    }
+    return kept;
+}
+
+
+std::vector<double> distinct_gsds(const std::vector<stac_item>& items)
+{
+    std::vector<double> out;
+    for (const stac_item& item : items)
+    {
+        if (std::find(out.begin(), out.end(), item.gsd) == out.end())
+            out.push_back(item.gsd);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+
+void sort_stac_items(std::vector<stac_item>& items)
+{
+    std::stable_sort(items.begin(), items.end(),
+                     [](const stac_item& a, const stac_item& b) { return a.id < b.id; });
+}
+
+
+std::int64_t estimate_output_pixels(const fetch_extent& extent, double grid_spacing)
+{
+    const double cols = std::ceil((extent.x_max - extent.x_min) / grid_spacing - 1e-9);
+    const double rows = std::ceil((extent.y_max - extent.y_min) / grid_spacing - 1e-9);
+    return static_cast<std::int64_t>(std::max(0.0, cols) * std::max(0.0, rows));
+}
+
+
+double estimate_download_megabytes(double n_cells, double bytes_per_cell)
+{
+    return n_cells * bytes_per_cell / 1.0e6;
+}
+
+
+double geographic_cell_count(double west, double south, double east, double north,
+                             double cell_degrees)
+{
+    return ((east - west) / cell_degrees) * ((north - south) / cell_degrees);
+}
+
+
+bool stamp_provenance(const std::string&                                       path,
+                      const std::vector<std::pair<std::string, std::string>>& items,
+                      std::string&                                             error)
+{
+    gdal_dataset_guard ds;
+    {
+        quiet_gdal_errors quiet;
+        ds.reset(GDALOpen(path.c_str(), GA_Update));
+    }
+    if (!ds)
+    {
+        error = "could not open " + path + " to record its provenance";
+        return false;
+    }
+    for (const auto& kv : items)
+    {
+        GDALSetMetadataItem(ds.get(), kv.first.c_str(), kv.second.c_str(), nullptr);
+    }
+    ds.reset();
+    return true;
+}
+
+} // namespace fetch_detail
+
 
 // =============================================================================
 // Public helpers
@@ -754,6 +1153,10 @@ bool parse_dem_source(const std::string& name, lsdtt_dem_source& out)
     if (name == "cop30_aws")          { out = lsdtt_dem_source::cop30_aws;          return true; }
     if (name == "opentopography")     { out = lsdtt_dem_source::opentopography;     return true; }
     if (name == "planetary_computer") { out = lsdtt_dem_source::planetary_computer; return true; }
+    for (const lsdtt_dem_source_info& info : dem_source_catalogue())
+    {
+        if (!info.legacy_path && info.name == name) { out = info.id; return true; }
+    }
     return false;
 }
 
@@ -765,10 +1168,142 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::cop30_aws:          return "cop30_aws";
         case lsdtt_dem_source::opentopography:     return "opentopography";
         case lsdtt_dem_source::planetary_computer: return "planetary_computer";
+        case lsdtt_dem_source::us_3dep:            return "us_3dep";
     }
     return "unknown";
 }
 
+
+
+// -----------------------------------------------------------------------------
+// The DEM source catalogue. Access details checked live on the date in
+// `accessed`; national endpoints change, so the network tests re-check them.
+// -----------------------------------------------------------------------------
+const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
+{
+    static const std::vector<lsdtt_dem_source_info> catalogue = [] {
+        std::vector<lsdtt_dem_source_info> rows;
+
+        lsdtt_dem_source_info cop;
+        cop.id = lsdtt_dem_source::cop30_aws;
+        cop.name = "cop30_aws";
+        cop.title = "Copernicus GLO-30 (AWS Open Data)";
+        cop.provider = "ESA / Copernicus, hosted on the AWS Open Data registry";
+        cop.licence_attribution =
+            "Copernicus DEM GLO-30: produced using Copernicus WorldDEM-30 "
+            "(c) DLR e.V. 2010-2014 and (c) Airbus Defence and Space GmbH "
+            "2014-2018, provided under COPERNICUS by the European Union and ESA.";
+        cop.coverage_text = "global";
+        cop.description =
+            "Copernicus GLO-30 -- a DIGITAL SURFACE MODEL (canopy and buildings "
+            "included) from TanDEM-X radar, nominal 30 m (1 arc-second). Heights "
+            "in metres above EGM2008 (geoid). Global and keyless: start here.";
+        cop.accessed = "2026-07-20";
+        cop.legacy_path = true;
+        cop.native_resolutions_metres = {30.0};
+        cop.default_resolution_metres = 30.0;
+        cop.surface_models = {"dsm"};
+        cop.default_surface_model = "dsm";
+        cop.vertical_datum = "EGM2008";
+        cop.coverage_envelopes = {{-180.0, -90.0, 180.0, 90.0}};
+        rows.push_back(cop);
+
+        lsdtt_dem_source_info ot;
+        ot.id = lsdtt_dem_source::opentopography;
+        ot.name = "opentopography";
+        ot.title = "OpenTopography global datasets (needs an API key)";
+        ot.provider = "OpenTopography";
+        ot.licence_attribution = "See the citation printed for the ot_dem_type used.";
+        ot.coverage_text = "depends on ot_dem_type";
+        ot.description =
+            "OpenTopography global DEMs (ot_dem_type picks the dataset; run -h "
+            "ot_dem_type). Surface or terrain model and datum depend on the "
+            "dataset. Needs a free API key.";
+        ot.accessed = "2026-07-22";
+        ot.legacy_path = true;
+        ot.coverage_envelopes = {{-180.0, -90.0, 180.0, 90.0}};
+        rows.push_back(ot);
+
+        lsdtt_dem_source_info pc;
+        pc.id = lsdtt_dem_source::planetary_computer;
+        pc.name = "planetary_computer";
+        pc.title = "Microsoft Planetary Computer STAC collection";
+        pc.provider = "Microsoft Planetary Computer";
+        pc.licence_attribution = "See the licence of the pc_collection used.";
+        pc.coverage_text = "depends on pc_collection";
+        pc.description =
+            "Any Planetary Computer raster collection (pc_collection; default "
+            "cop-dem-glo-30, the same data as cop30_aws). Keyless: asset URLs "
+            "are signed automatically. Surface or terrain model and datum depend "
+            "on the collection; source_resolution_metres picks items by gsd.";
+        pc.accessed = "2026-07-22";
+        pc.legacy_path = true;
+        pc.coverage_envelopes = {{-180.0, -90.0, 180.0, 90.0}};
+        rows.push_back(pc);
+
+        lsdtt_dem_source_info dep;
+        dep.id = lsdtt_dem_source::us_3dep;
+        dep.name = "us_3dep";
+        dep.title = "USGS 3DEP seamless DEM (via Planetary Computer)";
+        dep.provider = "U.S. Geological Survey, 3D Elevation Program; hosted by "
+                       "Microsoft Planetary Computer";
+        dep.licence_attribution =
+            "U.S. Geological Survey, 3D Elevation Program (3DEP) seamless DEM, "
+            "public domain; accessed through Microsoft Planetary Computer "
+            "(collection 3dep-seamless).";
+        dep.coverage_text = "conterminous US, Alaska, Hawaii, Puerto Rico and "
+                            "US territories (patchy outside CONUS)";
+        dep.description =
+            "USGS 3DEP seamless DEM -- a DIGITAL TERRAIN MODEL (bare earth, "
+            "mostly from lidar). Nominal 10 m (1/3 arc-second, the default) or "
+            "30 m (1 arc-second) on a geographic NAD83 grid, so it is always "
+            "reprojected to square cells. Heights in metres above NAVD88 "
+            "(geoid).";
+        dep.accessed = "2026-11-01";
+        dep.native_resolutions_metres = {10.0, 30.0};
+        dep.default_resolution_metres = 10.0;
+        dep.surface_models = {"dtm"};
+        dep.default_surface_model = "dtm";
+        dep.vertical_datum = "NAVD88";
+        dep.coverage_envelopes = {
+            {-125.0,  24.0,  -66.0,  50.0},   // conterminous US
+            {-180.0,  51.0, -129.0,  72.0},   // Alaska
+            { 172.0,  51.0,  180.0,  54.0},   // western Aleutians
+            {-161.0,  18.5, -154.0,  22.5},   // Hawaii
+            { -68.0,  17.5,  -64.5,  18.6},   // Puerto Rico, US Virgin Islands
+            { 144.5,  13.2,  146.2,  20.6},   // Guam, Northern Marianas
+            {-171.0, -14.6, -168.0, -11.0}};  // American Samoa
+        dep.stac_search_url = "https://planetarycomputer.microsoft.com/api/stac/v1/search";
+        dep.stac_collection = "3dep-seamless";
+        dep.stac_asset = "data";
+        dep.stac_planetary_computer_signing = true;
+        rows.push_back(dep);
+
+        return rows;
+    }();
+    return catalogue;
+}
+
+
+const lsdtt_dem_source_info& dem_source_info(lsdtt_dem_source source)
+{
+    for (const lsdtt_dem_source_info& info : dem_source_catalogue())
+    {
+        if (info.id == source) return info;
+    }
+    return dem_source_catalogue().front();   // unreachable: every id has a row
+}
+
+
+std::string dem_source_name_list()
+{
+    std::string out;
+    for (const lsdtt_dem_source_info& info : dem_source_catalogue())
+    {
+        out += (out.empty() ? "" : ", ") + info.name;
+    }
+    return out;
+}
 
 // -----------------------------------------------------------------------------
 // The OpenTopography global raster catalogue.
@@ -1348,6 +1883,503 @@ bool http_available()
 
 namespace {
 
+// =============================================================================
+// Pre-flight checks, provenance and the catalogue path
+// =============================================================================
+
+double resolved_source_resolution(const lsdtt_fetch_options& o, const lsdtt_dem_source_info& info)
+{
+    return o.source_resolution_metres > 0.0 ? o.source_resolution_metres
+                                            : info.default_resolution_metres;
+}
+
+std::string resolved_surface_model(const lsdtt_fetch_options& o, const lsdtt_dem_source_info& info)
+{
+    return (o.surface_model_choice.empty() || o.surface_model_choice == "source_default")
+         ? info.default_surface_model : o.surface_model_choice;
+}
+
+std::string list_of(const std::vector<double>& values)
+{
+    std::string out;
+    for (double v : values)
+    {
+        std::string text = format_double(v, 3);
+        while (!text.empty() && text.back() == '0') text.pop_back();
+        if (!text.empty() && text.back() == '.') text.pop_back();
+        out += (out.empty() ? "" : ", ") + text;
+    }
+    return out;
+}
+
+// Source, resolution, surface model and coverage: everything that can be
+// refused without the network. Errors, never skips: none of them is the
+// network's fault.
+bool preflight_source(const lsdtt_fetch_options& o, std::string& error)
+{
+    const lsdtt_dem_source_info& info = dem_source_info(o.source);
+    const std::string model_choice = o.surface_model_choice.empty()
+                                   ? std::string("source_default") : o.surface_model_choice;
+    if (model_choice != "source_default" && model_choice != "dtm" && model_choice != "dsm")
+    {
+        error = "surface_model_choice must be source_default, dtm or dsm (got '" +
+                model_choice + "')";
+        return false;
+    }
+    if (info.legacy_path)
+    {
+        if (model_choice != "source_default")
+        {
+            error = (o.source == lsdtt_dem_source::cop30_aws)
+                  ? "Copernicus GLO-30 is a DSM only; surface_model_choice must be "
+                    "source_default for cop30_aws"
+                  : "surface_model_choice applies to catalogue sources only; leave it "
+                    "at source_default for " + info.name;
+            return false;
+        }
+        return true;
+    }
+
+    const double res = resolved_source_resolution(o, info);
+    bool offered = false;
+    for (double r : info.native_resolutions_metres)
+        if (std::abs(r - res) <= 1e-6 * r) offered = true;
+    if (!offered)
+    {
+        error = info.name + " offers " + list_of(info.native_resolutions_metres) +
+                " m (nominal); source_resolution_metres " + format_double(res, 3) +
+                " is not one of them";
+        return false;
+    }
+
+    const std::string model = resolved_surface_model(o, info);
+    if (std::find(info.surface_models.begin(), info.surface_models.end(), model) ==
+        info.surface_models.end())
+    {
+        std::string offered_models;
+        for (const std::string& m : info.surface_models)
+            offered_models += (offered_models.empty() ? "" : ", ") + m;
+        error = info.name + " has no " + model + " product (it offers: " +
+                offered_models + ")";
+        return false;
+    }
+
+    bool inside = false;
+    for (const auto& box : info.coverage_envelopes)
+    {
+        if (o.west < box[2] && o.east > box[0] && o.south < box[3] && o.north > box[1])
+            inside = true;
+    }
+    if (!inside)
+    {
+        error = "the area (" + format_double(o.west, 4) + ", " + format_double(o.south, 4) +
+                ", " + format_double(o.east, 4) + ", " + format_double(o.north, 4) +
+                ") lies outside " + info.name + " coverage (" + info.coverage_text +
+                "). No data was fetched; use cop30_aws for global 30 m coverage";
+        return false;
+    }
+    return true;
+}
+
+// The source-cell size GDAL will actually read: the native resolution, or
+// the coarsest power-of-two overview not coarser than the output grid.
+double effective_read_resolution(double native, double grid_spacing)
+{
+    double r = native;
+    while (r * 2.0 <= grid_spacing + 1e-9) r *= 2.0;
+    return r;
+}
+
+// Output pixels and download size, before any request. The download estimate
+// assumes Float32 cells and ignores compression, so it errs high.
+bool preflight_size(const lsdtt_fetch_options& o, int epsg, std::string& error)
+{
+    std::int64_t out_pixels = 0;
+    if (o.use_frame)
+    {
+        out_pixels = static_cast<std::int64_t>(o.frame.n_cols()) * o.frame.n_rows();
+    }
+    else
+    {
+        try
+        {
+            out_pixels = fetch_detail::estimate_output_pixels(
+                fetch_detail::target_extent_for_bbox(o.west, o.south, o.east, o.north,
+                                                     epsg, o.grid_spacing),
+                o.grid_spacing);
+        }
+        catch (const std::exception& e)
+        {
+            error = e.what();
+            return false;
+        }
+    }
+    if (o.max_output_pixels > 0 && out_pixels > o.max_output_pixels)
+    {
+        error = "the output grid would be " + std::to_string(out_pixels) +
+                " pixels, more than max_output_pixels (" +
+                std::to_string(o.max_output_pixels) + "); use a coarser grid_spacing, "
+                "a smaller area, or raise max_output_pixels";
+        return false;
+    }
+
+    const lsdtt_dem_source_info& info = dem_source_info(o.source);
+    double cell_degrees = 1.0 / 3600.0;   // GLO-30 and the 1 arc-second products
+    if (!info.legacy_path)
+    {
+        const double read_res = effective_read_resolution(
+            resolved_source_resolution(o, info), o.grid_spacing);
+        cell_degrees = read_res / 111320.0;
+    }
+    else if (o.source == lsdtt_dem_source::planetary_computer &&
+             o.source_resolution_metres > 0.0)
+    {
+        cell_degrees = o.source_resolution_metres / 111320.0;
+    }
+    const double megabytes = fetch_detail::estimate_download_megabytes(
+        fetch_detail::geographic_cell_count(o.west, o.south, o.east, o.north, cell_degrees),
+        4.0);
+    if (o.max_download_megabytes > 0.0 && megabytes > o.max_download_megabytes)
+    {
+        error = "the download is estimated at " + format_double(megabytes, 1) +
+                " MB, more than max_download_megabytes (" +
+                format_double(o.max_download_megabytes, 1) + " MB); fetch a smaller "
+                "area, use a coarser grid_spacing or source_resolution_metres, or "
+                "raise max_download_megabytes";
+        return false;
+    }
+    return true;
+}
+
+// The LSDTT_* items for a legacy-path output.
+std::vector<std::pair<std::string, std::string>> legacy_provenance(
+    const lsdtt_fetch_options& o, const lsdtt_fetch_result& result)
+{
+    const lsdtt_dem_source_info& info = dem_source_info(o.source);
+    std::string surface = "not recorded (depends on the dataset)";
+    std::string datum   = surface;
+    std::string resolution = "not filtered";
+    std::string dataset;
+    if (o.source == lsdtt_dem_source::cop30_aws ||
+        (o.source == lsdtt_dem_source::planetary_computer &&
+         (o.pc_collection.empty() || o.pc_collection == "cop-dem-glo-30")))
+    {
+        surface = "DSM";
+        datum = "EGM2008";
+        resolution = "30";
+    }
+    if (o.source == lsdtt_dem_source::planetary_computer)
+    {
+        dataset = o.pc_collection.empty() ? "cop-dem-glo-30" : o.pc_collection;
+        if (o.source_resolution_metres > 0.0)
+            resolution = format_double(o.source_resolution_metres, 3);
+    }
+    else if (o.source == lsdtt_dem_source::opentopography)
+    {
+        dataset = o.ot_dem_type.empty() ? "COP30" : o.ot_dem_type;
+        const lsdtt_ot_dataset* d = ot_dataset_info(dataset);
+        resolution = d ? d->resolution : "not recorded";
+    }
+    std::vector<std::pair<std::string, std::string>> items = {
+        {"LSDTT_DEM_SOURCE", info.name},
+        {"LSDTT_SURFACE_MODEL", surface},
+        {"LSDTT_VERTICAL_DATUM", datum},
+        {"LSDTT_VERTICAL_UNITS", "metre"},
+        {"LSDTT_SOURCE_RESOLUTION_METRES", resolution},
+        {"LSDTT_SOURCE_ITEM_COUNT", std::to_string(result.tiles.size())},
+        {"LSDTT_RESAMPLING", o.resampling},
+        {"LSDTT_OVERVIEW_USED", "false"}};
+    if (!dataset.empty()) items.push_back({"LSDTT_SOURCE_DATASET", dataset});
+    return items;
+}
+
+// Stamp a written output and record what was stamped. A failure to stamp
+// fails the fetch: the provenance is part of the product.
+lsdtt_fetch_result stamp_result(lsdtt_fetch_result result,
+                                const std::vector<std::pair<std::string, std::string>>& items)
+{
+    if (!result.ok) return result;
+    std::string error;
+    if (!fetch_detail::stamp_provenance(result.path, items, error))
+        return make_error("lsdtt::fetch_dem: " + error);
+    result.provenance = items;
+    return result;
+}
+
+// Percentage of output cells that are not nodata, read row by row so a large
+// output is never held whole.
+double valid_percent(const std::string& path)
+{
+    gdal_dataset_guard ds(GDALOpen(path.c_str(), GA_ReadOnly));
+    if (!ds) return 0.0;
+    GDALRasterBandH band = GDALGetRasterBand(ds.get(), 1);
+    int has_nodata = 0;
+    const double nodata = GDALGetRasterNoDataValue(band, &has_nodata);
+    const int cols = GDALGetRasterXSize(ds.get());
+    const int rows = GDALGetRasterYSize(ds.get());
+    std::vector<float> line(static_cast<std::size_t>(cols));
+    std::int64_t valid = 0;
+    for (int r = 0; r < rows; ++r)
+    {
+        if (GDALRasterIO(band, GF_Read, 0, r, cols, 1, line.data(), cols, 1,
+                         GDT_Float32, 0, 0) != CE_None) return 0.0;
+        for (float v : line)
+            if (!has_nodata || v != static_cast<float>(nodata)) ++valid;
+    }
+    const double total = static_cast<double>(cols) * rows;
+    return total > 0.0 ? 100.0 * static_cast<double>(valid) / total : 0.0;
+}
+
+// A declared vertical unit that is not metres is refused: elevations must be
+// metres, and a feet DEM is otherwise indistinguishable from steep terrain.
+bool vertical_units_are_metres(GDALDatasetH ds, std::string& found)
+{
+    auto is_metre = [](std::string u) {
+        for (char& c : u) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return u.empty() || u == "m" || u == "metre" || u == "meter" ||
+               u == "metres" || u == "meters";
+    };
+    const char* band_unit = GDALGetRasterUnitType(GDALGetRasterBand(ds, 1));
+    found = band_unit ? band_unit : "";
+    if (!is_metre(found)) return false;
+
+    OGRSpatialReferenceH srs = GDALGetSpatialRef(ds);
+    if (srs != nullptr && (OSRIsCompound(srs) || OSRIsVertical(srs)))
+    {
+        char* name = nullptr;
+        const double factor = OSRGetTargetLinearUnits(srs, "VERT_CS", &name);
+        if (name != nullptr && factor > 0.0 && std::abs(factor - 1.0) > 1e-9)
+        {
+            found = name;
+            return false;
+        }
+    }
+    return true;
+}
+
+// Fraction (percent) of a 64 x 64 lattice over the box covered by any item
+// bbox: the partial-coverage check for sources whose footprints are known.
+double footprint_coverage_percent(const lsdtt_fetch_options& o,
+                                  const std::vector<fetch_detail::stac_item>& items)
+{
+    const int n = 64;
+    int covered = 0;
+    for (int j = 0; j < n; ++j)
+    {
+        const double lat = o.south + (j + 0.5) * (o.north - o.south) / n;
+        for (int i = 0; i < n; ++i)
+        {
+            const double lon = o.west + (i + 0.5) * (o.east - o.west) / n;
+            for (const auto& item : items)
+            {
+                if (lon >= item.bbox[0] && lon <= item.bbox[2] &&
+                    lat >= item.bbox[1] && lat <= item.bbox[3]) { ++covered; break; }
+            }
+        }
+    }
+    return 100.0 * covered / (n * n);
+}
+
+lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
+                                        const lsdtt_dem_source_info&    info,
+                                        double                          res,
+                                        const std::string&              model,
+                                        const std::vector<std::string>& paths,
+                                        const std::string&              out_path,
+                                        lsdtt_fetch_result              result,
+                                        double                          coverage);
+
+// The catalogue path: discover the source files, warp straight from them onto
+// the snapped target grid, check the result, stamp its provenance.
+lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
+                                          const std::string&         out_path,
+                                          lsdtt_fetch_result         result)
+{
+    const lsdtt_dem_source_info& info = dem_source_info(options.source);
+    const double res = resolved_source_resolution(options, info);
+    const std::string model = resolved_surface_model(options, info);
+
+    // ---- discovery: STAC search, following rel=next ----
+    std::vector<fetch_detail::stac_item> items;
+    std::vector<std::string> missing_asset;
+    {
+        lsdtt_fetch_options search = options;
+        search.pc_collection = info.stac_collection;
+        std::string url  = info.stac_search_url;
+        std::string body = fetch_detail::pc_stac_search_body(search);
+        for (int page = 0; ; ++page)
+        {
+            std::string response, error, next_href, next_body;
+            if (!http_request_body(url, body, options.http_timeout_seconds,
+                                   options.http_max_retry, response, error))
+            {
+                return make_skip("lsdtt::fetch_dem: " + info.name + " search failed: " + error);
+            }
+            if (!fetch_detail::parse_stac_items(response, info.stac_asset, items,
+                                                missing_asset, next_href, next_body, error))
+            {
+                return make_skip("lsdtt::fetch_dem: " + info.name + ": " + error);
+            }
+            if (next_href.empty()) break;
+            if (options.max_tiles > 0 &&
+                static_cast<int>(items.size()) > options.max_tiles * 2)
+                break;   // already far past the limit; the count check below refuses
+            url = next_href;
+            body = next_body;
+        }
+    }
+
+    const std::vector<double> gsds = fetch_detail::distinct_gsds(items);
+    items = fetch_detail::filter_stac_items_by_gsd(items, res);
+    if (items.empty())
+    {
+        return make_error("lsdtt::fetch_dem: no " + info.name + " data at " +
+                          list_of({res}) + " m intersects this area (resolutions "
+                          "found: " + (gsds.empty() ? std::string("none") : list_of(gsds)) +
+                          " m; coverage: " + info.coverage_text + ")");
+    }
+    if (options.max_tiles > 0 && static_cast<int>(items.size()) > options.max_tiles)
+    {
+        return make_error("lsdtt::fetch_dem: this area needs " +
+                          std::to_string(items.size()) + " " + info.name +
+                          " source files, more than max_tiles (" +
+                          std::to_string(options.max_tiles) + "); raise max_tiles or "
+                          "fetch a smaller area");
+    }
+    fetch_detail::sort_stac_items(items);
+
+    const double coverage = footprint_coverage_percent(options, items);
+    if (coverage < 99.95)
+    {
+        result.warnings.push_back(info.name + " data covers " + format_double(coverage, 1) +
+                                  " % of the requested area; the rest is NoData");
+    }
+
+    // ---- sign and open the sources ----
+    std::string token;
+    if (info.stac_planetary_computer_signing)
+    {
+        std::string error;
+        if (!pc_collection_token(info.stac_collection, options.http_timeout_seconds,
+                                 options.http_max_retry, token, error))
+        {
+            return make_skip("lsdtt::fetch_dem: " + info.name + ": " + error);
+        }
+    }
+    std::vector<std::string> paths;
+    for (const auto& item : items)
+    {
+        std::string href = item.href;
+        if (!token.empty())
+            href += (href.find('?') == std::string::npos ? "?" : "&") + token;
+        paths.push_back("/vsicurl/" + href);
+        result.tiles.push_back(item.id);
+    }
+    return warp_catalogue_files(options, info, res, model, paths, out_path, result,
+                                coverage);
+}
+
+// After discovery: open, check units, warp onto the snapped grid, check the
+// output, stamp its provenance. Shared with the offline tests through
+// fetch_detail::warp_catalogue_files.
+lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
+                                        const lsdtt_dem_source_info&    info,
+                                        double                          res,
+                                        const std::string&              model,
+                                        const std::vector<std::string>& paths,
+                                        const std::string&              out_path,
+                                        lsdtt_fetch_result              result,
+                                        double                          coverage)
+{
+    fetch_detail::fetch_extent extent;
+    if (!options.use_frame)
+    {
+        try
+        {
+            extent = fetch_detail::target_extent_for_bbox(options.west, options.south,
+                                                          options.east, options.north,
+                                                          result.epsg, options.grid_spacing);
+        }
+        catch (const std::exception& e)
+        {
+            return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+        }
+    }
+    const std::vector<std::string>& item_names = result.tiles;
+
+    std::vector<GDALDatasetH> datasets;
+    auto close_all = [&datasets]() {
+        for (GDALDatasetH d : datasets) GDALClose(d);
+        datasets.clear();
+    };
+    for (std::size_t i = 0; i < paths.size(); ++i)
+    {
+        GDALDatasetH d = nullptr;
+        {
+            quiet_gdal_errors quiet;
+            d = GDALOpen(paths[i].c_str(), GA_ReadOnly);
+        }
+        const std::string name = i < item_names.size() ? item_names[i] : paths[i];
+        if (d == nullptr)
+        {
+            close_all();
+            return make_skip("lsdtt::fetch_dem: could not open " + info.name +
+                             " source file " + name + " -- the host may be unreachable");
+        }
+        std::string unit;
+        if (!vertical_units_are_metres(d, unit))
+        {
+            GDALClose(d);
+            close_all();
+            return make_error("lsdtt::fetch_dem: " + info.name + " source file " +
+                              name + " declares vertical units '" + unit +
+                              "'; elevations must be in metres");
+        }
+        datasets.push_back(d);
+    }
+
+    // ---- overviews: GDALWarp reads them when the grid is coarse enough ----
+    const int n_overviews = GDALGetOverviewCount(GDALGetRasterBand(datasets.front(), 1));
+    const bool overview_used = n_overviews > 0 && options.grid_spacing >= 2.0 * res - 1e-9;
+    if (overview_used)
+    {
+        result.warnings.push_back(
+            "grid_spacing " + list_of({options.grid_spacing}) + " m is coarser than the " +
+            list_of({res}) + " m source; GDAL will read the source's overviews (built "
+            "by the provider, kernel not controlled), and " + options.resampling +
+            " is applied only to the final step");
+    }
+
+    lsdtt_fetch_result written = warp_and_write_sources(
+        datasets, options, result, out_path, options.use_frame ? nullptr : &extent);
+    close_all();
+    if (!written.ok) return written;
+
+    const double valid = valid_percent(written.path);
+    if (!(valid > 0.0))
+    {
+        VSIUnlink(written.path.c_str());
+        return make_error("lsdtt::fetch_dem: the " + info.name + " output has no valid "
+                          "cells; the area may lie in a gap of its coverage (" +
+                          info.coverage_text + ")");
+    }
+
+    std::string surface = model;
+    for (char& c : surface) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::vector<std::pair<std::string, std::string>> items_out = {
+        {"LSDTT_DEM_SOURCE", info.name},
+        {"LSDTT_SURFACE_MODEL", surface},
+        {"LSDTT_VERTICAL_DATUM", info.vertical_datum},
+        {"LSDTT_VERTICAL_UNITS", "metre"},
+        {"LSDTT_SOURCE_RESOLUTION_METRES", list_of({res})},
+        {"LSDTT_SOURCE_ITEM_COUNT", std::to_string(paths.size())},
+        {"LSDTT_RESAMPLING", options.resampling},
+        {"LSDTT_OVERVIEW_USED", overview_used ? "true" : "false"},
+        {"LSDTT_COVERAGE_PERCENT", format_double(coverage, 1)},
+        {"LSDTT_VALID_PERCENT", format_double(valid, 1)}};
+    return stamp_result(written, items_out);
+}
+
 lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
                                   const std::string&         out_path)
 {
@@ -1357,15 +2389,16 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
         return make_error("lsdtt::fetch_dem: " + error);
     }
 
-    if (options.source != lsdtt_dem_source::cop30_aws &&
-        options.source != lsdtt_dem_source::opentopography &&
-        options.source != lsdtt_dem_source::planetary_computer)
+    if (dem_source_name(options.source) == "unknown")
     {
         // Explicit rather than silently substituting a different source.
         return make_error(
-            "lsdtt::fetch_dem: source '" + dem_source_name(options.source) +
-            "' is not supported (available: cop30_aws, opentopography, "
-            "planetary_computer; see docs/developer_notes/testing_and_benchmarking.md)");
+            "lsdtt::fetch_dem: source is not supported (available: " +
+            dem_source_name_list() + ")");
+    }
+    if (!preflight_source(options, error))
+    {
+        return make_error("lsdtt::fetch_dem: " + error);
     }
 
     if (options.source == lsdtt_dem_source::opentopography &&
@@ -1392,13 +2425,6 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
     if (out_path.empty())
     {
         return make_error("lsdtt::fetch_dem: out_path must not be empty");
-    }
-
-    if (!http_available())
-    {
-        return make_skip(
-            "lsdtt::fetch_dem: this GDAL build has no HTTP support (built "
-            "without curl), so remote DEMs cannot be fetched");
     }
 
     lsdtt_fetch_result result;
@@ -1438,6 +2464,19 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
     }
     result.grid_spacing = options.grid_spacing;
 
+    if (!preflight_size(options, options.use_frame ? 0 : result.epsg, error))
+    {
+        return make_error("lsdtt::fetch_dem: " + error);
+    }
+
+    if (!http_available())
+    {
+        return make_skip(
+            "lsdtt::fetch_dem: this GDAL build has no HTTP support (built "
+            "without curl), so remote DEMs cannot be fetched");
+    }
+
+
     // ---------------------------------------------------------------------
     // Cache lookup (opt-in)
     // ---------------------------------------------------------------------
@@ -1456,6 +2495,16 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
             {
                 result.n_cols = GDALGetRasterXSize(cached.get());
                 result.n_rows = GDALGetRasterYSize(cached.get());
+                // The cached raster carries the provenance stamped when it
+                // was fetched.
+                char** md = GDALGetMetadata(cached.get(), nullptr);
+                for (int i = 0; md != nullptr && md[i] != nullptr; ++i)
+                {
+                    const std::string entry = md[i];
+                    const std::size_t eq = entry.find('=');
+                    if (entry.rfind("LSDTT_", 0) == 0 && eq != std::string::npos)
+                        result.provenance.emplace_back(entry.substr(0, eq), entry.substr(eq + 1));
+                }
                 cached.reset();
 
                 if (cached_path != out_path)
@@ -1482,6 +2531,21 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
                                  options.http_max_retry);
 
     // ---------------------------------------------------------------------
+    // Catalogue sources: their own discovery and warp (no -projwin cut).
+    // ---------------------------------------------------------------------
+    if (!dem_source_info(options.source).legacy_path)
+    {
+        const lsdtt_fetch_result catalogue_result =
+            fetch_catalogue_source(options, out_path, result);
+        if (catalogue_result.ok && !cached_path.empty() && cached_path != out_path)
+        {
+            quiet_gdal_errors quiet;
+            CPLCopyFile(cached_path.c_str(), out_path.c_str());
+        }
+        return catalogue_result;
+    }
+
+    // ---------------------------------------------------------------------
     // Step 1: open the source (mosaicking when the bbox spans several tiles)
     //
     // A bounding box crossing a 1-degree boundary is normal for real study
@@ -1500,9 +2564,13 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
         if (!download_to_vsimem(url, options.api_key, staged_path,
                                 options.http_timeout_seconds,
                                 options.http_max_retry,
+                                options.max_download_megabytes,
                                 download_error))
         {
             // download_error is already masked. Never interpolate `url` here.
+            // Passing the byte limit is the user's limit, not the network.
+            if (download_error.find("max_download_megabytes") != std::string::npos)
+                return make_error("lsdtt::fetch_dem: " + download_error);
             return make_skip("lsdtt::fetch_dem: " + download_error);
         }
 
@@ -1517,11 +2585,12 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
             return make_error("lsdtt::fetch_dem: downloaded raster is unreadable");
         }
 
-        const lsdtt_fetch_result warped_result =
+        lsdtt_fetch_result warped_result =
             warp_and_write(downloaded, options, result, out_path);
 
         downloaded.reset();
         VSIUnlink(staged_path.c_str());
+        warped_result = stamp_result(warped_result, legacy_provenance(options, warped_result));
 
         if (warped_result.ok && !cached_path.empty() && cached_path != out_path)
         {
@@ -1540,9 +2609,13 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
     {
         std::vector<std::string> signed_hrefs;
         std::string search_error;
+        bool search_is_error = false;
 
-        if (!pc_search_assets(options, signed_hrefs, result.tiles, search_error))
+        if (!pc_search_assets(options, signed_hrefs, result.tiles, result.warnings,
+                              search_is_error, search_error))
         {
+            if (search_is_error)
+                return make_error("lsdtt::fetch_dem: " + search_error);
             // Any failure here is "data not obtainable right now" from the
             // caller's point of view, so skip rather than fail: an offline
             // machine and an empty search look the same to a test.
@@ -1663,6 +2736,7 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
 
     cut.reset();
     VSIUnlink("/vsimem/lsdtt_fetch_cut.tif");
+    final_result = stamp_result(final_result, legacy_provenance(options, final_result));
 
     // ---------------------------------------------------------------------
     // Populate the cache
@@ -1679,6 +2753,25 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
 }
 
 } // namespace
+
+lsdtt_fetch_result fetch_detail::warp_catalogue_files(const lsdtt_fetch_options&      options,
+                                                      const std::vector<std::string>& paths,
+                                                      const std::string&              out_path)
+{
+    std::string error;
+    if (!validate_options(options, error)) return make_error("lsdtt::fetch_dem: " + error);
+    const lsdtt_dem_source_info& info = dem_source_info(options.source);
+    lsdtt_fetch_result result;
+    result.epsg = options.target_epsg > 0
+                ? options.target_epsg
+                : utm_epsg_for_point(0.5 * (options.west + options.east),
+                                     0.5 * (options.south + options.north));
+    result.grid_spacing = options.grid_spacing;
+    return ::lsdtt::warp_catalogue_files(options, info,
+                                         resolved_source_resolution(options, info),
+                                         resolved_surface_model(options, info),
+                                         paths, out_path, result, 100.0);
+}
 
 // -----------------------------------------------------------------------------
 // fetch_bbox_for_frame

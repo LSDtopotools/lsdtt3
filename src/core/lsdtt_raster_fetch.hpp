@@ -44,7 +44,10 @@
 
 #pragma once
 
+#include <array>
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lsdtt_oblique_frame.hpp"
@@ -67,7 +70,12 @@ enum class lsdtt_dem_source
 {
     cop30_aws,            // Copernicus GLO-30, AWS Open Data. No key.
     opentopography,       // OpenTopography REST. Needs an API key.
-    planetary_computer    // Keyless, but asset URLs need SAS signing.
+    planetary_computer,   // Keyless, but asset URLs need SAS signing.
+
+    // Catalogue sources (lsdtt_dem_source_info): national and polar DEMs,
+    // named country first. New values are appended so existing ones keep
+    // their meaning.
+    us_3dep               // USGS 3DEP seamless, via Planetary Computer. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -75,6 +83,64 @@ bool parse_dem_source(const std::string& name, lsdtt_dem_source& out);
 
 // Name of a source, for messages and help text.
 std::string dem_source_name(lsdtt_dem_source source);
+
+
+// -----------------------------------------------------------------------------
+// lsdtt_dem_source_info
+//
+// One row of the source catalogue. Every source has a row, so `-h dem_source`
+// can describe them offline and messages can say what a source is. The three
+// original sources (cop30_aws, opentopography, planetary_computer) are marked
+// legacy_path: they keep their own fetch code, and their row is used only for
+// help text, the banner and provenance.
+//
+// The catalogue sources share one fetch path: a pre-flight check (coverage,
+// resolution, surface model, size) that needs no network, discovery of the
+// source files, one GDALWarp straight from them onto the target grid, and a
+// provenance stamp on the output.
+//
+// `description` must say in words whether the source is a surface model (DSM:
+// canopy and buildings included) or a terrain model (DTM: bare earth), and
+// give its vertical datum: users analyse these as ground surfaces.
+// -----------------------------------------------------------------------------
+struct lsdtt_dem_source_info
+{
+    lsdtt_dem_source id = lsdtt_dem_source::cop30_aws;
+    std::string name;                 // "us_3dep"
+    std::string title;                // "USGS 3DEP seamless DEM"
+    std::string provider;             // who distributes it
+    std::string licence_attribution;  // printed after a successful fetch
+    std::string coverage_text;        // "CONUS, Alaska, Hawaii, Puerto Rico"
+    std::string description;          // help text: DSM or DTM in words, datum
+    std::string accessed;             // when the access details were checked
+    bool legacy_path = false;
+
+    std::vector<double> native_resolutions_metres;   // nominal, e.g. {10, 30}
+    double default_resolution_metres = 0.0;
+    std::vector<std::string> surface_models;         // "dtm" and/or "dsm"
+    std::string default_surface_model;
+    std::string vertical_datum;                      // "NAVD88", "EGM2008", ...
+    std::string vertical_units = "metre";            // what the source must carry
+
+    // Coarse WGS84 boxes (west, south, east, north) for the offline coverage
+    // check: a request outside all of them fails before any network request.
+    std::vector<std::array<double, 4>> coverage_envelopes;
+
+    // STAC access (catalogue sources).
+    std::string stac_search_url;
+    std::string stac_collection;
+    std::string stac_asset;
+    bool        stac_planetary_computer_signing = false;
+};
+
+// The whole catalogue, in the order shown to users.
+const std::vector<lsdtt_dem_source_info>& dem_source_catalogue();
+
+// The row for one source (every lsdtt_dem_source has one).
+const lsdtt_dem_source_info& dem_source_info(lsdtt_dem_source source);
+
+// Comma-separated list of every valid dem_source name.
+std::string dem_source_name_list();
 
 
 // -----------------------------------------------------------------------------
@@ -167,6 +233,23 @@ struct lsdtt_fetch_options
     std::string pc_collection = "cop-dem-glo-30";
     std::string pc_asset      = "data";
 
+    // Native product resolution to fetch (nominal metres). 0: the source's
+    // default product; for planetary_computer, 0 keeps every item the search
+    // returns (the original behaviour) and a value keeps only items whose
+    // STAC gsd equals it. Ignored by cop30_aws and opentopography.
+    double source_resolution_metres = 0.0;
+
+    // "source_default", "dtm" or "dsm". Asking for a product a source does
+    // not have is an error.
+    std::string surface_model_choice = "source_default";
+
+    // Size limits, checked before any download (and, where lsdtt3 does the
+    // HTTP itself, while downloading). 0 disables a limit.
+    std::int64_t max_output_pixels      = 250000000;
+    double       max_download_megabytes = 2048.0;
+    int          max_tiles              = 256;
+    int          request_delay_milliseconds = 200;
+
     // *** NOT A CREDENTIAL FIELD ***
     // This is resolved by lsdtt_secret at the call site and passed in, rather
     // than being read from a parameter. It is here only so fetch_dem() can
@@ -222,6 +305,14 @@ struct lsdtt_fetch_result
     double grid_spacing = 0.0;
 
     std::vector<std::string> tiles;   // source tiles used
+
+    // Non-fatal advisories for the caller to print (partial coverage, mixed
+    // resolutions, overview reads).
+    std::vector<std::string> warnings;
+
+    // What was written into the output's metadata (LSDTT_* items) and should
+    // go into a run summary.
+    std::vector<std::pair<std::string, std::string>> provenance;
 };
 
 

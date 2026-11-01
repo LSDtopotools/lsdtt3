@@ -58,6 +58,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace lsdtt {
 
@@ -86,6 +87,13 @@ public:
     // An output whose name does not start with <write_fname>_ (the naming the
     // record finds outputs by). A no-op when no record is live.
     static void add_output(const std::string& path);
+
+    // A provenance item (key -> value) for the summary's "provenance" object,
+    // e.g. which data source a DEM came from. The object is written only when
+    // at least one item was added, so other CLIs' summaries are unchanged.
+    // A later value for the same key replaces the earlier one. A no-op when no
+    // record is live.
+    static void add_provenance(const std::string& key, const std::string& value);
 
     // Name of the summary file for a given write_fname.
     static std::string summary_filename(const std::string& write_fname);
@@ -120,6 +128,7 @@ private:
     std::filesystem::file_time_type           start_file_time_;
     paths       paths_;
     std::vector<std::string> extra_outputs_;
+    std::vector<std::pair<std::string, std::string>> provenance_;
     std::vector<std::string> extra_errors_;    // e.g. an uncaught exception
     bool succeeded_ = false;
     bool finished_  = false;

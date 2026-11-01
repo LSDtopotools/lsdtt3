@@ -129,6 +129,34 @@ static void print_ot_catalogue()
                  "the end of a successful run.\n\n";
 }
 
+// -----------------------------------------------------------------------------
+// print_dem_source_catalogue
+//
+// Every dem_source, one block each: what it is (surface or terrain model, in
+// words), its grid, datum and coverage. Shown by `-h dem_source`.
+// -----------------------------------------------------------------------------
+static void print_dem_source_catalogue()
+{
+    std::cout << "\nDEM sources (dem_source)\n"
+              << "------------------------\n";
+    for (const lsdtt::lsdtt_dem_source_info& d : lsdtt::dem_source_catalogue())
+    {
+        std::cout << "  " << d.name << "\n"
+                  << "      " << d.title << "\n"
+                  << "      " << d.description << "\n"
+                  << "      Coverage: " << d.coverage_text << "\n";
+        if (!d.native_resolutions_metres.empty())
+        {
+            std::cout << "      Resolutions (nominal, m):";
+            for (double r : d.native_resolutions_metres) std::cout << " " << r;
+            std::cout << "  (default " << d.default_resolution_metres << ")\n";
+        }
+        if (!d.vertical_datum.empty())
+            std::cout << "      Vertical datum: " << d.vertical_datum << ", metres\n";
+        std::cout << "      Access checked: " << d.accessed << "\n\n";
+    }
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -205,6 +233,10 @@ int main(int argc, char* argv[])
         "planetary_computer: Microsoft Planetary Computer. Also keyless -- its "
         "asset URLs are signed automatically for you -- and gives access to "
         "many other STAC collections (see pc_collection). "
+        "us_3dep: USGS 3DEP seamless, a bare-earth terrain model at nominal "
+        "10 m (default) or 30 m, keyless, US coverage only. "
+        "Run -h dem_source for every source with its surface or terrain model, "
+        "datum, resolutions and coverage. "
         "Any other value is an error rather than a silent substitution.",
         "Source", "param", ""};
 
@@ -215,6 +247,24 @@ int main(int argc, char* argv[])
         "3dep-seamless. Browse the full catalogue at "
         "https://planetarycomputer.microsoft.com/catalog. No account or key is "
         "needed: asset URLs are signed automatically.",
+        "Source", "param", ""};
+
+    float_default_map["source_resolution_metres"] = 0.0f;
+    help_map["source_resolution_metres"] = {"float","0",
+        "Native resolution of the product to fetch (nominal metres).",
+        "0 takes the source's default product (us_3dep: 10 m). For "
+        "planetary_computer, 0 uses every item the search returns and a value "
+        "keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). "
+        "A value the source does not offer is an error listing what it offers. "
+        "Not used by cop30_aws or opentopography.",
+        "Source", "param", ""};
+
+    string_default_map["surface_model_choice"] = "source_default";
+    help_map["surface_model_choice"] = {"string","source_default",
+        "Surface model (dsm: canopy and buildings) or terrain model (dtm: bare earth).",
+        "source_default, dtm or dsm. source_default takes the terrain model where "
+        "the source has one. Asking for a product the source lacks is an error; "
+        "cop30_aws is a surface model only.",
         "Source", "param", ""};
 
     string_default_map["pc_asset"] = "data";
@@ -505,8 +555,11 @@ int main(int argc, char* argv[])
     float_default_map["grid_spacing"] = 30.0f;
     help_map["grid_spacing"] = {"float","30.0",
         "Output grid spacing in projection units (metres for UTM).",
-        "The source is nominally 30 m. Coarser values resample down; finer "
-        "values interpolate and add no real detail.",
+        "Cells are always square. Copernicus and the other 30 m sources are "
+        "nominally 30 m. For a catalogue source (e.g. us_3dep) the default, "
+        "when grid_spacing is not given, is the source's native resolution. "
+        "Coarser values resample down; finer values interpolate and add no "
+        "real detail.",
         "Output grid", "param", ""};
 
     string_default_map["resampling_method"] = "cubic";
@@ -534,6 +587,28 @@ int main(int argc, char* argv[])
         "and behave as a large spurious depression in flow routing.",
         "Output grid", "param", ""};
 
+    // --- Size limits ---
+    int_default_map["max_output_pixels"] = 250000000;
+    help_map["max_output_pixels"] = {"int","250000000",
+        "Refuse a fetch whose output grid has more pixels than this.",
+        "Checked before anything is downloaded. 250 million Float32 cells is "
+        "about 1 GB, a 15.8 km square at 1 m. 0 disables the check.",
+        "Size limits", "param", ""};
+
+    float_default_map["max_download_megabytes"] = 2048.0f;
+    help_map["max_download_megabytes"] = {"float","2048",
+        "Refuse a fetch that would download more than this (megabytes, 10^6 bytes).",
+        "Estimated before any request from the area and the source resolution "
+        "(Float32 cells, compression ignored, so the estimate errs high). Where "
+        "lsdtt3 does the HTTP itself (opentopography) the transfer is also "
+        "counted and stopped when it passes the limit; reads of cloud-optimised "
+        "GeoTIFFs (cop30_aws, planetary_computer, us_3dep) rely on the estimate. "
+        "0 disables the check.",
+        "Size limits", "param", ""};
+
+    lsdtt::declare_fetch_request_limit_parameters(int_default_map, help_map,
+                                                  "the DEM source", "Size limits");
+
     // --- Network ---
     lsdtt::declare_http_request_parameters(int_default_map, help_map);
 
@@ -556,6 +631,10 @@ int main(int argc, char* argv[])
         // The help printer word-wraps, so a table cannot live in help_map.
         // Print it here instead: the dataset list is the thing a user actually
         // needs when choosing an OpenTopography product.
+        if (cli_args.help_topic == "dem_source")
+        {
+            print_dem_source_catalogue();
+        }
         if (cli_args.help_topic == "ot_dem_type" ||
             cli_args.help_topic == "dem_source")
         {
@@ -791,8 +870,7 @@ int main(int argc, char* argv[])
         if (!lsdtt::parse_dem_source(value, out))
         {
             std::cerr << "FATAL: unknown " << key << " '" << value
-                      << "'. Supported: cop30_aws, opentopography, "
-                         "planetary_computer.\n";
+                      << "'. Supported: " << lsdtt::dem_source_name_list() << ".\n";
             return false;
         }
         return true;
@@ -804,6 +882,51 @@ int main(int argc, char* argv[])
     if (!parse_source_or_fail(sf["dem_source"], "dem_source", parsed_source)) return 1;
     if (!parse_source_or_fail(sf["prefetch_source"], "prefetch_source", parsed_prefetch_source)) return 1;
     if (!parse_source_or_fail(sf["auth_fallback_source"], "auth_fallback_source", parsed_fallback_source)) return 1;
+
+    // Catalogue sources (fine national grids) are not used for outlet-mode
+    // discovery in this version: basin verification would route the fine
+    // grid at its full resolution. Fetch the groups with cop30_aws first.
+    auto is_catalogue = [](lsdtt::lsdtt_dem_source s) {
+        return !lsdtt::dem_source_info(s).legacy_path;
+    };
+    if (bounds_mode == "outlets" && is_catalogue(parsed_prefetch_source))
+    {
+        std::cerr << "FATAL: prefetch_source must be cop30_aws, planetary_computer or "
+                     "opentopography; " << sf["prefetch_source"] << " is not used for "
+                     "outlet-mode discovery.\n";
+        return 1;
+    }
+    if (is_catalogue(parsed_fallback_source))
+    {
+        std::cerr << "FATAL: auth_fallback_source must be cop30_aws or "
+                     "planetary_computer, not " << sf["auth_fallback_source"] << ".\n";
+        return 1;
+    }
+    if (bounds_mode == "outlets" && is_catalogue(parsed_source))
+    {
+        std::cerr << "FATAL: dem_source " << sf["dem_source"] << " cannot be used with "
+                     "bounds_mode: outlets in this version. Run outlets mode with "
+                     "cop30_aws, then fetch each group with bounds_fname: "
+                     "<group>_DEM.tif and dem_source: " << sf["dem_source"] << ".\n";
+        return 1;
+    }
+
+    // A catalogue source's native resolution is the natural grid: use it when
+    // grid_spacing was not given, and record it so the ingested parameters
+    // reproduce the run.
+    if (is_catalogue(parsed_source) && !pp.parameter_supplied("grid_spacing"))
+    {
+        const lsdtt::lsdtt_dem_source_info& info = lsdtt::dem_source_info(parsed_source);
+        const double native = ff["source_resolution_metres"] > 0.0f
+                            ? static_cast<double>(ff["source_resolution_metres"])
+                            : info.default_resolution_metres;
+        ff["grid_spacing"] = static_cast<float>(native);
+        std::ostringstream text;
+        text << native;
+        pp.record_resolved_parameter("grid_spacing", text.str());
+        std::cout << "grid_spacing not given: using " << info.name << "'s native "
+                  << native << " m.\n";
+    }
 
     if (parsed_fallback_source == lsdtt::lsdtt_dem_source::opentopography)
     {
@@ -1008,6 +1131,19 @@ int main(int argc, char* argv[])
     options.ot_dem_type                  = sf["ot_dem_type"];
     options.pc_collection                = sf["pc_collection"];
     options.pc_asset                     = sf["pc_asset"];
+    options.source_resolution_metres     = static_cast<double>(ff["source_resolution_metres"]);
+    options.surface_model_choice         = to_lower_copy(sf["surface_model_choice"]);
+    options.max_output_pixels            = ifs["max_output_pixels"];
+    options.max_download_megabytes       = static_cast<double>(ff["max_download_megabytes"]);
+    options.max_tiles                    = ifs["max_tiles"];
+    options.request_delay_milliseconds   = ifs["request_delay_milliseconds"];
+    if (options.source_resolution_metres > 0.0 &&
+        (options.source == lsdtt::lsdtt_dem_source::cop30_aws ||
+         options.source == lsdtt::lsdtt_dem_source::opentopography))
+    {
+        std::cerr << "WARNING: source_resolution_metres is not used by "
+                  << lsdtt::dem_source_name(options.source) << " and is ignored.\n";
+    }
 
     if (rotate_after_fetch)
     {
@@ -1357,6 +1493,7 @@ int main(int argc, char* argv[])
     auto print_fetch_success = [&](const lsdtt::lsdtt_fetch_options& used_options,
                                    const lsdtt::lsdtt_fetch_result& result)
     {
+        for (const std::string& w : result.warnings) std::cerr << "WARNING: " << w << "\n";
         std::cout << "Fetched " << result.n_cols << " x " << result.n_rows
                   << " pixels at " << result.grid_spacing << " m, ";
         if (result.in_frame)
@@ -1372,7 +1509,23 @@ int main(int argc, char* argv[])
         }
         std::cout << "\n";
         if (result.from_cache) std::cout << "(reused from cache)\n";
+        std::string surface, datum;
+        for (const auto& kv : result.provenance)
+        {
+            if (kv.first == "LSDTT_SURFACE_MODEL") surface = kv.second;
+            if (kv.first == "LSDTT_VERTICAL_DATUM") datum = kv.second;
+            lsdtt::lsdtt_run_record::add_provenance(kv.first, kv.second);
+        }
+        if (!surface.empty()) std::cout << "Surface     : " << surface << "\n";
+        if (!datum.empty())   std::cout << "Vertical    : " << datum << ", metres\n";
         std::cout << "Wrote: " << result.path << "\n\n";
+
+        const lsdtt::lsdtt_dem_source_info& info = lsdtt::dem_source_info(used_options.source);
+        if (!info.legacy_path)
+        {
+            std::cout << "--- Please acknowledge this data ---\n"
+                      << info.licence_attribution << "\n\n";
+        }
 
         if (used_options.source == lsdtt::lsdtt_dem_source::opentopography)
         {

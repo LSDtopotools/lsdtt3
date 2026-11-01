@@ -6774,6 +6774,68 @@ foreach(_ff_case IN ITEMS
     )
 endforeach()
 
+# Catalogue sources (us_3dep) and the size limits: refused before any
+# request, so these run offline.
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_3dep_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside us_3dep coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_3dep_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "us_3dep offers 10, 30 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_3dep_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "us_3dep has no dsm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_copernicus_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_copernicus_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "Copernicus GLO-30 is a DSM only"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_too_many_pixels
+    lsdtt-fetch-raster
+    fetch_raster_too_many_pixels.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_output_pixels"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_hires_outlets
+    lsdtt-fetch-raster
+    fetch_raster_hires_outlets.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "cannot be used with bounds_mode: outlets"
+)
+
+add_test(NAME smoke_fetch_raster_help_dem_source
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "USGS 3DEP seamless DEM -- a DIGITAL TERRAIN MODEL")
+
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_linear_feature PROPERTIES

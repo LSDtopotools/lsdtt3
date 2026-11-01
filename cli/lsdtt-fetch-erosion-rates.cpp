@@ -143,11 +143,9 @@ int main(int argc, char* argv[])
         "Basins larger than this (OCTOPUS AREA, km2) do not enlarge the suggested DEM box.",
         "", "OCTOPUS", "param", ""};
 
-    int_default_map["request_delay_milliseconds"] = 200;
-    help_map["request_delay_milliseconds"] = {"int","200",
-        "Pause after every request to the OCTOPUS WFS.",
-        "OCTOPUS publishes no rate limit; this keeps a fetch polite.",
-        "OCTOPUS", "param", ""};
+    lsdtt::declare_fetch_request_limit_parameters(int_default_map, help_map,
+                                                  "the OCTOPUS WFS", "OCTOPUS",
+                                                  /*with_max_tiles=*/false);
 
     string_default_map["octopus_response_dir"] = "";
     help_map["octopus_response_dir"] = {"string","",

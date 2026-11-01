@@ -1,0 +1,116 @@
+// lsdtt_raster_fetch_detail.hpp
+//
+// Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
+//
+// Copyright (C) 2026 Simon M. Mudd
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
+// See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
+//
+// -----------------------------------------------------------------------------
+// Internals of lsdtt_raster_fetch, exposed so tests can pin them without the
+// network. Not part of the public API: callers use fetch_dem().
+//
+// The pure functions here are what makes the Copernicus path checkable
+// offline: the cache key, the Planetary Computer search body and the warp
+// argument vector fully determine what that path asks GDAL to do, so pinning
+// their exact output pins its behaviour on any machine.
+// -----------------------------------------------------------------------------
+
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "lsdtt_raster_fetch.hpp"
+
+namespace lsdtt {
+namespace fetch_detail {
+
+// An extent in the target CRS (projection units).
+struct fetch_extent
+{
+    double x_min = 0.0;
+    double y_min = 0.0;
+    double x_max = 0.0;
+    double y_max = 0.0;
+};
+
+// The cache file name for a request: everything that changes the pixels.
+std::string fetch_cache_key(const lsdtt_fetch_options& options);
+
+// The JSON body of the Planetary Computer STAC search.
+std::string pc_stac_search_body(const lsdtt_fetch_options& options);
+
+// The GDALWarp argument vector. explicit_extent (target CRS) replaces -tap
+// with -te on the snapped extent; nullptr gives the Copernicus arguments.
+std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,
+                                              int                        epsg,
+                                              const fetch_extent*        explicit_extent = nullptr);
+
+// The envelope, in `epsg`, of the WGS84 box with every edge densified
+// (64 points per side), snapped outward to multiples of grid_spacing. Throws
+// std::runtime_error if the transform cannot be built.
+fetch_extent target_extent_for_bbox(double west, double south, double east, double north,
+                                    int epsg, double grid_spacing);
+
+// One STAC item as the catalogue path needs it.
+struct stac_item
+{
+    std::string id;
+    std::string href;        // asset href, unsigned
+    double      gsd = 0.0;   // 0 if the item carries none
+    std::string datetime;
+    double      bbox[4] = {0.0, 0.0, 0.0, 0.0};   // WGS84 west, south, east, north
+};
+
+// Parse a STAC ItemCollection (search response). Items without the asset are
+// skipped and named in `missing_asset`. Returns false (with error) only for
+// unparseable JSON. next_body / next_href: the rel=next link, if any.
+bool parse_stac_items(const std::string&        json,
+                      const std::string&        asset_key,
+                      std::vector<stac_item>&   items,
+                      std::vector<std::string>& missing_asset,
+                      std::string&              next_href,
+                      std::string&              next_body,
+                      std::string&              error);
+
+// Keep the items with gsd == resolution (0 = keep all), in their original
+// order. The identity for resolution 0 is what keeps planetary_computer's
+// default behaviour unchanged.
+std::vector<stac_item> filter_stac_items_by_gsd(const std::vector<stac_item>& items,
+                                                double resolution_metres);
+
+// Sorted distinct gsd values (0 means "none given").
+std::vector<double> distinct_gsds(const std::vector<stac_item>& items);
+
+// Sort by id: STAC search order is not guaranteed, and later inputs win where
+// GDALWarp inputs overlap, so the order is part of the result.
+void sort_stac_items(std::vector<stac_item>& items);
+
+// Pre-flight size estimates. Pixels of the output grid for `extent` at
+// grid_spacing; bytes downloaded for `n_cells` source cells of `bytes_per_cell`.
+std::int64_t estimate_output_pixels(const fetch_extent& extent, double grid_spacing);
+double       estimate_download_megabytes(double n_cells, double bytes_per_cell);
+
+// Source cells covered by a WGS84 box on a grid of `cell_degrees`.
+double geographic_cell_count(double west, double south, double east, double north,
+                             double cell_degrees);
+
+// Write the provenance items into an existing GeoTIFF's default metadata
+// domain. Band values, geotransform, CRS and nodata are not touched.
+bool stamp_provenance(const std::string&                                       path,
+                      const std::vector<std::pair<std::string, std::string>>& items,
+                      std::string&                                             error);
+
+// The catalogue path after discovery, on local or remote files: open them,
+// refuse non-metre vertical units, warp onto the snapped target grid (square
+// cells), check the output and stamp its provenance. options.source must be
+// a catalogue source. Used by the offline tests with synthetic files.
+lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
+                                        const std::vector<std::string>& paths,
+                                        const std::string&              out_path);
+
+} // namespace fetch_detail
+} // namespace lsdtt
