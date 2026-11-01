@@ -117,13 +117,29 @@ struct stac_item
 // Parse a STAC ItemCollection (search response). Items without the asset are
 // skipped and named in `missing_asset`. Returns false (with error) only for
 // unparseable JSON. next_body / next_href: the rel=next link, if any.
+// asset_key empty: take the GeoTIFF asset whose gsd (or eo:gsd) equals
+// asset_gsd, for hosts that key assets by file name.
 bool parse_stac_items(const std::string&        json,
                       const std::string&        asset_key,
                       std::vector<stac_item>&   items,
                       std::vector<std::string>& missing_asset,
                       std::string&              next_href,
                       std::string&              next_body,
-                      std::string&              error);
+                      std::string&              error,
+                      double                    asset_gsd = 0.0);
+
+// The body for the next page: the original search body with the rel=next
+// body's members laid over it. Some hosts (swisstopo) put only a cursor in
+// the next body; sent alone it drops the collection and bbox filter.
+std::string merge_stac_next_body(const std::string& original, const std::string& next);
+
+// The latest item (by datetime, then id) per tile, the tile being the item
+// id with its four-digit year token removed. Output in id order.
+std::vector<stac_item> latest_stac_item_per_tile(const std::vector<stac_item>& items);
+
+// Items whose bbox intersects the WGS84 box.
+std::vector<stac_item> stac_items_in_bbox(const std::vector<stac_item>& items, double west,
+                                          double south, double east, double north);
 
 // Keep the items with gsd == resolution (0 = keep all), in their original
 // order. The identity for resolution 0 is what keeps planetary_computer's

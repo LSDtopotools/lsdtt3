@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_swissalti3d_dsm
+
+# ch_swissalti3d is a terrain model only: asking for a DSM is refused (offline).
+west: 7.74
+south: 45.97
+east: 7.76
+north: 45.98
+
+dem_source: ch_swissalti3d
+surface_model_choice: dsm

@@ -6840,6 +6840,24 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_swissalti3d_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_swissalti3d_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "ch_swissalti3d has no dsm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_hrdem_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_hrdem_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "ca_hrdem offers 1, 2 m"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_copernicus_surface_model
     lsdtt-fetch-raster
     fetch_raster_copernicus_surface_model.param.in
@@ -6883,6 +6901,12 @@ add_test(NAME smoke_fetch_raster_help_dem_source_wcs
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_wcs PROPERTIES
     LABELS "smoke;cli;fetch"
     PASS_REGULAR_EXPRESSION "no_dtm.*nl_ahn.*DIGITAL SURFACE MODEL \\(dsm\\).*es_mdt.*pl_nmt")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_hrdem_swiss
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_hrdem_swiss PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "ca_hrdem.*CGVD2013.*ch_swissalti3d.*latest acquisition of each tile")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)

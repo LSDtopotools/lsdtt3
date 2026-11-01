@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_hrdem_res
+
+# ca_hrdem offers 1 and 2 m: a 5 m product is refused (offline).
+west: -75.72
+south: 45.40
+east: -75.69
+north: 45.42
+
+dem_source: ca_hrdem
+source_resolution_metres: 5

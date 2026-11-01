@@ -740,7 +740,8 @@ void test_dem_source_catalogue()
             continue;
         }
         check("catalogue: " + info.name + " has its STAC access",
-              !info.stac_search_url.empty() && !info.stac_asset.empty());
+              !info.stac_search_url.empty() &&
+              (!info.stac_asset.empty() || info.stac_asset_by_gsd));
         bool every_resolution_searchable = true;
         for (double r : info.native_resolutions_metres)
             if (lsdtt::fetch_detail::catalogue_stac_collection(info, r).empty())
@@ -1255,6 +1256,118 @@ void test_polar_warp_offline()
         VSIUnlink(f);
 }
 
+// HRDEM and swissALTI3D: asset selection, latest-per-tile, cursor paging.
+void test_hrdem_swiss_sources()
+{
+    namespace fd = lsdtt::fetch_detail;
+    using lsdtt::lsdtt_dem_source;
+
+    // Trimmed from a real swissALTI3D search: assets keyed by file name, two
+    // acquisitions of tile 2623-1091, one of 2624-1091.
+    const std::string swiss = R"({"type": "FeatureCollection", "features": [
+      {"id": "swissalti3d_2019_2623-1091", "bbox": [7.7353597, 45.9701488, 7.7483109, 45.9791788],
+       "properties": {"datetime": "2019-01-01T00:00:00Z"},
+       "assets": {
+         "swissalti3d_2019_2623-1091_0.5_2056_5728.tif": {"href": "https://example.invalid/2019_2623_05.tif", "type": "image/tiff; application=geotiff; profile=cloud-optimized", "gsd": 0.5},
+         "swissalti3d_2019_2623-1091_2_2056_5728.tif": {"href": "https://example.invalid/2019_2623_2.tif", "type": "image/tiff; application=geotiff; profile=cloud-optimized", "gsd": 2.0},
+         "swissalti3d_2019_2623-1091_2_2056_5728.xyz.zip": {"href": "https://example.invalid/2019_2623_2.xyz.zip", "type": "application/x.ascii-xyz+zip", "gsd": 2.0}}},
+      {"id": "swissalti3d_2024_2623-1091", "bbox": [7.7353597, 45.9701488, 7.7483109, 45.9791788],
+       "properties": {"datetime": "2024-01-01T00:00:00Z"},
+       "assets": {
+         "swissalti3d_2024_2623-1091_2_2056_5728.xyz.zip": {"href": "https://example.invalid/2024_2623_2.xyz.zip", "type": "application/x.ascii-xyz+zip", "gsd": 2.0},
+         "swissalti3d_2024_2623-1091_2_2056_5728.tif": {"href": "https://example.invalid/2024_2623_2.tif", "type": "image/tiff; application=geotiff; profile=cloud-optimized", "gsd": 2.0}}},
+      {"id": "swissalti3d_2019_2624-1091", "bbox": [7.7482601, 45.9701126, 7.7612133, 45.9791441],
+       "properties": {"datetime": "2019-01-01T00:00:00Z"},
+       "assets": {
+         "swissalti3d_2019_2624-1091_2_2056_5728.tif": {"href": "https://example.invalid/2019_2624_2.tif", "type": "image/tiff; application=geotiff; profile=cloud-optimized", "gsd": 2.0}}}],
+      "links": [{"rel": "next", "href": "https://example.invalid/search", "method": "POST", "body": {"cursor": "cD01OTM="}}]})";
+    std::vector<fd::stac_item> items;
+    std::vector<std::string> missing;
+    std::string next_href, next_body, error;
+    bool ok = fd::parse_stac_items(swiss, "", items, missing, next_href, next_body, error, 2.0);
+    bool all_tif = items.size() == 3;
+    for (const auto& item : items)
+        if (!contains(item.href, "_2.tif") || item.gsd != 2.0) all_tif = false;
+    check("swiss: the 2 m GeoTIFF asset is picked by gsd, never the XYZ text", ok && all_tif,
+          error);
+    items.clear(); missing.clear();
+    fd::parse_stac_items(swiss, "", items, missing, next_href, next_body, error, 0.5);
+    check("swiss: 0.5 m picks the 0.5 m asset; items without it are named",
+          items.size() == 1 && contains(items[0].href, "2019_2623_05.tif") &&
+          missing.size() == 2);
+
+    items.clear(); missing.clear();
+    fd::parse_stac_items(swiss, "", items, missing, next_href, next_body, error, 2.0);
+    const auto latest = fd::latest_stac_item_per_tile(items);
+    check("swiss: latest acquisition per tile, in id order",
+          latest.size() == 2 && latest[0].id == "swissalti3d_2019_2624-1091" &&
+          latest[1].id == "swissalti3d_2024_2623-1091",
+          latest.empty() ? "" : latest[0].id);
+
+    // The swisstopo next link carries only a cursor: merged with the
+    // original body it keeps the collection and bbox filter.
+    const std::string first =
+        R"({"collections":["ch.swisstopo.swissalti3d"],"bbox":[7.74,45.97,7.76,45.98],"limit":100})";
+    const std::string merged = fd::merge_stac_next_body(first, next_body);
+    check("stac paging: a cursor-only next body keeps the original filter",
+          contains(merged, "ch.swisstopo.swissalti3d") && contains(merged, "7.74") &&
+          contains(merged, "cD01OTM="), merged);
+    const std::string full_next =
+        R"({"collections":["3dep-seamless"],"bbox":[1,2,3,4],"limit":100,"token":"next:abc"})";
+    const std::string merged_full = fd::merge_stac_next_body(
+        R"({"collections":["3dep-seamless"],"bbox":[1,2,3,4],"limit":100})", full_next);
+    check("stac paging: a full next body is carried unchanged in substance",
+          contains(merged_full, "next:abc") && contains(merged_full, "3dep-seamless") &&
+          !contains(merged_full, "cursor"), merged_full);
+
+    // A host that ignores the filter: far-away items are dropped.
+    fd::stac_item far;
+    far.id = "far";
+    far.bbox[0] = 8.5; far.bbox[1] = 47.3; far.bbox[2] = 8.6; far.bbox[3] = 47.4;
+    items.push_back(far);
+    check("stac: items outside the request bbox are dropped",
+          fd::stac_items_in_bbox(items, 7.74, 45.97, 7.76, 45.98).size() == items.size() - 1);
+
+    // HRDEM: one item, both models as assets.
+    const std::string hrdem = R"({"features": [{"id": "9_2-mosaic-1m",
+      "bbox": [-76.986506, 41.266347, -69.184612, 46.888783],
+      "properties": {"datetime": "2025-05-05T12:00:00Z", "proj:epsg": 3979},
+      "assets": {"dsm": {"href": "https://example.invalid/9_2-mosaic-1m-dsm.tif"},
+                 "dtm": {"href": "https://example.invalid/9_2-mosaic-1m-dtm.tif"}}}]})";
+    items.clear(); missing.clear();
+    const auto& ca = lsdtt::dem_source_info(lsdtt_dem_source::ca_hrdem);
+    std::string dsm_key;
+    for (const auto& entry : ca.stac_asset_by_model)
+        if (entry.first == "dsm") dsm_key = entry.second;
+    fd::parse_stac_items(hrdem, dsm_key, items, missing, next_href, next_body, error);
+    check("hrdem: the dsm asset is chosen for surface_model_choice dsm",
+          items.size() == 1 && contains(items[0].href, "-dsm.tif") && items[0].gsd == 0.0);
+    check("hrdem: items carry no gsd, so no gsd filter; collection per resolution",
+          !ca.stac_items_carry_gsd &&
+          fd::catalogue_stac_collection(ca, 1.0) == "hrdem-mosaic-1m" &&
+          fd::catalogue_stac_collection(ca, 2.0) == "hrdem-mosaic-2m");
+
+    auto refused = [](const lsdtt::lsdtt_fetch_result& r, const std::string& part) {
+        return !r.ok && !r.skipped && contains(r.message, part);
+    };
+    lsdtt::lsdtt_fetch_options o;
+    o.source = lsdtt_dem_source::ch_swissalti3d;
+    o.west = 2.30; o.south = 48.80; o.east = 2.35; o.north = 48.85;
+    o.grid_spacing = 2.0;
+    auto r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("swiss: Paris is refused", refused(r, "outside ch_swissalti3d coverage"), r.message);
+    o.west = 7.74; o.south = 45.97; o.east = 7.76; o.north = 45.98;
+    o.surface_model_choice = "dsm";
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("swiss: no surface model", refused(r, "ch_swissalti3d has no dsm product"), r.message);
+    o.source = lsdtt_dem_source::ca_hrdem;
+    o.west = -75.72; o.south = 45.40; o.east = -75.69; o.north = 45.42;
+    o.surface_model_choice = "source_default";
+    o.source_resolution_metres = 5.0;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("hrdem: resolutions listed", refused(r, "ca_hrdem offers 1, 2 m"), r.message);
+}
+
 // The WCS sources: native extent, chunks, URLs, exception and multipart
 // parsing, pre-flight refusals.
 void test_wcs_sources()
@@ -1733,6 +1846,63 @@ int run_network_tests(const std::string& output_dir)
               metadata_item(path, "LSDTT_VERTICAL_DATUM") == "WGS84 ellipsoid");
     }
 
+    // ---- HRDEM (Ottawa) and swissALTI3D (Zermatt) ---------------------------
+    struct stac_case
+    {
+        lsdtt::lsdtt_dem_source source;
+        const char* label;
+        double west, south, east, north;
+        double grid;
+        int epsg;
+        const char* datum;
+        float lo, hi;
+    };
+    const stac_case stac_cases[] = {
+        {lsdtt::lsdtt_dem_source::ca_hrdem, "ca_hrdem", -75.72, 45.40, -75.69, 45.42, 1.0,
+         32618, "CGVD2013", 30.0f, 120.0f},
+        {lsdtt::lsdtt_dem_source::ch_swissalti3d, "ch_swissalti3d", 7.74, 45.97, 7.76, 45.98,
+         2.0, 32632, "LN02", 2000.0f, 3000.0f}};
+    for (const stac_case& sc : stac_cases)
+    {
+        lsdtt::lsdtt_fetch_options so;
+        so.source = sc.source;
+        so.west = sc.west; so.south = sc.south; so.east = sc.east; so.north = sc.north;
+        so.grid_spacing = sc.grid;
+        so.size_px = 256;
+        const std::string path = output_dir + "/fetch_" + sc.label + "_256.tif";
+        const auto f = lsdtt::fetch_dem(so, path);
+        const std::string name = sc.label;
+        if (f.skipped)
+        {
+            std::cout << "SKIP(" << name << "): " << f.message << "\n";
+            continue;
+        }
+        check("network: " + name + " fetch succeeded", f.ok, f.message);
+        const raster_content c = read_raster_content(path);
+        float lo = 1e30f, hi = -1e30f;
+        std::int64_t valid = 0;
+        for (float v : c.values)
+        {
+            if (v == -9999.0f) continue;
+            ++valid; lo = std::min(lo, v); hi = std::max(hi, v);
+        }
+        check("network: " + name + " 256 x 256 square cells, all valid, plausible heights",
+              c.ok && c.cols == 256 && c.rows == 256 && c.geotransform[1] == sc.grid &&
+              f.epsg == sc.epsg && valid == 256 * 256 && lo > sc.lo && hi < sc.hi,
+              "valid " + std::to_string(valid) + ", range [" + std::to_string(lo) + ", " +
+              std::to_string(hi) + "]");
+        check("network: " + name + " provenance says DTM and its datum",
+              metadata_item(path, "LSDTT_SURFACE_MODEL") == "DTM" &&
+              metadata_item(path, "LSDTT_VERTICAL_DATUM") == sc.datum);
+        if (sc.source == lsdtt::lsdtt_dem_source::ch_swissalti3d)
+        {
+            std::set<std::string> tiles;
+            for (const std::string& t : f.tiles) tiles.insert(t.substr(t.rfind('_') + 1));
+            check("network: swissALTI3D one acquisition per tile",
+                  !f.tiles.empty() && tiles.size() == f.tiles.size(), join(f.tiles));
+        }
+    }
+
     // ---- WCS sources: one small window each ---------------------------------
     struct wcs_case
     {
@@ -1860,6 +2030,8 @@ int main(int argc, char** argv)
     test_polar_sources();
     std::cout << "\n";
     test_polar_warp_offline();
+    std::cout << "\n";
+    test_hrdem_swiss_sources();
     std::cout << "\n";
     test_wcs_sources();
     std::cout << "\n";

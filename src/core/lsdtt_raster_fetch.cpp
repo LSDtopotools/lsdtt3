@@ -1257,7 +1257,8 @@ bool parse_stac_items(const std::string&        json,
                       std::vector<std::string>& missing_asset,
                       std::string&              next_href,
                       std::string&              next_body,
-                      std::string&              error)
+                      std::string&              error,
+                      double                    asset_gsd)
 {
     next_href.clear();
     next_body.clear();
@@ -1281,7 +1282,25 @@ bool parse_stac_items(const std::string&        json,
         {
             for (int k = 0; k < 4; ++k) item.bbox[k] = bbox[k].ToDouble();
         }
-        const CPLJSONObject asset = feature.GetObj("assets/" + asset_key);
+        CPLJSONObject asset = feature.GetObj("assets/" + asset_key);
+        if (asset_key.empty())
+        {
+            asset = CPLJSONObject();
+            asset.Deinit();
+            for (const CPLJSONObject& candidate : feature.GetObj("assets").GetChildren())
+            {
+                double g = candidate.GetDouble("gsd", 0.0);
+                if (g <= 0.0) g = candidate.GetDouble("eo:gsd", 0.0);
+                const std::string type = candidate.GetString("type", "");
+                if (std::abs(g - asset_gsd) <= 1e-6 * asset_gsd &&
+                    type.find("geotiff") != std::string::npos)
+                {
+                    asset = candidate;
+                    item.gsd = g;
+                    break;
+                }
+            }
+        }
         item.href = asset.IsValid() ? asset.GetString("href", "") : "";
         if (item.href.empty())
         {
@@ -1302,6 +1321,73 @@ bool parse_stac_items(const std::string&        json,
         if (body.IsValid()) next_body = body.Format(CPLJSONObject::PrettyFormat::Plain);
     }
     return true;
+}
+
+
+std::string merge_stac_next_body(const std::string& original, const std::string& next)
+{
+    CPLJSONDocument base, over;
+    if (next.empty() || !over.LoadMemory(next)) return next;
+    if (!base.LoadMemory(original)) return next;
+    CPLJSONObject root = base.GetRoot();
+    for (const CPLJSONObject& member : over.GetRoot().GetChildren())
+    {
+        root.Delete(member.GetName());
+        root.Add(member.GetName(), member);
+    }
+    return root.Format(CPLJSONObject::PrettyFormat::Plain);
+}
+
+
+std::vector<stac_item> latest_stac_item_per_tile(const std::vector<stac_item>& items)
+{
+    auto tile_of = [](const std::string& id) {
+        std::string out;
+        std::size_t start = 0;
+        while (start <= id.size())
+        {
+            const std::size_t end = std::min(id.find('_', start), id.size());
+            const std::string token = id.substr(start, end - start);
+            const bool year = token.size() == 4 &&
+                              std::all_of(token.begin(), token.end(),
+                                          [](char c) { return c >= '0' && c <= '9'; });
+            if (!year) out += (out.empty() ? "" : "_") + token;
+            start = end + 1;
+        }
+        return out;
+    };
+    std::vector<std::pair<std::string, stac_item>> best;
+    for (const stac_item& item : items)
+    {
+        const std::string tile = tile_of(item.id);
+        auto it = std::find_if(best.begin(), best.end(),
+                               [&](const auto& b) { return b.first == tile; });
+        if (it == best.end())
+            best.emplace_back(tile, item);
+        else if (std::make_pair(item.datetime, item.id) >
+                 std::make_pair(it->second.datetime, it->second.id))
+            it->second = item;
+    }
+    std::vector<stac_item> out;
+    for (const auto& b : best) out.push_back(b.second);
+    sort_stac_items(out);
+    return out;
+}
+
+
+std::vector<stac_item> stac_items_in_bbox(const std::vector<stac_item>& items, double west,
+                                          double south, double east, double north)
+{
+    std::vector<stac_item> out;
+    for (const stac_item& item : items)
+    {
+        const bool no_bbox = item.bbox[0] == 0.0 && item.bbox[1] == 0.0 &&
+                             item.bbox[2] == 0.0 && item.bbox[3] == 0.0;
+        if (no_bbox || (item.bbox[0] < east && item.bbox[2] > west &&
+                        item.bbox[1] < north && item.bbox[3] > south))
+            out.push_back(item);
+    }
+    return out;
 }
 
 
@@ -1418,6 +1504,8 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::nl_ahn:             return "nl_ahn";
         case lsdtt_dem_source::es_mdt:             return "es_mdt";
         case lsdtt_dem_source::pl_nmt:             return "pl_nmt";
+        case lsdtt_dem_source::ca_hrdem:           return "ca_hrdem";
+        case lsdtt_dem_source::ch_swissalti3d:     return "ch_swissalti3d";
     }
     return "unknown";
 }
@@ -1756,6 +1844,65 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         pl.wcs_max_chunk_side = 2000;
         pl.wcs_zero_is_nodata = true;
         rows.push_back(pl);
+
+        lsdtt_dem_source_info ca;
+        ca.id = lsdtt_dem_source::ca_hrdem;
+        ca.name = "ca_hrdem";
+        ca.title = "Canada HRDEM mosaic 1 m / 2 m (NRCan)";
+        ca.provider = "Natural Resources Canada, via the CCMEO datacube STAC";
+        ca.licence_attribution =
+            "High Resolution Digital Elevation Model (HRDEM) mosaic, Natural Resources "
+            "Canada. Contains information licensed under the Open Government Licence "
+            "- Canada.";
+        ca.coverage_text = "Canada where airborne lidar exists (patchy; gaps are NoData)";
+        ca.description =
+            "NRCan HRDEM mosaic: a DIGITAL TERRAIN MODEL (dtm, the default: bare earth "
+            "from airborne lidar) or a DIGITAL SURFACE MODEL (dsm), at 1 m (the "
+            "default) or 2 m on Canada Atlas Lambert (EPSG:3979). Heights in metres "
+            "above CGVD2013. Coverage follows lidar campaigns, so expect NoData gaps.";
+        ca.accessed = "2026-11-01";
+        ca.native_resolutions_metres = {1.0, 2.0};
+        ca.default_resolution_metres = 1.0;
+        ca.surface_models = {"dtm", "dsm"};
+        ca.default_surface_model = "dtm";
+        ca.vertical_datum = "CGVD2013";
+        ca.coverage_envelopes = {{-141.1, 41.6, -52.5, 83.2}};
+        ca.native_grid_projected = true;
+        ca.stac_search_url = "https://datacube.services.geo.ca/stac/api/search";
+        ca.stac_collection_by_resolution = {{1.0, "hrdem-mosaic-1m"},
+                                            {2.0, "hrdem-mosaic-2m"}};
+        ca.stac_asset = "dtm";
+        ca.stac_asset_by_model = {{"dtm", "dtm"}, {"dsm", "dsm"}};
+        ca.stac_items_carry_gsd = false;
+        rows.push_back(ca);
+
+        lsdtt_dem_source_info ch;
+        ch.id = lsdtt_dem_source::ch_swissalti3d;
+        ch.name = "ch_swissalti3d";
+        ch.title = "swissALTI3D 0.5 m / 2 m (swisstopo)";
+        ch.provider = "Federal Office of Topography swisstopo, via the data.geo.admin.ch STAC";
+        ch.licence_attribution =
+            "swissALTI3D, Federal Office of Topography swisstopo (free geodata; the "
+            "source reference is required).";
+        ch.coverage_text = "Switzerland and Liechtenstein";
+        ch.description =
+            "swisstopo swissALTI3D -- a DIGITAL TERRAIN MODEL (bare earth, from lidar "
+            "and stereo imagery) at 2 m (the default) or 0.5 m on the Swiss LV95 grid "
+            "(EPSG:2056), in 1 km tiles; the latest acquisition of each tile is used. "
+            "Heights in metres above LN02.";
+        ch.accessed = "2026-11-01";
+        ch.native_resolutions_metres = {0.5, 2.0};
+        ch.default_resolution_metres = 2.0;
+        ch.surface_models = {"dtm"};
+        ch.default_surface_model = "dtm";
+        ch.vertical_datum = "LN02";
+        ch.coverage_envelopes = {{5.9, 45.8, 10.5, 47.85}};
+        ch.native_grid_projected = true;
+        ch.stac_search_url = "https://data.geo.admin.ch/api/stac/v1/search";
+        ch.stac_collection = "ch.swisstopo.swissalti3d";
+        ch.stac_asset_by_gsd = true;
+        ch.stac_latest_per_tile = true;
+        rows.push_back(ch);
 
         return rows;
     }();
@@ -2879,8 +3026,12 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
     std::vector<fetch_detail::stac_item> items;
     std::vector<std::string> missing_asset;
     {
+        std::string asset_key = info.stac_asset_by_gsd ? std::string() : info.stac_asset;
+        for (const auto& entry : info.stac_asset_by_model)
+            if (entry.first == model) asset_key = entry.second;
         std::string url  = info.stac_search_url;
-        std::string body = fetch_detail::catalogue_stac_search_body(options);
+        const std::string first_body = fetch_detail::catalogue_stac_search_body(options);
+        std::string body = first_body;
         for (int page = 0; ; ++page)
         {
             std::string response, error, next_href, next_body;
@@ -2889,8 +3040,8 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
             {
                 return make_skip("lsdtt::fetch_dem: " + info.name + " search failed: " + error);
             }
-            if (!fetch_detail::parse_stac_items(response, info.stac_asset, items,
-                                                missing_asset, next_href, next_body, error))
+            if (!fetch_detail::parse_stac_items(response, asset_key, items, missing_asset,
+                                                next_href, next_body, error, res))
             {
                 return make_skip("lsdtt::fetch_dem: " + info.name + ": " + error);
             }
@@ -2899,12 +3050,16 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
                 static_cast<int>(items.size()) > options.max_tiles * 2)
                 break;   // already far past the limit; the count check below refuses
             url = next_href;
-            body = next_body;
+            body = fetch_detail::merge_stac_next_body(first_body, next_body);
         }
     }
 
+    // A host that ignored the filter must not pull in far-away tiles.
+    items = fetch_detail::stac_items_in_bbox(items, options.west, options.south,
+                                             options.east, options.north);
     const std::vector<double> gsds = fetch_detail::distinct_gsds(items);
-    items = fetch_detail::filter_stac_items_by_gsd(items, res);
+    if (info.stac_items_carry_gsd) items = fetch_detail::filter_stac_items_by_gsd(items, res);
+    if (info.stac_latest_per_tile) items = fetch_detail::latest_stac_item_per_tile(items);
     if (items.empty())
     {
         return make_error("lsdtt::fetch_dem: no " + info.name + " data at " +

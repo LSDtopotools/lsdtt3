@@ -81,7 +81,9 @@ enum class lsdtt_dem_source
     no_dtm,               // Kartverket NHM DTM 1 m (Norway), WCS. No key.
     nl_ahn,               // AHN 0.5 m (Netherlands), WCS. No key.
     es_mdt,               // IGN MDT05 5 m (Spain), WCS. No key.
-    pl_nmt                // GUGiK NMT 1 m (Poland), WCS. No key.
+    pl_nmt,               // GUGiK NMT 1 m (Poland), WCS. No key.
+    ca_hrdem,             // NRCan HRDEM mosaic 1/2 m (Canada), STAC. No key.
+    ch_swissalti3d        // swisstopo swissALTI3D 0.5/2 m (Switzerland), STAC. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -140,6 +142,17 @@ struct lsdtt_dem_source_info
     // Hosts that publish one collection per resolution (PGC): the collection
     // for each native resolution, used instead of stac_collection.
     std::vector<std::pair<double, std::string>> stac_collection_by_resolution;
+    // The asset per surface model, where one item carries both (HRDEM:
+    // "dtm" -> "dtm", "dsm" -> "dsm"); otherwise stac_asset.
+    std::vector<std::pair<std::string, std::string>> stac_asset_by_model;
+    // Assets are keyed by file name, one per resolution and format
+    // (swisstopo): take the GeoTIFF asset whose gsd is the resolution.
+    bool stac_asset_by_gsd = false;
+    // Items carry no gsd (the collection fixes the resolution): no gsd filter.
+    bool stac_items_carry_gsd = true;
+    // Several acquisitions per tile, the year a token of the item id
+    // ("swissalti3d_2024_2623-1091"): keep the latest per tile.
+    bool stac_latest_per_tile = false;
     // STAC fields extension: return only these item fields. PGC items list
     // every source scene, tens of kB each; the fetch needs none of it.
     std::vector<std::string> stac_fields_include;
