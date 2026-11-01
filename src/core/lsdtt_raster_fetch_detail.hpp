@@ -53,6 +53,45 @@ std::string catalogue_stac_search_body(const lsdtt_fetch_options& options);
 std::string catalogue_stac_collection(const lsdtt_dem_source_info& info,
                                       double                       resolution_metres);
 
+// ---- WCS (catalogue rows with a wcs_url) ----
+
+// The native-grid extent to request: the output area (the snapped target
+// extent, or the bbox in frame mode) transformed to the native CRS, snapped
+// outward to native pixel edges and padded for the resampling kernel.
+// Throws std::runtime_error if a transform cannot be built.
+fetch_extent wcs_native_extent(const lsdtt_fetch_options&   options,
+                               const lsdtt_dem_source_info& info,
+                               int                          target_epsg);
+
+// Split an extent on the native grid into chunks of at most max_side pixels
+// a side, row by row from the top left. Chunks abut exactly.
+std::vector<fetch_extent> wcs_plan_chunks(const fetch_extent& extent, double pixel,
+                                          int max_side);
+
+// The GetCoverage URL for one chunk (WCS 1.0.0 or 2.0.1).
+std::string wcs_getcoverage_url(const lsdtt_dem_source_info& info,
+                                const std::string&           coverage_id,
+                                const fetch_extent&          chunk);
+
+// The message of an OGC exception report (OWS 1.1/2.0 ExceptionReport or a
+// WCS 1.0 ServiceExceptionReport); empty if the text is not one.
+std::string parse_ows_exception(const std::string& xml);
+
+// The payload of the first non-XML part of a multipart MIME body; empty if
+// there is none.
+std::string multipart_first_payload(const std::string& body, const std::string& boundary);
+
+// Stage one GetCoverage response as a Float32 GeoTIFF at out_path (/vsimem)
+// with the native CRS (and nodata 0 where the row says so). Refuses a
+// response whose grid is not exactly the requested chunk on the native
+// grid: a server that resampled would add a second resampling.
+bool wcs_stage_response(const lsdtt_dem_source_info& info,
+                        const std::string&           body,
+                        const std::string&           content_type,
+                        const fetch_extent&          chunk,
+                        const std::string&           out_path,
+                        std::string&                 error);
+
 // The GDALWarp argument vector. explicit_extent (target CRS) replaces -tap
 // with -te on the snapped extent; nullptr gives the Copernicus arguments.
 std::vector<std::string> fetch_warp_arguments(const lsdtt_fetch_options& options,

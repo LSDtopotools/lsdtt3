@@ -6774,7 +6774,7 @@ foreach(_ff_case IN ITEMS
     )
 endforeach()
 
-# Catalogue sources (us_3dep, arctic_arcticdem, antarctic_rema) and the size limits: refused before any
+# Catalogue sources (STAC and WCS) and the size limits: refused before any
 # request, so these run offline.
 add_lsdtt_cli_smoke_test(
     failure_fetch_raster_3dep_outside_coverage
@@ -6822,6 +6822,24 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_wcs_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_wcs_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside no_dtm coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_wcs_too_many_native_cells
+    lsdtt-fetch-raster
+    fetch_raster_wcs_too_many_native_cells.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "native 0.5 m cells"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_copernicus_surface_model
     lsdtt-fetch-raster
     fetch_raster_copernicus_surface_model.param.in
@@ -6859,6 +6877,12 @@ add_test(NAME smoke_fetch_raster_help_dem_source_polar
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_polar PROPERTIES
     LABELS "smoke;cli;fetch"
     PASS_REGULAR_EXPRESSION "ArcticDEM mosaic v4.1 -- a DIGITAL SURFACE MODEL.*REMA mosaic v2.0 -- a DIGITAL SURFACE MODEL")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_wcs
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_wcs PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "no_dtm.*nl_ahn.*DIGITAL SURFACE MODEL \\(dsm\\).*es_mdt.*pl_nmt")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)

@@ -1373,7 +1373,7 @@ void declare_fetch_request_limit_parameters(std::map<std::string, int>& int_defa
     {
         int_default_map["max_tiles"] = 256;
         help_map["max_tiles"] = {"int","256",
-            "Refuse a request needing more tiles or source files than this.",
+            "Refuse a request needing more tiles, source files or service requests than this.",
             "A guard against an accidental continental request, checked before "
             "anything is downloaded. Raise it deliberately for large areas.",
             group, "param", ""};

@@ -33,6 +33,7 @@
 #include <gdal_utils.h>      // GDALTranslate / GDALWarp
 #include "lsdtt_http_fetch.hpp"
 #include <cpl_json.h>        // CPLJSONDocument (STAC + SAS responses)
+#include <cpl_multiproc.h>   // CPLSleep (WCS request delay)
 #include <ogr_api.h>         // OGR_L_* / OGR_G_* vector access
 #include <ogr_srs_api.h>     // OSR* / OCT* coordinate transforms
 
@@ -893,6 +894,217 @@ std::string pc_stac_search_body(const lsdtt_fetch_options& o)
 }
 
 
+namespace {
+
+// Envelope in `to_epsg` of a box in `from_epsg` with every edge densified.
+fetch_extent densified_envelope(const fetch_extent& box, int from_epsg, int to_epsg)
+{
+    OGRSpatialReferenceH from = OSRNewSpatialReference(nullptr);
+    OGRSpatialReferenceH to   = OSRNewSpatialReference(nullptr);
+    const OGRErr e1 = OSRImportFromEPSG(from, from_epsg);
+    const OGRErr e2 = OSRImportFromEPSG(to, to_epsg);
+    OSRSetAxisMappingStrategy(from, OAMS_TRADITIONAL_GIS_ORDER);
+    OSRSetAxisMappingStrategy(to, OAMS_TRADITIONAL_GIS_ORDER);
+    OGRCoordinateTransformationH ct = nullptr;
+    if (e1 == OGRERR_NONE && e2 == OGRERR_NONE)
+    {
+        quiet_gdal_errors quiet;
+        ct = OCTNewCoordinateTransformation(from, to);
+    }
+    OSRDestroySpatialReference(from);
+    OSRDestroySpatialReference(to);
+    if (ct == nullptr)
+        throw std::runtime_error("cannot transform EPSG:" + std::to_string(from_epsg) +
+                                 " to EPSG:" + std::to_string(to_epsg));
+
+    const int per_side = 64;
+    std::vector<double> xs, ys;
+    for (int i = 0; i <= per_side; ++i)
+    {
+        const double t = static_cast<double>(i) / per_side;
+        const double x = box.x_min + t * (box.x_max - box.x_min);
+        const double y = box.y_min + t * (box.y_max - box.y_min);
+        xs.insert(xs.end(), {x, x, box.x_min, box.x_max});
+        ys.insert(ys.end(), {box.y_min, box.y_max, y, y});
+    }
+    std::vector<int> ok(xs.size(), 0);
+    OCTTransformEx(ct, static_cast<int>(xs.size()), xs.data(), ys.data(), nullptr,
+                   ok.data());
+    OCTDestroyCoordinateTransformation(ct);
+    fetch_extent out{1e300, 1e300, -1e300, -1e300};
+    for (std::size_t i = 0; i < xs.size(); ++i)
+    {
+        if (!ok[i]) continue;
+        out.x_min = std::min(out.x_min, xs[i]); out.x_max = std::max(out.x_max, xs[i]);
+        out.y_min = std::min(out.y_min, ys[i]); out.y_max = std::max(out.y_max, ys[i]);
+    }
+    if (!(out.x_max > out.x_min && out.y_max > out.y_min))
+        throw std::runtime_error("the area does not transform to EPSG:" +
+                                 std::to_string(to_epsg));
+    return out;
+}
+
+std::string url_number(double v)
+{
+    std::string text = format_double(v, 6);
+    while (!text.empty() && text.back() == '0') text.pop_back();
+    if (!text.empty() && text.back() == '.') text.pop_back();
+    return text;
+}
+
+std::string xml_text_of(const std::string& xml, const std::string& tag)
+{
+    // <tag ...>text</tag>, with or without a namespace prefix.
+    std::size_t pos = 0;
+    while ((pos = xml.find(tag, pos)) != std::string::npos)
+    {
+        const bool opening = pos > 0 && (xml[pos - 1] == '<' || xml[pos - 1] == ':');
+        const std::size_t after = pos + tag.size();
+        if (opening && after < xml.size() && (xml[after] == '>' || xml[after] == ' '))
+        {
+            std::size_t lt = pos;
+            while (lt > 0 && xml[lt] != '<') --lt;
+            if (xml[lt] == '<' && xml[lt + 1] != '/')
+            {
+                const std::size_t start = xml.find('>', after);
+                const std::size_t end = xml.find("</", start);
+                if (start != std::string::npos && end != std::string::npos)
+                {
+                    std::string text = xml.substr(start + 1, end - start - 1);
+                    const std::size_t a = text.find_first_not_of(" \t\r\n");
+                    const std::size_t b = text.find_last_not_of(" \t\r\n");
+                    return a == std::string::npos ? std::string() : text.substr(a, b - a + 1);
+                }
+            }
+        }
+        pos = after;
+    }
+    return "";
+}
+
+} // namespace
+
+
+fetch_extent wcs_native_extent(const lsdtt_fetch_options&   o,
+                               const lsdtt_dem_source_info& info,
+                               int                          target_epsg)
+{
+    fetch_extent area;
+    if (o.use_frame || target_epsg <= 0)
+    {
+        area = densified_envelope({o.west, o.south, o.east, o.north}, 4326,
+                                  info.wcs_native_epsg);
+    }
+    else
+    {
+        const fetch_extent target =
+            target_extent_for_bbox(o.west, o.south, o.east, o.north, target_epsg,
+                                   o.grid_spacing);
+        area = densified_envelope(target, target_epsg, info.wcs_native_epsg);
+    }
+    // Pad by the resampling kernel: two output cells, at least two native
+    // pixels, plus one.
+    const double p = info.wcs_pixel_metres;
+    const double pad = p * (std::ceil(2.0 * std::max(1.0, o.grid_spacing / p)) + 1.0);
+    fetch_extent out;
+    out.x_min = info.wcs_origin_x + std::floor((area.x_min - pad - info.wcs_origin_x) / p) * p;
+    out.x_max = info.wcs_origin_x + std::ceil((area.x_max + pad - info.wcs_origin_x) / p) * p;
+    out.y_max = info.wcs_origin_y - std::floor((info.wcs_origin_y - area.y_max - pad) / p) * p;
+    out.y_min = info.wcs_origin_y - std::ceil((info.wcs_origin_y - area.y_min + pad) / p) * p;
+    return out;
+}
+
+
+std::vector<fetch_extent> wcs_plan_chunks(const fetch_extent& extent, double pixel,
+                                          int max_side)
+{
+    const long long cols = std::llround((extent.x_max - extent.x_min) / pixel);
+    const long long rows = std::llround((extent.y_max - extent.y_min) / pixel);
+    std::vector<fetch_extent> chunks;
+    if (cols <= 0 || rows <= 0 || max_side <= 0) return chunks;
+    for (long long r0 = 0; r0 < rows; r0 += max_side)
+    {
+        const long long r1 = std::min(rows, r0 + max_side);
+        for (long long c0 = 0; c0 < cols; c0 += max_side)
+        {
+            const long long c1 = std::min(cols, c0 + max_side);
+            chunks.push_back({extent.x_min + c0 * pixel, extent.y_max - r1 * pixel,
+                              extent.x_min + c1 * pixel, extent.y_max - r0 * pixel});
+        }
+    }
+    return chunks;
+}
+
+
+std::string wcs_getcoverage_url(const lsdtt_dem_source_info& info,
+                                const std::string&           coverage_id,
+                                const fetch_extent&          c)
+{
+    std::ostringstream url;
+    url << info.wcs_url << "?SERVICE=WCS&VERSION=" << info.wcs_version
+        << "&REQUEST=GetCoverage";
+    if (info.wcs_version == "1.0.0")
+    {
+        const long long w = std::llround((c.x_max - c.x_min) / info.wcs_pixel_metres);
+        const long long h = std::llround((c.y_max - c.y_min) / info.wcs_pixel_metres);
+        url << "&COVERAGE=" << coverage_id << "&CRS=EPSG:" << info.wcs_native_epsg
+            << "&BBOX=" << url_number(c.x_min) << ',' << url_number(c.y_min) << ','
+            << url_number(c.x_max) << ',' << url_number(c.y_max)
+            << "&WIDTH=" << w << "&HEIGHT=" << h << "&FORMAT=" << info.wcs_format;
+    }
+    else
+    {
+        url << "&COVERAGEID=" << coverage_id << "&FORMAT=" << info.wcs_format
+            << "&SUBSET=" << info.wcs_x_axis << '(' << url_number(c.x_min) << ','
+            << url_number(c.x_max) << ')'
+            << "&SUBSET=" << info.wcs_y_axis << '(' << url_number(c.y_min) << ','
+            << url_number(c.y_max) << ')';
+    }
+    return url.str();
+}
+
+
+std::string parse_ows_exception(const std::string& xml)
+{
+    if (xml.find("ExceptionReport") == std::string::npos) return "";
+    std::string text = xml_text_of(xml, "ExceptionText");
+    if (text.empty()) text = xml_text_of(xml, "ServiceException");
+    return text.empty() ? std::string("the service returned an exception report") : text;
+}
+
+
+std::string multipart_first_payload(const std::string& body, const std::string& boundary)
+{
+    const std::string marker = "--" + boundary;
+    std::size_t pos = body.find(marker);
+    while (pos != std::string::npos)
+    {
+        std::size_t headers = pos + marker.size();
+        if (body.compare(headers, 2, "--") == 0) break;   // closing boundary
+        std::size_t sep = body.find("\r\n\r\n", headers);
+        std::size_t sep_len = 4;
+        const std::size_t lf = body.find("\n\n", headers);
+        if (lf != std::string::npos && (sep == std::string::npos || lf < sep))
+        {
+            sep = lf;
+            sep_len = 2;
+        }
+        if (sep == std::string::npos) break;
+        const std::size_t next = body.find(marker, sep);
+        const std::string head = body.substr(headers, sep - headers);
+        std::size_t end = next == std::string::npos ? body.size() : next;
+        while (end > sep + sep_len && (body[end - 1] == '\n' || body[end - 1] == '\r')) --end;
+        std::string lower = head;
+        for (char& ch : lower)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (lower.find("xml") == std::string::npos)
+            return body.substr(sep + sep_len, end - sep - sep_len);
+        pos = next;
+    }
+    return "";
+}
+
+
 std::string catalogue_stac_collection(const lsdtt_dem_source_info& info,
                                       double                       resolution_metres)
 {
@@ -1202,6 +1414,10 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::us_3dep:            return "us_3dep";
         case lsdtt_dem_source::arctic_arcticdem:   return "arctic_arcticdem";
         case lsdtt_dem_source::antarctic_rema:     return "antarctic_rema";
+        case lsdtt_dem_source::no_dtm:             return "no_dtm";
+        case lsdtt_dem_source::nl_ahn:             return "nl_ahn";
+        case lsdtt_dem_source::es_mdt:             return "es_mdt";
+        case lsdtt_dem_source::pl_nmt:             return "pl_nmt";
     }
     return "unknown";
 }
@@ -1389,6 +1605,157 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         rema.stac_fields_include = pgc_fields;
         rema.native_grid_projected = true;
         rows.push_back(rema);
+
+        // National lidar DEMs served by WCS. Each row pins the native grid
+        // from the service's DescribeCoverage (origin = top-left pixel edge),
+        // so every request is an exact window of stored pixels. Where the
+        // service has no nodata value, sea and areas outside the country come
+        // back as 0; kept as data, a border becomes a cliff to 0 m that cubic
+        // resampling overshoots (-229 m measured in the Tatra), so 0 is nodata.
+        lsdtt_dem_source_info no;
+        no.id = lsdtt_dem_source::no_dtm;
+        no.name = "no_dtm";
+        no.title = "Norway national height model DTM 1 m (Kartverket)";
+        no.provider = "Kartverket (Norwegian Mapping Authority), via the Geonorge WCS";
+        no.licence_attribution =
+            "Nasjonal hoydemodell (NHM) DTM 1 m, (c) Kartverket, from the Geonorge WCS "
+            "(free, no access constraints declared by the service). Credit Kartverket.";
+        no.coverage_text = "mainland Norway (not Svalbard)";
+        no.description =
+            "Kartverket national height model -- a DIGITAL TERRAIN MODEL (bare earth, "
+            "from airborne lidar) at 1 m on UTM 33N (EPSG:25833), the whole country "
+            "in one grid. Heights in metres above NN2000. Sea and areas outside "
+            "Norway are NoData (the service returns 0 there, so cells of exactly "
+            "0 m are NoData).";
+        no.accessed = "2026-11-01";
+        no.native_resolutions_metres = {1.0};
+        no.default_resolution_metres = 1.0;
+        no.surface_models = {"dtm"};
+        no.default_surface_model = "dtm";
+        no.vertical_datum = "NN2000";
+        no.coverage_envelopes = {{4.0, 57.9, 31.2, 71.25}};
+        no.native_grid_projected = true;
+        no.wcs_url = "https://wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833";
+        no.wcs_version = "1.0.0";
+        no.wcs_coverage_by_model = {{"dtm", "nhm_dtm_topo_25833"}};
+        no.wcs_format = "GeoTIFF";
+        no.wcs_native_epsg = 25833;
+        no.wcs_origin_x = -100275.0;
+        no.wcs_origin_y = 8000275.0;
+        no.wcs_pixel_metres = 1.0;
+        no.wcs_max_chunk_side = 2000;   // 4000 x 4000 timed out (HTTP 504)
+        no.wcs_zero_is_nodata = true;
+        rows.push_back(no);
+
+        lsdtt_dem_source_info nl;
+        nl.id = lsdtt_dem_source::nl_ahn;
+        nl.name = "nl_ahn";
+        nl.title = "AHN, Actueel Hoogtebestand Nederland 0.5 m (PDOK)";
+        nl.provider = "Rijkswaterstaat and the water boards (AHN), via the PDOK WCS";
+        nl.licence_attribution =
+            "Actueel Hoogtebestand Nederland (AHN), from the PDOK WCS, CC0 1.0 "
+            "(public domain).";
+        nl.coverage_text = "the Netherlands";
+        nl.description =
+            "AHN at 0.5 m on the Dutch RD grid (EPSG:28992): a DIGITAL TERRAIN MODEL "
+            "(dtm, the default: bare earth from airborne lidar, with gaps where "
+            "buildings and water were removed) or a DIGITAL SURFACE MODEL (dsm). "
+            "Heights in metres above NAP. Only the 0.5 m product is served, so "
+            "large areas download a lot of data.";
+        nl.accessed = "2026-11-01";
+        nl.native_resolutions_metres = {0.5};
+        nl.default_resolution_metres = 0.5;
+        nl.surface_models = {"dtm", "dsm"};
+        nl.default_surface_model = "dtm";
+        nl.vertical_datum = "NAP";
+        nl.coverage_envelopes = {{3.2, 50.7, 7.3, 53.6}};
+        nl.native_grid_projected = true;
+        nl.wcs_url = "https://service.pdok.nl/rws/ahn/wcs/v1_0";
+        nl.wcs_version = "2.0.1";
+        nl.wcs_coverage_by_model = {{"dtm", "dtm_05m"}, {"dsm", "dsm_05m"}};
+        nl.wcs_format = "image/tiff";
+        nl.wcs_native_epsg = 28992;
+        nl.wcs_origin_x = 10000.0;
+        nl.wcs_origin_y = 618750.0;
+        nl.wcs_pixel_metres = 0.5;
+        nl.wcs_max_chunk_side = 4000;   // the service's MAXSIZE
+        rows.push_back(nl);
+
+        lsdtt_dem_source_info es;
+        es.id = lsdtt_dem_source::es_mdt;
+        es.name = "es_mdt";
+        es.title = "Spain MDT05 5 m (Instituto Geografico Nacional)";
+        es.provider = "Instituto Geografico Nacional (IGN), via the IDEE WCS";
+        es.licence_attribution =
+            "MDT05, (c) Instituto Geografico Nacional de Espana, from the IDEE WCS, "
+            "CC BY 4.0 scne.es.";
+        es.coverage_text = "mainland Spain and the Balearic Islands (not the Canaries)";
+        es.description =
+            "IGN MDT05 -- a DIGITAL TERRAIN MODEL (bare earth, from airborne lidar) "
+            "at 5 m on UTM 30N (EPSG:25830) for the whole peninsula. Heights in "
+            "metres above mean sea level at Alicante (REDNAP). Fetched as text to "
+            "keep millimetre heights (the service's GeoTIFF is whole metres). Sea "
+            "and areas outside Spain are NoData (the service returns 0 there, so "
+            "cells of exactly 0 m are NoData).";
+        es.accessed = "2026-11-01";
+        es.native_resolutions_metres = {5.0};
+        es.default_resolution_metres = 5.0;
+        es.surface_models = {"dtm"};
+        es.default_surface_model = "dtm";
+        es.vertical_datum = "REDNAP (Alicante)";
+        es.coverage_envelopes = {{-9.4, 35.9, 4.4, 43.9}};
+        es.native_grid_projected = true;
+        es.wcs_url = "https://servicios.idee.es/wcs-inspire/mdt";
+        es.wcs_version = "2.0.1";
+        es.wcs_coverage_by_model = {{"dtm", "Elevacion25830_5"}};
+        es.wcs_format = "application/asc";
+        es.wcs_multipart_ascii = true;
+        es.wcs_native_epsg = 25830;
+        es.wcs_origin_x = -19452.5;
+        es.wcs_origin_y = 4865682.5;
+        es.wcs_pixel_metres = 5.0;
+        es.wcs_max_chunk_side = 2000;   // MAXSIZE is 4096; text is ~9 bytes a cell
+        es.wcs_bytes_per_cell = 9.0;
+        es.wcs_zero_is_nodata = true;
+        rows.push_back(es);
+
+        lsdtt_dem_source_info pl;
+        pl.id = lsdtt_dem_source::pl_nmt;
+        pl.name = "pl_nmt";
+        pl.title = "Poland NMT 1 m grid (GUGiK)";
+        pl.provider = "Glowny Urzad Geodezji i Kartografii (GUGiK), via the "
+                      "geoportal.gov.pl WCS";
+        pl.licence_attribution =
+            "Numeryczny Model Terenu (NMT) 1 m, Glowny Urzad Geodezji i Kartografii "
+            "(GUGiK), from the geoportal.gov.pl WCS (no fees or access constraints "
+            "declared by the service). Credit GUGiK.";
+        pl.coverage_text = "Poland";
+        pl.description =
+            "GUGiK NMT -- a DIGITAL TERRAIN MODEL (bare earth, from airborne lidar) "
+            "at 1 m on the PL-1992 grid (EPSG:2180). Heights in metres in the "
+            "Kronstadt 1986 system (PL-KRON86-NH). Areas outside Poland are "
+            "NoData (the service returns 0 there, so cells of exactly 0 m are "
+            "NoData). The service is slow (about 1 MB/s).";
+        pl.accessed = "2026-11-01";
+        pl.native_resolutions_metres = {1.0};
+        pl.default_resolution_metres = 1.0;
+        pl.surface_models = {"dtm"};
+        pl.default_surface_model = "dtm";
+        pl.vertical_datum = "PL-KRON86-NH";
+        pl.coverage_envelopes = {{14.1, 49.0, 24.2, 54.9}};
+        pl.native_grid_projected = true;
+        pl.wcs_url = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/GRID1/WCS/"
+                     "DigitalTerrainModelFormatTIFF";
+        pl.wcs_version = "2.0.1";
+        pl.wcs_coverage_by_model = {{"dtm", "DTM_PL-KRON86-NH_TIFF"}};
+        pl.wcs_format = "image/tiff";
+        pl.wcs_native_epsg = 2180;
+        pl.wcs_origin_x = 160828.343266;
+        pl.wcs_origin_y = 796521.669410;
+        pl.wcs_pixel_metres = 1.0;
+        pl.wcs_max_chunk_side = 2000;
+        pl.wcs_zero_is_nodata = true;
+        rows.push_back(pl);
 
         return rows;
     }();
@@ -2151,6 +2518,35 @@ bool preflight_size(const lsdtt_fetch_options& o, int epsg, std::string& error)
 
     const lsdtt_dem_source_info& info = dem_source_info(o.source);
     double cell_degrees = 1.0 / 3600.0;   // GLO-30 and the 1 arc-second products
+    if (!info.wcs_url.empty())
+    {
+        // The native cells requested, exactly as the chunk planner will ask.
+        double cells = 0.0;
+        try
+        {
+            const fetch_detail::fetch_extent native =
+                fetch_detail::wcs_native_extent(o, info, o.use_frame ? 0 : epsg);
+            cells = ((native.x_max - native.x_min) / info.wcs_pixel_metres) *
+                    ((native.y_max - native.y_min) / info.wcs_pixel_metres);
+        }
+        catch (const std::exception& e)
+        {
+            error = e.what();
+            return false;
+        }
+        if (o.max_output_pixels > 0 && cells > static_cast<double>(o.max_output_pixels))
+        {
+            error = "the " + info.name + " download would be " +
+                    format_double(cells, 0) + " native " +
+                    list_of({info.wcs_pixel_metres}) + " m cells, more than "
+                    "max_output_pixels (" + std::to_string(o.max_output_pixels) +
+                    "); fetch a smaller area or raise max_output_pixels";
+            return false;
+        }
+        return check_download_estimate(
+            o, fetch_detail::estimate_download_megabytes(cells, info.wcs_bytes_per_cell),
+            error);
+    }
     if (!info.legacy_path && info.native_grid_projected)
     {
         // Metre cells: count them over the output extent's area.
@@ -2317,6 +2713,156 @@ lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
                                         lsdtt_fetch_result              result,
                                         double                          coverage);
 
+// One WCS GetCoverage request: the body, capped at max_bytes (0 = no cap).
+// An OGC exception report, whatever the HTTP status, becomes the error.
+bool wcs_download(const std::string& url, int timeout_seconds, int max_retry,
+                  double max_bytes, std::string& body, std::string& content_type,
+                  bool& over_limit, std::string& error)
+{
+    gdal_string_list_guard http_opts;
+    http_opts.add("TIMEOUT="   + std::to_string(timeout_seconds));
+    http_opts.add("MAX_RETRY=" + std::to_string(max_retry));
+    http_opts.add("RETRY_DELAY=2");
+    capped_download download;
+    download.max_bytes = max_bytes;
+    CPLHTTPResult* response = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        response = CPLHTTPFetchEx(url.c_str(), http_opts.get(), nullptr, nullptr,
+                                  capped_download_write, &download);
+    }
+    over_limit = download.over_limit;
+    body.assign(download.data.begin(), download.data.end());
+    content_type = (response && response->pszContentType) ? response->pszContentType : "";
+    const int status = response ? response->nStatus : -1;
+    const std::string transport = (response && response->pszErrBuf) ? response->pszErrBuf : "";
+    if (response != nullptr) destroy_detached(response);
+    if (over_limit) return false;
+
+    const std::string exception = fetch_detail::parse_ows_exception(
+        body.substr(0, std::min<std::size_t>(body.size(), 8192)));
+    if (!exception.empty())
+    {
+        error = "the service refused the request: " + exception;
+        return false;
+    }
+    if (response == nullptr || status != 0)
+    {
+        error = "HTTP request failed: " + (transport.empty() ? std::string("no response")
+                                                             : transport);
+        return false;
+    }
+    if (body.empty())
+    {
+        error = "the service returned an empty response";
+        return false;
+    }
+    return true;
+}
+
+// WCS sources: plan native-grid chunks, download each, then the common warp.
+lsdtt_fetch_result fetch_wcs_source(const lsdtt_fetch_options&   options,
+                                    const lsdtt_dem_source_info& info,
+                                    double                       res,
+                                    const std::string&           model,
+                                    const std::string&           out_path,
+                                    lsdtt_fetch_result           result)
+{
+    std::string coverage_id;
+    for (const auto& entry : info.wcs_coverage_by_model)
+        if (entry.first == model) coverage_id = entry.second;
+
+    std::vector<fetch_detail::fetch_extent> chunks;
+    try
+    {
+        chunks = fetch_detail::wcs_plan_chunks(
+            fetch_detail::wcs_native_extent(options, info,
+                                            options.use_frame ? 0 : result.epsg),
+            info.wcs_pixel_metres, info.wcs_max_chunk_side);
+    }
+    catch (const std::exception& e)
+    {
+        return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+    }
+    if (options.max_tiles > 0 && static_cast<int>(chunks.size()) > options.max_tiles)
+    {
+        return make_error("lsdtt::fetch_dem: this area needs " +
+                          std::to_string(chunks.size()) + " " + info.name +
+                          " requests, more than max_tiles (" +
+                          std::to_string(options.max_tiles) + "); raise max_tiles or "
+                          "fetch a smaller area");
+    }
+
+    // Fraction of the area inside the coverage envelopes (coarse).
+    std::vector<fetch_detail::stac_item> envelopes;
+    for (const auto& box : info.coverage_envelopes)
+    {
+        fetch_detail::stac_item item;
+        for (int k = 0; k < 4; ++k) item.bbox[k] = box[k];
+        envelopes.push_back(item);
+    }
+    const double coverage = footprint_coverage_percent(options, envelopes);
+
+    std::vector<std::string> paths;
+    auto remove_chunks = [&paths]() {
+        for (const std::string& path : paths) VSIUnlink(path.c_str());
+    };
+    double bytes_so_far = 0.0;
+    const double max_bytes = options.max_download_megabytes * 1.0e6;
+    for (std::size_t i = 0; i < chunks.size(); ++i)
+    {
+        if (i > 0 && options.request_delay_milliseconds > 0)
+            CPLSleep(options.request_delay_milliseconds / 1000.0);
+        const std::string url = fetch_detail::wcs_getcoverage_url(info, coverage_id, chunks[i]);
+        std::string body, content_type, error;
+        bool over_limit = false;
+        const double remaining = max_bytes > 0.0 ? std::max(1.0, max_bytes - bytes_so_far) : 0.0;
+        const bool ok = wcs_download(url, options.http_timeout_seconds, options.http_max_retry,
+                                     remaining, body, content_type, over_limit, error);
+        const std::string which = info.name + " request " + std::to_string(i + 1) + " of " +
+                                  std::to_string(chunks.size());
+        if (over_limit)
+        {
+            remove_chunks();
+            return make_error("lsdtt::fetch_dem: " + which + " passed max_download_megabytes (" +
+                              format_double(options.max_download_megabytes, 1) +
+                              " MB) and the fetch was stopped; raise max_download_megabytes "
+                              "or fetch a smaller area");
+        }
+        if (!ok)
+        {
+            remove_chunks();
+            // A refusal is the service's answer, not the network's fault.
+            if (error.rfind("the service refused", 0) == 0)
+                return make_error("lsdtt::fetch_dem: " + which + ": " + error);
+            return make_skip("lsdtt::fetch_dem: " + which + ": " + error);
+        }
+        bytes_so_far += static_cast<double>(body.size());
+        const std::string chunk_path =
+            "/vsimem/lsdtt_wcs_" + info.name + "_" + std::to_string(i) + ".tif";
+        if (!fetch_detail::wcs_stage_response(info, body, content_type, chunks[i], chunk_path,
+                                                error))
+        {
+            remove_chunks();
+            return make_error("lsdtt::fetch_dem: " + which + ": " + error);
+        }
+        paths.push_back(chunk_path);
+        result.tiles.push_back(coverage_id + "[" + std::to_string(i + 1) + "/" +
+                               std::to_string(chunks.size()) + "]");
+    }
+    if (coverage < 99.95)
+    {
+        result.warnings.push_back(info.name + " covers about " + format_double(coverage, 1) +
+                                  " % of the requested area (" + info.coverage_text + ")");
+    }
+    result.provenance.push_back({"LSDTT_DOWNLOAD_MEGABYTES",
+                                 format_double(bytes_so_far / 1.0e6, 1)});
+    lsdtt_fetch_result written = warp_catalogue_files(options, info, res, model, paths,
+                                                      out_path, result, coverage);
+    remove_chunks();
+    return written;
+}
+
 // The catalogue path: discover the source files, warp straight from them onto
 // the snapped target grid, check the result, stamp its provenance.
 lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
@@ -2326,6 +2872,8 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
     const lsdtt_dem_source_info& info = dem_source_info(options.source);
     const double res = resolved_source_resolution(options, info);
     const std::string model = resolved_surface_model(options, info);
+    if (!info.wcs_url.empty())
+        return fetch_wcs_source(options, info, res, model, out_path, result);
 
     // ---- discovery: STAC search, following rel=next ----
     std::vector<fetch_detail::stac_item> items;
@@ -2501,9 +3049,16 @@ lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
                           info.coverage_text + ")");
     }
 
+    if (valid < 99.95)
+    {
+        written.warnings.push_back(format_double(100.0 - valid, 1) + " % of the output "
+                                   "cells are NoData (outside " + info.name +
+                                   " coverage, or gaps in the source)");
+    }
+
     std::string surface = model;
     for (char& c : surface) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    const std::vector<std::pair<std::string, std::string>> items_out = {
+    std::vector<std::pair<std::string, std::string>> items_out = {
         {"LSDTT_DEM_SOURCE", info.name},
         {"LSDTT_SURFACE_MODEL", surface},
         {"LSDTT_VERTICAL_DATUM", info.vertical_datum},
@@ -2514,6 +3069,8 @@ lsdtt_fetch_result warp_catalogue_files(const lsdtt_fetch_options&      options,
         {"LSDTT_OVERVIEW_USED", overview_used ? "true" : "false"},
         {"LSDTT_COVERAGE_PERCENT", format_double(coverage, 1)},
         {"LSDTT_VALID_PERCENT", format_double(valid, 1)}};
+    // Items the discovery step recorded (e.g. the WCS download size).
+    for (const auto& item : written.provenance) items_out.push_back(item);
     return stamp_result(written, items_out);
 }
 
@@ -2890,6 +3447,114 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
 }
 
 } // namespace
+
+bool fetch_detail::wcs_stage_response(const lsdtt_dem_source_info& info,
+                                      const std::string&           body,
+                                      const std::string&           content_type,
+                                      const fetch_extent&          chunk,
+                                      const std::string&           out_path,
+                                      std::string&                 error)
+{
+    std::string payload = body;
+    std::string staged = out_path + ".download";
+    if (info.wcs_multipart_ascii)
+    {
+        std::string boundary;
+        const std::size_t b = content_type.find("boundary=");
+        if (b != std::string::npos)
+        {
+            boundary = content_type.substr(b + 9);
+            const std::size_t end = boundary.find(';');
+            if (end != std::string::npos) boundary = boundary.substr(0, end);
+            if (!boundary.empty() && boundary.front() == '"')
+                boundary = boundary.substr(1, boundary.size() - 2);
+        }
+        payload = boundary.empty() ? body
+                                   : fetch_detail::multipart_first_payload(body, boundary);
+        if (payload.empty())
+        {
+            error = "the multipart response held no grid";
+            return false;
+        }
+        staged += ".asc";
+    }
+    else
+    {
+        staged += ".tif";
+    }
+    {
+        VSILFILE* f = VSIFOpenL(staged.c_str(), "wb");
+        if (f == nullptr ||
+            VSIFWriteL(payload.data(), 1, payload.size(), f) != payload.size())
+        {
+            if (f) VSIFCloseL(f);
+            error = "could not stage the response in memory";
+            return false;
+        }
+        VSIFCloseL(f);
+    }
+    GDALDatasetH src = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        src = GDALOpen(staged.c_str(), GA_ReadOnly);
+    }
+    if (src == nullptr)
+    {
+        VSIUnlink(staged.c_str());
+        error = "the response is not a readable raster (content type '" + content_type + "')";
+        return false;
+    }
+
+    double gt[6] = {0, 0, 0, 0, 0, 0};
+    GDALGetGeoTransform(src, gt);
+    const double p = info.wcs_pixel_metres;
+    const double tol = 1e-4 * p;   // origins are given to 1e-6 m
+    const int w = static_cast<int>(std::llround((chunk.x_max - chunk.x_min) / p));
+    const int h = static_cast<int>(std::llround((chunk.y_max - chunk.y_min) / p));
+    if (std::abs(gt[1] - p) > 1e-9 * p || std::abs(gt[5] + p) > 1e-9 * p ||
+        gt[2] != 0.0 || gt[4] != 0.0 || std::abs(gt[0] - chunk.x_min) > tol ||
+        std::abs(gt[3] - chunk.y_max) > tol ||
+        GDALGetRasterXSize(src) != w || GDALGetRasterYSize(src) != h)
+    {
+        error = "the service returned a " + std::to_string(GDALGetRasterXSize(src)) + " x " +
+                std::to_string(GDALGetRasterYSize(src)) + " grid at " +
+                list_of({gt[1]}) + " m from (" + list_of({gt[0]}) + ", " +
+                list_of({gt[3]}) + "), not the requested native " + std::to_string(w) +
+                " x " + std::to_string(h) + " grid at " + list_of({p}) + " m from (" +
+                list_of({chunk.x_min}) + ", " + list_of({chunk.y_max}) + ")";
+        GDALClose(src);
+        VSIUnlink(staged.c_str());
+        return false;
+    }
+
+    gdal_string_list_guard args;
+    for (const char* a : {"-of", "GTiff", "-ot", "Float32"}) args.add(a);
+    args.add("-a_srs");
+    args.add("EPSG:" + std::to_string(info.wcs_native_epsg));
+    if (info.wcs_zero_is_nodata)
+    {
+        args.add("-a_nodata");
+        args.add("0");
+    }
+    GDALTranslateOptions* opts = GDALTranslateOptionsNew(args.get(), nullptr);
+    GDALDatasetH copy = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        copy = GDALTranslate(out_path.c_str(), src, opts, nullptr);
+    }
+    GDALTranslateOptionsFree(opts);
+    GDALClose(src);
+    VSIUnlink(staged.c_str());
+    VSIUnlink((staged + ".aux.xml").c_str());
+    if (copy == nullptr)
+    {
+        error = "could not convert the response to GeoTIFF";
+        return false;
+    }
+    GDALClose(copy);
+    return true;
+}
+
 
 lsdtt_fetch_result fetch_detail::warp_catalogue_files(const lsdtt_fetch_options&      options,
                                                       const std::vector<std::string>& paths,

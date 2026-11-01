@@ -77,7 +77,11 @@ enum class lsdtt_dem_source
     // their meaning.
     us_3dep,              // USGS 3DEP seamless, via Planetary Computer. No key.
     arctic_arcticdem,     // PGC ArcticDEM mosaic v4.1. No key.
-    antarctic_rema        // PGC REMA mosaic v2.0. No key.
+    antarctic_rema,       // PGC REMA mosaic v2.0. No key.
+    no_dtm,               // Kartverket NHM DTM 1 m (Norway), WCS. No key.
+    nl_ahn,               // AHN 0.5 m (Netherlands), WCS. No key.
+    es_mdt,               // IGN MDT05 5 m (Spain), WCS. No key.
+    pl_nmt                // GUGiK NMT 1 m (Poland), WCS. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -143,6 +147,27 @@ struct lsdtt_dem_source_info
     // The source grid is projected (metre cells), not geographic: the
     // download estimate counts cells by area rather than by degrees.
     bool native_grid_projected = false;
+
+    // WCS access (catalogue sources served by a Web Coverage Service; a row
+    // with a wcs_url uses it instead of STAC). The native grid is requested
+    // exactly, so the server does no resampling, in chunks of at most
+    // wcs_max_chunk_side pixels a side that abut on native pixel edges.
+    std::string wcs_url;                       // base URL, without a query
+    std::string wcs_version;                   // "1.0.0" or "2.0.1"
+    std::vector<std::pair<std::string, std::string>> wcs_coverage_by_model;  // "dtm" -> id
+    std::string wcs_format;                    // the GetCoverage FORMAT value
+    bool   wcs_multipart_ascii = false;        // response is multipart MIME around an ESRI ASCII grid
+    int    wcs_native_epsg = 0;
+    double wcs_origin_x = 0.0;                 // top-left corner of the grid (a pixel edge)
+    double wcs_origin_y = 0.0;
+    double wcs_pixel_metres = 0.0;
+    std::string wcs_x_axis = "x";              // 2.0.1 SUBSET label for easting
+    std::string wcs_y_axis = "y";              // 2.0.1 SUBSET label for northing
+    int    wcs_max_chunk_side = 2000;
+    double wcs_bytes_per_cell = 4.0;           // for the download estimate
+    // The service has no nodata value and returns 0 outside the country (and
+    // over sea): 0 is set as nodata, so a border is not a cliff to 0 m.
+    bool   wcs_zero_is_nodata = false;
 };
 
 // The whole catalogue, in the order shown to users.

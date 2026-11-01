@@ -721,6 +721,24 @@ void test_dem_source_catalogue()
         }
         check("catalogue: " + info.name + " has a datum and metres",
               !info.vertical_datum.empty() && info.vertical_units == "metre");
+        if (!info.wcs_url.empty())
+        {
+            bool every_model_served = true;
+            for (const std::string& m : info.surface_models)
+            {
+                bool found = false;
+                for (const auto& entry : info.wcs_coverage_by_model)
+                    if (entry.first == m && !entry.second.empty()) found = true;
+                if (!found) every_model_served = false;
+            }
+            check("catalogue: " + info.name + " has its WCS access, a coverage per model",
+                  every_model_served && info.wcs_native_epsg > 0 &&
+                  info.wcs_pixel_metres > 0.0 && info.wcs_max_chunk_side > 0 &&
+                  info.native_resolutions_metres ==
+                      std::vector<double>{info.wcs_pixel_metres} &&
+                  (info.wcs_version == "1.0.0" || info.wcs_version == "2.0.1"));
+            continue;
+        }
         check("catalogue: " + info.name + " has its STAC access",
               !info.stac_search_url.empty() && !info.stac_asset.empty());
         bool every_resolution_searchable = true;
@@ -1237,6 +1255,250 @@ void test_polar_warp_offline()
         VSIUnlink(f);
 }
 
+// The WCS sources: native extent, chunks, URLs, exception and multipart
+// parsing, pre-flight refusals.
+void test_wcs_sources()
+{
+    namespace fd = lsdtt::fetch_detail;
+    using lsdtt::lsdtt_dem_source;
+    const auto& no = lsdtt::dem_source_info(lsdtt_dem_source::no_dtm);
+    const auto& nl = lsdtt::dem_source_info(lsdtt_dem_source::nl_ahn);
+    const auto& es = lsdtt::dem_source_info(lsdtt_dem_source::es_mdt);
+    const auto& pl = lsdtt::dem_source_info(lsdtt_dem_source::pl_nmt);
+    auto on_lattice = [](double v, double origin, double p) {
+        const double k = (v - origin) / p;
+        return std::abs(k - std::round(k)) < 1e-6;
+    };
+
+    // ---- native extent: on the native lattice, covering the output area ----
+    {
+        lsdtt::lsdtt_fetch_options o;
+        o.source = lsdtt_dem_source::pl_nmt;
+        o.west = 19.95; o.south = 49.20; o.east = 19.98; o.north = 49.22;
+        o.grid_spacing = 1.0;
+        const fd::fetch_extent e = fd::wcs_native_extent(o, pl, 32634);
+        check("wcs: Polish native extent sits on the grid's pixel edges",
+              on_lattice(e.x_min, pl.wcs_origin_x, 1.0) &&
+              on_lattice(e.x_max, pl.wcs_origin_x, 1.0) &&
+              on_lattice(e.y_min, pl.wcs_origin_y, 1.0) &&
+              on_lattice(e.y_max, pl.wcs_origin_y, 1.0),
+              std::to_string(e.x_min) + " " + std::to_string(e.y_max));
+        // Every corner of the snapped UTM output grid must fall inside it.
+        const fd::fetch_extent t =
+            fd::target_extent_for_bbox(o.west, o.south, o.east, o.north, 32634, 1.0);
+        OGRSpatialReferenceH utm = OSRNewSpatialReference(nullptr);
+        OGRSpatialReferenceH pls = OSRNewSpatialReference(nullptr);
+        OSRImportFromEPSG(utm, 32634);
+        OSRImportFromEPSG(pls, 2180);
+        OSRSetAxisMappingStrategy(utm, OAMS_TRADITIONAL_GIS_ORDER);
+        OSRSetAxisMappingStrategy(pls, OAMS_TRADITIONAL_GIS_ORDER);
+        OGRCoordinateTransformationH ct = OCTNewCoordinateTransformation(utm, pls);
+        double xs[4] = {t.x_min, t.x_max, t.x_min, t.x_max};
+        double ys[4] = {t.y_min, t.y_min, t.y_max, t.y_max};
+        OCTTransform(ct, 4, xs, ys, nullptr);
+        OCTDestroyCoordinateTransformation(ct);
+        OSRDestroySpatialReference(utm);
+        OSRDestroySpatialReference(pls);
+        bool inside = true;
+        for (int k = 0; k < 4; ++k)
+            if (xs[k] < e.x_min + 2.0 || xs[k] > e.x_max - 2.0 ||
+                ys[k] < e.y_min + 2.0 || ys[k] > e.y_max - 2.0) inside = false;
+        check("wcs: native extent covers the output grid's corners with a margin", inside);
+    }
+
+    // ---- chunks: abut exactly, cover exactly, respect max_side ----
+    {
+        const fd::fetch_extent e{1000.0, 2000.0, 1000.0 + 4500.0, 2000.0 + 2100.0};
+        const auto chunks = fd::wcs_plan_chunks(e, 1.0, 2000);
+        bool sizes_ok = chunks.size() == 6;
+        double area = 0.0;
+        for (const auto& c : chunks)
+        {
+            if (c.x_max - c.x_min > 2000.0 || c.y_max - c.y_min > 2000.0) sizes_ok = false;
+            area += (c.x_max - c.x_min) * (c.y_max - c.y_min);
+        }
+        check("wcs: 4500 x 2100 px at max side 2000 is 3 x 2 chunks", sizes_ok,
+              std::to_string(chunks.size()));
+        check("wcs: chunks cover the extent exactly, no overlap",
+              area == 4500.0 * 2100.0 && chunks.front().x_min == 1000.0 &&
+              chunks.front().y_max == 4100.0 && chunks.back().x_max == 5500.0 &&
+              chunks.back().y_min == 2000.0);
+        check("wcs: neighbouring chunks share an edge",
+              chunks.size() == 6 && chunks[0].x_max == chunks[1].x_min &&
+              chunks[0].y_min == chunks[3].y_max);
+        const auto half = fd::wcs_plan_chunks({0.0, 0.0, 2500.0, 1000.0}, 0.5, 4000);
+        check("wcs: 0.5 m pixels count in pixels, not metres",
+              half.size() == 2 && half[0].x_max == 2000.0);
+    }
+
+    // ---- GetCoverage URLs, pinned ----
+    check("wcs: Norway URL (WCS 1.0.0, BBOX + size)",
+          fd::wcs_getcoverage_url(no, "nhm_dtm_topo_25833", {140000, 6830000, 140200, 6830100}) ==
+          "https://wcs.geonorge.no/skwms1/wcs.hoyde-dtm-nhm-25833?SERVICE=WCS&VERSION=1.0.0"
+          "&REQUEST=GetCoverage&COVERAGE=nhm_dtm_topo_25833&CRS=EPSG:25833"
+          "&BBOX=140000,6830000,140200,6830100&WIDTH=200&HEIGHT=100&FORMAT=GeoTIFF");
+    check("wcs: Netherlands URL (WCS 2.0.1, x/y subsets)",
+          fd::wcs_getcoverage_url(nl, "dsm_05m", {136000, 455000, 136100, 455050.5}) ==
+          "https://service.pdok.nl/rws/ahn/wcs/v1_0?SERVICE=WCS&VERSION=2.0.1"
+          "&REQUEST=GetCoverage&COVERAGEID=dsm_05m&FORMAT=image/tiff"
+          "&SUBSET=x(136000,136100)&SUBSET=y(455000,455050.5)");
+    check("wcs: Spain URL asks for the text grid",
+          fd::wcs_getcoverage_url(es, "Elevacion25830_5", {420002.5, 4520002.5, 420102.5, 4520102.5}) ==
+          "https://servicios.idee.es/wcs-inspire/mdt?SERVICE=WCS&VERSION=2.0.1"
+          "&REQUEST=GetCoverage&COVERAGEID=Elevacion25830_5&FORMAT=application/asc"
+          "&SUBSET=x(420002.5,420102.5)&SUBSET=y(4520002.5,4520102.5)");
+    check("wcs: Poland URL keeps the grid's fractional origin",
+          fd::wcs_getcoverage_url(pl, "DTM_PL-KRON86-NH_TIFF",
+                                  {637000.343266, 486000.66941, 637100.343266, 486100.66941}) ==
+          "https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/GRID1/WCS/"
+          "DigitalTerrainModelFormatTIFF?SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage"
+          "&COVERAGEID=DTM_PL-KRON86-NH_TIFF&FORMAT=image/tiff"
+          "&SUBSET=x(637000.343266,637100.343266)&SUBSET=y(486000.66941,486100.66941)");
+
+    // ---- exception reports (as returned by the services, trimmed) ----
+    const std::string ows = R"(<?xml version="1.0" encoding="UTF-8"?>
+<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/2.0" version="2.0.1" xml:lang="en-US">
+  <ows:Exception exceptionCode="InvalidParameterValue" locator="size">
+    <ows:ExceptionText>msWCSGetCoverage20(): WCS server error. Raster size out of range, width and height of resulting coverage must be no more than MAXSIZE=4000.</ows:ExceptionText>
+  </ows:Exception>
+</ows:ExceptionReport>)";
+    const std::string wcs10 = R"(<?xml version="1.0" encoding="UTF-8" ?>
+<ServiceExceptionReport version="1.2.0" xmlns="http://www.opengis.net/ogc">
+  <ServiceException code="UnSupportedCombination">
+Request image size exceeds allowed limit.
+  </ServiceException>
+</ServiceExceptionReport>)";
+    check("wcs: OWS 2.0 exception text read",
+          contains(fd::parse_ows_exception(ows), "MAXSIZE=4000"), fd::parse_ows_exception(ows));
+    check("wcs: WCS 1.0 service exception read",
+          fd::parse_ows_exception(wcs10) == "Request image size exceeds allowed limit.",
+          fd::parse_ows_exception(wcs10));
+    check("wcs: a GeoTIFF is not an exception", fd::parse_ows_exception("II*\0abc").empty());
+
+    // ---- multipart (the Spanish service wraps its ASCII grid) ----
+    const std::string multipart =
+        "\r\n--wcs\r\nContent-Type: application/asc\r\nContent-ID: coverage/out.asc\r\n\r\n"
+        "ncols 2\nnrows 1\nxllcorner 0\nyllcorner 0\ncellsize 5\n 1.5 2.5\n\r\n--wcs--\r\n";
+    check("wcs: multipart payload extracted",
+          fd::multipart_first_payload(multipart, "wcs") ==
+          "ncols 2\nnrows 1\nxllcorner 0\nyllcorner 0\ncellsize 5\n 1.5 2.5",
+          fd::multipart_first_payload(multipart, "wcs"));
+    const std::string with_xml =
+        "--b\r\nContent-Type: text/xml\r\n\r\n<x/>\r\n--b\r\nContent-Type: image/tiff\r\n\r\nDATA\r\n--b--";
+    check("wcs: multipart skips an XML part",
+          fd::multipart_first_payload(with_xml, "b") == "DATA");
+
+    // ---- pre-flight ----
+    auto refused = [](const lsdtt::lsdtt_fetch_result& r, const std::string& part) {
+        return !r.ok && !r.skipped && contains(r.message, part);
+    };
+    lsdtt::lsdtt_fetch_options o;
+    o.source = lsdtt_dem_source::no_dtm;
+    o.west = 10.3; o.east = 10.4; o.south = 46.4; o.north = 46.5;
+    o.grid_spacing = 1.0;
+    auto r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("wcs: Norway over the Alps is refused", refused(r, "outside no_dtm coverage"),
+          r.message);
+    o.source = lsdtt_dem_source::es_mdt;
+    o.west = -3.98; o.south = 40.78; o.east = -3.95; o.north = 40.80;
+    o.surface_model_choice = "dsm";
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("wcs: Spain has no surface model", refused(r, "es_mdt has no dsm product"), r.message);
+    o.source = lsdtt_dem_source::nl_ahn;
+    o.west = 5.10; o.south = 52.08; o.east = 5.12; o.north = 52.09;
+    o.surface_model_choice = "source_default";
+    o.source_resolution_metres = 5.0;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("wcs: the AHN service has only 0.5 m", refused(r, "nl_ahn offers 0.5 m"), r.message);
+    // A 10 m output from AHN still downloads 0.5 m cells: the limits count those.
+    o.source_resolution_metres = 0.0;
+    o.grid_spacing = 10.0;
+    o.max_output_pixels = 1000000;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("wcs: max_output_pixels counts the native 0.5 m cells downloaded",
+          refused(r, "native 0.5 m cells"), r.message);
+    o.max_output_pixels = 250000000;
+    o.max_download_megabytes = 5.0;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("wcs: max_download_megabytes counts the native cells downloaded",
+          refused(r, "max_download_megabytes"), r.message);
+}
+
+// Write a small GeoTIFF on a given grid and return its bytes (a stand-in
+// for a GetCoverage response).
+std::string geotiff_bytes(double x0, double y0, double pixel, int w, int h, float value)
+{
+    const std::string path = "/vsimem/wcs_response.tif";
+    GDALDatasetH ds = GDALCreate(GDALGetDriverByName("GTiff"), path.c_str(), w, h, 1,
+                                 GDT_Float32, nullptr);
+    const double gt[6] = {x0, pixel, 0.0, y0, 0.0, -pixel};
+    GDALSetGeoTransform(ds, const_cast<double*>(gt));
+    std::vector<float> z(static_cast<std::size_t>(w) * h, value);
+    z[0] = 0.0f;   // one "outside the country" cell
+    const CPLErr written = GDALRasterIO(GDALGetRasterBand(ds, 1), GF_Write, 0, 0, w, h,
+                                        z.data(), w, h, GDT_Float32, 0, 0);
+    check("wcs staging: synthetic response written", written == CE_None);
+    GDALClose(ds);
+    vsi_l_offset size = 0;
+    GByte* data = VSIGetMemFileBuffer(path.c_str(), &size, FALSE);
+    const std::string bytes(reinterpret_cast<const char*>(data), static_cast<std::size_t>(size));
+    VSIUnlink(path.c_str());
+    return bytes;
+}
+
+void test_wcs_staging_offline()
+{
+    namespace fd = lsdtt::fetch_detail;
+    const auto& pl = lsdtt::dem_source_info(lsdtt::lsdtt_dem_source::pl_nmt);
+    const fd::fetch_extent chunk{637000.343266, 486000.66941, 637100.343266, 486050.66941};
+    std::string error;
+
+    const std::string good = geotiff_bytes(chunk.x_min, chunk.y_max, 1.0, 100, 50, 120.0f);
+    bool ok = fd::wcs_stage_response(pl, good, "image/tiff", chunk, "/vsimem/wcs_ok.tif", error);
+    GDALDatasetH ds = ok ? GDALOpen("/vsimem/wcs_ok.tif", GA_ReadOnly) : nullptr;
+    int has_nodata = 0;
+    const double nodata = ds ? GDALGetRasterNoDataValue(GDALGetRasterBand(ds, 1), &has_nodata) : -1;
+    const char* wkt = ds ? GDALGetProjectionRef(ds) : "";
+    check("wcs staging: an exact native chunk is staged with its CRS",
+          ok && ds && contains(wkt, "2180") &&
+          GDALGetRasterDataType(GDALGetRasterBand(ds, 1)) == GDT_Float32, error);
+    check("wcs staging: 0 is nodata where the service returns 0 outside the country",
+          has_nodata && nodata == 0.0);
+    if (ds) GDALClose(ds);
+
+    const std::string shifted = geotiff_bytes(chunk.x_min + 0.5, chunk.y_max, 1.0, 100, 50, 120.0f);
+    ok = fd::wcs_stage_response(pl, shifted, "image/tiff", chunk, "/vsimem/wcs_bad.tif", error);
+    check("wcs staging: a half-pixel shift (server resampling) is refused",
+          !ok && contains(error, "not the requested native"), error);
+    const std::string coarse = geotiff_bytes(chunk.x_min, chunk.y_max, 2.0, 50, 25, 120.0f);
+    ok = fd::wcs_stage_response(pl, coarse, "image/tiff", chunk, "/vsimem/wcs_bad.tif", error);
+    check("wcs staging: a coarser grid is refused", !ok && contains(error, "not the requested native"),
+          error);
+
+    // Spain: multipart ESRI ASCII, millimetre heights, no CRS in the payload.
+    const auto& es = lsdtt::dem_source_info(lsdtt::lsdtt_dem_source::es_mdt);
+    const fd::fetch_extent es_chunk{420002.5, 4520002.5, 420012.5, 4520012.5};
+    const std::string body =
+        "\r\n--wcs\r\nContent-Type: application/asc\r\nContent-ID: coverage/out.asc\r\n\r\n"
+        "ncols        2\nnrows        2\nxllcorner    420002.500000000000\n"
+        "yllcorner    4520002.500000000000\ncellsize     5.000000000000\n"
+        " 1740.251 1739.792\n 1741.003 0.000\n\r\n--wcs--\r\n";
+    ok = fd::wcs_stage_response(es, body, "multipart/related; boundary=wcs", es_chunk,
+                                "/vsimem/wcs_es.tif", error);
+    float v[4] = {0, 0, 0, 0};
+    ds = ok ? GDALOpen("/vsimem/wcs_es.tif", GA_ReadOnly) : nullptr;
+    CPLErr read = CE_Failure;
+    if (ds) read = GDALRasterIO(GDALGetRasterBand(ds, 1), GF_Read, 0, 0, 2, 2, v, 2, 2,
+                                GDT_Float32, 0, 0);
+    check("wcs staging: Spanish text grid staged with millimetre heights and EPSG:25830",
+          ok && ds && read == CE_None && contains(GDALGetProjectionRef(ds), "25830") &&
+          std::abs(v[0] - 1740.251f) < 1e-3f && std::abs(v[2] - 1741.003f) < 1e-3f, error);
+    if (ds) GDALClose(ds);
+
+    for (const char* f : {"/vsimem/wcs_ok.tif", "/vsimem/wcs_bad.tif", "/vsimem/wcs_es.tif"})
+        VSIUnlink(f);
+}
+
 // =============================================================================
 // Network mode
 // =============================================================================
@@ -1470,6 +1732,64 @@ int run_network_tests(const std::string& output_dir)
               metadata_item(path, "LSDTT_SURFACE_MODEL") == "DSM" &&
               metadata_item(path, "LSDTT_VERTICAL_DATUM") == "WGS84 ellipsoid");
     }
+
+    // ---- WCS sources: one small window each ---------------------------------
+    struct wcs_case
+    {
+        lsdtt::lsdtt_dem_source source;
+        const char* label;
+        double west, south, east, north;
+        double grid;
+        int epsg;
+        const char* datum;
+        float lo, hi;          // plausible heights for the window
+        double min_valid;      // percent of the 256 x 256 window
+    };
+    const wcs_case wcs_cases[] = {
+        {lsdtt::lsdtt_dem_source::no_dtm, "no_dtm", 8.30, 61.60, 8.33, 61.62, 1.0,
+         32632, "NN2000", 1300.0f, 2500.0f, 99.0},
+        {lsdtt::lsdtt_dem_source::nl_ahn, "nl_ahn", 5.10, 52.08, 5.12, 52.09, 0.5,
+         32631, "NAP", -5.0f, 30.0f, 20.0},
+        {lsdtt::lsdtt_dem_source::es_mdt, "es_mdt", -3.98, 40.78, -3.95, 40.80, 5.0,
+         32630, "REDNAP (Alicante)", 1700.0f, 2500.0f, 99.0},
+        {lsdtt::lsdtt_dem_source::pl_nmt, "pl_nmt", 19.97, 49.24, 19.98, 49.25, 1.0,
+         32634, "PL-KRON86-NH", 800.0f, 2000.0f, 99.0}};
+    for (const wcs_case& wc : wcs_cases)
+    {
+        lsdtt::lsdtt_fetch_options wo;
+        wo.source = wc.source;
+        wo.west = wc.west; wo.south = wc.south; wo.east = wc.east; wo.north = wc.north;
+        wo.grid_spacing = wc.grid;
+        wo.size_px = 256;
+        const std::string path = output_dir + "/fetch_" + wc.label + "_256.tif";
+        const auto w = lsdtt::fetch_dem(wo, path);
+        const std::string name = wc.label;
+        if (w.skipped)
+        {
+            std::cout << "SKIP(" << name << "): " << w.message << "\n";
+            continue;
+        }
+        check("network: " + name + " fetch succeeded", w.ok, w.message);
+        const raster_content c = read_raster_content(path);
+        float lo = 1e30f, hi = -1e30f;
+        std::int64_t valid = 0;
+        for (float v : c.values)
+        {
+            if (v == -9999.0f) continue;
+            ++valid; lo = std::min(lo, v); hi = std::max(hi, v);
+        }
+        check("network: " + name + " 256 x 256 square cells at the native spacing, UTM",
+              c.ok && c.cols == 256 && c.rows == 256 && c.geotransform[1] == wc.grid &&
+              c.geotransform[5] == -wc.grid && w.epsg == wc.epsg);
+        check("network: " + name + " valid cells and heights in a plausible band (metres)",
+              100.0 * valid / (256.0 * 256.0) >= wc.min_valid && lo > wc.lo && hi < wc.hi,
+              "valid " + std::to_string(valid) + ", range [" + std::to_string(lo) + ", " +
+              std::to_string(hi) + "]");
+        check("network: " + name + " provenance says DTM and its datum",
+              metadata_item(path, "LSDTT_SURFACE_MODEL") == "DTM" &&
+              metadata_item(path, "LSDTT_VERTICAL_DATUM") == wc.datum &&
+              !metadata_item(path, "LSDTT_DOWNLOAD_MEGABYTES").empty());
+    }
     return 0;
 }
 
@@ -1540,6 +1860,10 @@ int main(int argc, char** argv)
     test_polar_sources();
     std::cout << "\n";
     test_polar_warp_offline();
+    std::cout << "\n";
+    test_wcs_sources();
+    std::cout << "\n";
+    test_wcs_staging_offline();
 
     std::cout << "\n" << g_n_checks - g_n_failed << " / " << g_n_checks
               << " checks passed\n";
