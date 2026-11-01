@@ -1364,4 +1364,107 @@ void write_reference_xs_candidates_csv(
     }
 }
 
+void write_reaches_template_lines(
+    const std::vector<lsdtt_reach_template_row>& reaches,
+    const std::string&                           out_path,
+    const std::string&                           crs_wkt,
+    lsdtt::vector_output_format                  format,
+    bool                                         spatial_index)
+{
+    if (reaches.empty()) return;
+    
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "reach_index", "start_distance_m", "end_distance_m",
+        "manning_n", "target_discharge_m3s"};
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type};
+    
+    auto fields = [](const lsdtt_reach_template_row& r)
+        -> std::vector<lsdtt_vector_field_value>
+    {
+        return {
+            static_cast<std::int64_t>(r.reach_index),
+            r.start_distance_m,
+            r.end_distance_m,
+            0.0,  // manning_n (empty for user to fill)
+            0.0   // target_discharge_m3s (empty for user to fill)
+        };
+    };
+    
+    const std::string ext = lsdtt::output_extension(format);
+    
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(out_path + ext, "reaches_template",
+                              schema, crs_wkt, format, spatial_index);
+    
+    for (const auto& r : reaches)
+    {
+        std::vector<lsdtt_xy> line = {
+            {r.start_easting_m, r.start_northing_m},
+            {r.end_easting_m, r.end_northing_m}
+        };
+        writer.write_line(line, fields(r));
+    }
+    
+    writer.finish_vector_write();
+}
+
+void write_reference_xs_candidates_points(
+    const std::vector<lsdtt_reference_xs_candidate>& candidates,
+    const std::string&                               out_path,
+    const std::string&                               crs_wkt,
+    lsdtt::vector_output_format                      format,
+    bool                                             spatial_index)
+{
+    if (candidates.empty()) return;
+    
+    lsdtt_vector_schema schema;
+    schema.field_names = {
+        "reach_index", "reach_start_m", "reach_end_m",
+        "cross_id", "distance_from_source_m", "drainage_area_m2",
+        "slope_m_per_m", "slope_valid"};
+    schema.field_types = {
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type};
+    
+    auto fields = [](const lsdtt_reference_xs_candidate& c)
+        -> std::vector<lsdtt_vector_field_value>
+    {
+        return {
+            static_cast<std::int64_t>(c.reach_index),
+            c.reach_start_distance_m,
+            c.reach_end_distance_m,
+            static_cast<std::int64_t>(c.cross_id),
+            c.distance_from_source_m,
+            c.drainage_area_m2,
+            c.slope_m_per_m,
+            static_cast<std::int64_t>(c.slope_valid)
+        };
+    };
+    
+    const std::string ext = lsdtt::output_extension(format);
+    
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(out_path + ext, "reference_xs",
+                              schema, crs_wkt, format, spatial_index);
+    
+    for (const auto& c : candidates)
+    {
+        writer.write_point(c.easting_m, c.northing_m, fields(c));
+    }
+    
+    writer.finish_vector_write();
+}
+
 } // namespace lsdtt

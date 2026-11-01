@@ -398,4 +398,18 @@ void write_reference_xs_candidates_csv(
     const std::vector<lsdtt_reference_xs_candidate>& candidates,
     const std::string&                               out_path);
 
+void write_reaches_template_lines(
+    const std::vector<lsdtt_reach_template_row>& reaches,
+    const std::string&                           out_path,
+    const std::string&                           crs_wkt,
+    lsdtt::vector_output_format                  format,
+    bool                                         spatial_index);
+
+void write_reference_xs_candidates_points(
+    const std::vector<lsdtt_reference_xs_candidate>& candidates,
+    const std::string&                               out_path,
+    const std::string&                               crs_wkt,
+    lsdtt::vector_output_format                      format,
+    bool                                             spatial_index);
+
 } // namespace lsdtt
