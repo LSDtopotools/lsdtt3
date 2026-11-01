@@ -49,7 +49,7 @@
 // inward test relies on an edge cell draining into the grid when it has a
 // lower in-grid neighbour. The caller checks this; it holds the string.
 //
-// Plan: docs/plan_docs/plan_perimeter_valley_sources.md. Does not print; the
+// Does not print; the
 // report says what happened and the caller decides what to say.
 // -----------------------------------------------------------------------------
 

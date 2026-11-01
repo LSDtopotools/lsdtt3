@@ -208,6 +208,10 @@ through bends like the grid lines of a boundary-fitted mesh.
 | `<write_fname>_valley_cross_section_hydraulics.csv` | Stage / width / area / wetted perimeter / hydraulic depth |
 | `<write_fname>_valley_cross_section_hydraulic_breaks.csv` | Breakpoints in the hydraulic-depth curve |
 | `<write_fname>_valley_mask.tif` | The mask used, per channel |
+| `<write_fname>_relative_elevation.tif`, `_relative_elevation_owner.tif` | Relative elevation (RER) and the centreline that owns each cell (`write_relative_elevation_raster`) |
+| `<write_fname>_terrace_profile.csv`, `<write_fname>_terrace_patches.csv` | Surface patches binned along the centreline (`write_terrace_profile_csv`) |
+| `<write_fname>_cross_section_levels.csv` | Levels clustered from section hydraulic breaks (`write_cross_section_levels_csv`); read by `lsdtt-fluvial-surfaces` |
+| `<write_fname>_valley_segments.csv`, `_valley_segment_channels.fgb`, `_valley_widths.csv` | Valley width network (`run_valley_width_network`) |
 | `<write_fname>_cross_section_informed_valley_mask.tif` | Hydraulic-break valley mask, when enabled |
 | `<write_fname>_hillshade.tif`, `_multidirectional_hillshade.tif` | Backdrops |
 | `<write_fname>_README.csv` / `.html` | The resolved parameters for that run |

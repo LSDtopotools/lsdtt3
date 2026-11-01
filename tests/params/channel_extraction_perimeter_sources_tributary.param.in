@@ -1,4 +1,4 @@
-# Perimeter sources on the Carradale shape (trunk entering north, tributary
+# Perimeter sources on the trunk-and-tributary shape (trunk entering north, tributary
 # entering west, one exit south): 2 sources, 1 outlet crossing.
 read_path: __READ_PATH__
 read_fname: ps_tributary_dem.tif

@@ -1,5 +1,5 @@
-# segmentation_algorithm_choice on the dissected staircase (fluvial-surface
-# methods plan, phase 6). check_whole_mask_segmentation.py renders this once per
+# segmentation_algorithm_choice on the dissected staircase.
+# check_whole_mask_segmentation.py renders this once per
 # case, replacing __SEGMENTATION__, __RISER_MASK__ and __STEM__: within_bands,
 # whole_mask with a closed riser mask (the tread map's boundaries), and
 # whole_mask with the find_risers centreline, which is open at the graded gaps.

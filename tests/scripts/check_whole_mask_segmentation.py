@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check segmentation_algorithm_choice whole_mask against within_bands.
 
-Fluvial-surface methods plan, phase 6. whole_mask is the riser segmentation:
+whole_mask is the riser segmentation:
 the admitted ground minus a riser mask is labelled once, each patch taking its
 majority level. It is kept so it can be compared with band-then-label, and the
 comparison is the test. On the dissected staircase (4 treads, 3 graded gaps,

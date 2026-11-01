@@ -8,10 +8,10 @@
 //
 // -----------------------------------------------------------------------------
 // compare_surface_classes / surface_class_agreement_bits
-// (lsdtt_surface_method_comparison_cpu), fluvial-surface methods plan 7b/7d.
+// (lsdtt_surface_method_comparison_cpu).
 // Hand-checkable class maps: a method compared with itself, two methods that
 // disagree on known cells, invalid cells, the bit layout, and scoring against
-// mapped classes (plan 7c).
+// mapped classes.
 // -----------------------------------------------------------------------------
 
 #include <cmath>

@@ -1,5 +1,4 @@
-# Training polygons (fluvial-surface methods plan 7i) on the dissected
-# staircase: tread 1 drawn as "fp", tread 2 as "t1", tread 3 as "T5" (the
+# Training polygons on the dissected staircase: tread 1 drawn as "fp", tread 2 as "t1", tread 3 as "T5" (the
 # number is wrong on purpose - numbers are ignored, levels come from HAND).
 # Treads sit 8, 16, 24, 32 m above the channel. Both methods in one run:
 #   ladder     the trained breaks (about 12 and 20 m) are the lowest breaks;

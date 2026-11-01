@@ -336,9 +336,9 @@ cross_section_informed_valley_mask(
 // riser gap's ramp, or a valley wall - is not a level of the channel.
 // min_level_gap_m is the tightest gap among the levels kept.
 //
-// Measured on Royalton (fluvial-surface methods plan, phase 5): the section
-// thalweg sits 0.06 m (median) above the pinned centreline baseline, and
-// height above that baseline is 0.22 m (median) below flow-path HAND within
+// On a low-relief floodplain DEM the section thalweg sat a few centimetres
+// (median) above the pinned centreline baseline, and height above that
+// baseline was a few tenths of a metre (median) below flow-path HAND within
 // 400 m of the centreline - so these heights can band flow-path HAND.
 // -----------------------------------------------------------------------------
 struct cross_section_level

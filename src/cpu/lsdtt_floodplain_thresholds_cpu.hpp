@@ -37,7 +37,7 @@
 // whatever domain the caller decides.
 //
 // Departures from the LSDTopoTools2 code (LSDFloodplain, LSDTerrace), on
-// purpose (fluvial-surface methods plan, decision D2):
+// purpose (the method follows Clubb et al. 2017, not the legacy code):
 //   - the terrace window starts ABOVE the floodplain bound; legacy's
 //     min_terrace_height < R < R_t + min_terrace_height overlapped the
 //     floodplain whenever min_terrace_height < R_t, and floodplain pixels are

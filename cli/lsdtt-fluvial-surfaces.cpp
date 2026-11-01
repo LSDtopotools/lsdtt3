@@ -348,7 +348,7 @@ int main(int argc, char* argv[])
         "fill_floodplain_holes.",
         "Admission","param",""};
 
-    // Training polygons (fluvial-surface methods plan 7i).
+    // Training polygons.
     string_default_map["training_surfaces_fname"] = "";
     help_map["training_surfaces_fname"] = {"string","",
         "Polygons (gpkg, fgb, shp) of floodplain and terrace drawn by hand, used "
@@ -402,7 +402,7 @@ int main(int argc, char* argv[])
         "and below it there the threshold is the data-chosen one.",
         "Training","param",""};
 
-    // Mapped floodplains and terraces (fluvial-surface methods plan 7c).
+    // Mapped floodplains and terraces.
     string_default_map["mapped_surfaces_fname"] = "";
     help_map["mapped_surfaces_fname"] = {"string","",
         "Mapped floodplain and terrace polygons (gpkg, fgb, shp) to score every "
@@ -842,9 +842,8 @@ int main(int argc, char* argv[])
         "of the DEM's floodplain gradient is below low_relief_max_gradient, "
         "else hand_and_gradient. The fraction and the branch are in the run "
         "log, and the branch is recorded in _ingested_params.param so a rerun "
-        "repeats it. Measured 2026-10-27 on four tiles (fraction below 0.1): "
-        "Royalton 0.97 (gradient bound removed the floodplain), Mayoco 0.53, "
-        "Salinas 0.27, Freiburg 0.17.",
+        "repeats it. On low-relief ground the fraction (below 0.1) can approach 1, "
+        "and the gradient bound can then remove the floodplain.",
         "Floodplain","param","admission_algorithm_choice"};
 
     float_default_map["low_relief_max_gradient"] = 0.1f;
@@ -1282,7 +1281,7 @@ int main(int argc, char* argv[])
         "tell them apart - it is a means of making connectivity discriminating, "
         "not a way to shrink the mask. The cost is that a reach narrower than "
         "2 * this + 1 pixels erodes to nothing and cannot regrow: on the "
-        "Royalton 10 m DEM a value of 4 (64 m) destroyed 30% of a valley floor "
+        "10 m DEM a value of 4 (64 m) can destroy a large part of a valley floor "
         "that connectivity alone had got right. Raise it only when two valleys "
         "are genuinely merging through a col.",
         "Outputs","param","clean_valley_mask"};
@@ -1308,7 +1307,7 @@ int main(int argc, char* argv[])
         "neighbouring one across a broad col, where connectivity alone is not "
         "enough. Default FALSE here: on a meandering floodplain a great deal of "
         "genuine valley floor has no straight line to the channel that stays "
-        "inside the mask. On the Royalton 10 m DEM it removed 82% of band 0 on "
+        "inside the mask. On a 10 m DEM it can remove a large share of band 0 on "
         "its own, with every other filter disabled - which made the valley mask "
         "SMALLER than the floodplain class computed from the same field. Turn "
         "it on where two valleys meet around a col and connectivity alone "
@@ -1618,7 +1617,7 @@ int main(int argc, char* argv[])
     // unless the parameter file named it. The table printed below says which,
     // so a run can be read back without the parameter file.
     // -------------------------------------------------------------------------
-    // Methods to run (plan 7b): one preset, or several, comma-separated with
+    // Methods to run: one preset, or several, comma-separated with
     // no spaces (ladder,clubb2017). Each runs the whole pipeline below under
     // its own stem, <write_fname>_<method>; stage parameters named in the file
     // apply to every one. One method keeps the plain <write_fname> stem.
@@ -1667,7 +1666,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // ---- mapped surfaces (plan 7c): burned before any work, so a bad file
+    // ---- mapped surfaces: burned before any work, so a bad file
     // fails fast. On the DEM grid, scored after the methods have run.
     const bool mapped_on = !sf["mapped_surfaces_fname"].empty();
     std::vector<std::uint8_t> mapped_cls, mapped_scored;
@@ -2419,8 +2418,8 @@ int main(int argc, char* argv[])
 
         // fill_admitted_holes: roughness (noise, crops, buildings) leaves
         // enclosed gaps in a relief / gradient / flat-mask admission that
-        // become holes in every surface built on it (Mayoco's flat mask:
-        // 988 holes). The floodplain_thresholds admission is not filled here:
+        // become holes in every surface built on it (a flat mask on a rough
+        // 25 m DEM had about a thousand). The floodplain_thresholds admission is not filled here:
         // its floodplain has its own fill (fill_floodplain_holes).
         if (!admit_by_bounds && bf["fill_admitted_holes"])
         {
@@ -3112,7 +3111,7 @@ int main(int argc, char* argv[])
                          "to 0 for the antimode ladder\n";
     }
 
-    // ---- training polygons (plan 7i) ----------------------------------------
+    // ---- training polygons -------------------------------------------------
     const bool training_on = !sf["training_surfaces_fname"].empty();
     lsdtt::training_set training;
     std::vector<lsdtt::training_polygon>  training_polygon_stats;
@@ -4856,7 +4855,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // ---- method record (plan 7a) and what the comparison needs -------------
+    // ---- method record and what the comparison needs ----------------------
     {
         std::vector<std::vector<std::string>> rec;
         auto add = [&](const std::string& item, const std::string& value,
@@ -4959,7 +4958,7 @@ int main(int argc, char* argv[])
         if (rc != 0) return rc;
     }
 
-    // ---- comparison of the methods (plan 7b) -----------------------------------
+    // ---- comparison of the methods ---------------------------------------------
     if (several)
     {
         const std::string base = pp.get_full_write_path();
@@ -5055,7 +5054,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // ---- scores against the mapped surfaces (plan 7c) ---------------------------
+    // ---- scores against the mapped surfaces -------------------------------------
     if (mapped_on)
     {
         const std::string base = pp.get_full_write_path();

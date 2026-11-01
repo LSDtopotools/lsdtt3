@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the three-stage cross-section levels workflow on the staircase and check it.
 
-Fluvial-surface methods plan, phase 5. The levels of a terrace flight can come
+The levels of a terrace flight can come
 from cross sections instead of from the ladder:
 
   1. lsdtt-fluvial-surfaces       -> a valley mask

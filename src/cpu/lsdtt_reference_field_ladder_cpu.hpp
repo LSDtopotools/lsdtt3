@@ -356,8 +356,8 @@ struct ladder_request
     // set the DEM cannot resolve is flagged rather than hidden.
     std::map<std::int32_t, std::vector<double>> supplied_breaks;
 
-    // Training polygons (fluvial-surface methods plan 7i; see
-    // lsdtt_surface_training_cpu). When set, a window's lower breaks come from
+    // Training polygons (see lsdtt_surface_training_cpu).
+    // When set, a window's lower breaks come from
     // the training cells pooled over the same windows as its values (k-1..k+1):
     // floodplain / terrace and terrace / terrace breaks by best separation.
     // Above the top trained break the ladder's own search runs on the values
@@ -791,8 +791,7 @@ struct banded_label_result
 // -----------------------------------------------------------------------------
 // segment_whole_mask
 //
-// segmentation_algorithm_choice whole_mask (fluvial-surface methods plan,
-// phase 6): the riser segmentation, kept selectable so it can be compared
+// segmentation_algorithm_choice whole_mask: the riser segmentation, kept selectable so it can be compared
 // with band-then-label rather than argued about.
 //
 // The admitted mask minus the barrier (normally a riser centreline from

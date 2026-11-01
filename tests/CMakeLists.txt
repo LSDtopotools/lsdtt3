@@ -9013,7 +9013,7 @@ endif()
 # find_risers (lsdtt_riser_finder_cpu), behind lsdtt-feature-finder
 # feature_type find_risers: staircase risers recovered at their true 7.4 m
 # step, astar gap closing across a road cut out of the search mask, no
-# segments on a ramp or a noisy flat (fluvial-surface methods plan, phase 6).
+# segments on a ramp or a noisy flat.
 add_executable(lsdtt-test-riser-finder cpp/test_riser_finder.cpp)
 target_link_libraries(lsdtt-test-riser-finder PRIVATE lsdtt3_cpu)
 add_test(NAME unit_feature_finder_risers COMMAND lsdtt-test-riser-finder)
@@ -9021,7 +9021,7 @@ lsdtt_set_tests_properties(unit_feature_finder_risers PROPERTIES
     LABELS "unit;surface_metrics")
 
 # compare_surface_classes / agreement bits: the comparison behind running
-# several methods in one lsdtt-fluvial-surfaces call (plan 7b), on class maps
+# several methods in one lsdtt-fluvial-surfaces call, on class maps
 # small enough to check by hand.
 add_executable(lsdtt-test-surface-method-comparison cpp/test_surface_method_comparison.cpp)
 target_link_libraries(lsdtt-test-surface-method-comparison PRIVATE lsdtt3_cpu)
@@ -9050,7 +9050,7 @@ lsdtt_set_tests_properties(unit_valley_relative_elevation PROPERTIES
 # Perimeter sources (lsdtt_perimeter_sources_cpu, plan phases P1-P4): the
 # trace on rectangles, frames, a rotated square, a neck, components and holes;
 # gentle runs, gap closing, the low-spot test and the seam; outlet runs and
-# sources on valley, tributary, perched-notch, basin-clipped, Salinas-shape
+# sources on valley, tributary, perched-notch, basin-clipped, two-network
 # and coast DEMs.
 add_executable(lsdtt-test-perimeter-sources cpp/test_perimeter_sources.cpp)
 target_link_libraries(lsdtt-test-perimeter-sources PRIVATE lsdtt3_cpu)
@@ -9058,7 +9058,7 @@ add_test(NAME unit_perimeter_sources COMMAND lsdtt-test-perimeter-sources)
 lsdtt_set_tests_properties(unit_perimeter_sources PROPERTIES
     LABELS "unit;fluvial_surfaces")
 
-# Phase P5 CLI pins on the tributary (Carradale) and Salinas shapes the unit
+# CLI pins on the trunk-and-tributary and two-network shapes the unit
 # driver writes: 2 sources and 1 source, and boundary conditions other than
 # oooo refused.
 set(LSDTT_PERIMETER_SOURCES_FIXTURE_DIR
@@ -9084,15 +9084,15 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_tributary PROPERTIES
     FIXTURES_REQUIRED perimeter_sources_fixture)
 add_lsdtt_cli_smoke_test(
-    smoke_channel_extraction_perimeter_sources_salinas
+    smoke_channel_extraction_perimeter_sources_two_network
     lsdtt-channel-extraction
-    channel_extraction_perimeter_sources_salinas.param.in
+    channel_extraction_perimeter_sources_two_network.param.in
     pss_perimeter_sources.fgb
     --read-path "${LSDTT_PERIMETER_SOURCES_FIXTURE_DIR}"
     --stdout-contains "Sources found                 : 1"
     --stdout-contains "outlet rank 1 (selected)"
 )
-lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_salinas PROPERTIES
+lsdtt_set_tests_properties(smoke_channel_extraction_perimeter_sources_two_network PROPERTIES
     FIXTURES_REQUIRED perimeter_sources_fixture)
 add_lsdtt_cli_smoke_test(
     failure_channel_extraction_perimeter_sources_boundary
@@ -9106,7 +9106,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(failure_channel_extraction_perimeter_sources_boundary PROPERTIES
     FIXTURES_REQUIRED perimeter_sources_fixture)
 
-# Training polygons (plan 7i): class labels, best separation, a window fit
+# Training polygons: class labels, best separation, a window fit
 # with a mislabelled terrace number, a flagged polygon and a shared level, and
 # the reach windows, on populations small enough to check by hand.
 add_executable(lsdtt-test-surface-training cpp/test_surface_training.cpp)
@@ -9940,7 +9940,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_patch_polygons PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Several methods in one run (plan 7b/7d): ladder,clubb2017 with the settings
+# Several methods in one run: ladder,clubb2017 with the settings
 # of rigorous_fluvial_surfaces_clubb2017. The clubb2017 class raster carries
 # that test's pin (8718), i.e. running inside a list changes nothing; verified
 # 2026-10-27 that every per-method raster and CSV is byte-identical to its
@@ -9981,7 +9981,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_fill_admitted_holes PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Training polygons (plan 7i) on the staircase: fp / t1 / T5 drawn on treads
+# Training polygons on the staircase: fp / t1 / T5 drawn on treads
 # 1-3. The trained breaks fall midway between the polygon cores, p25..p75
 # (8.14 | 15.88 m and 16.40 | 23.88 m); the ladder's own search adds the break above them (k 4,
 # the third break 24.88 m in the ladder windows CSV); under
@@ -10015,7 +10015,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_training PROPERTIES
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
-# Mapped surfaces (plan 7c) on the staircase, scored against its own tread map
+# Mapped surfaces on the staircase, scored against its own tread map
 # (tread 1 floodplain, treads 2-4 terrace, full valley length on both flanks).
 # The burn equals the generator's tread map outside the three riser-gap ramps;
 # FlatGeobuf, GeoPackage and EPSG:4326 copies burn byte-identically (one sha);
@@ -10220,7 +10220,7 @@ lsdtt_set_tests_properties(rigorous_fluvial_surfaces_cross_section_levels_workfl
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # segmentation_algorithm_choice whole_mask against within_bands on the staircase
-# (fluvial-surface methods plan, phase 6): with closed risers whole_mask keeps
+# With closed risers whole_mask keeps
 # every patch on one tread; with the find_risers centreline, open at the graded
 # gaps, treads join into one patch - the documented failure, asserted.
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS)

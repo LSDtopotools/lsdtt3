@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Training polygons (lsdtt_surface_training_cpu), fluvial-surface methods plan
-// 7i. Hand-checkable populations: the class parser, best separation on
+// Training polygons (lsdtt_surface_training_cpu). Hand-checkable populations: the class parser, best separation on
 // disjoint and overlapping samples, a window fit with a mislabelled terrace
 // number, a sloping (flagged) polygon, a high terrace kept by the relative
 // limit and two polygons on one level, the too-little-training fallback, the

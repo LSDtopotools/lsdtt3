@@ -8,14 +8,13 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 //
 // -----------------------------------------------------------------------------
-// Training polygons: supervised thresholds for lsdtt-fluvial-surfaces
-// (fluvial-surface methods plan, 7i).
+// Training polygons: supervised thresholds for lsdtt-fluvial-surfaces.
 //
 // The user draws a few floodplain and terrace polygons where they are sure,
 // looking at a hillshade; the program uses the cells inside them to CHOOSE
 // thresholds. Hand-drawn polygons do not separate HAND cleanly and their
-// terrace numbers need not follow height (measured on Simon's Salinas and
-// Mayoco files), so:
+// terrace numbers need not follow height (seen in hand-drawn training
+// files), so:
 //
 //   - classes: "floodplain"/"fp" and "terraceN"/"tN" ("terrace 2" too; case
 //     and spaces ignored). The terrace NUMBER is ignored: every terrace
@@ -75,7 +74,7 @@ struct training_set
 
 // Burn the polygons of `vector_path` (cell-centre rule, no gap fill) onto the
 // grid of `reference` and parse their classes. Also the reader for mapped
-// surfaces (plan 7c), which accept the same class values. Throws std::invalid_argument
+// surfaces, which accept the same class values. Throws std::invalid_argument
 // naming any label that is neither floodplain nor terrace.
 [[nodiscard]] training_set read_training_surfaces(
     const lsdtt_raster_cpu& reference,

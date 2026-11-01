@@ -66,7 +66,7 @@ Parameter file lines are `key: value`; `#` starts a comment. Keys use
 |---|---|---|---|
 | `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window local relief (max − min) is measured over, converted to the nearest whole number of cells. `0` = 2 cells, a 5×5 window. The same name and meaning as in `lsdtt-fluvial-surfaces` and `lsdtt-mountain-front`. |
 | `max_relief_metres` | float | `1.0` | Local relief (m) below which a pixel is admitted as flat. |
-| `relief_threshold_algorithm_choice` | string | `fixed` | `fixed` uses `max_relief_metres`; `cdf_divergence` chooses the bound at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF. |
+| `relief_threshold_algorithm_choice` | string | `fixed` | `fixed` uses `max_relief_metres`; `cdf_divergence` chooses the bound at the point of maximum divergence between the empirical CDF and the best-fitting parametric CDF; `qq_gaussian` chooses it from a quantile-quantile plot against a Gaussian (Clubb et al. 2017). |
 | `relief_threshold_multiplier` | float | `1.0` | Multiplier applied to a bound chosen by `cdf_divergence`. |
 
 `relief_threshold_algorithm_choice: cdf_divergence` writes `<write_fname>_relief_adaptive_cdf.csv` — the
@@ -94,8 +94,8 @@ them.
 The gradient comes from a polynomial surface fitted over
 `admission_gradient_window_radius_metres`, not a 3×3 difference: a three-cell
 operator on a 30 m DEM measures pixel noise. Gradients are m/m, not angles. There
-is no default bound worth guessing — about 0.087 (5 degrees) is a valley floor,
-0.27 (15 degrees) admits fan and pediment — so run the census at more than one
+is no default bound worth guessing — about 0.087 m/m is a valley floor,
+0.27 m/m admits fan and pediment — so run the census at more than one
 bound and report the sensitivity.
 
 ---

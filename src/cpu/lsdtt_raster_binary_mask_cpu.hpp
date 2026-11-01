@@ -307,9 +307,9 @@ struct seed_reachability_options
     //
     // It is a STRONG filter and it is not always wanted. On a broad meandering
     // floodplain a great deal of genuine valley floor has no straight line to
-    // the channel that stays inside the mask, and is pruned. Measured on the
-    // Royalton 10 m DEM it removed 82% of a HAND band-0 mask on its own, with
-    // every other filter disabled.
+    // the channel that stays inside the mask, and is pruned: on a 10 m DEM of a
+    // meandering floodplain it removed most of a HAND band-0 mask on its own,
+    // with every other filter disabled.
     //
     // Default true because that is the behaviour it was extracted with; a
     // caller wanting a permissive valley floor should turn it off.

@@ -828,7 +828,7 @@ void write_phase0b_fixtures(const std::string& output_dir)
         loader.finish_vector_write();
     }
 
-    // Training polygons (training_surfaces_fname, plan 7i) on the east flank,
+    // Training polygons (training_surfaces_fname) on the east flank,
     // inset 50 m from each tread's edges, rows 60..140: tread 1 labelled
     // "fp", tread 2 "t1", tread 3 "T5" (a wrong number - numbers are ignored).
     // Tread 4 is left for the ladder's own search above the trained breaks.
@@ -855,7 +855,7 @@ void write_phase0b_fixtures(const std::string& output_dir)
         loader.finish_vector_write();
     }
 
-    // Mapped surfaces (mapped_surfaces_fname, plan 7c): the staircase's own
+    // Mapped surfaces (mapped_surfaces_fname): the staircase's own
     // tread map as polygons - tread 1 "floodplain", treads 2-4 "terrace" - on
     // both flanks, edges half a cell off the cell centres so no centre sits on
     // an edge. The polygons run the full valley length, across the three
@@ -2487,8 +2487,7 @@ void run_coherence_diffusion_checks()
 // vertical_accuracy_metres happened to be left at.
 // =============================================================================
 // =============================================================================
-// Strahler channel definition and swath-baseline relief (fluvial-surface
-// methods plan, phase 3) - the two reference-field pieces Clubb et al. (2017)
+// Strahler channel definition and swath-baseline relief - the two reference-field pieces Clubb et al. (2017)
 // need that lsdtt3 did not have.
 //
 // Every check compares against a brute-force evaluation of the same definition
@@ -2769,8 +2768,7 @@ void run_channel_order_and_swath_checks()
 }
 
 // =============================================================================
-// Floodplain and terraces from two bounds (fluvial-surface methods plan,
-// phase 4) - classify_floodplain_terraces_by_thresholds, the engine behind
+// Floodplain and terraces from two bounds - classify_floodplain_terraces_by_thresholds, the engine behind
 // lsdtt-fluvial-surfaces' fixed_thresholds and lsdtt-hillslope-channel-
 // coupling's simple floodplain.
 //
@@ -2966,8 +2964,7 @@ void run_floodplain_threshold_checks()
 }
 
 // =============================================================================
-// Cross-section levels and supplied breaks (fluvial-surface methods plan,
-// phase 5): partition_population, cluster_cross_section_levels with its
+// Cross-section levels and supplied breaks: partition_population, cluster_cross_section_levels with its
 // support filter, the levels file, breaks_from_levels, and
 // build_reference_field_ladder with supplied breaks.
 // =============================================================================

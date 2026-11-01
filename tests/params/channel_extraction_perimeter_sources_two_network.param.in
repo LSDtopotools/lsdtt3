@@ -1,7 +1,7 @@
-# Perimeter sources on the Salinas shape: the main valley enters south and
+# Perimeter sources on the two-network shape: the main valley enters south and
 # leaves north; a second network starts inside and leaves east. 1 source.
 read_path: __READ_PATH__
-read_fname: ps_salinas_dem.tif
+read_fname: ps_two_network_dem.tif
 write_path: __WRITE_PATH__
 write_fname: pss
 n_threads: 1

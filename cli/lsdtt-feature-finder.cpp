@@ -1377,8 +1377,7 @@ int main(int argc, char* argv[])
         "Coherence-enhancing diffusion", "switch", ""};
 
     // --- Riser finder (find_risers) ---
-    // Moved here from lsdtt-flat-surface-finder's slope-break block (fluvial-
-    // surface methods plan, phase 6): risers are a morphometric question with
+    // Moved here from lsdtt-flat-surface-finder's slope-break block: risers are a morphometric question with
     // no channel in it. Same machinery, riser_ prefix like valley_ and road_.
     string_default_map["riser_search_mask_fname"] = "";
     help_map["riser_search_mask_fname"] = {"string","",

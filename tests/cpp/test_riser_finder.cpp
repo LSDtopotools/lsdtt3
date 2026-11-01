@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// find_risers (lsdtt_riser_finder_cpu), fluvial-surface methods plan phase 6.
+// find_risers (lsdtt_riser_finder_cpu).
 //
 // Fixtures, all 10 m cells on the synthetic georeference:
 //

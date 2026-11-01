@@ -9,10 +9,10 @@
 //
 // -----------------------------------------------------------------------------
 // Comparing the floodplain / terrace classes of several methods on one grid
-// (fluvial-surface methods plan, phase 7b). lsdtt-fluvial-surfaces runs every
+// lsdtt-fluvial-surfaces runs every
 // method listed in fluvial_surface_algorithm_choice and hands their class
 // rasters here; the comparison is a pure function of those rasters, so the
-// later compare-earlier-runs mode (7e) and the bindings reuse it.
+// a later compare-earlier-runs mode and the bindings can reuse it.
 //
 // Classes are surface_class values: 0 none, 1 floodplain, 2 terrace. Cells
 // outside `valid` take no part.
@@ -57,7 +57,7 @@ struct method_pair_comparison
     const std::vector<method_class_map>& methods,
     const std::vector<std::uint8_t>&     valid);
 
-// Scoring one method against mapped floodplains and terraces (plan 7c).
+// Scoring one method against mapped floodplains and terraces.
 // mapped: per cell 0 none (surveyed, neither class), 1 floodplain, 2 terrace.
 // Only cells with `scored` nonzero count (the surveyed extent, valid in both).
 // confusion[mapped][method]. Per class k (1, 2):

@@ -37,8 +37,8 @@
 //      height floor an adaptive threshold finds a "line" in any noise.
 //
 // The product is SEGMENTS, not polygons: risers rarely close, which is why
-// segmenting surfaces by them failed (fluvial-surface methods plan, section
-// 3), and nothing downstream may assume closure.
+// segmenting surfaces by them alone fails, and nothing downstream may assume
+// closure.
 // -----------------------------------------------------------------------------
 
 #pragma once

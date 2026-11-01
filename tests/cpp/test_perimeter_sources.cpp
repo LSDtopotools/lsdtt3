@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// find_perimeter_sources (lsdtt_perimeter_sources_cpu) on synthetic DEMs,
-// phases P1-P4 of docs/plan_docs/plan_perimeter_valley_sources.md.
+// find_perimeter_sources (lsdtt_perimeter_sources_cpu) on synthetic DEMs.
 //
 // P1 trace: rectangle length and start, padding equivalence inside a nodata
 //    frame, a rotated square (closed, diagonal steps), a one-cell neck
@@ -20,7 +19,7 @@
 // P3/P4 outlets and sources: valley through (1 source, 1 outlet on the floor
 //    exit, area summed over parallel D8 outlets); trunk plus tributary (2
 //    sources); a perched flat notch (failed_inward); a basin-clipped DEM
-//    (0 sources); the Salinas shape with n = 1 and 2 (1 source both times);
+//    (0 sources); the two-network shape with n = 1 and 2 (1 source both times);
 //    a coast with a river mouth.
 //
 // Terrain: a 400 m cap cut by straight valleys, each with a flat floor of
@@ -158,7 +157,7 @@ grid make_valley()
     return g;
 }
 
-// Carradale shape: trunk entering north, tributary entering west.
+// Trunk-and-tributary shape: trunk entering north, tributary entering west.
 grid make_tributary()
 {
     grid g = make_valley();
@@ -166,9 +165,9 @@ grid make_tributary()
     return g;
 }
 
-// Salinas shape: main valley south -> north, a second network starting
+// Two-network shape: main valley south -> north, a second network starting
 // inside and leaving east.
-grid make_salinas()
+grid make_two_network()
 {
     grid g(140, 160);
     g.cut({145, 60, -5, 60, 150, 120, 25});
@@ -182,7 +181,7 @@ void write_cli_fixture(const std::string& dir)
     std::filesystem::create_directories(dir);
     lsdtt::lsdtt_data_loader loader;
     for (const auto& [name, g] : {std::make_pair(std::string("ps_tributary_dem.tif"), make_tributary()),
-                                  std::make_pair(std::string("ps_salinas_dem.tif"), make_salinas())})
+                                  std::make_pair(std::string("ps_two_network_dem.tif"), make_two_network())})
         loader.write_full(g.z, meta_for(g.rows, g.cols), dir + "/" + name,
                           lsdtt::raster_output_format::gtiff);
 }
@@ -313,7 +312,7 @@ int main(int argc, char* argv[])
     }
     {
         // Edge noise: the entering floor's lowest edge cell is a 0.3 m low
-        // that drains straight out (Salinas east edge). The source moves to
+        // that drains straight out. The source moves to
         // the lowest floor cell that drains inward.
         grid g = A;
         g.at(0, 80) -= 0.3f;
@@ -418,23 +417,23 @@ int main(int argc, char* argv[])
               "basin clipped: top outlet at the south notch");
     }
     {
-        // E: Salinas shape: main valley south -> north, a second network
+        // E: two-network shape: main valley south -> north, a second network
         // starting inside and leaving east.
-        const grid g = make_salinas();
+        const grid g = make_two_network();
         lsdtt::perimeter_sources_request rq;
         rq.min_valley_width_metres = 200.0;
         const auto r1 = run(g, rq);
-        describe("salinas n=1", r1);
+        describe("two_network n=1", r1);
         check(r1.sources.size() == 1 && r1.sources[0].row == g.rows - 1,
-              "salinas n=1: one source, south");
+              "two_network n=1: one source, south");
         check(count_verdict(r1, V::outlet_crossing) >= 2,
-              "salinas n=1: north exit and east network are outlet crossings");
-        check(r1.report.outlet_area_ratio > 1.0, "salinas n=1: n/n+1 area ratio reported (" +
+              "two_network n=1: north exit and east network are outlet crossings");
+        check(r1.report.outlet_area_ratio > 1.0, "two_network n=1: n/n+1 area ratio reported (" +
               std::to_string(r1.report.outlet_area_ratio) + ")");
         rq.n_outlets = 2;
         const auto r2 = run(g, rq);
         check(r2.sources.size() == 1 && r2.sources[0].row == g.rows - 1,
-              "salinas n=2: still one source, south");
+              "two_network n=2: still one source, south");
     }
     {
         // F: coast. Sea (nodata) south of row 85; a valley reaches it. Steep

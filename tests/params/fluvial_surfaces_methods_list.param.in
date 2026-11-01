@@ -1,4 +1,4 @@
-# Several methods in one run (plan 7b): ladder and clubb2017 on the linear-range
+# Several methods in one run: ladder and clubb2017 on the linear-range
 # surface, with the settings of fluvial_surfaces_clubb2017. Each method's
 # outputs must equal its single-method run byte for byte (the clubb2017 class
 # raster carries that test's pin), and the comparison outputs are written.
