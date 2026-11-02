@@ -1738,40 +1738,13 @@ int main(int argc, char* argv[])
         // Each centreline with its baseline, and per node the drainage area of
         // its channel pixel (matched in downstream order) as the priority that
         // lets the larger channel win.
-        const std::vector<float> da = flow->get_drainage_area_raster().data;
-        std::vector<lsdtt::valley_rer_centreline> rc;
-        for (std::size_t s = 0; s < vres.channels.size(); ++s)
-        {
-            const lsdtt::valley_channel_centreline& ch = vres.channels[s];
-            if (ch.centreline_flats.empty()) continue;
-            const std::vector<std::int64_t>& chan =
-                network_mode ? nres.segments[s].channel_flats
-                             : scope.channel_node_lists[s];
-            lsdtt::valley_rer_centreline c;
-            c.id = ch.source_id;
-            c.flats = ch.centreline_flats;
-            c.baseline = ch.centreline_baseline_elevation;
-            if (c.baseline.size() != c.flats.size())
-                c.baseline.assign(c.flats.size(), std::numeric_limits<float>::quiet_NaN());
-            std::vector<lsdtt::lsdtt_xy> pts;
-            std::vector<double> along;
-            double len = 0.0;
-            for (std::size_t k = 0; k < c.flats.size(); ++k)
-            {
-                const lsdtt::lsdtt_xy p = node_xy(c.flats[k]);
-                if (k > 0) len += std::hypot(p.x - pts.back().x, p.y - pts.back().y);
-                pts.push_back(p);
-                along.push_back(len);
-            }
-            const std::vector<std::int64_t> m =
-                lsdtt::match_points_to_channel(pts, along, len, chan, meta);
-            c.priority.assign(c.flats.size(), 0.0);
-            for (std::size_t k = 0; k < m.size(); ++k)
-                if (m[k] >= 0)
-                    c.priority[k] = da[static_cast<std::size_t>(
-                        chan[static_cast<std::size_t>(m[k])])];
-            rc.push_back(std::move(c));
-        }
+        std::vector<std::vector<std::int64_t>> channel_lists;
+        if (network_mode)
+            for (const auto& seg : nres.segments) channel_lists.push_back(seg.channel_flats);
+        else
+            channel_lists = scope.channel_node_lists;
+        const std::vector<lsdtt::valley_rer_centreline> rc = lsdtt::make_rer_centrelines(
+            vres, channel_lists, flow->get_drainage_area_raster().data, meta);
         try
         {
             // The domain: the valley mask, a supplied mask, or every valid cell.

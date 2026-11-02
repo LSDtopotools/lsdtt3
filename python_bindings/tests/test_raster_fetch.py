@@ -48,6 +48,43 @@ class RasterFetchTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source must be"):
             lsdtt3.fetch_dem_for_outlets(outlets, source="not-a-source")
 
+    def test_dem_source_catalogue(self):
+        sources = {row["dem_source"]: row for row in lsdtt3.dem_sources()}
+        for name in ("cop30_aws", "us_3dep", "arctic_arcticdem", "nl_ahn",
+                     "gb_sct_lidar", "nz_lidar", "jp_gsi"):
+            self.assertIn(name, sources)
+        self.assertEqual(sorted(sources["nl_ahn"]["surface_models"]), ["dsm", "dtm"])
+        self.assertIn("phase-1", sources["gb_sct_lidar"]["collections"])
+        self.assertEqual(sources["us_3dep"]["collections"], [])
+        self.assertTrue(sources["nz_lidar"]["requires_lerc"])
+        self.assertTrue(sources["jp_gsi"]["attribution"])
+
+    def test_unknown_source_lists_the_catalogue(self):
+        with self.assertRaisesRegex(ValueError, "gb_sct_lidar"):
+            lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, source="not-a-source")
+
+    def test_source_options_are_checked_before_any_download(self):
+        with self.assertRaisesRegex(RuntimeError, "source_collection_choice"):
+            lsdtt3.fetch_dem(8.0, 61.0, 8.01, 61.01, source="no_dtm",
+                             source_collection_choice="phase-1")
+        with self.assertRaisesRegex(RuntimeError, "phase-9"):
+            lsdtt3.fetch_dem(-4.9, 55.7, -4.89, 55.71, source="gb_sct_lidar",
+                             source_collection_choice="phase-9")
+        with self.assertRaisesRegex(RuntimeError, "DSM"):
+            lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, surface_model_choice="dtm")
+
+    def test_lerc_source_warns_before_fetching(self):
+        # Outside New Zealand, so it fails in pre-flight whether or not this
+        # GDAL can read LERC; the warning comes first either way.
+        with self.assertWarnsRegex(UserWarning, "LERC"):
+            with self.assertRaises(RuntimeError):
+                lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, source="nz_lidar")
+
+    def test_outlet_fetch_refuses_high_resolution_sources(self):
+        outlets = gpd.GeoDataFrame(geometry=[Point(-105.5, 40.0)], crs="EPSG:4326")
+        with self.assertRaisesRegex(ValueError, "us_3dep"):
+            lsdtt3.fetch_dem_for_outlets(outlets, source="us_3dep")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -93,7 +93,9 @@ nb::object scope_table(const ChannelScope& scope)
 
 ChannelScope make_scope(const FlowInfo& flow, int threshold_contributing_pixels, nb::object sources,
                         nb::object outlets, bool snap_sources, int source_snap_max_radius_pixels,
-                        double outlet_snap_max_distance_metres, bool auto_detect_roles)
+                        double outlet_snap_max_distance_metres, bool auto_detect_roles,
+                        const std::string& channel_definition_algorithm_choice,
+                        int min_stream_order)
 {
     if (threshold_contributing_pixels < 1) throw std::invalid_argument("threshold_contributing_pixels must be positive");
     lsdtt::channel_scope_request request;
@@ -104,6 +106,9 @@ ChannelScope make_scope(const FlowInfo& flow, int threshold_contributing_pixels,
     request.source_snap_max_radius_pixels = source_snap_max_radius_pixels;
     request.outlet_snap_max_distance_metres = outlet_snap_max_distance_metres;
     request.auto_detect_roles = auto_detect_roles;
+    request.channel_definition =
+        lsdtt::parse_channel_definition_choice(channel_definition_algorithm_choice);
+    request.min_stream_order = min_stream_order;
     return ChannelScope(lsdtt::resolve_channel_scope(flow.native(), request), flow.shared_native());
 }
 
@@ -994,6 +999,8 @@ Returns
 Raster
 )doc");
     flow.def("channel_scope", &make_scope, nb::arg("threshold_contributing_pixels"), nb::arg("sources") = nb::none(), nb::arg("outlets") = nb::none(), nb::arg("snap_sources") = true, nb::arg("source_snap_max_radius_pixels") = 25, nb::arg("outlet_snap_max_distance_metres") = 0.0, nb::arg("auto_detect_roles") = false,
+        nb::arg("channel_definition_algorithm_choice") = "contributing_pixels",
+        nb::arg("min_stream_order") = 3,
         R"doc(
 Resolve threshold or supplied source paths into a ChannelScope.
 
@@ -1028,6 +1035,14 @@ auto_detect_roles : bool, default=False
     Pass all points as ``sources`` and let roles be inferred: a point that
     lies downstream of another supplied point becomes an outlet that cuts
     that channel. Requires ``outlets=None``; sources are always snapped.
+channel_definition_algorithm_choice : {"contributing_pixels", "stream_order"}, default="contributing_pixels"
+    What counts as a channel pixel, as in lsdtt-fluvial-surfaces:
+    ``contributing_pixels`` keeps every traced pixel; ``stream_order``
+    keeps only traced pixels of Strahler order >= ``min_stream_order``
+    (Clubb et al. 2017 use 3). The threshold still decides which
+    first-order channels exist, and so the order every pixel reaches.
+min_stream_order : int, default=3
+    Lowest Strahler order kept under ``stream_order``.
 
 Returns
 -------

@@ -203,6 +203,21 @@ struct network_section_rules_request
     const std::vector<std::int64_t>& channel_flats,
     const lsdtt_raster_meta&         meta);
 
+// The centrelines compute_valley_relative_elevation measures against, as
+// lsdtt-valley-centreline builds them: one per channel of `centrelines` that
+// has centreline nodes, with its id (source_id), its baseline (NaN throughout
+// when the channel has none, or the wrong length), and per node the drainage
+// area of the channel pixel it matches in downstream order
+// (match_points_to_channel), so the larger channel wins where two meet.
+// channel_flats[s] is channel s's pixels, head -> downstream: the channel
+// scope's node lists, or the width network's segment channel_flats; a missing
+// list gives every node priority 0. drainage_area is per grid cell (m^2).
+[[nodiscard]] std::vector<valley_rer_centreline> make_rer_centrelines(
+    const valley_centreline_result&               centrelines,
+    const std::vector<std::vector<std::int64_t>>& channel_flats,
+    const std::vector<float>&                     drainage_area,
+    const lsdtt_raster_meta&                      meta);
+
 // The channel pixel each station belongs to: an index into its segment's
 // channel_flats, parallel to sections.sections (-1: the segment has no channel
 // pixels). Matched in downstream order, so the index never decreases along a

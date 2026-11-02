@@ -84,6 +84,14 @@ public:
     { return nearest_channel_elevations_left_; }
     [[nodiscard]] const std::vector<float>& nearest_channel_elevations_right() const noexcept
     { return nearest_channel_elevations_right_; }
+    // Moving-average fits from fit_ridgeline_profile(..., additional_output =
+    // true), one per window, in the order they were made.
+    [[nodiscard]] const std::vector<int>& moving_window_sizes_pixels() const noexcept
+    { return moving_window_sizes_pixels_; }
+    [[nodiscard]] const std::vector<std::vector<float>>& moving_window_fitted_elevations() const noexcept
+    { return moving_window_fitted_elevations_; }
+    [[nodiscard]] const std::vector<std::vector<float>>& moving_window_detrended_elevations() const noexcept
+    { return moving_window_detrended_elevations_; }
 
     [[nodiscard]] double total_length() const noexcept
     {

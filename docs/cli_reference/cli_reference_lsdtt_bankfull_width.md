@@ -268,7 +268,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `reach_template_min_break_spacing_metres` | `float` | `20.0` | `param` | `generate_reach_template` | Minimum distance between break locations (merged if closer). | Prevents over-segmentation from noise. For gullies: 10-30 m. For large rivers: 200-500 m. |
 | `reach_template_min_reach_length_metres` | `float` | `30.0` | `param` | `generate_reach_template` | Minimum reach length (shorter reaches merged). | Ensures reaches are geomorphically meaningful. For gullies: 20-50 m. For large rivers: 300-1000 m. |
 | `reach_template_n_reference_xs` | `int` | `10` | `param` | `generate_reach_template` | Number of reference cross-section candidates per reach. | Evenly spaced by position (not distance) along each reach. Use these to pick a reference XS for discharge calculation. |
-| `reach_template_vector_format` | `string` | `fgb` | `param` | `generate_reach_template` | Vector format for reach template visualization outputs. | Options: fgb (FlatGeobuf) or gpkg (GeoPackage). CSV is always written for editing. This governs only the optional .fgb/.gpkg visualization layers. |
 
 ### Interior nodata
 

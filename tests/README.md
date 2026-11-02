@@ -486,8 +486,8 @@ regenerated CSV should be committed with a note explaining why it moved.
 ## Native DEM fetch tests
 
 `unit_raster_fetch` (labels `unit;fetch`) runs `tests/cpp/test_raster_fetch.cpp`
-in offline mode: 31 checks over `src/core/lsdtt_raster_fetch.*`, needing no
-network. See `docs/developer_notes/testing_and_benchmarking.md`.
+in offline mode: 292 checks over `src/core/lsdtt_raster_fetch.*`, needing no
+network. See `docs/developer_notes/testing_and_benchmarking.md` §10.
 
 - UTM zone derivation, including zone boundaries and the ±180 antimeridian
   (an off-by-one silently reprojects into the neighbouring zone rather than
@@ -510,6 +510,72 @@ ctest --test-dir build -L '^fetch$' --output-on-failure
 
 It fetches a 128² window, checks the crop, EPSG, nodata and that the elevations
 are plausible alpine values, and exits 77 (skip) when the source is unreachable.
+
+### High-resolution national and polar sources
+
+The `dem_source` catalogue (`us_3dep`, `arctic_arcticdem`, `antarctic_rema`,
+`no_dtm`, `nl_ahn`, `es_mdt`, `pl_nmt`, `ca_hrdem`, `ch_swissalti3d`,
+`nz_lidar`, `gb_sct_lidar`, `jp_gsi`) shares one fetch path: offline
+pre-flight, size estimate, discovery, then a single warp onto the snapped
+target grid. The offline checks in `unit_raster_fetch` reach every route
+through `src/core/lsdtt_raster_fetch_detail.hpp` with synthetic inputs, so no
+CLI exists only for testing:
+
+- **The Copernicus path is frozen.** `test_copernicus_frozen` pins the cache
+  keys, the Planetary Computer search body and the warp argument vector
+  exactly. The network driver also checks that `cop30_aws` and
+  `planetary_computer` give identical rasters, and pins a content hash
+  (band values and geotransform, metadata ignored) per GDAL release. On a
+  release with no pin it prints `SKIP(pin)` with the hash to add.
+- **Catalogue rows and pre-flight** (`test_dem_source_catalogue`,
+  `test_catalogue_preflight`): every row has a description that says DSM or
+  DTM, an attribution, an `accessed` date and a complete access block. Wrong
+  products, resolutions, coverage, collection names and size limits are
+  refused before any request.
+- **Shared warp** (`test_catalogue_warp_offline`, `test_polar_warp_offline`):
+  synthetic EPSG:4269 and EPSG:3413 planes come back within 1e-2 m after
+  warping to UTM (cubic is exact on a plane). Also checked: square cells,
+  extents on the `grid_spacing` lattice, the overview warning, refusal of a
+  source in feet, and the 84 N UTM warning.
+- **STAC** (`test_stac_parsing`, `test_polar_sources`,
+  `test_hrdem_swiss_sources`): search bodies, the fields filter, picking an
+  asset by gsd, paging when the next-link body is only a cursor (it is merged
+  into the original body or the bbox filter is lost), and the latest
+  acquisition per tile.
+- **WCS** (`test_wcs_sources`, `test_wcs_staging_offline`): native-grid
+  extents snapped to pixel edges, chunk plans that abut exactly, GetCoverage
+  URLs, OWS exception parsing, multipart ASCII grids, zero as NoData, and
+  refusal of a response whose grid is not the requested chunk.
+- **Grid-keyed buckets** (`test_grid_keyed_sources`): NZTopo50 sheet and
+  Ordnance Survey grid references at the grid edges; the tile keys for each
+  Scottish collection; `source_collection_choice` refusals; and the
+  `nz_lidar` LERC warning text, with and without LERC.
+- **GSI tiles** (`test_gsi_tiles`): the RGB height decoder truth table
+  (NoData, -0.01 m, -5.00 m, the maximum), and a generated PNG through the
+  tile step with its georeferencing. Also the `max_tiles` refusal, which
+  happens before any request.
+
+`network_raster_fetch` (opt-in, as above) fetches a small window from each
+source and checks its size, value range, surface model and provenance items.
+For Scotland it checks that `latest` uses only the newest collection and that
+a named phase uses only that phase. `nz_lidar` skips on a GDAL without LERC.
+
+CLI tests (opt-in Python tier, `run_cli_smoke.py`):
+
+- the `failure_fetch_raster_*` tests for each new refusal (outside coverage,
+  bad resolution, wrong surface model, too many native WCS cells, a bad
+  Scottish collection, high-resolution sources in outlet mode);
+- `failure_fetch_raster_nz_lidar_lerc_warning`, which checks the screen
+  warning, the OpenTopography pointer and the refusal;
+- `smoke_fetch_raster_help_dem_source_{polar,wcs,hrdem_swiss,grid_keyed,gsi}`,
+  which check the `-h dem_source` text.
+
+The native checks above cover the same refusals, so these CLI tests are not
+the default guard.
+
+```bash
+ctest --test-dir build -L fetch -LE heavy --output-on-failure
+```
 
 ## Credential handling tests
 

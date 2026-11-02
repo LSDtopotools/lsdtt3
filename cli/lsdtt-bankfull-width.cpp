@@ -384,13 +384,11 @@ int main(int argc, char* argv[])
         "Use these to pick a reference XS for discharge calculation.",
         "Reach template", "param", "generate_reach_template"};
 
-    string_default_map["reach_template_vector_format"] = "fgb";
-    help_map["reach_template_vector_format"] = {"string", "fgb",
-        "Vector format for reach template visualization outputs.",
-        "Options: fgb (FlatGeobuf) or gpkg (GeoPackage). CSV is always "
-        "written for editing. This governs only the optional .fgb/.gpkg "
-        "visualization layers.",
-        "Reach template", "param", "generate_reach_template"};
+    // The reach template's .fgb/.gpkg layers follow write_vector_format (the
+    // CSV is always written for editing). The old reach_template_vector_format
+    // is a compatibility alias (below) landing in this hidden key.
+    string_default_map["legacy_reach_template_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
 
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
@@ -425,7 +423,9 @@ int main(int argc, char* argv[])
         {"cross_section_sample_points_output_format",
          {"legacy_cross_section_sample_points_write_vector_format", "write_vector_format"}},
         {"manning_bank_points_output_format",
-         {"legacy_manning_bank_points_write_vector_format", "write_vector_format"}} });
+         {"legacy_manning_bank_points_write_vector_format", "write_vector_format"}},
+        {"reach_template_vector_format",
+         {"legacy_reach_template_write_vector_format", "write_vector_format"}} });
     pp.parse_all_parameters(
         float_default_map, int_default_map, bool_default_map, string_default_map);
 
@@ -440,6 +440,8 @@ int main(int argc, char* argv[])
         sf["legacy_cross_section_sample_points_write_vector_format"], sf["write_vector_format"]);
     const std::string manning_points_format_text = lsdtt::resolve_output_format_override(
         sf["legacy_manning_bank_points_write_vector_format"], sf["write_vector_format"]);
+    const std::string reach_template_format_text = lsdtt::resolve_output_format_override(
+        sf["legacy_reach_template_write_vector_format"], sf["write_vector_format"]);
 
     // -------------------------------------------------------------------------
     // Cross-parameter validation (before any expensive work)
@@ -989,7 +991,7 @@ int main(int argc, char* argv[])
             const std::string candidates_vec_path = pp.get_full_write_path() + "_reference_xs";
             
             lsdtt::vector_output_format vec_fmt =
-                lsdtt::resolve_vector_output_format(sf["reach_template_vector_format"]);
+                lsdtt::resolve_vector_output_format(reach_template_format_text);
             
             const bool spatial_index = bf["calculate_spatial_index"];
             
@@ -1001,9 +1003,9 @@ int main(int argc, char* argv[])
             const std::string reaches_ext = lsdtt::output_extension(vec_fmt);
             const std::string candidates_ext = lsdtt::output_extension(vec_fmt);
             std::cout << "Wrote: " << reaches_vec_path << reaches_ext
-                      << " (" << sf["reach_template_vector_format"] << ", line geometries for QGIS)\n";
+                      << " (" << reach_template_format_text << ", line geometries for QGIS)\n";
             std::cout << "Wrote: " << candidates_vec_path << candidates_ext
-                      << " (" << sf["reach_template_vector_format"] << ", point geometries for QGIS)\n";
+                      << " (" << reach_template_format_text << ", point geometries for QGIS)\n";
         }
         catch (const std::exception& e)
         {

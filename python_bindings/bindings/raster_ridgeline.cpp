@@ -85,8 +85,38 @@ pixels : array-like of int
         .def("reverse", [](Ridgeline& r) { r.native().reverse(); })
         .def("segment_snout", [](Ridgeline& r, float fraction) { r.native().segment_ridgeline_snout_by_curvature(fraction); },
              nb::arg("smoothing_window_fraction"))
-        .def("fit_profile", [](Ridgeline& r, bool use_polynomial, bool use_constant) { r.native().fit_ridgeline_profile(use_polynomial, use_constant); },
-             nb::arg("use_polynomial") = false, nb::arg("use_constant") = false)
+        .def("fit_profile", [](Ridgeline& r, bool use_polynomial, bool use_constant,
+                               const std::vector<int>& detrend_moving_average_window_pixels) {
+                 // As lsdtt-ridgeline-analysis: the main fit, then one
+                 // moving-average fit per ridgeline_detrend_moving_average_window_pixels.
+                 r.native().fit_ridgeline_profile(use_polynomial, use_constant);
+                 for (const int window : detrend_moving_average_window_pixels)
+                     r.native().fit_ridgeline_profile(use_polynomial, use_constant, window, true);
+             },
+             nb::arg("use_polynomial") = false, nb::arg("use_constant") = false,
+             nb::arg("detrend_moving_average_window_pixels") = std::vector<int>{}, R"doc(
+Fit the ridgeline profile beyond the snout (slope and r^2 from the linear fit).
+
+Parameters
+----------
+use_polynomial, use_constant : bool, default=False
+    Detrend against a quadratic, or a constant, instead of the line.
+detrend_moving_average_window_pixels : list of int, default=[]
+    Also detrend against moving averages of these widths (positive odd
+    pixel counts, each once), as lsdtt-ridgeline-analysis
+    ``ridgeline_detrend_moving_average_window_pixels``; read them from
+    ``moving_average_fits``.
+)doc")
+        .def_prop_ro("moving_average_fits", [](const Ridgeline& r) {
+                 nb::dict out;
+                 const auto& sizes = r.native().moving_window_sizes_pixels();
+                 for (std::size_t k = 0; k < sizes.size(); ++k)
+                     out[nb::int_(sizes[k])] = nb::make_tuple(
+                         r.native().moving_window_fitted_elevations()[k],
+                         r.native().moving_window_detrended_elevations()[k]);
+                 return out;
+             },
+             "Window (pixels) to (fitted, detrended) elevations per node from ``fit_profile``'s moving averages; nodata before the snout.")
         .def("detrend", [](Ridgeline& r, int window) { r.native().smoothen_and_derive_detrended_ridgeline(window); },
              nb::arg("smoothing_window_pixels"))
         .def("steepness", [](const Ridgeline& r, float area, float concavity) { return r.native().calculate_ridgeline_steepness(area, concavity); },

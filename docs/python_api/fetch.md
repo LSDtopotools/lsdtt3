@@ -574,15 +574,58 @@ def cop30_tiles_for_bbox(west: float, south: float, east: float, north: float) -
 
 ---
 
+## `dem_sources`
+
+Return the ``fetch_dem`` DEM source catalogue as dictionaries.
+
+The same rows ``lsdtt-fetch-raster -h dem_source`` describes.
+
+Parameters
+----------
+None
+
+Returns
+-------
+list of dict
+    One dict per source with keys ``dem_source`` (the ``source`` value for
+    ``fetch_dem``), ``title``, ``provider``, ``description``, ``coverage``,
+    ``native_resolutions_metres``, ``default_resolution_metres``,
+    ``surface_models`` (``"dtm"`` and/or ``"dsm"``),
+    ``default_surface_model``, ``vertical_datum``, ``collections`` (the
+    ``source_collection_choice`` labels; empty for most sources),
+    ``attribution`` (to cite when you use the data), ``accessed`` (when the
+    access details were last checked) and ``requires_lerc``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def dem_sources() -> list
+```
+
+---
+
 ## `fetch_dem`
 
 Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.
 
 The source tiles are downloaded, mosaicked and warped to a projected grid
-(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)
-stores the sea as exactly 0 m, not as nodata, so mask it before flow
-routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
+(UTM by default), with the same code and the same parameter names as
+``lsdtt-fetch-raster``. The Copernicus DEM (the default ``cop30_aws``
+source) stores the sea as exactly 0 m, not as nodata, so mask it before
+flow routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
 footprint are nodata.
+
+Besides the global 30 m sources there are keyless national and polar
+high-resolution DEMs (``us_3dep``, ``arctic_arcticdem``,
+``antarctic_rema``, ``no_dtm``, ``nl_ahn``, ``es_mdt``, ``pl_nmt``,
+``ca_hrdem``, ``ch_swissalti3d``, ``nz_lidar``, ``gb_sct_lidar``,
+``jp_gsi``); ``dem_sources()`` lists each one's resolutions, surface models
+(DSM or DTM), vertical datum, coverage and attribution. Warnings from the
+fetch (partial coverage, overviews read, a LERC-compressed source this GDAL
+cannot read, older Scottish collections covering the area) are issued as
+``UserWarning``.
 
 Or, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,
 fetch a strip along a fault, river or range warped straight from the source
@@ -599,15 +642,19 @@ west, south, east, north : float, optional
     ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.
     Required unless ``frame`` or ``fetch_from_linear_feature`` gives the
     area; refused with them.
-source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
-    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.
+source : str, optional
+    ``cop30_aws`` (default) is a keyless global 30 m Copernicus DEM.
     OpenTopography reads its key only from the ``OT_API_KEY`` or
     ``OT_API_KEY_FILE`` environment variables (never pass a key as an
-    argument). ``planetary_computer`` is keyless.
+    argument). ``planetary_computer`` is keyless. The national and polar
+    sources are listed by ``dem_sources()``.
 target_epsg : int, optional
     Output EPSG code. Zero selects the UTM zone of the bounding-box centre.
-grid_spacing : float, optional
-    Output cell size in target CRS units (m for UTM); default 30.
+grid_spacing : float or None, optional
+    Output cell size in target CRS units (m for UTM). None (default) uses
+    the frame's cell size with ``frame``, the source's native resolution
+    (``source_resolution_metres`` if set) for a national or polar source,
+    and 30 otherwise. Output cells are always square.
 resampling : str, optional
     GDAL warp resampling method (``"cubic"`` default, ``"bilinear"``,
     ``"near"``, ...).
@@ -632,8 +679,8 @@ http_connect_timeout_seconds : int, optional
 http_max_retry : int, optional
     Number of retries of a failed HTTP request.
 frame : RotationFrame or None, optional
-    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``
-    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
+    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``,
+    if given, must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
     are refused (the frame carries its rotate-back target).
 fetch_from_linear_feature : bool, optional
     Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster
@@ -654,12 +701,36 @@ rotate_after_fetch : bool, optional
     With ``fetch_from_linear_feature``: True (default) returns the strip in
     the oblique frame; False returns the frame's WGS84 envelope in UTM, as a
     plain fetch.
+source_resolution_metres : float, optional
+    Native resolution (m) to fetch from a source that offers several (for
+    example 1, 2 or 10 for ``arctic_arcticdem``); 0 (default) uses the
+    source's default. Refused for a source that does not offer it.
+surface_model_choice : {"source_default", "dtm", "dsm"}, optional
+    Terrain (DTM) or surface (DSM) model. ``source_default`` takes the DTM
+    where the source has one. Asking for a model the source lacks raises
+    ``RuntimeError``; the Copernicus sources are DSMs only.
+source_collection_choice : str, optional
+    ``gb_sct_lidar`` only: ``latest`` (default) uses the newest collection
+    with tiles in the area (a warning names older ones that also cover it);
+    a collection label (``phase-1`` ... ``phase-6``,
+    ``national-lidar-programme``) uses that one. Collections are never mixed.
+max_output_pixels : int, optional
+    Largest output grid (cells) allowed, checked before any download; for
+    the WCS sources the native cells requested are counted too.
+max_download_megabytes : float, optional
+    Largest download allowed (MB): an estimate checked before the fetch,
+    and a running count that stops the transfer where lsdtt3 does the HTTP.
+max_tiles : int, optional
+    Largest number of tiles, source files or service requests allowed.
+request_delay_milliseconds : int, optional
+    Pause between requests to tile services (ms).
 
 Returns
 -------
 Raster
     A projected raster of elevation (m): UTM (or ``target_epsg``), or the
-    oblique frame. Network, GDAL, and invalid-request failures raise
+    oblique frame. Network, GDAL, and invalid-request failures (including
+    an area outside the source's coverage or over a size limit) raise
     ``RuntimeError``; an inconsistent combination of arguments raises
     ``ValueError``.
 
@@ -672,7 +743,7 @@ S. M. Mudd
 - `size_px` -> `size_pixels`; earliest removal: following minor.
 
 ```python
-def fetch_dem(west: float = 'nan', south: float = 'nan', east: float = 'nan', north: float = 'nan', source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3, frame: object | None = None, fetch_from_linear_feature: bool = False, fetch_feature_fname: str = '', fetch_feature_layer: str = '', linear_feature_fetch_width: float = 0.0, linear_feature_fetch_end_buffer: float = -1.0, rotate_after_fetch: bool = True) -> lsdtt3.Raster
+def fetch_dem(west: float = 'nan', south: float = 'nan', east: float = 'nan', north: float = 'nan', source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float | None = None, resampling: str = 'cubic', nodata_value: float = -9999.0, size_pixels: int = 0, cache_dir: str = '', ot_dem_type: str = 'COP30', pc_collection: str = 'cop-dem-glo-30', pc_asset: str = 'data', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3, frame: object | None = None, fetch_from_linear_feature: bool = False, fetch_feature_fname: str = '', fetch_feature_layer: str = '', linear_feature_fetch_width: float = 0.0, linear_feature_fetch_end_buffer: float = -1.0, rotate_after_fetch: bool = True, source_resolution_metres: float = 0.0, surface_model_choice: str = 'source_default', source_collection_choice: str = 'latest', max_output_pixels: int = 250000000, max_download_megabytes: float = 2048.0, max_tiles: int = 256, request_delay_milliseconds: int = 200) -> lsdtt3.Raster
 ```
 
 ---
@@ -692,7 +763,9 @@ Parameters
 outlets : geopandas.GeoDataFrame
     Point geometries defining outlet locations, in any declared CRS.
 source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
-    DEM source, as in ``fetch_dem``.
+    DEM source, as in ``fetch_dem``. The national and polar sources are
+    refused here, as in ``lsdtt-fetch-raster`` outlets mode: find the groups
+    with ``cop30_aws``, then ``fetch_dem`` each group's area.
 target_epsg : int, optional
     Output EPSG code; 0 selects UTM from each group's centre.
 grid_spacing : float, optional
@@ -738,6 +811,9 @@ max_search_radius_pixels : int, optional
     ``"largest_area"``.
 mask_outside_basins : bool, optional
     Set cells outside the selected basin union to nodata in returned DEMs.
+max_output_pixels, max_download_megabytes, max_tiles, request_delay_milliseconds
+    Size limits and request pacing for each group's fetch, as in
+    ``fetch_dem``.
 
 Returns
 -------
@@ -750,7 +826,7 @@ B. Gailleton
 S. M. Mudd
 
 ```python
-def fetch_dem_for_outlets(outlets: object, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, initial_radius_km: float = 100.0, auto_split_disconnected_basins: bool = True, split_cluster_gap_km: float = 25.0, max_final_dem_area_km2: float = 2500.0, split_overlap_km: float = 2.0, max_basins_per_dem: int = 0, cache_dir: str = '', resampling: str = 'cubic', nodata_value: float = -9999.0, snapping_method: str = 'downstream', contributing_pixels_threshold: int = 1000, edge_buffer_pixels: int = 3, nodata_buffer_pixels: int = 1, tight_bbox_buffer_pixels: int = 3, verify_expand_factor: float = 1.25, verify_max_iters: int = 3, tight_bbox_refetch: bool = True, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, mask_outside_basins: bool = False) -> lsdtt3.OutletFetchResult
+def fetch_dem_for_outlets(outlets: object, source: str = 'cop30_aws', target_epsg: int = 0, grid_spacing: float = 30.0, initial_radius_km: float = 100.0, auto_split_disconnected_basins: bool = True, split_cluster_gap_km: float = 25.0, max_final_dem_area_km2: float = 2500.0, split_overlap_km: float = 2.0, max_basins_per_dem: int = 0, cache_dir: str = '', resampling: str = 'cubic', nodata_value: float = -9999.0, snapping_method: str = 'downstream', contributing_pixels_threshold: int = 1000, edge_buffer_pixels: int = 3, nodata_buffer_pixels: int = 1, tight_bbox_buffer_pixels: int = 3, verify_expand_factor: float = 1.25, verify_max_iters: int = 3, tight_bbox_refetch: bool = True, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, mask_outside_basins: bool = False, max_output_pixels: int = 250000000, max_download_megabytes: float = 2048.0, max_tiles: int = 256, request_delay_milliseconds: int = 200) -> lsdtt3.OutletFetchResult
 ```
 
 ---
