@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_nz_lerc_warning
+
+# nz_lidar over Paris: refused before any request (offline), after the
+# LERC screen warning that also points to OpenTopography.
+west: 2.30
+south: 48.80
+east: 2.35
+north: 48.85
+
+dem_source: nz_lidar

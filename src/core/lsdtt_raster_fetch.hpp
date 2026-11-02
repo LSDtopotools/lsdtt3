@@ -44,7 +44,10 @@
 
 #pragma once
 
+#include <array>
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lsdtt_oblique_frame.hpp"
@@ -67,7 +70,23 @@ enum class lsdtt_dem_source
 {
     cop30_aws,            // Copernicus GLO-30, AWS Open Data. No key.
     opentopography,       // OpenTopography REST. Needs an API key.
-    planetary_computer    // Keyless, but asset URLs need SAS signing.
+    planetary_computer,   // Keyless, but asset URLs need SAS signing.
+
+    // Catalogue sources (lsdtt_dem_source_info): national and polar DEMs,
+    // named country first. New values are appended so existing ones keep
+    // their meaning.
+    us_3dep,              // USGS 3DEP seamless, via Planetary Computer. No key.
+    arctic_arcticdem,     // PGC ArcticDEM mosaic v4.1. No key.
+    antarctic_rema,       // PGC REMA mosaic v2.0. No key.
+    no_dtm,               // Kartverket NHM DTM 1 m (Norway), WCS. No key.
+    nl_ahn,               // AHN 0.5 m (Netherlands), WCS. No key.
+    es_mdt,               // IGN MDT05 5 m (Spain), WCS. No key.
+    pl_nmt,               // GUGiK NMT 1 m (Poland), WCS. No key.
+    ca_hrdem,             // NRCan HRDEM mosaic 1/2 m (Canada), STAC. No key.
+    ch_swissalti3d,       // swisstopo swissALTI3D 0.5/2 m (Switzerland), STAC. No key.
+    nz_lidar,             // LINZ national 1 m DEM/DSM (New Zealand), public S3. No key.
+    gb_sct_lidar,         // Scottish Remote Sensing Portal lidar, public S3. No key.
+    jp_gsi                // GSI elevation tiles 1/5/10 m (Japan), XYZ PNG. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -75,6 +94,138 @@ bool parse_dem_source(const std::string& name, lsdtt_dem_source& out);
 
 // Name of a source, for messages and help text.
 std::string dem_source_name(lsdtt_dem_source source);
+
+
+// -----------------------------------------------------------------------------
+// lsdtt_dem_source_info
+//
+// One row of the source catalogue. Every source has a row, so `-h dem_source`
+// can describe them offline and messages can say what a source is. The three
+// original sources (cop30_aws, opentopography, planetary_computer) are marked
+// legacy_path: they keep their own fetch code, and their row is used only for
+// help text, the banner and provenance.
+//
+// The catalogue sources share one fetch path: a pre-flight check (coverage,
+// resolution, surface model, size) that needs no network, discovery of the
+// source files, one GDALWarp straight from them onto the target grid, and a
+// provenance stamp on the output.
+//
+// `description` must say in words whether the source is a surface model (DSM:
+// canopy and buildings included) or a terrain model (DTM: bare earth), and
+// give its vertical datum: users analyse these as ground surfaces.
+// -----------------------------------------------------------------------------
+struct lsdtt_dem_source_info
+{
+    lsdtt_dem_source id = lsdtt_dem_source::cop30_aws;
+    std::string name;                 // "us_3dep"
+    std::string title;                // "USGS 3DEP seamless DEM"
+    std::string provider;             // who distributes it
+    std::string licence_attribution;  // printed after a successful fetch
+    std::string coverage_text;        // "CONUS, Alaska, Hawaii, Puerto Rico"
+    std::string description;          // help text: DSM or DTM in words, datum
+    std::string accessed;             // when the access details were checked
+    bool legacy_path = false;
+
+    std::vector<double> native_resolutions_metres;   // nominal, e.g. {10, 30}
+    double default_resolution_metres = 0.0;
+    std::vector<std::string> surface_models;         // "dtm" and/or "dsm"
+    std::string default_surface_model;
+    std::string vertical_datum;                      // "NAVD88", "EGM2008", ...
+    std::string vertical_units = "metre";            // what the source must carry
+
+    // Coarse WGS84 boxes (west, south, east, north) for the offline coverage
+    // check: a request outside all of them fails before any network request.
+    std::vector<std::array<double, 4>> coverage_envelopes;
+
+    // STAC access (catalogue sources).
+    std::string stac_search_url;
+    std::string stac_collection;
+    std::string stac_asset;
+    bool        stac_planetary_computer_signing = false;
+    // Hosts that publish one collection per resolution (PGC): the collection
+    // for each native resolution, used instead of stac_collection.
+    std::vector<std::pair<double, std::string>> stac_collection_by_resolution;
+    // The asset per surface model, where one item carries both (HRDEM:
+    // "dtm" -> "dtm", "dsm" -> "dsm"); otherwise stac_asset.
+    std::vector<std::pair<std::string, std::string>> stac_asset_by_model;
+    // Assets are keyed by file name, one per resolution and format
+    // (swisstopo): take the GeoTIFF asset whose gsd is the resolution.
+    bool stac_asset_by_gsd = false;
+    // Items carry no gsd (the collection fixes the resolution): no gsd filter.
+    bool stac_items_carry_gsd = true;
+    // Several acquisitions per tile, the year a token of the item id
+    // ("swissalti3d_2024_2623-1091"): keep the latest per tile.
+    bool stac_latest_per_tile = false;
+    // STAC fields extension: return only these item fields. PGC items list
+    // every source scene, tens of kB each; the fetch needs none of it.
+    std::vector<std::string> stac_fields_include;
+
+    // The source grid is projected (metre cells), not geographic: the
+    // download estimate counts cells by area rather than by degrees.
+    bool native_grid_projected = false;
+
+    // WCS access (catalogue sources served by a Web Coverage Service; a row
+    // with a wcs_url uses it instead of STAC). The native grid is requested
+    // exactly, so the server does no resampling, in chunks of at most
+    // wcs_max_chunk_side pixels a side that abut on native pixel edges.
+    std::string wcs_url;                       // base URL, without a query
+    std::string wcs_version;                   // "1.0.0" or "2.0.1"
+    std::vector<std::pair<std::string, std::string>> wcs_coverage_by_model;  // "dtm" -> id
+    std::string wcs_format;                    // the GetCoverage FORMAT value
+    bool   wcs_multipart_ascii = false;        // response is multipart MIME around an ESRI ASCII grid
+    int    wcs_native_epsg = 0;
+    double wcs_origin_x = 0.0;                 // top-left corner of the grid (a pixel edge)
+    double wcs_origin_y = 0.0;
+    double wcs_pixel_metres = 0.0;
+    std::string wcs_x_axis = "x";              // 2.0.1 SUBSET label for easting
+    std::string wcs_y_axis = "y";              // 2.0.1 SUBSET label for northing
+    int    wcs_max_chunk_side = 2000;
+    double wcs_bytes_per_cell = 4.0;           // for the download estimate
+    // The service has no nodata value and returns 0 outside the country (and
+    // over sea): 0 is set as nodata, so a border is not a cliff to 0 m.
+    bool   wcs_zero_is_nodata = false;
+    // Grid-keyed public bucket (no catalogue): file names are computed from
+    // coordinates in grid_epsg, and a file that does not exist means no data
+    // there. Collections are listed oldest first; one is used per fetch
+    // (source_collection_choice), never a mix.
+    struct grid_collection
+    {
+        std::string label;         // "phase-3", recorded in the provenance
+        std::string key_template;  // tokens: {model} {MODEL} {sheet} {os10} {os5} {os1}
+        double      tile_width = 0.0;    // metres, easting
+        double      tile_height = 0.0;   // metres, northing
+        double      origin_x = 0.0;      // a tile corner (west edge)
+        double      origin_y = 0.0;      // a tile corner (south edge)
+    };
+    std::string grid_base_url;               // https base; a file is base + key
+    int         grid_epsg = 0;
+    std::vector<grid_collection> grid_collections;
+    // The bucket's name for a surface model, where it differs ("dtm" -> "dem").
+    std::vector<std::pair<std::string, std::string>> grid_model_names;
+    std::string grid_sentinel_key;           // a file that exists: tells "no data
+                                             // here" from "host unreachable"
+    bool requires_lerc = false;              // files are LERC-compressed
+
+    // XYZ elevation PNG tiles (GSI encoding, EPSG:3857): one layer per
+    // resolution. A tile that does not exist (404) means no data there.
+    struct xyz_layer
+    {
+        double      resolution_metres = 0.0;   // nominal
+        int         zoom = 0;
+        std::string label;                     // "dem5a_png", recorded in the provenance
+        std::string url_template;              // with {z} {x} {y}
+    };
+    std::vector<xyz_layer> xyz_layers;
+};
+
+// The whole catalogue, in the order shown to users.
+const std::vector<lsdtt_dem_source_info>& dem_source_catalogue();
+
+// The row for one source (every lsdtt_dem_source has one).
+const lsdtt_dem_source_info& dem_source_info(lsdtt_dem_source source);
+
+// Comma-separated list of every valid dem_source name.
+std::string dem_source_name_list();
 
 
 // -----------------------------------------------------------------------------
@@ -167,6 +318,27 @@ struct lsdtt_fetch_options
     std::string pc_collection = "cop-dem-glo-30";
     std::string pc_asset      = "data";
 
+    // Native product resolution to fetch (nominal metres). 0: the source's
+    // default product; for planetary_computer, 0 keeps every item the search
+    // returns (the original behaviour) and a value keeps only items whose
+    // STAC gsd equals it. Ignored by cop30_aws and opentopography.
+    double source_resolution_metres = 0.0;
+
+    // "source_default", "dtm" or "dsm". Asking for a product a source does
+    // not have is an error.
+    std::string surface_model_choice = "source_default";
+    // Sources published as several survey collections (gb_sct_lidar): "latest"
+    // takes the newest collection with tiles in the area; a collection label
+    // ("phase-3", "national-lidar-programme") takes that one only.
+    std::string source_collection_choice = "latest";
+
+    // Size limits, checked before any download (and, where lsdtt3 does the
+    // HTTP itself, while downloading). 0 disables a limit.
+    std::int64_t max_output_pixels      = 250000000;
+    double       max_download_megabytes = 2048.0;
+    int          max_tiles              = 256;
+    int          request_delay_milliseconds = 200;
+
     // *** NOT A CREDENTIAL FIELD ***
     // This is resolved by lsdtt_secret at the call site and passed in, rather
     // than being read from a parameter. It is here only so fetch_dem() can
@@ -222,6 +394,14 @@ struct lsdtt_fetch_result
     double grid_spacing = 0.0;
 
     std::vector<std::string> tiles;   // source tiles used
+
+    // Non-fatal advisories for the caller to print (partial coverage, mixed
+    // resolutions, overview reads).
+    std::vector<std::string> warnings;
+
+    // What was written into the output's metadata (LSDTT_* items) and should
+    // go into a run summary.
+    std::vector<std::pair<std::string, std::string>> provenance;
 };
 
 
@@ -259,6 +439,14 @@ std::string cop30_tile_url(const std::string& tile_name);
 
 // True if GDAL can make HTTP requests at all (built with curl).
 bool http_available();
+
+// True if this GDAL build can decode LERC-compressed GeoTIFFs (needed by
+// sources with requires_lerc, e.g. nz_lidar).
+bool gdal_can_read_lerc();
+
+// The screen warning for a source whose files are LERC-compressed: what it
+// needs, whether this GDAL has it, and the alternative. Empty for others.
+std::string lerc_source_warning(lsdtt_dem_source source);
 
 
 // -----------------------------------------------------------------------------

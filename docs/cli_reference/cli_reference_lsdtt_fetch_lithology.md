@@ -164,9 +164,9 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `macrostrat_tile_zoom` | `int` | `10` | `param` | - | Zoom of the Macrostrat vector tiles fetched (0-16). | The blended 'carto' layer serves more detailed source maps at higher zoom, and the tile geometry is quantised to about 1/4096 of a tile (about 10 m at zoom 10, 40 m at zoom 8). Higher zoom means more tiles for the same box. |
-| `max_tiles` | `int` | `256` | `param` | - | Refuse a request needing more tiles than this. | A guard against an accidental continental request. Raise it deliberately for large areas, or lower macrostrat_tile_zoom. |
+| `max_tiles` | `int` | `256` | `param` | - | Refuse a request needing more tiles, source files or service requests than this. | A guard against an accidental continental request, checked before anything is downloaded. Raise it deliberately for large areas. |
+| `request_delay_milliseconds` | `int` | `200` | `param` | - | Pause after every request to Macrostrat. | Keeps a large fetch polite to a service that publishes no rate limit. |
 | `lookup_map_units` | `bool` | `true` | `param` | - | Look up each map unit's linked lithologies and the source maps in the Macrostrat API. | Adds lith_ids, lith_names, lith_type and lith_class and the full attribution. Without it lith_primary comes from the tiles' lith text only. |
-| `request_delay_milliseconds` | `int` | `200` | `param` | - | Pause after every request to Macrostrat. | Macrostrat publishes no rate limit; this keeps a large fetch polite. |
 | `output_epsg` | `int` | `0` | `param` | - | EPSG code of the output layer. 0 (default) = the WGS 84 UTM zone of the box centre. | Must be a projected CRS in metres for lsdtt-lithology-erodibility; Web Mercator (EPSG:3857, the tiles' own) is refused by lsdtt because it distorts distances. |
 | `macrostrat_tile_dir` | `string` | - | `param` | - | Read the tiles from a local directory instead of downloading them. | Tiles must be at &lt;dir&gt;/{z}/{x}/{y}.mvt (or .pbf), e.g. a previously downloaded set. Combine with lookup_map_units: false to work entirely offline. |
 

@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_gsi_res
+
+# jp_gsi offers 1, 5 and 10 m: a 2 m product is refused (offline).
+west: 139.22
+south: 35.61
+east: 139.26
+north: 35.64
+
+dem_source: jp_gsi
+source_resolution_metres: 2

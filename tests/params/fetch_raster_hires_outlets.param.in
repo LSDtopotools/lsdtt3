@@ -1,0 +1,9 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_3dep_outlets
+
+# Catalogue sources are not used in outlets mode in this version (offline).
+bounds_mode: outlets
+outlet_points_fname: no_such_outlets.csv
+
+dem_source: us_3dep

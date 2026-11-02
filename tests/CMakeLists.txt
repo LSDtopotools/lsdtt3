@@ -6774,6 +6774,190 @@ foreach(_ff_case IN ITEMS
     )
 endforeach()
 
+# Catalogue sources (STAC and WCS) and the size limits: refused before any
+# request, so these run offline.
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_3dep_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside us_3dep coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_3dep_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "us_3dep offers 10, 30 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_3dep_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_3dep_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "us_3dep has no dsm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_arcticdem_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_arcticdem_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside arctic_arcticdem coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_rema_terrain_model
+    lsdtt-fetch-raster
+    fetch_raster_rema_terrain_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "antarctic_rema has no dtm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_wcs_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_wcs_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside no_dtm coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_wcs_too_many_native_cells
+    lsdtt-fetch-raster
+    fetch_raster_wcs_too_many_native_cells.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "native 0.5 m cells"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_swissalti3d_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_swissalti3d_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "ch_swissalti3d has no dsm product"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_hrdem_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_hrdem_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "ca_hrdem offers 1, 2 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_sct_lidar_outside_coverage
+    lsdtt-fetch-raster
+    fetch_raster_sct_lidar_outside_coverage.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "outside gb_sct_lidar coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_nz_lidar_lerc_warning
+    lsdtt-fetch-raster
+    fetch_raster_nz_lidar_lerc_warning.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "LERC-compressed"
+    --stderr-contains "OpenTopography (opentopography.org) with an API key"
+    --stderr-contains "outside nz_lidar coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_gsi_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_gsi_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "jp_gsi offers 1, 5, 10 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_sct_lidar_bad_collection
+    lsdtt-fetch-raster
+    fetch_raster_sct_lidar_bad_collection.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "gb_sct_lidar has no collection 'phase-9'"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_copernicus_surface_model
+    lsdtt-fetch-raster
+    fetch_raster_copernicus_surface_model.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "Copernicus GLO-30 is a DSM only"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_too_many_pixels
+    lsdtt-fetch-raster
+    fetch_raster_too_many_pixels.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "more than max_output_pixels"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_hires_outlets
+    lsdtt-fetch-raster
+    fetch_raster_hires_outlets.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "cannot be used with bounds_mode: outlets"
+)
+
+add_test(NAME smoke_fetch_raster_help_dem_source
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "USGS 3DEP seamless DEM -- a DIGITAL TERRAIN MODEL")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_polar
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_polar PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "ArcticDEM mosaic v4.1 -- a DIGITAL SURFACE MODEL.*REMA mosaic v2.0 -- a DIGITAL SURFACE MODEL")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_wcs
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_wcs PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "no_dtm.*nl_ahn.*DIGITAL SURFACE MODEL \\(dsm\\).*es_mdt.*pl_nmt")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_hrdem_swiss
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_hrdem_swiss PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "ca_hrdem.*CGVD2013.*ch_swissalti3d.*latest acquisition of each tile")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_grid_keyed
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_grid_keyed PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "nz_lidar.*NZVD2016.*LERC.*gb_sct_lidar.*source_collection_choice")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_gsi
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_gsi PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "jp_gsi.*DIGITAL TERRAIN MODEL.*second.*resampling")
+
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_linear_feature PROPERTIES

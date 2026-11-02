@@ -1,0 +1,11 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_sct_outside
+
+# gb_sct_lidar over Paris: refused before any request (offline).
+west: 2.30
+south: 48.80
+east: 2.35
+north: 48.85
+
+dem_source: gb_sct_lidar

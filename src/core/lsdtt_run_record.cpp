@@ -237,6 +237,16 @@ void lsdtt_run_record::add_output(const std::string& path)
     if (g_live) g_live->extra_outputs_.push_back(path);
 }
 
+void lsdtt_run_record::add_provenance(const std::string& key, const std::string& value)
+{
+    if (!g_live) return;
+    for (auto& kv : g_live->provenance_)
+    {
+        if (kv.first == key) { kv.second = value; return; }
+    }
+    g_live->provenance_.emplace_back(key, value);
+}
+
 std::string lsdtt_run_record::summary_filename(const std::string& write_fname)
 {
     return write_fname + "_run_summary.json";
@@ -428,7 +438,18 @@ std::string lsdtt_run_record::write_summary(const std::vector<output_file>& outp
         out << (i ? ",\n" : "\n") << "    {\"path\": " << json_string(outputs[i].path)
             << ", \"bytes\": " << outputs[i].bytes << "}";
     }
-    out << (outputs.empty() ? "]\n" : "\n  ]\n") << "}\n";
+    out << (outputs.empty() ? "]" : "\n  ]");
+    if (!provenance_.empty())
+    {
+        out << ",\n  \"provenance\": {";
+        for (std::size_t i = 0; i < provenance_.size(); ++i)
+        {
+            out << (i ? ",\n" : "\n") << "    " << json_string(provenance_[i].first)
+                << ": " << json_string(provenance_[i].second);
+        }
+        out << "\n  }";
+    }
+    out << "\n}\n";
     out.close();
     return out ? path.string() : "";
 }

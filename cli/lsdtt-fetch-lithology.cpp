@@ -107,12 +107,8 @@ int main(int argc, char* argv[])
         "Higher zoom means more tiles for the same box.",
         "Macrostrat", "param", ""};
 
-    int_default_map["max_tiles"] = 256;
-    help_map["max_tiles"] = {"int","256",
-        "Refuse a request needing more tiles than this.",
-        "A guard against an accidental continental request. Raise it deliberately for large "
-        "areas, or lower macrostrat_tile_zoom.",
-        "Macrostrat", "param", ""};
+    lsdtt::declare_fetch_request_limit_parameters(int_default_map, help_map,
+                                                  "Macrostrat", "Macrostrat");
 
     bool_default_map["lookup_map_units"] = true;
     help_map["lookup_map_units"] = {"bool","true",
@@ -121,11 +117,6 @@ int main(int argc, char* argv[])
         "lith_primary comes from the tiles' lith text only.",
         "Macrostrat", "param", ""};
 
-    int_default_map["request_delay_milliseconds"] = 200;
-    help_map["request_delay_milliseconds"] = {"int","200",
-        "Pause after every request to Macrostrat.",
-        "Macrostrat publishes no rate limit; this keeps a large fetch polite.",
-        "Macrostrat", "param", ""};
 
     int_default_map["output_epsg"] = 0;
     help_map["output_epsg"] = {"int","0",

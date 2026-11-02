@@ -1,0 +1,14 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_wcs_native_cells
+
+# nl_ahn at a 10 m output still downloads 0.5 m cells; max_output_pixels
+# counts those and refuses before any request (offline).
+west: 5.10
+south: 52.08
+east: 5.12
+north: 52.09
+
+dem_source: nl_ahn
+grid_spacing: 10
+max_output_pixels: 1000000

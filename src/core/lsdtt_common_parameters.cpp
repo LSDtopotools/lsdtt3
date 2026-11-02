@@ -1363,6 +1363,29 @@ void declare_http_request_parameters(std::map<std::string, int>& int_default_map
         "Network", "param", ""};
 }
 
+void declare_fetch_request_limit_parameters(std::map<std::string, int>& int_default_map,
+                                            lsdtt_help_registry&        help_map,
+                                            const std::string&          service,
+                                            const std::string&          group,
+                                            bool                        with_max_tiles)
+{
+    if (with_max_tiles)
+    {
+        int_default_map["max_tiles"] = 256;
+        help_map["max_tiles"] = {"int","256",
+            "Refuse a request needing more tiles, source files or service requests than this.",
+            "A guard against an accidental continental request, checked before "
+            "anything is downloaded. Raise it deliberately for large areas.",
+            group, "param", ""};
+    }
+
+    int_default_map["request_delay_milliseconds"] = 200;
+    help_map["request_delay_milliseconds"] = {"int","200",
+        "Pause after every request to " + service + ".",
+        "Keeps a large fetch polite to a service that publishes no rate limit.",
+        group, "param", ""};
+}
+
 void declare_lithology_map_parameters(std::map<std::string, std::string>& string_default_map,
                                       lsdtt_help_registry&                help_map,
                                       const std::string&                  prefix)

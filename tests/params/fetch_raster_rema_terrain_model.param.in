@@ -1,0 +1,12 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_rema_dtm
+
+# antarctic_rema is a surface model only: asking for a DTM is refused (offline).
+west: -63.80
+south: -64.85
+east: -63.60
+north: -64.75
+
+dem_source: antarctic_rema
+surface_model_choice: dtm
