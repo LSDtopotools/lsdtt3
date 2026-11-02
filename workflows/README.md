@@ -1,44 +1,53 @@
 # LSDTT workflows
 
-This directory is the workflow layer for multi-stage LSDTT pipelines.
+Snakemake pipelines that chain several lsdtt3 command-line tools. The user
+guide is `docs/what_is_lsdtt3/workflows.md` (setting up the `workflows` pixi
+environment, running, and changing parameters), with one page per module:
 
-Planned stage model:
+| Module | Config | Guide |
+|---|---|---|
+| `valley_widths` | `config/valley_widths.yaml` | `docs/what_is_lsdtt3/workflow_valley_widths.md` |
+| `chi_region` | `config/chi_region.yaml` | `docs/what_is_lsdtt3/workflow_chi_region.md` |
+| `lithology_channels` | `config/lithology_channels.yaml` | `docs/what_is_lsdtt3/workflow_lithology_channels.md` |
+| `check_basins` | `config/config.yaml` (the default module) | `docs/what_is_lsdtt3/workflows.md` |
+| `cosmo_landslides`, `cosmo_step_change_random_network`, `cosmo_landslides_synthetic`, `cosmo_transient_landslides` | `config/config.yaml`, `config/cosmo_landslides_synthetic.yaml` | below |
 
-1. fetch,
-2. preprocess,
-3. extract,
-4. analyse,
-5. report.
+Quick start, from the repository root:
 
-Current implemented modules:
+```bash
+pixi install -e workflows
+pixi run -e workflows snakemake -n --cores 1 --snakefile workflows/Snakefile \
+    --directory workflows --configfile workflows/config/valley_widths.yaml
+pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile \
+    --directory workflows --configfile workflows/config/valley_widths.yaml
+```
 
-1. `check_basins` (bbox fetch -> preprocess -> outlet-driven basin extraction),
-2. `cosmo_landslides`,
-3. `cosmo_step_change_random_network`,
-4. `cosmo_landslides_synthetic`,
-5. `cosmo_transient_landslides`.
+`config/config.yaml` is always loaded first; a `--configfile` is merged over
+it. Relative paths in a config are relative to `workflows/`.
 
-Currently configured default module in `config/config.yaml`:
+## Layout of the rules
 
-- `analysis.module: check_basins`
-- chain: bounding-box DEM fetch -> preprocess -> extract basins from supplied
-  outlets CSV/FGB -> write basin and channel FGB outputs.
+- `rules/common_params.smk`: helpers for the per-item modules. A config block
+  of CLI parameters is copied verbatim into the CLI's parameter file; the
+  workflow sets only file I/O and the keys that chain one CLI to the next
+  (`render_param_file` refuses a config that sets one of those).
+- `rules/common_regions.smk`: DEM fetch, basin selection and Macrostrat fetch
+  per region, shared by `chi_region` and `lithology_channels`.
+- `rules/domain_*.smk`: one file per module.
+- `rules/common_fetch.smk`, `common_preprocess.smk`, `common_extract.smk`:
+  the single-DEM stages used by `check_basins` and `cosmo_landslides`.
+- The Snakefile's `shell.prefix` unsets the pixi environment's GDAL/PROJ
+  variables before every command (they make the CLIs load the wrong
+  plugins), and sources `lsdtt_setenv_script` when a config names one.
 
-## Quick start (check basins)
+- Figures: `figures_enabled()` in `common_params.smk` probes for lsdviztools3
+  (`lsdviz3-drape --help` behind `figures.lsdviz3_command_prefix`) once per run
+  and caches the answer in the environment for child processes; figure rules
+  use `run_lsdviz3`, which runs without the GDAL/PROJ variables and without the
+  setenv script. `figures.enabled`: auto (default) | true | false.
 
-1. Set your run ID and outlet file in `workflows/config/config.yaml`.
-2. Set your bounding box (`fetch.west/south/east/north`).
-3. Run:
-
-   `pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile --directory workflows`
-
-4. Open these outputs in QGIS:
-
-   - `workflows/results/<run_id>/extract/check_junction_basin_outlines.fgb`
-   - `workflows/results/<run_id>/extract/check_channel_network_lines.fgb`
-
-This module is designed to verify that supplied outlet points select the
-expected basins.
+Every CLI's log is kept under `results/<run_id>/<item>/logs/`; on failure
+its last lines are printed.
 
 ## Synthetic landslide workflow quick start
 

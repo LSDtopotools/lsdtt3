@@ -29,7 +29,7 @@ analysis:
   module: "check_basins"
 
 check_basins:
-  outlets_file: "../tests/data/cosmo_tiny_points.csv"
+  outlets_file: "config/check_basins_outlets.csv"   # three outlets inside the fetch box
   threshold_contributing_pixels: 20
   basin_outlet_snapping_method: "downstream"
   basin_outlet_contributing_pixels_threshold: 20
@@ -257,6 +257,17 @@ cosmo_transient_landslides:
     # With flush_time_threshold_yr: 100 the flush window is long closed at the
     # report time, so these must be identical row for row.
     assert_equal_scenarios: ["S1=S1f"]
+
+# Figures come from lsdviztools3 (lsdviz3-* commands), a separate install.
+#   enabled: auto  -> draw them if lsdviztools3 is found, otherwise skip with a message
+#            true  -> lsdviztools3 is required; stop if it is not found
+#            false -> never draw them, and do not look for lsdviztools3
+# lsdviz3_command_prefix goes before every lsdviz3-* command, for an
+# lsdviztools3 that is not on your PATH, e.g.
+#   "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+figures:
+  enabled: "auto"
+  lsdviz3_command_prefix: ""
 
 executables:
   fetch_raster: "../build/lsdtt-fetch-raster"

@@ -1,13 +1,16 @@
 # Your first analysis
 
-This page takes you from a DEM sitting on disk to a hillshade and a channel
-network. It assumes you have lsdtt3 installed and the tools on your `PATH` —
+This page takes you from a DEM sitting on disk to a hillshade raster and a channel
+network vector file. It assumes you have lsdtt3 installed and the tools on your `PATH` —
 if not, start with [Installing lsdtt3](install_lsdtt3.md).
+
+These instricutions are for the command line tools, which is the way the developers use this software. 
+If you prefer python or QGIS you will need to look at those sections in the documentation. 
 
 The one thing to understand before anything else: **lsdtt3 tools are driven by
 a parameter file, not by command-line flags.** There is no `--dem` or
 `--output-directory`. You write a short text file that says what to read, where
-to write it, and what to compute; then you hand that file to a tool.
+to write it, and what to compute; then you hand that file to a tool. The rationale for this structure is that every `lsdtt` analysis is associated with a (semi)-permanent file, wather than an ephemeral command line flag. 
 
 ---
 

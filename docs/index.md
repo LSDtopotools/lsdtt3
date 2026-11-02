@@ -4,7 +4,7 @@
   <img src="LSD-logo.png" alt="LSDTopoTools3 logo" width="220">
 </p>
 
-**LSDTopoTools3** (lsdtt3) is a C++17 library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It also includes some a basic landscape evolution model (lem), tools for analysis of cosmogenic radionuclides (CRNs), and a simple flooding model. It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), with faster algorithms and performance enhancements, built-in handling of a wide range of raster and vector data formats, python bindings and an API, a QGIS plugin, and a rigorous testing regime that includes benchmarking against similar software packages. Basically it improves every component of LSDTopoTools2. We hope you like it!
+**LSDTopoTools3** (lsdtt3) is a C++17 library and set of command-line tools for topographic analysis of digital elevation models (DEMs). It also includes two basic landscape evolution models (lems, once is minimalistic, one has a few extra bells and whistles), tools for analysis of cosmogenic radionuclides (CRNs), a simple flooding model and two hydrologic models, and tools for downloading both DEMs and lithologic data. It is a ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2), with faster algorithms and performance enhancements, built-in handling of a wide range of raster and vector data formats, python bindings and an API, a QGIS plugin, and a rigorous testing regime that includes benchmarking against similar software packages. Basically it improves every component of LSDTopoTools2. We hope you like it!
 
 ---
 
@@ -18,8 +18,8 @@
 | Install on macOS | [macOS](what_is_lsdtt3/install_lsdtt3.md#macos) |
 | Run it in a browser | [Google Colab](what_is_lsdtt3/install_lsdtt3.md#google-colab) |
 | Look up parameters for a tool | [Command-line reference](cli_reference/cli_reference_lsdtt_channel_extraction.md) |
-| Compile the latest code (don't do this unless you are a developer) | [Building from source](developer_notes/building_from_source.md) |
-| Contribute or modify the code | [Developer notes](developer_notes/lsdtt3_architecture.md) |
+| Compile the latest code (DO NOT do this unless you are a developer) | [Building from source](developer_notes/building_from_source.md) |
+| Contribute or modify the code | [Developer notes](developer_notes/developer_onboarding.md) |
 
 ---
 
@@ -37,7 +37,7 @@
 
 **Cosmogenic nuclides** — basin-averaged CRN erosion rates, concentration prediction, 1-D transient column simulation.
 
-**Landscape evolution** — implicit stream-power incision, linear and nonlinear hillslope transport, uniform uplift.
+**Landscape evolution** — implicit stream-power incision, linear and nonlinear hillslope transport, uniform uplift, and more exotic configurations.
 
 ---
 

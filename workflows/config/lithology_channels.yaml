@@ -1,0 +1,114 @@
+# lithology_channels: does channel steepness, or the shape of the channel
+# network, differ between lithologic units? The geology is the Macrostrat
+# geologic map (best coverage in North America).
+#
+#   lsdtt-fetch-raster -> lsdtt-fetch-lithology -> lsdtt-basin-extraction
+#       -> lsdtt-chi-analysis              (k_sn by lithologic unit)
+#       -> lsdtt-channel-network-analysis  (bearings, junction angles and
+#                                           Strahler statistics by unit)
+#
+# Copy this file, edit the copy, and run it with
+#
+#   pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile \
+#       --directory workflows --configfile workflows/config/my_lithology.yaml
+#
+# Relative paths are relative to the workflows/ directory. Each block of CLI
+# parameters is copied into that CLI's parameter file as written. The workflow
+# sets the file I/O, the lithology fetch area and output_epsg,
+# lithology_fname, basin_outlet_fname, basin_outlet_snapping_method and
+# write_selected_basin_outlets_csv itself.
+
+workflow_name: "lithology_channels"
+run_id: "lithology-channels-example"
+
+analysis:
+  module: "lithology_channels"
+
+stages:
+  report: true
+
+lithology_channels:
+  # --- which regions ----------------------------------------------------------
+  # As in chi_region. The lithology map is fetched over the same box, in the
+  # DEM's CRS: a region read from a file needs `epsg:` (its EPSG code), because
+  # the polygon map is laid on the DEM grid without reprojection.
+  regions:
+    blue_ridge:
+      fetch:
+        west: -83.60
+        south: 35.50
+        east: -83.30
+        north: 35.70
+        dem_source: "cop30_aws"
+    # my_area:
+    #   file: "my_dem.tif"
+    #   epsg: 32617
+  dem_dir: "dems"
+  dem_glob: "*.tif"
+
+  shared_parameters:
+    threshold_contributing_pixels: 1000
+
+  # --- lsdtt-fetch-lithology ----------------------------------------------------
+  fetch_lithology:
+    macrostrat_tile_zoom: 10         # higher = more detailed polygons, more tiles
+
+  # --- lsdtt-basin-extraction ---------------------------------------------------
+  basin_extraction:
+    select_all_basins: true
+    filter_incomplete_basins: true
+    filter_nested_basins: true
+    filter_basins_by_area: true
+    basins_min_area_pixels: 1000
+    write_basin_outlines: true
+    write_basin_outlines_as_polygon: true
+
+  # --- lsdtt-chi-analysis: k_sn by lithologic unit ------------------------------
+  chi_analysis:
+    n_largest_basins: 0
+    m_over_n: 0.45
+    min_channel_pixels: 30
+    fit_chi_networks: true
+    write_ksn_basin_summary: true
+    # Map attribute that names the unit: lith_primary (the first lithology
+    # Macrostrat lists), or another field of <region>_macrostrat_units.fgb.
+    lithology_field_name: "lith_primary"
+    # lithology_crosswalk_fname: "my_crosswalk.csv"   # merge map values into units
+    lithology_min_reach_pixels: 10
+    lithology_contact_buffer_metres: 0
+    lithology_bootstrap_replicates: 1000
+    write_lithology_code_raster: true
+    write_output_format: "gtiff"
+
+  # --- lsdtt-channel-network-analysis: network statistics by lithologic unit ----
+  channel_network_analysis:
+    analyse_all_junctions: true
+    only_complete_basins: true
+    lithology_field_name: "lith_primary"
+    lithology_min_majority_fraction: 0.8
+    write_channel_link_bearings: true
+    write_junction_angles: true
+    write_strahler_channels: true
+    write_channel_bearing_statistics: true
+    write_junction_angle_statistics: true
+    channel_bearing_group_by: "lithology"
+    channel_bearing_stratify_by: "strahler_order"
+    channel_bearing_comparison_mode: "one_vs_rest"
+    junction_angle_group_by: "lithology"
+    junction_angle_stratify_by: "strahler_order"
+    write_lithology_code_raster: true
+    write_channel_network_lines: true
+
+# Figures (lsdviztools3: lithology map, k_sn by unit, bearing roses by unit). auto draws them when lsdviztools3 is found
+# and skips them when it is not; true requires it; false never looks.
+# See config/config.yaml.
+figures:
+  enabled: "auto"
+  lsdviz3_command_prefix: ""        # e.g. "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+
+executables:
+  fetch_raster: "../build/lsdtt-fetch-raster"
+  fetch_lithology: "../build/lsdtt-fetch-lithology"
+  basin_extraction: "../build/lsdtt-basin-extraction"
+  chi_analysis: "../build/lsdtt-chi-analysis"
+  channel_network_analysis: "../build/lsdtt-channel-network-analysis"

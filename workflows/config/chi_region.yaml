@@ -1,0 +1,90 @@
+# chi_region: fetch a DEM for a region (or read your own), pick the basins
+# in it, and run a chi analysis on them.
+#
+#   lsdtt-fetch-raster -> lsdtt-basin-extraction -> lsdtt-chi-analysis
+#
+# Copy this file, edit the copy, and run it with
+#
+#   pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile \
+#       --directory workflows --configfile workflows/config/my_chi.yaml
+#
+# Relative paths are relative to the workflows/ directory. Each block of CLI
+# parameters is copied into that CLI's parameter file as written; any
+# parameter in the CLI's reference page (or its -h output) can be added. The
+# workflow sets read_path, read_fname, write_path, write_fname,
+# write_selected_basin_outlets_csv, basin_outlet_fname and
+# basin_outlet_snapping_method itself.
+
+workflow_name: "chi_region"
+run_id: "chi-region-example"        # outputs go to workflows/results/<run_id>/
+
+analysis:
+  module: "chi_region"
+
+stages:
+  report: true
+
+chi_region:
+  # --- which regions ----------------------------------------------------------
+  # Each region is fetched (a `fetch:` block of lsdtt-fetch-raster parameters:
+  # a WGS84 box or bounds_fname, and optionally dem_source, grid_spacing,
+  # target_epsg) or read from a file (`file:`, in dem_dir or absolute).
+  # A region can carry its own CLI parameter blocks, merged over the ones below.
+  regions:
+    carpathians:
+      fetch:
+        west: 25.35
+        south: 47.00
+        east: 25.65
+        north: 47.20
+        dem_source: "cop30_aws"
+    # my_area:
+    #   file: "my_dem.tif"
+    #   chi_analysis:
+    #     m_over_n: 0.5
+  # With no `regions`, every dem_glob file in dem_dir is a region.
+  dem_dir: "dems"
+  dem_glob: "*.tif"
+
+  # --- parameters given to every CLI that takes them --------------------------
+  shared_parameters:
+    threshold_contributing_pixels: 1000
+
+  # --- lsdtt-basin-extraction: which basins -----------------------------------
+  # Every complete (not cut by the DEM edge), non-nested basin of at least
+  # basins_min_area_pixels. To analyse your own outlets instead, replace these
+  # with select_basins_from_outlets: true and basin_outlet_fname: <file>.
+  basin_extraction:
+    select_all_basins: true
+    filter_incomplete_basins: true
+    filter_nested_basins: true
+    filter_basins_by_area: true
+    basins_min_area_pixels: 5000
+    write_basin_outlines: true
+    write_basin_outlines_as_polygon: true
+
+  # --- lsdtt-chi-analysis -------------------------------------------------------
+  chi_analysis:
+    n_largest_basins: 0              # 0 = every basin from basin_extraction
+    m_over_n: 0.45
+    chi_A0: 1
+    min_channel_pixels: 30
+    fit_chi_networks: true           # piecewise chi fits and the m/n disorder sweep
+    write_ksn_basin_summary: true
+    write_fit_tables: true
+    write_chi_fit_segment_lines: true
+    write_chi_coordinate_raster: true
+    write_chi_data_maps: true
+    write_output_format: "gtiff"
+
+# Figures (lsdviztools3: the chi coordinate draped on the shaded DEM). auto draws them when lsdviztools3 is found
+# and skips them when it is not; true requires it; false never looks.
+# See config/config.yaml.
+figures:
+  enabled: "auto"
+  lsdviz3_command_prefix: ""        # e.g. "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+
+executables:
+  fetch_raster: "../build/lsdtt-fetch-raster"
+  basin_extraction: "../build/lsdtt-basin-extraction"
+  chi_analysis: "../build/lsdtt-chi-analysis"
