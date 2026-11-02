@@ -154,48 +154,41 @@ of each outgoing divide edge. The final node has `NaN` values.
 
 ## Selected-ridgeline triple-divide outputs
 
-These opt-in switches run after ridgeline selection and write one combined
-point layer for all enabled triple-divide methods:
+These opt-in switches write separate native and topological triple-divide CSVs
+and point layers. Outputs are calculated after ridgeline processing, so row/col,
+distance and elevation refer to the final processed divide-grid nodes.
 
 | Parameter | Description |
 |---|---|
 | `write_triple_divides_on_selected_ridgelines` | Write triple and quadruple divide nodes identified where three or more surrounding flow basins meet a selected ridgeline. |
-| `write_zero_order_triple_divides_on_selected_ridglines` | Write the join and leave nodes where first-order source-basin outlines bound a selected ridgeline. The parameter spelling is retained exactly as the CLI name. |
-| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where either left or right flow-topological distance exceeds a supplied threshold. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | Write selected-ridgeline nodes where the maximum of left/right flow-topological distance exceeds a supplied threshold. |
 | `topological_distance_triple_divide_threshold` | Backward-compatible single threshold in metres. |
 | `topological_distance_triple_divide_thresholds` | Comma-separated thresholds in metres. A node qualifies when `left > threshold OR right > threshold`; one output pair is written per threshold. |
 
-The native surrounding-basin and zero-order methods are written to separate
-outputs so they can be loaded and compared independently. Enabled topological
-distance points are also written separately:
+Native and topological points use separate schemas. The native CSV includes the
+junction number reached from each surrounding NW, NE, SE, and SW DEM pixel. The
+topological CSV includes left, right, and maximum flow distance plus the
+left/right common-junction coordinates in WGS84. Unavailable CSV values use the
+DEM nodata value. Enabled topological outputs are:
 
 ```text
-<write_fname>_native_triple_divides.csv
-<write_fname>_native_triple_divides.fgb
-<write_fname>_zero_order_triple_divides.csv
-<write_fname>_zero_order_triple_divides.fgb
+<write_fname>_native_triple_divides_area_XXX.csv
+<write_fname>_native_triple_divides_area_XXX.fgb
 <write_fname>_topological_distance_triple_divides_XXXm.csv
 <write_fname>_topological_distance_triple_divides_XXXm.fgb
 <write_fname>_topological_distance_paired_flowpaths_XXXm.fgb
 ```
 
-Each non-empty layer uses the common schema containing ridgeline ID/type,
-method, node index, distance along ridgeline, elevation, selected basin
-junction IDs, and latitude/longitude in the CSV. The FlatGeobuf stores point
-geometry in the DEM CRS. CSV files are written even when a selected method
-finds no points. Threshold-specific topological FlatGeobufs are also created
-when empty so threshold cases remain explicit.
+Both CSVs contain ridgeline ID/type, divide-grid row/col, distance along
+ridgeline, elevation, and WGS84 coordinates. FlatGeobuf point geometry is in the
+DEM CRS. CSV and point layers are written even when a selected method finds no
+points, so threshold cases remain explicit.
 
 For each topological-distance threshold, the paired-flowpath FlatGeobuf stores
-the incoming and outgoing branches on every qualifying side of every TDJ. Its
-attributes include ridgeline/node IDs, side, branch, threshold, pair distance,
-and the common junction flat index.
-
-Zero-order output uses the dedicated source-pixel basin view. Each source pixel
-identified by `threshold_contributing_pixels` defines one zero-order basin from
-the complete upslope contributing area. Its ordered divide-grid outline is
-matched to each selected ridgeline; each contiguous contact interval contributes
-its join and leave ridgeline nodes.
+the incoming and outgoing branches on each side that exceeds the threshold. Its
+attributes include ridgeline ID/type, divide-grid row/col, side, branch,
+threshold, and `topological_distance` (the unchanged combined distance to the
+common downstream junction).
 
 ---
 
@@ -454,12 +447,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `write_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write triple and quadruple divide nodes on selected ridgelines. | The surrounding-basin test is used. |
-| `write_zero_order_triple_divides_on_selected_ridglines` | `bool` | `false` | `switch` | - | Write triple divide join/leave nodes bounding zero-order basins. | Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network. |
-| `write_zero_order_basins_touching_selected_ridgelines` | `bool` | `false` | `switch` | - | Write source-based zero-order basin outlines that touch selected ridgelines. | Uses the same exact ridgeline-grid contact test as zero-order TDJ detection. |
-| `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where either flanking flow topological distance exceeds the threshold. | Results are written with the other selected triple-divide modes in one metadata-compatible layer. |
-| `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when the left OR right distance is greater than this value. |
+| `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where the maximum left/right flow topological distance exceeds the threshold. | Writes separate per-threshold CSV and point/paired-path FlatGeobuf outputs. |
+| `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when max(left distance, right distance) is greater than this value. |
 | `topological_distance_triple_divide_thresholds` | `string` | - | `param` | - | Comma-separated flow topological distance thresholds in metres. | When supplied, one topological triple-divide CSV and FlatGeobuf is written for each value. An empty value falls back to the singular topological_distance_triple_divide_threshold parameter. |
-| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated channel-area thresholds in square metres for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value. |
+| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated contributing-pixel thresholds for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value; CSV and FlatGeobuf filenames end in `_native_triple_divides_area_<value>`. |
 
 ### Paired flow paths
 
