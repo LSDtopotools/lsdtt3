@@ -710,9 +710,10 @@ HAND in reach windows along each channel (the reference-field ladder), each
 band is labelled into patches, and patches are classed floodplain or
 terrace. The ladder keywords have the names and meanings of the
 lsdtt-fluvial-surfaces parameters; see that CLI's reference for the method.
-Two defaults differ from the CLI so earlier results are unchanged:
-``min_band_component_pixels`` (CLI 50) and
-``ladder_unresolved_window_algorithm_choice`` (CLI ``nearest_resolved``).
+Three defaults differ from the CLI so earlier results are unchanged:
+``min_band_component_pixels`` (CLI 50),
+``ladder_unresolved_window_algorithm_choice`` (CLI ``nearest_resolved``) and
+``valley_corridor_half_width_metres`` (CLI 5000).
 
 Parameters
 ----------

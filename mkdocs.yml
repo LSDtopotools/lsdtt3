@@ -137,6 +137,8 @@ nav:
       - Flow, channels, and basins: python/flow_networks.md
       - Chi and ksn: python/chi_ksn.md
       - Channel-head extraction: python/channel_extraction.md
+      - Floodplains, terraces, and valleys: python/fluvial_surfaces.md
+      - Ridgeline profiles: python/ridgelines.md
       - Cosmogenic erosion: python/cosmogenic.md
       - GraphFlood: python/graphflood.md
     - API reference:

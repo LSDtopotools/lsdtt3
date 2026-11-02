@@ -27,11 +27,11 @@ does exactly this.
 
 ## Channel sources where a valley floor crosses the DEM edge
 
-A channel that enters the DEM across its edge has no head inside the DEM, so
-the threshold and the head detectors above cannot start it.
-`find_perimeter_sources` traces the DEM perimeter, finds the gentle, wide, low
-runs where a valley floor crosses it, and keeps each run whose path inward is
-gentle and drains to one of the largest outlets:
+Where a valley floor crosses the edge of the DEM, its channel enters from
+outside, so no channel head lies inside the DEM. `find_perimeter_sources`
+traces the DEM perimeter, finds the gentle, wide, low runs where a valley
+floor crosses it, and keeps each run whose path inward is gentle and drains to
+one of the largest outlets:
 
 ```python
 filled = lsdtt3.fill_pits(dem)
