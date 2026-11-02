@@ -54,7 +54,7 @@ def domain(name):
         return "cosmogenic"
     if "chi" in lower:
         return "chi"
-    if any(word in lower for word in ("fetch", "bounds", "cop30", "utm_epsg", "http_available", "rotat")):
+    if any(word in lower for word in ("fetch", "bounds", "cop30", "utm_epsg", "http_available", "rotat", "dem_sources")):
         return "fetch"
     if any(word in lower for word in ("landscape", "hillslope")):
         return "landscape"
@@ -62,7 +62,9 @@ def domain(name):
         return "drainage"
     if any(word in lower for word in ("sediment", "landslide", "road", "mountainfront", "mountain_front", "ridgeline", "thinlines", "thin_lines")):
         return "sediment"
-    if any(word in lower for word in ("valley", "tidal", "marsh", "water", "streamburn", "burn_stream", "repair_water")):
+    if any(word in lower for word in ("valley", "tidal", "marsh", "water", "streamburn", "burn_stream", "repair_water",
+                                      "floodplain", "surface_class", "surface_levels", "riser", "relief_above",
+                                      "select_threshold", "perimeter")):
         return "fluvial"
     if any(word in lower for word in ("flow", "channel", "basin", "divide", "connectivity")):
         return "flow"

@@ -17,20 +17,35 @@ Returned by ``classify_flat_surfaces()``, ``classify_flat_surfaces_with_scope()`
 
 Attributes
 ----------
+banded_labels : Raster
+    Patch labels after band-then-label (1..N, 0 = background); the ``patches`` labels.
 floodplain_mask : Raster
 global_breaks_metres : list[float]
 hand_band : Raster
+ladder_window_index : Raster
+    Index into ``ladder_windows`` of the reach window each pixel was banded in (-1 = global).
+ladder_windows : pandas.DataFrame
+    One row per ladder reach window: source_id, window_centre_metres, n_pixels, k_selected, status (resolved, unresolved, forced, degenerate, supplied), used_global_breaks, breaks_metres, band_centres_metres, required_gap_metres (kappa x E_v), vertical_accuracy_metres, median_gradient, n_trained_breaks, training_source.
 n_floodplain_labels : int
+n_ladder_windows_trained : int
 n_terrace_labels : int
+patches : pandas.DataFrame
+    One row per patch of ``banded_labels``: label, band, n_pixels, area_m2, median_field (HAND, m).
 surface_class : Raster
 table : pandas.DataFrame
     One row per flat label; columns as in the class documentation.
+training_polygons : pandas.DataFrame
+    One row per training polygon (empty without training_surfaces_fname): label, surface_class, n_cells, n_with_field, median, p10, p25, p75, p90 (HAND, m), flagged (spread too wide to be one level).
 
 Authors
 -------
 B. Gailleton
 
 ### Members
+
+#### `banded_labels`
+
+Patch labels after band-then-label (1..N, 0 = background); the ``patches`` labels.
 
 #### `floodplain_mask`
 
@@ -44,13 +59,29 @@ B. Gailleton
 
 (self) -> lsdtt3.Raster
 
+#### `ladder_window_index`
+
+Index into ``ladder_windows`` of the reach window each pixel was banded in (-1 = global).
+
+#### `ladder_windows`
+
+One row per ladder reach window: source_id, window_centre_metres, n_pixels, k_selected, status (resolved, unresolved, forced, degenerate, supplied), used_global_breaks, breaks_metres, band_centres_metres, required_gap_metres (kappa x E_v), vertical_accuracy_metres, median_gradient, n_trained_breaks, training_source.
+
 #### `n_floodplain_labels`
+
+(self) -> int
+
+#### `n_ladder_windows_trained`
 
 (self) -> int
 
 #### `n_terrace_labels`
 
 (self) -> int
+
+#### `patches`
+
+One row per patch of ``banded_labels``: label, band, n_pixels, area_m2, median_field (HAND, m).
 
 #### `surface_class`
 
@@ -59,6 +90,10 @@ B. Gailleton
 #### `table`
 
 One row per flat label; columns as in the class documentation.
+
+#### `training_polygons`
+
+One row per training polygon (empty without training_surfaces_fname): label, surface_class, n_cells, n_with_field, median, p10, p25, p75, p90 (HAND, m), flagged (spread too wide to be one level).
 
 ---
 
@@ -183,7 +218,7 @@ edge (see ``RasterMeta``). Typical round trip::
     out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)
     out.write("doubled.tif")
 
-Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 245 more.
+Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 257 more.
 
 Attributes
 ----------
@@ -1201,18 +1236,21 @@ height_above_channel : Raster
     HAND (m) on the same grid (``FlowInfo.height_above_channel``).
 channel_source_ids : Raster
     Source ID of each in-scope channel pixel, negative elsewhere.
-floodplain_max_height_metres : float, default=1.0
+max_floodplain_hand_metres : float, default=1.0
     A channel-adjacent label is floodplain when its median HAND (m) is at
-    most this.
-terrace_min_height_metres : float, default=0.0
+    most this. Replaces the deprecated ``floodplain_max_height_metres``.
+min_terrace_hand_metres : float, default=0.0
     A label linked to a channel is terrace when its median HAND (m) is at
-    least this (and it is not floodplain).
+    least this (and it is not floodplain). Replaces the deprecated
+    ``terrace_min_height_metres``.
 channel_adjacency_radius_metres : float, default=0.0
     A label is channel-adjacent when a pixel lies within this distance (m)
     of an in-scope channel; 0 means touching (8-neighbour).
-terrace_max_distance_to_channel_metres : float, default=0.0
+valley_corridor_half_width_metres : float, default=0.0
     A terrace must have a pixel within this distance (m) of a channel,
-    excluding upland flats; 0 means no limit.
+    excluding upland flats; 0 means no limit (lsdtt-fluvial-surfaces
+    defaults to 5000). Replaces the deprecated
+    ``terrace_max_distance_to_channel_metres``.
 enable_leak_split : bool, default=True
     Split a label whose HAND distribution is bimodal (a floodplain leaking
     into a terrace across a broken riser) at the antimode.
@@ -1236,18 +1274,32 @@ Authors
 -------
 B. Gailleton
 
+**Deprecated compatibility names:**
+- `floodplain_max_height_metres` -> `max_floodplain_hand_metres`; earliest removal: following minor.
+- `terrace_min_height_metres` -> `min_terrace_hand_metres`; earliest removal: following minor.
+- `terrace_max_distance_to_channel_metres` -> `valley_corridor_half_width_metres`; earliest removal: following minor.
+
 ```python
-def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
+def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, max_floodplain_hand_metres: float = 1.0, min_terrace_hand_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, valley_corridor_half_width_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, donor_flat: object | None = None, channel_flow_distance: object | None = None, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
 ```
 
 ---
 
 ## `classify_flat_surfaces_with_scope`
 
-Classify flat surfaces using a ``ChannelScope``.
+Classify flat surfaces using a ``ChannelScope``: the HAND ladder of
+``lsdtt-fluvial-surfaces``.
 
 HAND, its nearest-channel donors, flow distance, channel mask, and source IDs
-are derived from the scope's retained D8 flow topology.
+are derived from the scope's retained D8 flow topology. Pixels are banded by
+HAND in reach windows along each channel (the reference-field ladder), each
+band is labelled into patches, and patches are classed floodplain or
+terrace. The ladder keywords have the names and meanings of the
+lsdtt-fluvial-surfaces parameters; see that CLI's reference for the method.
+Three defaults differ from the CLI so earlier results are unchanged:
+``min_band_component_pixels`` (CLI 50),
+``ladder_unresolved_window_algorithm_choice`` (CLI ``nearest_resolved``) and
+``valley_corridor_half_width_metres`` (CLI 5000).
 
 Parameters
 ----------
@@ -1257,18 +1309,21 @@ dem : Raster
     Elevation (m) on the scope's flow grid.
 scope : ChannelScope
     In-scope channels (``FlowInfo.channel_scope``).
-floodplain_max_height_metres : float, default=1.0
+max_floodplain_hand_metres : float, default=1.0
     A channel-adjacent label is floodplain when its median HAND (m) is at
-    most this.
-terrace_min_height_metres : float, default=0.0
+    most this. Replaces the deprecated ``floodplain_max_height_metres``.
+min_terrace_hand_metres : float, default=0.0
     A label linked to a channel is terrace when its median HAND (m) is at
-    least this (and it is not floodplain).
+    least this (and it is not floodplain). Replaces the deprecated
+    ``terrace_min_height_metres``.
 channel_adjacency_radius_metres : float, default=0.0
     A label is channel-adjacent when a pixel lies within this distance (m)
     of an in-scope channel; 0 means touching (8-neighbour).
-terrace_max_distance_to_channel_metres : float, default=0.0
+valley_corridor_half_width_metres : float, default=0.0
     A terrace must have a pixel within this distance (m) of a channel,
-    excluding upland flats; 0 means no limit.
+    excluding upland flats; 0 means no limit (lsdtt-fluvial-surfaces
+    defaults to 5000). Replaces the deprecated
+    ``terrace_max_distance_to_channel_metres``.
 enable_leak_split : bool, default=True
     Split a label whose HAND distribution is bimodal (a floodplain leaking
     into a terrace across a broken riser) at the antimode.
@@ -1277,6 +1332,97 @@ enable_hand_banding : bool, default=False
     classifying.
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
+ladder_break_algorithm_choice : {"antimode", "jenks", "gap"}, default="antimode"
+    How each window's HAND population is split into levels.
+ladder_level_count : int, default=0
+    Force this many levels; 0 picks the largest resolvable number.
+ladder_max_level_count : int, default=12
+    Most levels tried.
+vertical_accuracy_metres : float, default=0.0
+    DEM vertical accuracy E_v (m); levels closer than
+    ``ladder_resolvability_kappa`` x E_v are not resolved. 0 disables it.
+vertical_accuracy_algorithm_choice : {"fixed", "slope_dependent"}, default="fixed"
+    ``slope_dependent`` uses ``vertical_accuracy_gentle_metres`` below and
+    ``vertical_accuracy_steep_metres`` above ``vertical_accuracy_break_gradient``
+    (m/m), the window gradient measured by a polyfit of radius
+    ``vertical_accuracy_gradient_window_radius_metres`` (0: 2.5 cells).
+vertical_accuracy_gentle_metres, vertical_accuracy_steep_metres : float, default=0.0
+    E_v (m) on gentle and steep ground, for ``slope_dependent``.
+vertical_accuracy_break_gradient : float, default=0.20
+    Gradient (m/m) between gentle and steep.
+vertical_accuracy_gradient_window_radius_metres : float, default=0.0
+    Polyfit radius (m) of that gradient; 0 means 2.5 cells.
+ladder_resolvability_kappa : float, default=3.0
+    Multiple of E_v two levels must be apart.
+ladder_k_bootstrap, ladder_k_bootstrap_seed : int, default=0, 1
+    Bootstrap resamples of each window's level count (0 = none), and seed.
+ladder_reach_window_metres : float, default=0.0
+    Reach window length (m) along the channel; 0 is max(2000 m, span / 8).
+ladder_min_window_pixels : int, default=1000
+    Smallest window population; smaller windows use the global breaks.
+ladder_hist_bins : int, default=64
+    Histogram bins of the antimode finder.
+ladder_min_field_metres : float, default=0.05
+    HAND (m) below which pixels are not banded.
+ladder_max_valley_fraction : float, default=0.6
+    Antimode: a dip is a break when its smoothed density is below this
+    fraction of the smaller flanking peak.
+ladder_gap_break_position : {"lower", "midpoint", "upper"}, default="midpoint"
+    Where in an empty gap the gap finder puts the break.
+ladder_gap_rank : {"lowest", "width"}, default="lowest"
+    Which gaps the gap finder uses first.
+ladder_gap_trough_max_ratio : float, default=0.6
+    Gap finder: a local minimum is a candidate break when its floor is below
+    this fraction of the smaller flanking peak; 0 means empty spans only.
+ladder_gap_empty_fraction : float, default=0.02
+    Gap finder: a bin below this fraction of the tallest bin is empty.
+ladder_gap_min_width_metres : float, default=0.5
+    Gap finder: narrowest gap (m).
+ladder_gap_hist_bins : int, default=80
+    Gap finder histogram bins.
+ladder_max_separation_ratio : float, default=0.0
+    Reject a partition whose worst break sits where the density is above
+    this fraction of the populations either side; 0 disables it.
+ladder_min_break_metres, ladder_max_break_metres : float, default=0.0
+    Breaks outside this HAND range (m) are dropped; 0 disables each bound.
+min_band_component_pixels : int, default=1
+    Smallest patch kept within a band (lsdtt-fluvial-surfaces default 50).
+ladder_unresolved_window_algorithm_choice : {"single_band", "nearest_resolved"}, default="single_band"
+    A window with no resolvable levels gets one band, or borrows the
+    nearest resolved window's breaks (the CLI default).
+clip_corridor_per_pixel : bool, default=True
+    Apply the valley corridor per pixel as well as per patch, so a patch
+    touching the corridor edge does not carry its class across an
+    interfluve.
+max_band_spread_metres : float, default=50.0
+    A patch whose robust HAND spread still exceeds this (m) cannot take the
+    terrace class; 0 disables it.
+segmentation_algorithm_choice : {"within_bands", "whole_mask"}, default="within_bands"
+    Label within each band, or segment the whole admitted mask (with
+    ``riser_mask`` as barriers).
+riser_mask : Raster or None, default=None
+    ``whole_mask`` only: riser cells (> 0.5) that patches may not cross,
+    for example ``find_risers(...).centreline``.
+break_flats_with_channels : bool, default=False
+    Remove channel cells from the flats before classifying.
+supplied_levels : dict of int to list of float, default={}
+    Level heights (HAND, m) per channel source id, banded at the midpoints
+    between levels (lsdtt-fluvial-surfaces ``supplied_levels``; for
+    example ``ValleyCrossSections.levels()`` grouped by source).
+training_surfaces_fname : str, default=""
+    Vector file of floodplain / terraceN training polygons that set the
+    HAND breaks per window (lsdtt-fluvial-surfaces training).
+training_surfaces_layer_name : str, default=""
+    Its layer; empty reads the first.
+training_surfaces_class_field_name : str, default="class"
+    Its class field (``floodplain``, ``terrace`` or ``terraceN``).
+training_spread_factor, training_max_relative_spread : float, default=3.0, 0.25
+    A training polygon whose HAND p75 - p25 exceeds both
+    ``training_spread_factor`` x the global required gap and
+    ``training_max_relative_spread`` x its median is flagged as not one
+    level.
+min_training_cells_per_class : int, default=20
+    Fewest core cells a training population needs in a window.
 
 Returns
 -------
@@ -1286,8 +1432,13 @@ Authors
 -------
 B. Gailleton
 
+**Deprecated compatibility names:**
+- `floodplain_max_height_metres` -> `max_floodplain_hand_metres`; earliest removal: following minor.
+- `terrace_min_height_metres` -> `min_terrace_hand_metres`; earliest removal: following minor.
+- `terrace_max_distance_to_channel_metres` -> `valley_corridor_half_width_metres`; earliest removal: following minor.
+
 ```python
-def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = 1.0, terrace_min_height_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, terrace_max_distance_to_channel_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceClassification
+def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, max_floodplain_hand_metres: float = 1.0, min_terrace_hand_metres: float = 0.0, channel_adjacency_radius_metres: float = 0.0, valley_corridor_half_width_metres: float = 0.0, enable_leak_split: bool = True, enable_hand_banding: bool = False, n_threads: int = 0, ladder_break_algorithm_choice: str = 'antimode', ladder_level_count: int = 0, ladder_max_level_count: int = 12, vertical_accuracy_metres: float = 0.0, vertical_accuracy_algorithm_choice: str = 'fixed', vertical_accuracy_gentle_metres: float = 0.0, vertical_accuracy_steep_metres: float = 0.0, vertical_accuracy_break_gradient: float = 0.2, vertical_accuracy_gradient_window_radius_metres: float = 0.0, ladder_resolvability_kappa: float = 3.0, ladder_k_bootstrap: int = 0, ladder_k_bootstrap_seed: int = 1, ladder_reach_window_metres: float = 0.0, ladder_min_window_pixels: int = 1000, ladder_hist_bins: int = 64, ladder_min_field_metres: float = 0.05, ladder_max_valley_fraction: float = 0.6, ladder_gap_break_position: str = 'midpoint', ladder_gap_rank: str = 'lowest', ladder_gap_trough_max_ratio: float = 0.6, ladder_gap_empty_fraction: float = 0.02, ladder_gap_min_width_metres: float = 0.5, ladder_gap_hist_bins: int = 80, ladder_max_separation_ratio: float = 0.0, ladder_min_break_metres: float = 0.0, ladder_max_break_metres: float = 0.0, min_band_component_pixels: int = 1, ladder_unresolved_window_algorithm_choice: str = 'single_band', clip_corridor_per_pixel: bool = True, max_band_spread_metres: float = 50.0, segmentation_algorithm_choice: str = 'within_bands', riser_mask: object | None = None, break_flats_with_channels: bool = False, supplied_levels: collections.abc.Mapping[int, collections.abc.Sequence[float]] = '{}', training_surfaces_fname: str = '', training_surfaces_layer_name: str = '', training_surfaces_class_field_name: str = 'class', training_spread_factor: float = 3.0, training_max_relative_spread: float = 0.25, min_training_cells_per_class: int = 20) -> lsdtt3.FlatSurfaceClassification
 ```
 
 ---
@@ -1861,7 +2012,7 @@ Detect and label flat surfaces from texture and local relief.
 Each enabled roughness metric is computed in a moving window and thresholded
 at a percentile of its own distribution (low roughness = flat); the metric
 masks are combined, local relief must also be below
-``relief_threshold_metres``, and connected flats are labelled.
+``max_relief_metres``, and connected flats are labelled.
 
 Parameters
 ----------
@@ -1908,10 +2059,14 @@ directional_close_n_angles : int, default=18
     Number of line orientations tried (18 = 10-degree steps).
 min_component_pixels : int, default=100
     Smallest labelled flat (pixels).
-relief_window_side_pixels : int, default=5
-    Side (pixels, odd, >= 3) of the square local-relief window.
-relief_threshold_metres : float, default=1.0
+relief_window_radius_metres : float, default=0.0
+    Radius (m) of the square local-relief window, converted to the nearest
+    whole number of cells (at least one); a radius of r cells is a
+    (2r + 1)-cell side. 0 means 2 cells (a 5 x 5 window). Replaces the
+    deprecated ``relief_window_side_pixels`` (a full side in cells).
+max_relief_metres : float, default=1.0
     Pixels with local relief (max - min, m) at or above this are not flat.
+    Replaces the deprecated ``relief_threshold_metres``.
 remove_risers : bool, default=False
     Fit a plane to each flat and remove pixels with high residual relief
     (risers between terrace levels), then relabel.
@@ -1929,10 +2084,12 @@ B. Gailleton
 S. M. Mudd
 
 **Deprecated compatibility names:**
-- `relief_window_pixels` -> `relief_window_side_pixels`; earliest removal: following minor.
+- `relief_window_pixels` -> `relief_window_radius_metres`; earliest removal: following minor.
+- `relief_window_side_pixels` -> `relief_window_radius_metres`; earliest removal: following minor.
+- `relief_threshold_metres` -> `max_relief_metres`; earliest removal: following minor.
 
 ```python
-def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_radius_metres: float = 100.0, madk2_threshold_percentile: float = 25.0, use_residual_iqr: bool = True, iqr_method: str = 'fftw_highpass', iqr_fit_lambda_metres: float = 500.0, iqr_detrend_radius_metres: float = 500.0, iqr_window_radius_metres: float = 50.0, iqr_window_shape: str = 'circular', iqr_threshold_percentile: float = 25.0, use_nvd: bool = False, nvd_polyfit_lambda: float = 10.0, nvd_window_radius_metres: float = 100.0, nvd_window_shape: str = 'circular', nvd_threshold_percentile: float = 25.0, require_all_metrics_pass: bool = True, directional_close_line_length_pixels: int = 0, directional_close_n_angles: int = 18, min_component_pixels: int = 100, relief_window_side_pixels: int = 5, relief_threshold_metres: float = 1.0, remove_risers: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceResult
+def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = True, madk2_window_radius_metres: float = 100.0, madk2_threshold_percentile: float = 25.0, use_residual_iqr: bool = True, iqr_method: str = 'fftw_highpass', iqr_fit_lambda_metres: float = 500.0, iqr_detrend_radius_metres: float = 500.0, iqr_window_radius_metres: float = 50.0, iqr_window_shape: str = 'circular', iqr_threshold_percentile: float = 25.0, use_nvd: bool = False, nvd_polyfit_lambda: float = 10.0, nvd_window_radius_metres: float = 100.0, nvd_window_shape: str = 'circular', nvd_threshold_percentile: float = 25.0, require_all_metrics_pass: bool = True, directional_close_line_length_pixels: int = 0, directional_close_n_angles: int = 18, min_component_pixels: int = 100, relief_window_radius_metres: float = 0.0, max_relief_metres: float = 1.0, remove_risers: bool = False, n_threads: int = 0) -> lsdtt3.FlatSurfaceResult
 ```
 
 ---

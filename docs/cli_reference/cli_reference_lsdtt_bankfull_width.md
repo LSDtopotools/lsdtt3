@@ -77,9 +77,9 @@ The reach template workflow (above) helps you identify reach breaks and select r
 | `<write_fname>_channel_profile.csv` | `write_channel_profile_csv` | `cross_id`, `distance_from_source_m`, `drainage_area_m2`, `thalweg_elevation_m`, `slope_m_per_m`, `slope_valid` |
 | `<write_fname>_cross_section_sample_points.<ext>` | `write_cross_section_sample_points` | Sampled elevation profile per section: `cross_section_id`, `offset_metres`, `x`, `y`, `elevation`, `valid` |
 | `<write_fname>_reaches_template.csv` | `generate_reach_template` | Reach bounds with coordinates (`start_easting_m`, `start_northing_m`, etc.) and empty `manning_n`/`target_discharge_m3s` columns |
-| `<write_fname>_reaches_template_lines.<ext>` | `generate_reach_template` | Reach boundaries as line geometries (FlatGeobuf or GeoPackage). Attributes: `reach_index`, `start_distance_m`, `end_distance_m`, `manning_n`, `target_discharge_m3s` (latter two are 0 for user to fill in CSV) |
+| `<write_fname>_reaches_template_lines.<ext>` | `generate_reach_template` | Reach boundaries as line geometries (FlatGeobuf or GeoPackage, set by `write_vector_format`). Attributes: `reach_index`, `start_distance_m`, `end_distance_m`, `manning_n`, `target_discharge_m3s` (latter two are 0 for user to fill in CSV) |
 | `<write_fname>_reference_xs_candidates.csv` | `generate_reach_template` | Reference cross-section candidates per reach: `cross_id`, `distance_from_source_m`, `easting_m`, `northing_m`, `drainage_area_m2`, `slope_m_per_m` |
-| `<write_fname>_reference_xs.<ext>` | `generate_reach_template` | Reference cross-section candidates as point geometries (FlatGeobuf or GeoPackage). Attributes: `reach_index`, `cross_id`, `distance_m`, `drainage_area_m2`, `slope_m_per_m`, `slope_valid` |
+| `<write_fname>_reference_xs.<ext>` | `generate_reach_template` | Reference cross-section candidates as point geometries (FlatGeobuf or GeoPackage, set by `write_vector_format`). Attributes: `reach_index`, `cross_id`, `distance_m`, `drainage_area_m2`, `slope_m_per_m`, `slope_valid` |
 | `<write_fname>_manning_bank_points.<ext>` | `write_manning_bank_points` | One point per bank per valid section |
 | `<write_fname>_manning_widths.csv` | `write_manning_widths_csv` | Per section: solved depth, water-surface elevation, bank positions, width, flow area, wetted perimeter, hydraulic radius, discharge at the solution, `valid`, `quality_flag` |
 
@@ -93,6 +93,7 @@ These older names are still read and print a deprecation warning:
 |---|---|
 | `cross_section_sample_points_output_format` | `write_vector_format` (an old value is still applied to that layer for the run) |
 | `manning_bank_points_output_format` | `write_vector_format` (an old value is still applied to that layer for the run) |
+| `reach_template_vector_format` | `write_vector_format` (an old value is still applied to the reach-template line and point layers for the run) |
 | `minimum_bearing_window_pixels` | `min_bearing_window_pixels` |
 
 ---
@@ -268,7 +269,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `reach_template_min_break_spacing_metres` | `float` | `20.0` | `param` | `generate_reach_template` | Minimum distance between break locations (merged if closer). | Prevents over-segmentation from noise. For gullies: 10-30 m. For large rivers: 200-500 m. |
 | `reach_template_min_reach_length_metres` | `float` | `30.0` | `param` | `generate_reach_template` | Minimum reach length (shorter reaches merged). | Ensures reaches are geomorphically meaningful. For gullies: 20-50 m. For large rivers: 300-1000 m. |
 | `reach_template_n_reference_xs` | `int` | `10` | `param` | `generate_reach_template` | Number of reference cross-section candidates per reach. | Evenly spaced by position (not distance) along each reach. Use these to pick a reference XS for discharge calculation. |
-| `reach_template_vector_format` | `string` | `fgb` | `param` | `generate_reach_template` | Vector format for reach template visualization outputs. | Options: fgb (FlatGeobuf) or gpkg (GeoPackage). CSV is always written for editing. This governs only the optional .fgb/.gpkg visualization layers. |
 
 ### Interior nodata
 

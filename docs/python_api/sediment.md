@@ -237,6 +237,8 @@ Attributes
 distance_metres : list[float]
 elevation : list[float]
 length_metres : float
+moving_average_fits : dict
+    Window (pixels) to (fitted, detrended) elevations per node from ``fit_profile``'s moving averages; nodata before the snout.
 pixels : numpy.ndarray
     N x 2 int64 array of (row, col).
 positions : numpy.ndarray
@@ -249,7 +251,8 @@ Methods
 -------
 detrend(smoothing_window_pixels: int) -> None
 fill_elevation(dem: Raster) -> None
-fit_profile(use_polynomial: bool = False, use_constant: bool = False) -> None
+fit_profile(use_polynomial: bool = False, use_constant: bool = False, detrend_moving_average_window_pixels: Sequence[int] = []) -> None
+    Fit the ridgeline profile beyond the snout (slope and r^2 from the linear fit).
 is_four_connected(periodic_ns: bool = False, periodic_ew: bool = False) -> bool
 reverse() -> None
 sample(raster: Raster) -> list[float]
@@ -300,10 +303,22 @@ def fill_elevation(self, dem: lsdtt3.Raster) -> None
 
 #### `fit_profile`
 
-fit_profile(self, use_polynomial: bool = False, use_constant: bool = False) -> None
+fit_profile(self, use_polynomial: bool = False, use_constant: bool = False, detrend_moving_average_window_pixels: collections.abc.Sequence[int] = []) -> None
+
+Fit the ridgeline profile beyond the snout (slope and r^2 from the linear fit).
+
+Parameters
+----------
+use_polynomial, use_constant : bool, default=False
+    Detrend against a quadratic, or a constant, instead of the line.
+detrend_moving_average_window_pixels : list of int, default=[]
+    Also detrend against moving averages of these widths (positive odd
+    pixel counts, each once), as lsdtt-ridgeline-analysis
+    ``ridgeline_detrend_moving_average_window_pixels``; read them from
+    ``moving_average_fits``.
 
 ```python
-def fit_profile(self, use_polynomial: bool = False, use_constant: bool = False) -> None
+def fit_profile(self, use_polynomial: bool = False, use_constant: bool = False, detrend_moving_average_window_pixels: collections.abc.Sequence[int] = []) -> None
 ```
 
 #### `is_four_connected`
@@ -317,6 +332,10 @@ def is_four_connected(self, periodic_ns: bool = False, periodic_ew: bool = False
 #### `length_metres`
 
 (self) -> float
+
+#### `moving_average_fits`
+
+Window (pixels) to (fitted, detrended) elevations per node from ``fit_profile``'s moving averages; nodata before the snout.
 
 #### `pixels`
 

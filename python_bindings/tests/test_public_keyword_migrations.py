@@ -134,11 +134,23 @@ def test_flat_relief_window_legacy_keyword_warns_and_conflicts():
     common = dict(
         use_madk2=True, madk2_window_radius_metres=1.0,
         use_residual_iqr=False, use_nvd=False, min_component_pixels=1,
-        relief_threshold_metres=20.0, n_threads=1,
+        max_relief_metres=20.0, n_threads=1,
     )
     canonical = lsdtt3.find_flat_surfaces(
-        dem, relief_window_side_pixels=5, **common
+        dem, relief_window_radius_metres=2.0, **common
     )
+    with pytest.warns(DeprecationWarning, match="relief_window_side_pixels"):
+        side = lsdtt3.find_flat_surfaces(
+            dem, relief_window_side_pixels=5, **common
+        )
+    np.testing.assert_array_equal(
+        canonical.relief.to_numpy(), side.relief.to_numpy()
+    )
+    with pytest.warns(DeprecationWarning, match="relief_threshold_metres"):
+        lsdtt3.find_flat_surfaces(
+            dem, relief_window_radius_metres=2.0, relief_threshold_metres=20.0,
+            **{k: v for k, v in common.items() if k != "max_relief_metres"}
+        )
     with pytest.warns(DeprecationWarning, match="relief_window_side_pixels"):
         legacy = lsdtt3.find_flat_surfaces(
             dem, relief_window_pixels=5, **common
@@ -201,7 +213,7 @@ def test_classification_floodplain_mask_composes_with_centreline():
         lsdtt3.Raster.from_numpy(labels, valid, meta),
         lsdtt3.Raster.from_numpy(hand, valid, meta),
         lsdtt3.Raster.from_numpy(sources, valid, meta),
-        floodplain_max_height_metres=1.0, n_threads=1,
+        max_floodplain_hand_metres=1.0, n_threads=1,
     )
     channel = np.column_stack((np.arange(1, 8), np.full(7, 4)))
     result = lsdtt3.extract_valley_centrelines(

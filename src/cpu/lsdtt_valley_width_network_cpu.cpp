@@ -929,4 +929,48 @@ std::vector<network_section_exclusion> apply_network_section_rules(
     return reason;
 }
 
+std::vector<valley_rer_centreline> make_rer_centrelines(
+    const valley_centreline_result&               centrelines,
+    const std::vector<std::vector<std::int64_t>>& channel_flats,
+    const std::vector<float>&                     drainage_area,
+    const lsdtt_raster_meta&                      meta)
+{
+    const std::vector<std::int64_t> no_channel;
+    std::vector<valley_rer_centreline> rc;
+    for (std::size_t s = 0; s < centrelines.channels.size(); ++s)
+    {
+        const valley_channel_centreline& ch = centrelines.channels[s];
+        if (ch.centreline_flats.empty()) continue;
+        const std::vector<std::int64_t>& chan =
+            s < channel_flats.size() ? channel_flats[s] : no_channel;
+        valley_rer_centreline c;
+        c.id = ch.source_id;
+        c.flats = ch.centreline_flats;
+        c.baseline = ch.centreline_baseline_elevation;
+        if (c.baseline.size() != c.flats.size())
+            c.baseline.assign(c.flats.size(), std::numeric_limits<float>::quiet_NaN());
+        std::vector<lsdtt_xy> pts;
+        std::vector<double> along;
+        double len = 0.0;
+        for (std::size_t k = 0; k < c.flats.size(); ++k)
+        {
+            const lsdtt_xy p = cell_center_from_row_col(
+                meta, static_cast<int>(c.flats[k] / meta.n_cols),
+                static_cast<int>(c.flats[k] % meta.n_cols));
+            if (k > 0) len += std::hypot(p.x - pts.back().x, p.y - pts.back().y);
+            pts.push_back(p);
+            along.push_back(len);
+        }
+        const std::vector<std::int64_t> m =
+            match_points_to_channel(pts, along, len, chan, meta);
+        c.priority.assign(c.flats.size(), 0.0);
+        for (std::size_t k = 0; k < m.size(); ++k)
+            if (m[k] >= 0)
+                c.priority[k] = drainage_area[static_cast<std::size_t>(
+                    chan[static_cast<std::size_t>(m[k])])];
+        rc.push_back(std::move(c));
+    }
+    return rc;
+}
+
 } // namespace lsdtt

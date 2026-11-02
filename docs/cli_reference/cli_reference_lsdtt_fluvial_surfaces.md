@@ -38,6 +38,52 @@ a result you intend to publish; the texture metrics in
 
 ---
 
+## Methods
+
+The tool works in stages, and a method preset,
+`fluvial_surface_algorithm_choice`, sets all of them at once. Any stage named
+in the parameter file overrides its preset.
+
+| Stage | Parameter | `ladder` (default) | `clubb2017` | `cross_section_levels` |
+|---|---|---|---|---|
+| Which ground is considered | `admission_algorithm_choice` | `flat_mask` | `floodplain_thresholds` | `flat_mask` |
+| How the floodplain bounds are chosen | `floodplain_threshold_algorithm_choice` | `fixed` | `qq_gaussian` | `fixed` |
+| Which pixels count as channel | `channel_definition_algorithm_choice` | `contributing_pixels` | `stream_order` | `contributing_pixels` |
+| How the ground is split into levels | `level_algorithm_choice` | `ladder` | `fixed_thresholds` | `supplied_levels` |
+| What terrace height is measured from | `terrace_reference_field_algorithm_choice` | `same` | `swath_baseline` | `same` |
+| How ground becomes patches | `segmentation_algorithm_choice` | `within_bands` | `whole_mask` | `within_bands` |
+
+- **`ladder`** finds the level breaks in the data (see [The idea](#the-idea)).
+- **`clubb2017`** is the method of Clubb et al. (2017): a floodplain bound on
+  HAND and one on gradient, both read from quantile-quantile plots
+  (`floodplain_qq_*`). The floodplain must touch the channel, and one
+  terrace class lies above the floodplain bound
+  (`min_terrace_height_above_floodplain_metres`,
+  `max_terrace_height_metres`). Channel pixels are Strahler order
+  `min_channel_stream_order` (3) and up. `floodplain_second_pass_algorithm_choice:
+  qq_upper_departure` re-reads the HAND bound from the first-pass
+  floodplain, separating the valley floor from wide flats above it.
+- **`cross_section_levels`** bands with levels read from
+  `supplied_levels_fname`, normally the `_cross_section_levels.csv` from
+  `lsdtt-valley-centreline`.
+
+The other options:
+- **Several presets:** list them comma-separated with no spaces
+  (`ladder,clubb2017`) to run each under `<write_fname>_<preset>` and write
+  the comparison outputs.
+- **Training polygons:** `training_surfaces_fname` takes polygons classed
+  `floodplain` or `terraceN`, which set the HAND breaks in each reach window.
+- **Mapped polygons:** `mapped_surfaces_fname` takes mapped polygons to score
+  each method against. Keep the scoring polygons separate from the training
+  polygons.
+
+`_method_record.csv` lists every stage, where its value came from (preset,
+parameter file or measured), and each data-chosen bound. The
+[design notes](../design_and_algorithms/fluvial_surfaces_and_valleys.md)
+describe each method and what it is sensitive to.
+
+---
+
 ## The idea
 
 ### Band first, then label
@@ -74,6 +120,14 @@ parameter, `ladder_level_count`:
 a reach sit at a roughly constant height above the channel, so HAND makes a
 terrace flight a step function. This is the field for fluvial terraces and
 floodplains.
+
+**`relative_elevation`** — height above the baseline of the valley
+centreline that owns each cell, as `lsdtt-valley-centreline` computes its
+relative elevation raster. The centreline network is built here from the
+valley-floor mask in `relative_elevation_floor_mask_fname`. Unlike HAND, it
+measures a tread that drains sideways into another reach against the valley
+it sits in. It can leave more reach windows unresolved, and training
+polygons need `hand`.
 
 **`fitted_surface`** — the signed residual to a surface fitted to the flat
 ground. A fan is *not* a step function in HAND: it climbs continuously from toe
@@ -163,6 +217,12 @@ the final run computing HAND if you want the windowed ladder.
 | `_ladder_windows.csv` | The resolvability report. Read it first. |
 | `_reference_field.tif` | The field that was actually banded, whichever it was. |
 | `_hand.tif` | The HAND raster, for feeding back as `hand_fname`. |
+| `_floodplain_thresholds.csv`, `_floodplain_<hand\|gradient>_qq.csv` | Each data-chosen floodplain bound and the QQ (or CDF) table it was read from (`write_floodplain_threshold_csv`). |
+| `_floodplain_first_pass_mask.tif`, `_floodplain_hand_qq_second_pass.csv` | The first-pass floodplain and the second-pass QQ table (`floodplain_second_pass_algorithm_choice: qq_upper_departure`). |
+| `_terrace_field.tif`, `_floodplain_gradient.tif` | The terrace reference field and the gradient the floodplain bound was applied to (`fixed_thresholds`). |
+| `_patch_level_clusters.csv` | Whether the patches' median HAND values cluster into levels more than random heights would, with a p-value. |
+| `_training_polygons.csv`, `_training_fit.csv`, `_training_levels.tif` | Per-polygon statistics, the per-window breaks fitted from them, and the levels they define (`training_surfaces_fname`). |
+| `_surface_class_polygons`, `_surface_patch_polygons`, `_floodplain_polygons` | The classes, the patches and the floodplain as polygons (`write_*_polygons`, in `write_vector_format`). |
 
 The band is **not** packed into the label. The label is a plain running counter
 and the band travels in `_band_index.tif` and in the patch table, so nothing has
@@ -221,172 +281,26 @@ exactly what it was given.
 
 ---
 
-## Parameters
+## Reading the parameter tables
 
-### File I/O and run control
+The generated tables below list every parameter with its type, default and
+guidance, grouped as the CLI's `-h` output groups them. They are regenerated
+from the CLI on every change and checked by CTest, so they are the
+authority. Some cautions they do not stress:
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | `./` | Directory from which input files are read. |
-| `read_fname` | string | | Input DEM, with or without extension. |
-| `write_path` | string | same as `read_path` | Output directory. |
-| `write_fname` | string | stem of `read_fname` | Output prefix for all products. |
-| `n_threads` | int | `0` | Threads. `0` = all available. |
-| `write_output_format` | string | `cog` | Raster format: `cog`, `gtiff`, `same_as_input`. |
-| `write_vector_format` | string | `flatgeobuf` | Vector format: `flatgeobuf`, `gpkg`, `csv`. |
-| `flat_mask_fname` | string | | Flat mask from `lsdtt-flat-surface-finder`, in `read_path`. Empty falls back to the built-in admission below. |
-| `hand_fname` | string | | Precomputed height-above-channel raster, in `read_path`. Skips the HAND computation. |
-| `fitted_surface_mask_fname` | string | | Optional raster restricting where the surface is fitted, in `read_path`. |
-| `drainage_injection_points_fname` | string | | Vector of points injecting extra drainage area, in `read_path`. |
-| `source_points_fname` | string | | Channel source points (CSV or vector), in `read_path`. |
-| `source_points_input_format` | string | `auto_detect` | `auto_detect`, `csv`, `ogr_vector_layer`. |
-| `source_points_layer_name` | string | | Layer name within a source point vector file. |
-| `source_points_latitude_field_name` | string | `latitude` | Latitude column in a source point CSV. |
-| `source_points_longitude_field_name` | string | `longitude` | Longitude column in a source point CSV. |
-| `outlet_points_fname` | string | | Channel outlet points (CSV or vector), in `read_path`. |
-| `outlet_points_input_format` | string | `auto_detect` | As the source format. |
-| `outlet_points_layer_name` | string | | Layer name within an outlet point vector file. |
-| `outlet_points_latitude_field_name` | string | `latitude` | Latitude column in an outlet point CSV. |
-| `outlet_points_longitude_field_name` | string | `longitude` | Longitude column in an outlet point CSV. |
-
-### Admission
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `admission_algorithm_choice` | string | `flat_mask` | `flat_mask` reads `flat_mask_fname`; `relief` and `gradient` are a coarse built-in admission for a quick look. With `flat_mask_fname` empty, `flat_mask` falls back to `relief`. |
-| `relief_window_radius_metres` | float | `0` | **Radius** (m) of the square window for the built-in relief admission, converted to whole cells. `0` = 5 cells, an 11×11 window. The same name and meaning as in `lsdtt-flat-surface-finder` and `lsdtt-mountain-front`. |
-| `max_relief_metres` | float | `1.0` | Local relief below which a cell is admitted as flat [m]. |
-| `max_admission_gradient` | float | `0.05` | Gradient below which a cell is admitted as flat [m/m]. |
-| `min_band_component_pixels` | int | `50` | Minimum patch size in pixels, **applied per band**. |
-
-### Reference field
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `reference_field_algorithm_choice` | string | `hand` | Field to band: `hand` or `fitted_surface`. |
-| `fitted_surface_algorithm_choice` | string | `cone` | Surface to fit: `cone`, `plane_ransac`, `poly2`. |
-| `fitted_surface_ransac_tolerance_metres` | float | `5.0` | RANSAC inlier tolerance for `plane_ransac` [m]. Set it to the roughness of the surface being fitted, **not** to the depth of the features being isolated. |
-| `fitted_surface_ransac_iterations` | int | `1000` | Number of RANSAC hypotheses. |
-| `fitted_surface_seed` | int | `1` | RANSAC random seed, for reproducibility. |
-| `fitted_surface_apex_x` | float | `0.0` | Fan apex easting in the DEM's projected CRS [m]; `cone` only. |
-| `fitted_surface_apex_y` | float | `0.0` | Fan apex northing [m]; `cone` only. Leave both at 0 to take the centroid of the highest 0.1 % of fit-mask cells. |
-
-### Ladder: level count and break finding
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `ladder_level_count` | int | `0` | Number of levels: `0` = auto, `2` = the valley cut, `n` = an n-level ladder. |
-| `ladder_max_level_count` | int | `12` | Ceiling on the level count considered under auto selection. |
-| `ladder_break_algorithm_choice` | string | `antimode` | Break finder: `gap`, `antimode` or `jenks`. |
-| `ladder_gap_break_position` | string | `midpoint` | Where in the empty span the break goes: `lower`, `midpoint`, `upper`. |
-| `ladder_gap_rank` | string | `lowest` | Order the gap finder offers candidates in: `lowest` or `width`. |
-| `ladder_gap_trough_max_ratio` | float | `0.6` | Offer a local minimum as a candidate when its floor is below this fraction of the smaller flanking peak. `0` = empty spans only. |
-| `ladder_gap_empty_fraction` | float | `0.02` | A histogram bin below this fraction of the tallest bin counts as empty. |
-| `ladder_gap_min_width_metres` | float | `0.5` | Narrowest empty span the gap finder will call a separation [m]. |
-| `ladder_gap_hist_bins` | int | `80` | Linear histogram bins the gap finder searches for empty runs. |
-| `ladder_max_separation_ratio` | float | `0.0` | Reject a partition whose worst break sits where the density is above this fraction of the populations either side. `0` disables. |
-| `ladder_min_break_metres` | float | `0.0` | Reject any break below this height [m]. `0` = unbounded. |
-| `ladder_max_break_metres` | float | `0.0` | Reject any break above this height [m]. `0` = unbounded. |
-| `ladder_hist_bins` | int | `64` | Histogram bin count for the antimode break finder. |
-| `ladder_max_valley_fraction` | float | `0.6` | Antimode acceptance: dip depth relative to the smaller flanking peak. |
-| `ladder_min_field_metres` | float | `0.05` | Log floor for the antimode histogram [m]. |
-| `ladder_k_bootstrap` | int | `0` | Resample each window and re-run the break search this many times, to report how stable the chosen level count is. `0` = off. |
-| `ladder_k_bootstrap_seed` | int | `1` | Seed for the k bootstrap. |
-
-### Ladder: resolvability and windowing
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `vertical_accuracy_metres` | float | `0.0` | Vertical accuracy of the DEM, `E_v` [m]. **`0` disables the floor** and every window then reports `resolved` with no instrument guarantee. |
-| `ladder_resolvability_kappa` | float | `3.0` | Multiplier on `E_v`. Required band-centre gap = `kappa * E_v`. |
-| `vertical_accuracy_algorithm_choice` | string | `fixed` | How `E_v` is arrived at: `fixed` or `slope_dependent`. |
-| `vertical_accuracy_gentle_metres` | float | `0.0` | `E_v` [m] for windows at or below the break gradient. `slope_dependent` only. |
-| `vertical_accuracy_steep_metres` | float | `0.0` | `E_v` [m] for windows above the break gradient. `slope_dependent` only. |
-| `vertical_accuracy_break_gradient` | float | `0.2` | Gradient [m/m] separating gentle from steep `E_v`; 0.2 is the 20 percent grade the TanDEM-X specification splits on. |
-| `vertical_accuracy_gradient_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the window gradient is measured over. `0` = five cells. |
-| `ladder_reach_window_metres` | float | `0.0` | Along-channel window length for reach-relative breaks [m]. `0` = auto, negative = one global ladder. Ignored for `fitted_surface`. |
-| `ladder_min_window_pixels` | int | `1000` | Minimum admitted pixels for a window to find its own breaks. |
-
-### Classification
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `max_floodplain_hand_metres` | float | `1.0` | Upper HAND bound of the floodplain class [m]. An optional hard cap; the ladder already decides where a level ends. The same name as in `lsdtt-hillslope-channel-coupling`. |
-| `min_terrace_hand_metres` | float | `0.0` | Lower HAND bound of the terrace class [m]. |
-| `channel_adjacency_radius_metres` | float | `0.0` | Distance within which a surface counts as channel-adjacent [m]. |
-| `valley_corridor_half_width_metres` | float | `5000.0` | Valley-corridor half-width [m]. `0` or negative = no limit. |
-| `clip_corridor_per_pixel` | bool | `true` | Apply the corridor limit per pixel as well as per surface. |
-| `max_band_spread_metres` | float | `50.0` | QC tripwire on the field spread within one surface [m]. `0` disables. Under band-then-label it should almost never fire. |
-
-### Flow routing and channel scope
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `fill_before_routing` | bool | `true` | Choose whether to fill pits before building flow routing. `false` routes on the unfilled DEM, so paths may terminate at sinks. |
-| `fill_min_slope_for_routing` | float | `0.0001` | Minimum imposed slope when filling [m/m]. |
-| `boundary_conditions` | string | `oooo` | Edge boundary codes, north east south west. |
-| `threshold_contributing_pixels` | int | `1000` | Contributing-pixel threshold defining a channel. |
-| `break_flats_with_channels` | bool | `false` | Remove in-scope channel pixels from the admitted set before banding. |
-| `connect_surfaces_to_channels` | bool | `false` | Record which in-scope channel each surface is linked to. |
-| `auto_detect_outlet_points` | bool | `true` | Infer source and outlet roles from a single combined point file. |
-| `snap_sources_to_channel_threshold` | bool | `true` | Snap supplied source points onto the threshold channel network. |
-| `source_snap_max_search_radius_pixels` | int | `20` | Search radius when snapping a source point [pixels]. |
-| `outlet_snap_max_distance_metres` | float | `500.0` | Maximum distance an outlet may be moved onto a traced channel [m]. |
-
-### Valley floor
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `force_valley_hand_metres` | float | `0.0` | Define the valley floor directly as height above channel below this [m], instead of using the ladder's break. `0` = use the ladder. |
-| `force_valley_max_distance_metres` | float | `0.0` | Euclidean distance to an in-scope channel bounding the forced valley floor [m]. `0` = no limit. |
-
-### Valley-mask cleaning
-
-All of these affect `<stem>_valley_mask.tif` only. The band index, the labels and
-the patch table keep their holes and their speckle.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `fill_valley_mask_holes` | bool | `true` | Fill enclosed holes before writing the mask. A hole in the valley floor is a hole in the domain the centreline is traced through. |
-| `clean_valley_mask` | bool | `true` | Erode, drop patches that do not reach the channel, then regrow. **The regrow fills enclosed holes, so cleaning can make the mask bigger.** |
-| `valley_mask_closing_width_fraction` | float | `0.0` | Set the closing radius as a fraction of the *measured* valley width. `0` = use the radius in metres instead. About `0.2` is a reasonable start. |
-| `valley_width_section_spacing_metres` | float | `200.0` | Spacing of the cross sections used to measure the valley width [m]. |
-| `valley_width_max_half_length_metres` | float | `3000.0` | How far each width section looks either side before giving up [m]. |
-| `valley_mask_closing_radius_metres` | float | `0.0` | Seal narrow gaps with a morphological closing [m]. `0` = off. |
-| `valley_dilation_pixels` | int | `0` | Erosion / regrow radius when cleaning [pixels]. `0` = no erosion. |
-| `valley_max_detour_ratio` | float | `0.0` | Maximum along-ground path to the channel, as a multiple of the straight-line distance. |
-| `restrict_valley_to_channel_connected` | bool | `true` | Drop valley patches with no pixel on or beside the channel. |
-| `restrict_valley_to_line_of_sight` | bool | `false` | Require a straight line from each valley pixel to the channel to stay inside the mask. **A strong filter** — on a 10 m DEM it can remove a large share of band 0 on its own. Use it where two valleys meet around a col and connectivity alone merges them. |
-
-### Output switches
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `write_reference_field_raster` | bool | `true` | Write the field the ladder actually ran on. |
-| `write_hand_raster` | bool | `false` | Write the HAND raster, for feeding back as `hand_fname`. |
-| `write_band_index_raster` | bool | `true` | Write the per-pixel band index. |
-| `write_banded_labels_raster` | bool | `true` | Write the per-pixel patch label. |
-| `write_valley_mask_raster` | bool | `true` | Write band 0 as a valley mask. |
-| `write_surface_class_raster` | bool | `true` | Write the floodplain / terrace class raster. `hand` field only. |
-| `write_floodplain_mask_raster` | bool | `false` | Write the floodplain class on its own. |
-| `write_surface_patches_csv` | bool | `true` | One row per labelled patch. The join key for everything downstream. |
-| `write_surface_class_csv` | bool | `true` | One row per classification record. |
-| `write_ladder_windows_csv` | bool | `true` | The per-window resolvability report. **Read it first.** |
-| `write_ladder_break_metric_csv` | bool | `false` | Write the break *decision*, not just the break. |
-| `write_ladder_histogram_csv` | bool | `false` | Write the reference-field density each window's breaks were chosen from. |
-| `ladder_hist_plot_bins` | int | `80` | Bin count for that per-window density. |
-| `write_ladder_window_id_raster` | bool | `false` | Which along-channel window each pixel's breaks came from. |
-| `write_reference_field_profile_csv` | bool | `false` | Per-pixel table of the reference field along the channel. |
-| `write_nearest_source_id_raster` | bool | `false` | Which channel each pixel's height is measured to. |
-| `write_patch_terrain_aspect` | bool | `false` | Add terrain aspect and its resultant length to the patch table. |
-| `patch_aspect_window_radius_metres` | float | `0` | Window radius [m] of the polynomial fit the aspect is measured over. `0` = five cells. |
-| `write_channel_scope_raster` | bool | `false` | The in-scope channel network as a raster. |
-| `write_channel_scope_nodes_csv` | bool | `false` | The in-scope channel nodes as a table. |
-| `write_point_snap_csv` | bool | `false` | Where each supplied point snapped to. |
-| `write_channel_network` | bool | `false` | Write the channel network as vector layers. |
-| `write_channel_network_lines` | bool | `true` | Compact default representation of the channel network used to fit the surfaces; per-node points remain opt-in. |
-| `write_channel_network_points` | bool | `false` | Channel nodes as points. |
-| `write_junction_network_points` | bool | `false` | Junctions as points. |
+- `vertical_accuracy_metres` defaults to 0, which disables the resolvability
+  floor: every window then reports `resolved` with no instrument guarantee.
+- `min_band_component_pixels` is per band, not over the whole mask.
+- The valley-mask cleaning options (`fill_valley_mask_holes`,
+  `clean_valley_mask`, `valley_mask_closing_*`, `valley_dilation_pixels`,
+  `restrict_valley_to_*`) change `_valley_mask.tif` only. The band index,
+  the labels and the patch table keep their holes and speckle.
+- `restrict_valley_to_line_of_sight` is a strong filter: on a 10 m DEM it
+  can remove a large share of band 0 on its own. Use it where two valleys
+  meet around a col and connectivity alone merges them.
+- `max_floodplain_hand_metres` is a hard cap under `ladder`, where the
+  ladder decides where a level ends; under `fixed_thresholds` it is the
+  floodplain bound itself.
 
 ---
 
@@ -473,7 +387,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `training_surfaces_fname` | `string` | - | `param` | - | Polygons (gpkg, fgb, shp) of floodplain and terrace drawn by hand, used to choose the HAND thresholds. | Class values: floodplain or fp; terrace, terraceN, tN or 'terrace N' (case and spaces ignored). Terrace numbers are ignored: the levels come from the HAND inside the polygons. Each polygon is summarised by its median and its 10-90 percentile core; per reach window (the ladder's windows) the floodplain / terrace bound and the breaks between terrace levels are chosen by best separation (Youden's J) of those cores. clubb2017: the bound replaces the data-chosen HAND bound per window (and the second pass is skipped). ladder: the trained breaks are the lowest breaks and the ladder's own search runs above the top one. A window with too little training takes the fit over all training cells. Writes &lt;stem&gt;_training_levels.tif, &lt;stem&gt;_training_fit.csv and &lt;stem&gt;_training_polygons.csv. Needs reference_field_choice hand. |
+| `training_surfaces_fname` | `string` | - | `param` | - | Polygons (gpkg, fgb, shp) of floodplain and terrace drawn by hand, used to choose the HAND thresholds. | Class values: floodplain or fp; terrace, terraceN, tN or 'terrace N' (case and spaces ignored). Terrace numbers are ignored: the levels come from the HAND inside the polygons. Each polygon is summarised by its median and its 25-75 percentile core; per reach window (the ladder's windows) the floodplain / terrace bound and the breaks between terrace levels are chosen by best separation (Youden's J) of those cores. clubb2017: the bound replaces the data-chosen HAND bound per window (and the second pass is skipped). ladder: the trained breaks are the lowest breaks and the ladder's own search runs above the top one. A window with too little training takes the fit over all training cells. Writes &lt;stem&gt;_training_levels.tif, &lt;stem&gt;_training_fit.csv and &lt;stem&gt;_training_polygons.csv. Needs reference_field_algorithm_choice hand. |
 | `training_surfaces_layer_name` | `string` | - | `param` | - | Layer of training_surfaces_fname; empty = the first layer. | - |
 | `training_surfaces_class_field_name` | `string` | `class` | `param` | - | Field of training_surfaces_fname holding each polygon's class. | - |
 | `training_spread_factor` | `float` | `3.0` | `param` | - | Absolute limit on a training polygon's HAND interquartile range, in required gaps (kappa x E_v). | A polygon is summarised by its 25-75th percentile core, so a gully crossed while drawing does not move it. It is 'not a single level' (a sloping surface, or one drawn across a riser) when its interquartile range exceeds both this limit and training_max_relative_spread x its median HAND. Such a polygon still counts as terrace for the floodplain / terrace bound but takes no part in the terrace level breaks. Flagged in &lt;stem&gt;_training_polygons.csv. |

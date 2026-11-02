@@ -85,6 +85,12 @@ def manifest_inputs(_wc):
             f"{reports}/ensemble_report.txt",
         ])
         return out
+    if MODULE == "valley_widths":
+        return valley_widths_manifest()
+    if MODULE == "chi_region":
+        return chi_region_manifest()
+    if MODULE == "lithology_channels":
+        return lithology_channels_manifest()
     if MODULE == "check_basins":
         return [
             f"{ROOT}/{RUN_ID}/fetch/fetch_bbox.param",

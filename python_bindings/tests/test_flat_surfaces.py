@@ -6,7 +6,7 @@ import lsdtt3
 
 
 class FlatSurfaceTest(unittest.TestCase):
-    def test_relief_window_pixels_is_full_side_length(self):
+    def test_relief_window_radius_sets_the_window_side(self):
         metadata = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
         values = np.zeros((9, 9), dtype=np.float32)
         values[4, 4] = 10.0
@@ -16,13 +16,13 @@ class FlatSurfaceTest(unittest.TestCase):
         common = dict(
             use_madk2=True, madk2_window_radius_metres=1.0,
             use_residual_iqr=False, use_nvd=False, min_component_pixels=1,
-            relief_threshold_metres=20.0, n_threads=1,
+            max_relief_metres=20.0, n_threads=1,
         )
         relief3 = lsdtt3.find_flat_surfaces(
-            dem, relief_window_side_pixels=3, **common
+            dem, relief_window_radius_metres=1.0, **common
         ).relief.to_numpy()
         relief5 = lsdtt3.find_flat_surfaces(
-            dem, relief_window_side_pixels=5, **common
+            dem, relief_window_radius_metres=2.0, **common
         ).relief.to_numpy()
         self.assertEqual(relief3[4, 2], np.float32(0.0))
         self.assertEqual(relief5[4, 2], np.float32(10.0))
@@ -42,8 +42,8 @@ class FlatSurfaceTest(unittest.TestCase):
             use_residual_iqr=False,
             use_nvd=False,
             min_component_pixels=1,
-            relief_window_side_pixels=5,
-            relief_threshold_metres=1.0,
+            relief_window_radius_metres=2.0,
+            max_relief_metres=1.0,
             n_threads=1,
         )
 

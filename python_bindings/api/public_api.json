@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 220,
+  "export_count": 236,
   "exports": [
     {
       "name": "BasinCollection",
@@ -1141,8 +1141,14 @@
     {
       "name": "FlatSurfaceClassification",
       "kind": "class",
-      "doc": "Floodplain and terrace classification of labelled flats.\n\nMade by :func:`classify_flat_surfaces` or\n:func:`classify_flat_surfaces_with_scope`. ``table`` has one row per label:\n``label``, ``surface_class`` (``\"floodplain\"``, ``\"terrace\"`` or\n``\"none\"``), ``source_id``, ``n_pixels``, ``median_height``,\n``mean_height`` (HAND, m), ``min_distance_to_channel_metres``,\n``adjacent_to_channel``.\n\nReturned by ``classify_flat_surfaces()``, ``classify_flat_surfaces_with_scope()``; not constructible directly.\n\nAttributes\n----------\nfloodplain_mask : Raster\nglobal_breaks_metres : list[float]\nhand_band : Raster\nn_floodplain_labels : int\nn_terrace_labels : int\nsurface_class : Raster\ntable : pandas.DataFrame\n    One row per flat label; columns as in the class documentation.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Floodplain and terrace classification of labelled flats.\n\nMade by :func:`classify_flat_surfaces` or\n:func:`classify_flat_surfaces_with_scope`. ``table`` has one row per label:\n``label``, ``surface_class`` (``\"floodplain\"``, ``\"terrace\"`` or\n``\"none\"``), ``source_id``, ``n_pixels``, ``median_height``,\n``mean_height`` (HAND, m), ``min_distance_to_channel_metres``,\n``adjacent_to_channel``.\n\nReturned by ``classify_flat_surfaces()``, ``classify_flat_surfaces_with_scope()``; not constructible directly.\n\nAttributes\n----------\nbanded_labels : Raster\n    Patch labels after band-then-label (1..N, 0 = background); the ``patches`` labels.\nfloodplain_mask : Raster\nglobal_breaks_metres : list[float]\nhand_band : Raster\nladder_window_index : Raster\n    Index into ``ladder_windows`` of the reach window each pixel was banded in (-1 = global).\nladder_windows : pandas.DataFrame\n    One row per ladder reach window: source_id, window_centre_metres, n_pixels, k_selected, status (resolved, unresolved, forced, degenerate, supplied), used_global_breaks, breaks_metres, band_centres_metres, required_gap_metres (kappa x E_v), vertical_accuracy_metres, median_gradient, n_trained_breaks, training_source.\nn_floodplain_labels : int\nn_ladder_windows_trained : int\nn_terrace_labels : int\npatches : pandas.DataFrame\n    One row per patch of ``banded_labels``: label, band, n_pixels, area_m2, median_field (HAND, m).\nsurface_class : Raster\ntable : pandas.DataFrame\n    One row per flat label; columns as in the class documentation.\ntraining_polygons : pandas.DataFrame\n    One row per training polygon (empty without training_surfaces_fname): label, surface_class, n_cells, n_with_field, median, p10, p25, p75, p90 (HAND, m), flagged (spread too wide to be one level).\n\nAuthors\n-------\nB. Gailleton",
       "members": [
+        {
+          "name": "banded_labels",
+          "kind": "property",
+          "doc": "Patch labels after band-then-label (1..N, 0 = background); the ``patches`` labels.",
+          "signatures": []
+        },
         {
           "name": "floodplain_mask",
           "kind": "property",
@@ -1162,7 +1168,25 @@
           "signatures": []
         },
         {
+          "name": "ladder_window_index",
+          "kind": "property",
+          "doc": "Index into ``ladder_windows`` of the reach window each pixel was banded in (-1 = global).",
+          "signatures": []
+        },
+        {
+          "name": "ladder_windows",
+          "kind": "property",
+          "doc": "One row per ladder reach window: source_id, window_centre_metres, n_pixels, k_selected, status (resolved, unresolved, forced, degenerate, supplied), used_global_breaks, breaks_metres, band_centres_metres, required_gap_metres (kappa x E_v), vertical_accuracy_metres, median_gradient, n_trained_breaks, training_source.",
+          "signatures": []
+        },
+        {
           "name": "n_floodplain_labels",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_ladder_windows_trained",
           "kind": "property",
           "doc": "(self) -> int",
           "signatures": []
@@ -1171,6 +1195,12 @@
           "name": "n_terrace_labels",
           "kind": "property",
           "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "patches",
+          "kind": "property",
+          "doc": "One row per patch of ``banded_labels``: label, band, n_pixels, area_m2, median_field (HAND, m).",
           "signatures": []
         },
         {
@@ -1183,6 +1213,12 @@
           "name": "table",
           "kind": "property",
           "doc": "One row per flat label; columns as in the class documentation.",
+          "signatures": []
+        },
+        {
+          "name": "training_polygons",
+          "kind": "property",
+          "doc": "One row per training polygon (empty without training_surfaces_fname): label, surface_class, n_cells, n_with_field, median, p10, p25, p75, p90 (HAND, m), flagged (spread too wide to be one level).",
           "signatures": []
         }
       ],
@@ -1261,6 +1297,74 @@
         },
         {
           "name": "relief_flat_mask",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "FloodplainThresholdResult",
+      "kind": "class",
+      "doc": "Floodplain and terrace masks from :func:`classify_floodplain_terraces_by_thresholds`.\n\n``band_index`` is 0 on floodplain, 1 on terrace and -1 elsewhere, the\nencoding of the ladder's band index. The counts report what the patch\nfilters removed.\n\nReturned by ``classify_floodplain_terraces_by_thresholds()``; not constructible directly.\n\nAttributes\n----------\nband_index : Raster\nfloodplain_mask : Raster\nn_floodplain_candidates : int\nn_floodplain_components_kept : int\nn_floodplain_dropped_no_channel : int\nn_floodplain_dropped_small : int\nn_floodplain_pixels : int\nn_terrace_components : int\nn_terrace_pixels : int\nterrace_mask : Raster\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "band_index",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "floodplain_mask",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "n_floodplain_candidates",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_floodplain_components_kept",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_floodplain_dropped_no_channel",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_floodplain_dropped_small",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_floodplain_pixels",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_terrace_components",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_terrace_pixels",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "terrace_mask",
           "kind": "property",
           "doc": "(self) -> lsdtt3.Raster",
           "signatures": []
@@ -1428,7 +1532,7 @@
     {
       "name": "FlowInfo",
       "kind": "class",
-      "doc": "D8 drainage topology (steepest-descent receivers) of a conditioned DEM.\n\nEach valid pixel drains to the one of its eight neighbours with the steepest\ndownhill gradient, or is an outlet. ``FlowInfo`` stores this routing (and\neach pixel's upslope pixels), not the elevations, so later calls that need\nelevations take the DEM again. Fill or breach depressions first (for example\n``fill_pits``); a pixel with no downhill neighbour and no allowed exit raises\nan error unless ``allow_pits_as_outlets=True``. Pixels are addressed by\n``(row, col)`` (row 0 is the northern edge) or by flat index\n``row * n_cols + col``.\n\nTypical workflow::\n\n    F = lsdtt3.FlowInfo(lsdtt3.fill_pits(dem))\n    scope = F.channel_scope(threshold_contributing_pixels=1000)\n    N = F.channel_network(scope)\n    B = F.basins(outlets, min_upslope_pixels=0)\n\nConstruct it as\n\n    FlowInfo(dem: Raster, boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, forced_outlets: object | None = None, allow_pits_as_outlets: bool = False, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m) in a projected metre CRS.\nboundary_conditions : str, default='oooo'\n    Four characters for the north, east, south and west edges: ``o`` open\n    (an edge pixel may drain out of the grid when it has no lower in-grid\n    neighbour), ``n`` no-flux (flow cannot leave), ``p`` periodic (wraps to\n    the opposite edge; must be given for both opposite edges), ``b``\n    base level (every pixel on the edge is an outlet). See\n    ``make_boundary_conditions``.\ninterior_nodata_is_outlet : bool, default=True\n    If True, a pixel next to a nodata pixel may drain into it (become an\n    outlet) when it has no lower valid neighbour, as at a coastline or the\n    edge of a clipped DEM. If False such pixels must drain over valid pixels.\nforced_outlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` pixels that are made outlets regardless of\n    their neighbours (moulins, swallow holes, playas). Prepare the DEM with\n    ``fill_pits_with_sinks`` using the same pixels. Out-of-grid or nodata\n    pixels raise ``ValueError``; duplicates are ignored.\nallow_pits_as_outlets : bool, default=False\n    If True, a pixel that has no downhill neighbour and no allowed exit\n    becomes an outlet instead of raising an error (useful in landscape\n    evolution runs where transient pits form).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\nboundary_conditions : str\n    The four-character NESW boundary-condition string used.\ndirection : numpy.ndarray\n    Uint8 array (n_rows, n_cols) of internal D8 direction codes; see flow_direction() for a raster.\ndonor_count : numpy.ndarray\n    Uint8 array (n_rows, n_cols): number of neighbours draining directly into each pixel.\nmetadata : RasterMeta\n    Grid metadata (RasterMeta) of the DEM the topology was built from.\nn_outlets : int\n    Number of outlet pixels (pixels with no receiver).\nn_valid_cells : int\n    Number of valid (routed) pixels.\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 int64 array of (row, col), in flat-index order.\nreceiver : numpy.ndarray\n    Int64 array (n_rows, n_cols) of each pixel's receiver flat index; -2 at outlets, -1 at nodata.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols).\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate per-pixel weights downstream; default weights are cell areas.\nbasins(outlets: object | None = None, min_upslope_pixels: int = 0) -> BasinCollection\n    Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.\nchannel_mask(threshold_contributing_pixels: int) -> Raster\n    Return a 0/1 raster where contributing pixels meet the threshold.\nchannel_network(scope: ChannelScope) -> ChannelNetwork\n    Build a compact junction graph from a ChannelScope.\nchannel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> ChannelScope\n    Resolve threshold or supplied source paths into a ChannelScope.\nchi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate zero-based chi across complete upstream raster domains.\nchi_from_outlets_inherited(outlets: object, seed_chi: Raster, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate chi from supplied outlets using seed-raster base values.\ncontributing_pixels() -> Raster\n    Return the number of pixels draining through each pixel, including itself.\ndistance_to_channel(threshold_contributing_pixels: int) -> Raster\n    Return the D8 flow-path length from each pixel to the nearest downstream channel.\ndistance_to_farthest_ridge() -> Raster\n    Return the longest D8 flow-path length from any upslope pixel to this pixel.\ndownstream_sum(values: Raster, sinks: Raster) -> Raster\n    Sum a raster along each pixel's D8 path down to the first sink pixel.\ndrainage_area() -> Raster\n    Return the D8 drainage area of every pixel, including the pixel itself.\nflat_index(row: int, col: int) -> int\n    Return the flat index ``row * n_cols + col`` of a pixel.\nflow_direction() -> Raster\n    Return the D8 receiver direction of every pixel as a Raster of codes.\nflow_distance_to_outlet() -> Raster\n    Return the D8 flow-path length from each pixel to its outlet.\nflow_lines_geodataframe() -> object\n    Return all D8 receiver edges as a GeoPandas line layer.\nheight_above_channel(dem: Raster, channels: Raster) -> Raster\n    Compute HAND (height above nearest drainage) from an explicit channel raster.\nheight_above_channel_with_donor(dem: Raster, channels: Raster) -> dict\n    Compute HAND and the channel pixel (\"donor\") each pixel drains to.\nheight_to_farthest_ridge(dem: Raster) -> Raster\n    Return the elevation difference to the farthest upslope ridge pixel.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel is an outlet (has no downstream receiver).\nis_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool\n    Return True if the candidate pixel drains through the target pixel.\nreceiver_of(row: int, col: int) -> object\n    Return the pixel this pixel drains to.\nrow_col(flat_index: int) -> tuple\n    Return the ``(row, col)`` of a flat index.\nscope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope\n    Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.\nsnap_points(x: object | None = None, y: object | None = None, *, longitude: object | None = None, latitude: object | None = None, points: object | None = None, crs: str | None = None, method: str = 'downstream', threshold_contributing_pixels: int | None = None, threshold_drainage_area_m2: float | None = None, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, max_search_radius_metres: float | None = None) -> object\n    Snap points (for example basin outlets or sample sites) onto the flow network.\nsources(threshold_contributing_pixels: int) -> object\n    Return channel sources (channel heads) as an N by 2 (row, col) array.\nupslope_mean(values: Raster, include_self: bool = True) -> Raster\n    Average a raster over the upslope area of every pixel.\nupslope_pixels(row: int, col: int) -> object\n    Return every pixel that drains through this pixel, including itself.\nupslope_sum(values: Raster, include_self: bool = True) -> Raster\n    Sum a raster over the upslope area of every pixel.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "D8 drainage topology (steepest-descent receivers) of a conditioned DEM.\n\nEach valid pixel drains to the one of its eight neighbours with the steepest\ndownhill gradient, or is an outlet. ``FlowInfo`` stores this routing (and\neach pixel's upslope pixels), not the elevations, so later calls that need\nelevations take the DEM again. Fill or breach depressions first (for example\n``fill_pits``); a pixel with no downhill neighbour and no allowed exit raises\nan error unless ``allow_pits_as_outlets=True``. Pixels are addressed by\n``(row, col)`` (row 0 is the northern edge) or by flat index\n``row * n_cols + col``.\n\nTypical workflow::\n\n    F = lsdtt3.FlowInfo(lsdtt3.fill_pits(dem))\n    scope = F.channel_scope(threshold_contributing_pixels=1000)\n    N = F.channel_network(scope)\n    B = F.basins(outlets, min_upslope_pixels=0)\n\nConstruct it as\n\n    FlowInfo(dem: Raster, boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, forced_outlets: object | None = None, allow_pits_as_outlets: bool = False, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m) in a projected metre CRS.\nboundary_conditions : str, default='oooo'\n    Four characters for the north, east, south and west edges: ``o`` open\n    (an edge pixel may drain out of the grid when it has no lower in-grid\n    neighbour), ``n`` no-flux (flow cannot leave), ``p`` periodic (wraps to\n    the opposite edge; must be given for both opposite edges), ``b``\n    base level (every pixel on the edge is an outlet). See\n    ``make_boundary_conditions``.\ninterior_nodata_is_outlet : bool, default=True\n    If True, a pixel next to a nodata pixel may drain into it (become an\n    outlet) when it has no lower valid neighbour, as at a coastline or the\n    edge of a clipped DEM. If False such pixels must drain over valid pixels.\nforced_outlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` pixels that are made outlets regardless of\n    their neighbours (moulins, swallow holes, playas). Prepare the DEM with\n    ``fill_pits_with_sinks`` using the same pixels. Out-of-grid or nodata\n    pixels raise ``ValueError``; duplicates are ignored.\nallow_pits_as_outlets : bool, default=False\n    If True, a pixel that has no downhill neighbour and no allowed exit\n    becomes an outlet instead of raising an error (useful in landscape\n    evolution runs where transient pits form).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\nboundary_conditions : str\n    The four-character NESW boundary-condition string used.\ndirection : numpy.ndarray\n    Uint8 array (n_rows, n_cols) of internal D8 direction codes; see flow_direction() for a raster.\ndonor_count : numpy.ndarray\n    Uint8 array (n_rows, n_cols): number of neighbours draining directly into each pixel.\nmetadata : RasterMeta\n    Grid metadata (RasterMeta) of the DEM the topology was built from.\nn_outlets : int\n    Number of outlet pixels (pixels with no receiver).\nn_valid_cells : int\n    Number of valid (routed) pixels.\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 int64 array of (row, col), in flat-index order.\nreceiver : numpy.ndarray\n    Int64 array (n_rows, n_cols) of each pixel's receiver flat index; -2 at outlets, -1 at nodata.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols).\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate per-pixel weights downstream; default weights are cell areas.\nbasins(outlets: object | None = None, min_upslope_pixels: int = 0) -> BasinCollection\n    Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.\nchannel_mask(threshold_contributing_pixels: int) -> Raster\n    Return a 0/1 raster where contributing pixels meet the threshold.\nchannel_network(scope: ChannelScope) -> ChannelNetwork\n    Build a compact junction graph from a ChannelScope.\nchannel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> ChannelScope\n    Resolve threshold or supplied source paths into a ChannelScope.\nchi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate zero-based chi across complete upstream raster domains.\nchi_from_outlets_inherited(outlets: object, seed_chi: Raster, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate chi from supplied outlets using seed-raster base values.\ncontributing_pixels() -> Raster\n    Return the number of pixels draining through each pixel, including itself.\ndistance_to_channel(threshold_contributing_pixels: int) -> Raster\n    Return the D8 flow-path length from each pixel to the nearest downstream channel.\ndistance_to_farthest_ridge() -> Raster\n    Return the longest D8 flow-path length from any upslope pixel to this pixel.\ndownstream_sum(values: Raster, sinks: Raster) -> Raster\n    Sum a raster along each pixel's D8 path down to the first sink pixel.\ndrainage_area() -> Raster\n    Return the D8 drainage area of every pixel, including the pixel itself.\nflat_index(row: int, col: int) -> int\n    Return the flat index ``row * n_cols + col`` of a pixel.\nflow_direction() -> Raster\n    Return the D8 receiver direction of every pixel as a Raster of codes.\nflow_distance_to_outlet() -> Raster\n    Return the D8 flow-path length from each pixel to its outlet.\nflow_lines_geodataframe() -> object\n    Return all D8 receiver edges as a GeoPandas line layer.\nheight_above_channel(dem: Raster, channels: Raster) -> Raster\n    Compute HAND (height above nearest drainage) from an explicit channel raster.\nheight_above_channel_with_donor(dem: Raster, channels: Raster) -> dict\n    Compute HAND and the channel pixel (\"donor\") each pixel drains to.\nheight_to_farthest_ridge(dem: Raster) -> Raster\n    Return the elevation difference to the farthest upslope ridge pixel.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel is an outlet (has no downstream receiver).\nis_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool\n    Return True if the candidate pixel drains through the target pixel.\nreceiver_of(row: int, col: int) -> object\n    Return the pixel this pixel drains to.\nrow_col(flat_index: int) -> tuple\n    Return the ``(row, col)`` of a flat index.\nscope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope\n    Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.\nsnap_points(x: object | None = None, y: object | None = None, *, longitude: object | None = None, latitude: object | None = None, points: object | None = None, crs: str | None = None, method: str = 'downstream', threshold_contributing_pixels: int | None = None, threshold_drainage_area_m2: float | None = None, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, max_search_radius_metres: float | None = None) -> object\n    Snap points (for example basin outlets or sample sites) onto the flow network.\nsources(threshold_contributing_pixels: int) -> object\n    Return channel sources (channel heads) as an N by 2 (row, col) array.\nupslope_mean(values: Raster, include_self: bool = True) -> Raster\n    Average a raster over the upslope area of every pixel.\nupslope_pixels(row: int, col: int) -> object\n    Return every pixel that drains through this pixel, including itself.\nupslope_sum(values: Raster, include_self: bool = True) -> Raster\n    Sum a raster over the upslope area of every pixel.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [
         {
           "name": "__init__",
@@ -1505,17 +1609,19 @@
         {
           "name": "channel_scope",
           "kind": "method",
-          "doc": "channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False) -> lsdtt3.ChannelScope\n\nResolve threshold or supplied source paths into a ChannelScope.\n\nWith no ``sources``, every pixel whose contributing-pixel count reaches the\nthreshold is a channel. With ``sources``, only the channels traced\ndownstream from those points are used, optionally stopped at ``outlets``.\n\nParameters\n----------\nthreshold_contributing_pixels : int\n    Channel threshold: a pixel is a channel when the number of pixels\n    draining through it (including itself) is >= this value; positive.\n    Threshold area in m^2 is this times ``metadata.pixel_area`` (for\n    example 1000 pixels on a 30 m grid is 0.9 km^2).\nsources : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` channel-head pixels (valid pixels). Each\n    is traced downstream to its D8 outlet. None selects all channels.\noutlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` points where traced channels stop; needs\n    ``sources``. Each outlet is matched to the nearest pixel on a traced\n    path, and that path is cut there.\nsnap_sources : bool, default=True\n    Move each source to the nearest pixel that meets the threshold\n    (expanding-square search); sources that cannot be snapped are dropped.\n    If False sources are used as given.\nsource_snap_max_radius_pixels : int, default=25\n    Largest search radius, in pixels, for source snapping.\noutlet_snap_max_distance_metres : float, default=0.0\n    Largest distance (m) from an outlet point to the traced path it cuts;\n    outlets farther away are ignored. 0 or negative means unlimited.\nauto_detect_roles : bool, default=False\n    Pass all points as ``sources`` and let roles be inferred: a point that\n    lies downstream of another supplied point becomes an outlet that cuts\n    that channel. Requires ``outlets=None``; sources are always snapped.\n\nReturns\n-------\nChannelScope\n    Selected channel pixels, resolved sources and outlets.",
+          "doc": "channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> lsdtt3.ChannelScope\n\nResolve threshold or supplied source paths into a ChannelScope.\n\nWith no ``sources``, every pixel whose contributing-pixel count reaches the\nthreshold is a channel. With ``sources``, only the channels traced\ndownstream from those points are used, optionally stopped at ``outlets``.\n\nParameters\n----------\nthreshold_contributing_pixels : int\n    Channel threshold: a pixel is a channel when the number of pixels\n    draining through it (including itself) is >= this value; positive.\n    Threshold area in m^2 is this times ``metadata.pixel_area`` (for\n    example 1000 pixels on a 30 m grid is 0.9 km^2).\nsources : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` channel-head pixels (valid pixels). Each\n    is traced downstream to its D8 outlet. None selects all channels.\noutlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` points where traced channels stop; needs\n    ``sources``. Each outlet is matched to the nearest pixel on a traced\n    path, and that path is cut there.\nsnap_sources : bool, default=True\n    Move each source to the nearest pixel that meets the threshold\n    (expanding-square search); sources that cannot be snapped are dropped.\n    If False sources are used as given.\nsource_snap_max_radius_pixels : int, default=25\n    Largest search radius, in pixels, for source snapping.\noutlet_snap_max_distance_metres : float, default=0.0\n    Largest distance (m) from an outlet point to the traced path it cuts;\n    outlets farther away are ignored. 0 or negative means unlimited.\nauto_detect_roles : bool, default=False\n    Pass all points as ``sources`` and let roles be inferred: a point that\n    lies downstream of another supplied point becomes an outlet that cuts\n    that channel. Requires ``outlets=None``; sources are always snapped.\nchannel_definition_algorithm_choice : {\"contributing_pixels\", \"stream_order\"}, default=\"contributing_pixels\"\n    What counts as a channel pixel, as in lsdtt-fluvial-surfaces:\n    ``contributing_pixels`` keeps every traced pixel; ``stream_order``\n    keeps only traced pixels of Strahler order >= ``min_channel_stream_order``\n    (Clubb et al. 2017 use 3). The threshold still decides which\n    first-order channels exist, and so the order every pixel reaches.\nmin_channel_stream_order : int, default=3\n    Lowest Strahler order kept under ``stream_order``.\n\nReturns\n-------\nChannelScope\n    Selected channel pixels, resolved sources and outlets.",
           "signatures": [
             {
-              "definition": "def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = \\0, outlets: object | None = \\1, snap_sources: bool = \\2, source_snap_max_radius_pixels: int = \\3, outlet_snap_max_distance_metres: float = \\4, auto_detect_roles: bool = \\5) -> lsdtt3.ChannelScope",
+              "definition": "def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = \\0, outlets: object | None = \\1, snap_sources: bool = \\2, source_snap_max_radius_pixels: int = \\3, outlet_snap_max_distance_metres: float = \\4, auto_detect_roles: bool = \\5, channel_definition_algorithm_choice: str = \\6, min_channel_stream_order: int = \\7) -> lsdtt3.ChannelScope",
               "defaults": [
                 null,
                 null,
                 true,
                 25,
                 0.0,
-                false
+                false,
+                "contributing_pixels",
+                3
               ]
             }
           ]
@@ -3204,9 +3310,53 @@
       "signatures": []
     },
     {
+      "name": "PerimeterSources",
+      "kind": "class",
+      "doc": "Valley-floor channel sources on the DEM perimeter, from :func:`find_perimeter_sources`.\n\n``pixels`` are the source cells as ``(row, col)``, ready for\n``FlowInfo.channel_scope(..., sources=result.pixels)``. ``sources``,\n``crossings`` (every gentle run of the perimeter trace, with its verdict),\n``outlets`` (the outer outlet runs, by summed drainage area) and\n``profile`` (the perimeter trace) are the tables lsdtt-channel-extraction\nwrites; ``report`` holds the resolved automatic parameters and counts.\n\nReturned by ``find_perimeter_sources()``; not constructible directly.\n\nAttributes\n----------\ncrossings : pandas.DataFrame\n    One row per gentle perimeter run: run_id, n_visits, width_metres, min_elevation, relief_metres, low_spot, verdict (too_narrow, not_low_spot, outlet_crossing, failed_inward, drains_elsewhere, too_close_to_outlet, source), and the inward-test results.\noutlets : pandas.DataFrame\n    One row per outer outlet run, in rank order: outlet_run_id, rank, summed_drainage_area_m2, n_cells, width_metres, on_crossing, run_id, selected, row, col, x, y, elevation (of its largest-area cell).\npixels : numpy.ndarray\n    N x 2 int64 array of source (row, col).\nprofile : pandas.DataFrame\n    The perimeter trace, one row per visit: distance_metres, row, col, x, y, elevation, gradient (m/m), gentle, run_id, outlet_cell, outlet_run_id, repeated_visit.\nreport : dict\n    Resolved automatic parameters and counts, as a dict.\nsources : pandas.DataFrame\n    One row per source: source_id, run_id, outlet_run_id, row, col, x, y (cell centre), elevation, crossing_width_metres, crossing_relief_metres, path_length_to_outlet_metres, drop_to_outlet_metres.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "crossings",
+          "kind": "property",
+          "doc": "One row per gentle perimeter run: run_id, n_visits, width_metres, min_elevation, relief_metres, low_spot, verdict (too_narrow, not_low_spot, outlet_crossing, failed_inward, drains_elsewhere, too_close_to_outlet, source), and the inward-test results.",
+          "signatures": []
+        },
+        {
+          "name": "outlets",
+          "kind": "property",
+          "doc": "One row per outer outlet run, in rank order: outlet_run_id, rank, summed_drainage_area_m2, n_cells, width_metres, on_crossing, run_id, selected, row, col, x, y, elevation (of its largest-area cell).",
+          "signatures": []
+        },
+        {
+          "name": "pixels",
+          "kind": "property",
+          "doc": "N x 2 int64 array of source (row, col).",
+          "signatures": []
+        },
+        {
+          "name": "profile",
+          "kind": "property",
+          "doc": "The perimeter trace, one row per visit: distance_metres, row, col, x, y, elevation, gradient (m/m), gentle, run_id, outlet_cell, outlet_run_id, repeated_visit.",
+          "signatures": []
+        },
+        {
+          "name": "report",
+          "kind": "property",
+          "doc": "Resolved automatic parameters and counts, as a dict.",
+          "signatures": []
+        },
+        {
+          "name": "sources",
+          "kind": "property",
+          "doc": "One row per source: source_id, run_id, outlet_run_id, row, col, x, y (cell centre), elevation, crossing_width_metres, crossing_relief_metres, path_length_to_outlet_metres, drop_to_outlet_metres.",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
       "name": "Raster",
       "kind": "class",
-      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 245 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 257 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "from_numpy",
@@ -3608,7 +3758,7 @@
     {
       "name": "Ridgeline",
       "kind": "class",
-      "doc": "An ordered, four-connected raster ridgeline with profile-analysis methods.\n\nConstruct it as\n\n    Ridgeline(grid: Raster, pixels: object)\n\nParameters\n----------\ngrid : Raster\n    Raster whose grid the pixels refer to.\npixels : array-like of int\n    N x 2 ``(row, col)`` pixels along the ridge, in order (at least two).\n\nAttributes\n----------\ndistance_metres : list[float]\nelevation : list[float]\nlength_metres : float\npixels : numpy.ndarray\n    N x 2 int64 array of (row, col).\npositions : numpy.ndarray\n    N x 2 float64 array of (x, y) map coordinates.\nr_squared_fit : float\nslope_fit : float\nsnout_index : int\n\nMethods\n-------\ndetrend(smoothing_window_pixels: int) -> None\nfill_elevation(dem: Raster) -> None\nfit_profile(use_polynomial: bool = False, use_constant: bool = False) -> None\nis_four_connected(periodic_ns: bool = False, periodic_ew: bool = False) -> bool\nreverse() -> None\nsample(raster: Raster) -> list[float]\nsegment_snout(smoothing_window_fraction: float) -> None\nsteepness(basin_drainage_area: float, concavity: float) -> float\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "An ordered, four-connected raster ridgeline with profile-analysis methods.\n\nConstruct it as\n\n    Ridgeline(grid: Raster, pixels: object)\n\nParameters\n----------\ngrid : Raster\n    Raster whose grid the pixels refer to.\npixels : array-like of int\n    N x 2 ``(row, col)`` pixels along the ridge, in order (at least two).\n\nAttributes\n----------\ndistance_metres : list[float]\nelevation : list[float]\nlength_metres : float\nmoving_average_fits : dict\n    Window (pixels) to (fitted, detrended) elevations per node from ``fit_profile``'s moving averages; nodata before the snout.\npixels : numpy.ndarray\n    N x 2 int64 array of (row, col).\npositions : numpy.ndarray\n    N x 2 float64 array of (x, y) map coordinates.\nr_squared_fit : float\nslope_fit : float\nsnout_index : int\n\nMethods\n-------\ndetrend(smoothing_window_pixels: int) -> None\nfill_elevation(dem: Raster) -> None\nfit_profile(use_polynomial: bool = False, use_constant: bool = False, detrend_moving_average_window_pixels: Sequence[int] = []) -> None\n    Fit the ridgeline profile beyond the snout (slope and r^2 from the linear fit).\nis_four_connected(periodic_ns: bool = False, periodic_ew: bool = False) -> bool\nreverse() -> None\nsample(raster: Raster) -> list[float]\nsegment_snout(smoothing_window_fraction: float) -> None\nsteepness(basin_drainage_area: float, concavity: float) -> float\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "__init__",
@@ -3658,13 +3808,14 @@
         {
           "name": "fit_profile",
           "kind": "method",
-          "doc": "fit_profile(self, use_polynomial: bool = False, use_constant: bool = False) -> None",
+          "doc": "fit_profile(self, use_polynomial: bool = False, use_constant: bool = False, detrend_moving_average_window_pixels: collections.abc.Sequence[int] = []) -> None\n\nFit the ridgeline profile beyond the snout (slope and r^2 from the linear fit).\n\nParameters\n----------\nuse_polynomial, use_constant : bool, default=False\n    Detrend against a quadratic, or a constant, instead of the line.\ndetrend_moving_average_window_pixels : list of int, default=[]\n    Also detrend against moving averages of these widths (positive odd\n    pixel counts, each once), as lsdtt-ridgeline-analysis\n    ``ridgeline_detrend_moving_average_window_pixels``; read them from\n    ``moving_average_fits``.",
           "signatures": [
             {
-              "definition": "def fit_profile(self, use_polynomial: bool = \\0, use_constant: bool = \\1) -> None",
+              "definition": "def fit_profile(self, use_polynomial: bool = \\0, use_constant: bool = \\1, detrend_moving_average_window_pixels: collections.abc.Sequence[int] = \\2) -> None",
               "defaults": [
                 false,
-                false
+                false,
+                []
               ]
             }
           ]
@@ -3687,6 +3838,12 @@
           "name": "length_metres",
           "kind": "property",
           "doc": "(self) -> float",
+          "signatures": []
+        },
+        {
+          "name": "moving_average_fits",
+          "kind": "property",
+          "doc": "Window (pixels) to (fitted, detrended) elevations per node from ``fit_profile``'s moving averages; nodata before the snout.",
           "signatures": []
         },
         {
@@ -3770,6 +3927,68 @@
           "defaults": []
         }
       ]
+    },
+    {
+      "name": "RiserResult",
+      "kind": "class",
+      "doc": "Riser (break-of-slope step) detection output from :func:`find_risers`.\n\n``centreline`` is 1 on the kept riser segments; ``segments`` has one row\nand line per segment. ``edge_field``, ``adaptive_binary`` and ``skeleton``\nare the break-of-slope products the segments were drawn from, and\n``gap_closing_mask`` the cells added by gap closing.\n\nReturned by ``find_risers()``; not constructible directly.\n\nAttributes\n----------\nadaptive_binary : Raster\ncentreline : Raster\nedge_field : Raster\ngap_closing_mask : Raster\nn_dropped_low_step : int\nn_dropped_short : int\nn_segments_found : int\nsegments : geopandas.GeoDataFrame\n    One row per kept segment: segment_id, n_pixels, length_metres, step_height_metres (median step across the segment), face_gradient (m/m), mean_elevation_metres, is_loop, and the line geometry.\nskeleton : Raster\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "adaptive_binary",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "centreline",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "edge_field",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "gap_closing_mask",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        },
+        {
+          "name": "n_dropped_low_step",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_dropped_short",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "n_segments_found",
+          "kind": "property",
+          "doc": "(self) -> int",
+          "signatures": []
+        },
+        {
+          "name": "segments",
+          "kind": "property",
+          "doc": "One row per kept segment: segment_id, n_pixels, length_metres, step_height_metres (median step across the segment), face_gradient (m/m), mean_elevation_metres, is_loop, and the line geometry.",
+          "signatures": []
+        },
+        {
+          "name": "skeleton",
+          "kind": "property",
+          "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        }
+      ],
+      "signatures": []
     },
     {
       "name": "RoadFlowResult",
@@ -4682,7 +4901,7 @@
     {
       "name": "ValleyCentrelineResult",
       "kind": "class",
-      "doc": "Valley masks and centreline diagnostics for supplied channel paths.\n\nMade by :func:`extract_valley_centrelines`; pass it to\n:func:`extract_valley_cross_sections`.\n\nReturned by ``extract_valley_centrelines()``; not constructible directly.\n\nAttributes\n----------\ntable : pandas.DataFrame\n    One row per channel: source_id, valley_hand_break_metres, n_valley_pixels, routing_succeeded, trough_retries, n_centreline_nodes.\nvalley_mask : Raster\n    0/1 valley-floor Raster used for routing.\n\nMethods\n-------\ncentreline_pixels(source_id: int) -> object\n    Return the valley centreline of one channel, upstream to downstream.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Valley masks and centreline diagnostics for supplied channel paths.\n\nMade by :func:`extract_valley_centrelines`; pass it to\n:func:`extract_valley_cross_sections`.\n\nReturned by ``extract_valley_centrelines()``, ``ValleyWidthNetwork.centrelines``; not constructible directly.\n\nAttributes\n----------\ntable : pandas.DataFrame\n    One row per channel: source_id, valley_hand_break_metres, n_valley_pixels, routing_succeeded, trough_retries, n_centreline_nodes.\nvalley_mask : Raster\n    0/1 valley-floor Raster used for routing.\n\nMethods\n-------\ncentreline_pixels(source_id: int) -> object\n    Return the valley centreline of one channel, upstream to downstream.\nrelative_elevation(dem: Raster, relative_elevation_domain_algorithm_choice: str = 'valley_mask', domain_mask: object | None = None, relative_elevation_max_distance_metres: float = 0.0) -> tuple\n    Relative elevation above the valley centrelines' baselines (REM).\nterrace_profile(dem: Raster, surface_patch_labels: Raster, relative_elevation_max_distance_metres: float = 0.0, terrace_profile_bin_metres: float = 100.0) -> tuple\n    Surface patches along the valley centrelines: the terrace long profile.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "centreline_pixels",
@@ -4696,10 +4915,39 @@
           ]
         },
         {
+          "name": "relative_elevation",
+          "kind": "method",
+          "doc": "relative_elevation(self, dem: lsdtt3.Raster, relative_elevation_domain_algorithm_choice: str = 'valley_mask', domain_mask: object | None = None, relative_elevation_max_distance_metres: float = 0.0) -> tuple\n\nRelative elevation above the valley centrelines' baselines (REM).\n\nlsdtt-valley-centreline ``write_relative_elevation_raster``. On the valley\nfloor each cell is measured against the centreline node of the largest\nchannel whose floor it lies on; elsewhere against the node reached by the\nshortest floor-width-scaled ground distance. Needs centrelines from a\n``ChannelScope`` or :func:`build_valley_width_network` (the channels are\nranked by drainage area).\n\nParameters\n----------\ndem : Raster\n    Elevation (m), the DEM the centrelines were made on.\nrelative_elevation_domain_algorithm_choice : {\"valley_mask\", \"supplied\", \"whole_dem\"}, default=\"valley_mask\"\n    Where the field is computed: the valley floor, ``domain_mask``, or\n    every valid cell. The floor is always included.\ndomain_mask : Raster or None, default=None\n    Cells > 0.5, for ``supplied``.\nrelative_elevation_max_distance_metres : float, default=0.0\n    Largest ground distance (m) from a cell to its node; 0 means none.\n\nReturns\n-------\ntuple of Raster\n    ``(relative_elevation, owner)``: elevation above the owning node's\n    baseline (m) and the owning centreline's ``source_id``; nodata outside\n    the domain and the floor.",
+          "signatures": [
+            {
+              "definition": "def relative_elevation(self, dem: lsdtt3.Raster, relative_elevation_domain_algorithm_choice: str = \\0, domain_mask: object | None = \\1, relative_elevation_max_distance_metres: float = \\2) -> tuple",
+              "defaults": [
+                "valley_mask",
+                null,
+                0.0
+              ]
+            }
+          ]
+        },
+        {
           "name": "table",
           "kind": "property",
           "doc": "One row per channel: source_id, valley_hand_break_metres, n_valley_pixels, routing_succeeded, trough_retries, n_centreline_nodes.",
           "signatures": []
+        },
+        {
+          "name": "terrace_profile",
+          "kind": "method",
+          "doc": "terrace_profile(self, dem: lsdtt3.Raster, surface_patch_labels: lsdtt3.Raster, relative_elevation_max_distance_metres: float = 0.0, terrace_profile_bin_metres: float = 100.0) -> tuple\n\nSurface patches along the valley centrelines: the terrace long profile.\n\nlsdtt-valley-centreline ``write_terrace_profile_csv``. Every patch pixel is\ntied to a centreline node (ownership computed over the whole DEM) and\nbinned by distance along that centreline.\n\nParameters\n----------\ndem : Raster\n    Elevation (m).\nsurface_patch_labels : Raster\n    Patch label per cell (0 = none), for example\n    ``FlatSurfaceClassification.banded_labels``.\nrelative_elevation_max_distance_metres : float, default=0.0\n    Largest ground distance (m) from a cell to its node; 0 means none.\nterrace_profile_bin_metres : float, default=100.0\n    Bin width (m) along the centreline.\n\nReturns\n-------\ntuple of pandas.DataFrame\n    ``(bins, patches)``. ``bins``: centreline_id, patch_label,\n    bin_centre_metres, n_pixels, and elevation_* and\n    relative_elevation_* five-number summaries (min, p25, median, p75,\n    max). ``patches``: patch_label, centreline_id, n_pixels,\n    n_pixels_reassigned, along_min_metres, along_max_metres,\n    elevation_median, relative_elevation_median.",
+          "signatures": [
+            {
+              "definition": "def terrace_profile(self, dem: lsdtt3.Raster, surface_patch_labels: lsdtt3.Raster, relative_elevation_max_distance_metres: float = \\0, terrace_profile_bin_metres: float = \\1) -> tuple",
+              "defaults": [
+                0.0,
+                100.0
+              ]
+            }
+          ]
         },
         {
           "name": "valley_mask",
@@ -4713,7 +4961,7 @@
     {
       "name": "ValleyCrossSections",
       "kind": "class",
-      "doc": "Valley cross sections made by :func:`extract_valley_cross_sections`.\n\nAll tables are pandas DataFrames keyed by ``source_id`` (channel) and\n``station_id`` (section); distances are metres.\n\nReturned by ``extract_valley_cross_sections()``; not constructible directly.\n\nAttributes\n----------\nfeatures : pandas.DataFrame\n    Return detected channel crossings, curvature peaks, and hillshade peaks.\nhydraulic_breaks : pandas.DataFrame\n    Return hydraulic break stages and local heights above the thalweg.\nhydraulic_curve : pandas.DataFrame\n    Return optional BankfullMapper-style hydraulic geometry curves.\nhydraulic_edges : pandas.DataFrame\n    Return hydraulic step-boundary picks for every cross section.\nn_sections : int\n    Number of cross sections.\nsamples : pandas.DataFrame\n    One row per transect sample: source_id, station_id, offset_metres, x, y, elevation, elevation_valid, in_valley, curvature, curvature_valid, hillshade, hillshade_valid, is_channel.\nstations : pandas.DataFrame\n    One row per section: source_id, station_id, along_distance_metres, valley_width_metres, centre_x, centre_y, left_offset_metres, right_offset_metres, left_found, right_found.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Valley cross sections made by :func:`extract_valley_cross_sections`.\n\nAll tables are pandas DataFrames keyed by ``source_id`` (channel) and\n``station_id`` (section); distances are metres.\n\nReturned by ``extract_valley_cross_sections()``; not constructible directly.\n\nAttributes\n----------\nfeatures : pandas.DataFrame\n    Return detected channel crossings, curvature peaks, and hillshade peaks.\nhydraulic_breaks : pandas.DataFrame\n    Return hydraulic break stages and local heights above the thalweg.\nhydraulic_curve : pandas.DataFrame\n    Return optional BankfullMapper-style hydraulic geometry curves.\nhydraulic_edges : pandas.DataFrame\n    Return hydraulic step-boundary picks for every cross section.\nn_sections : int\n    Number of cross sections.\nsamples : pandas.DataFrame\n    One row per transect sample: source_id, station_id, offset_metres, x, y, elevation, elevation_valid, in_valley, curvature, curvature_valid, hillshade, hillshade_valid, is_channel.\nstations : pandas.DataFrame\n    One row per section: source_id, station_id, along_distance_metres, valley_width_metres, centre_x, centre_y, left_offset_metres, right_offset_metres, left_found, right_found.\n\nMethods\n-------\nlevels(ladder_break_algorithm_choice: str = 'antimode', ladder_max_level_count: int = 12, vertical_accuracy_metres: float = 0.0, ladder_resolvability_kappa: float = 3.0, cross_section_level_min_section_fraction: float = 0.5, include_dropped: bool = False) -> object\n    Surface levels per channel from every section's hydraulic breaks.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "features",
@@ -4738,6 +4986,24 @@
           "kind": "property",
           "doc": "Return hydraulic step-boundary picks for every cross section.",
           "signatures": []
+        },
+        {
+          "name": "levels",
+          "kind": "method",
+          "doc": "levels(self, ladder_break_algorithm_choice: str = 'antimode', ladder_max_level_count: int = 12, vertical_accuracy_metres: float = 0.0, ladder_resolvability_kappa: float = 3.0, cross_section_level_min_section_fraction: float = 0.5, include_dropped: bool = False) -> object\n\nSurface levels per channel from every section's hydraulic breaks.\n\nlsdtt-valley-centreline ``write_cross_section_levels_csv``: the breaks of\nall of a channel's sections are pooled and split by the ladder's rule. The\nresult can be passed, grouped by ``source_id``, as ``supplied_levels`` to\n``classify_flat_surfaces_with_scope``. The breaks are those in\n``hydraulic_breaks``.\n\nParameters\n----------\nladder_break_algorithm_choice : {\"antimode\", \"jenks\", \"gap\"}, default=\"antimode\"\n    How the pooled breaks are split.\nladder_max_level_count : int, default=12\n    Most levels tried.\nvertical_accuracy_metres : float, default=0.0\n    DEM vertical accuracy E_v (m).\nladder_resolvability_kappa : float, default=3.0\n    Levels must be at least kappa x E_v apart.\ncross_section_level_min_section_fraction : float, default=0.5\n    A level found on fewer than this fraction of the channel's sections is\n    dropped.\ninclude_dropped : bool, default=False\n    Also return the dropped levels (``kept`` False).\n\nReturns\n-------\npandas.DataFrame\n    One row per level: source_id, window_centre_metres, level_index,\n    level_hand_metres, n_breaks, n_sections, spread_metres, status,\n    required_gap_metres, min_level_gap_metres, kept.",
+          "signatures": [
+            {
+              "definition": "def levels(self, ladder_break_algorithm_choice: str = \\0, ladder_max_level_count: int = \\1, vertical_accuracy_metres: float = \\2, ladder_resolvability_kappa: float = \\3, cross_section_level_min_section_fraction: float = \\4, include_dropped: bool = \\5) -> object",
+              "defaults": [
+                "antimode",
+                12,
+                0.0,
+                3.0,
+                0.5,
+                false
+              ]
+            }
+          ]
         },
         {
           "name": "n_sections",
@@ -4805,6 +5071,42 @@
           "name": "valley_mask",
           "kind": "property",
           "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "ValleyWidthNetwork",
+      "kind": "class",
+      "doc": "A valley centreline for every channel segment of a network, from\n:func:`build_valley_width_network`.\n\n``centrelines`` feeds :func:`extract_valley_cross_sections` as usual;\n``segments`` describes the tree (each tributary stops at its parent's\nchannel); ``section_exclusions`` applies the network's rules to the cross\nsections.\n\nReturned by ``build_valley_width_network()``; not constructible directly.\n\nAttributes\n----------\ncentrelines : ValleyCentrelineResult\n    ValleyCentrelineResult with one channel per segment (source_id = segment_id).\nsegments : pandas.DataFrame\n    One row per segment: segment_id, parent_segment_id (-1 for a trunk), nesting_depth, n_channel_pixels, drains_to_edge, catchment_touches_edge, valley_width_estimate_metres, medial_path_failed, n_samples_snapped_to_mask_edge.\n\nMethods\n-------\nsection_exclusions(sections: ValleyCrossSections, run_tributary_stop_at_parent: bool = True, tributary_stop_width_fraction: float = 1.0, tributary_parent_width_window_multiple: float = 2.0, run_tributary_crossing_removal: bool = True) -> object\n    Which cross sections the network rules exclude, and why.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "centrelines",
+          "kind": "property",
+          "doc": "ValleyCentrelineResult with one channel per segment (source_id = segment_id).",
+          "signatures": []
+        },
+        {
+          "name": "section_exclusions",
+          "kind": "method",
+          "doc": "section_exclusions(self, sections: lsdtt3.ValleyCrossSections, run_tributary_stop_at_parent: bool = True, tributary_stop_width_fraction: float = 1.0, tributary_parent_width_window_multiple: float = 2.0, run_tributary_crossing_removal: bool = True) -> object\n\nWhich cross sections the network rules exclude, and why.\n\nAs lsdtt-valley-centreline with ``run_valley_width_network``.\n\nParameters\n----------\nsections : ValleyCrossSections\n    Sections made from ``centrelines``.\nrun_tributary_stop_at_parent : bool, default=True\n    Exclude a tributary's sections within its parent's valley.\ntributary_stop_width_fraction : float, default=1.0\n    Multiple of the parent's half-width within which a tributary section\n    is excluded.\ntributary_parent_width_window_multiple : float, default=2.0\n    Window (multiples of the parent's width) the parent's width is taken\n    over.\nrun_tributary_crossing_removal : bool, default=True\n    Exclude sections that cross a tributary's channel.\n\nReturns\n-------\npandas.DataFrame\n    One row per section: source_id, station_id, exclusion (``none``,\n    ``not_in_valley``, ``side_not_found``, ``near_parent_channel`` or\n    ``tributary_crossing``).",
+          "signatures": [
+            {
+              "definition": "def section_exclusions(self, sections: lsdtt3.ValleyCrossSections, run_tributary_stop_at_parent: bool = \\0, tributary_stop_width_fraction: float = \\1, tributary_parent_width_window_multiple: float = \\2, run_tributary_crossing_removal: bool = \\3) -> object",
+              "defaults": [
+                true,
+                1.0,
+                2.0,
+                true
+              ]
+            }
+          ]
+        },
+        {
+          "name": "segments",
+          "kind": "property",
+          "doc": "One row per segment: segment_id, parent_segment_id (-1 for a trunk), nesting_depth, n_channel_pixels, drains_to_edge, catchment_touches_edge, valley_width_estimate_metres, medial_path_failed, n_samples_snapped_to_mask_edge.",
           "signatures": []
         }
       ],
@@ -5131,6 +5433,24 @@
       ]
     },
     {
+      "name": "build_valley_width_network",
+      "kind": "function",
+      "doc": "Valley centrelines for every channel of a network, for valley widths.\n\nlsdtt-valley-centreline ``run_valley_width_network``: the channel network\nis split into segments at confluences (each tributary's trace stops at its\nparent), and each segment gets a centreline along the valley's medial axis\nor a smoothed channel.\n\nParameters\n----------\ndem : Raster\n    The routing DEM; its elevations pin the baselines.\nscope : ChannelScope\n    The channels (every channel of the scope is used).\nvalley_mask : Raster\n    Valley floor (cells > 0.5) on the DEM grid.\nnetwork_centreline_algorithm_choice : {\"medial_path\", \"smoothed_channel\"}, default=\"medial_path\"\n    Medial axis of the valley mask, or the channel smoothed over a valley\n    width.\nnetwork_centreline_window_margin_multiple : float, default=3.0\n    ``medial_path``: walk window padding, as a multiple of the largest\n    distance-to-wall at the segment's channel pixels.\nnetwork_centreline_smoothing_width_multiple : float, default=1.0\n    ``smoothed_channel``: Gaussian sigma as a multiple of the valley width.\nmin_centreline_nodes : int, default=10\n    Segments with fewer channel pixels get no centreline.\ncentreline_baseline_algorithm_choice : {\"projected_monotonic\", \"channel_crossings\"}, default=\"projected_monotonic\"\n    How each baseline is pinned to its channel.\n\nReturns\n-------\nValleyWidthNetwork\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def build_valley_width_network(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, valley_mask: lsdtt3.Raster, network_centreline_algorithm_choice: str = \\0, network_centreline_window_margin_multiple: float = \\1, network_centreline_smoothing_width_multiple: float = \\2, min_centreline_nodes: int = \\3, centreline_baseline_algorithm_choice: str = \\4) -> lsdtt3.ValleyWidthNetwork",
+          "defaults": [
+            "medial_path",
+            3.0,
+            1.0,
+            10,
+            "projected_monotonic"
+          ]
+        }
+      ]
+    },
+    {
       "name": "burn_streams",
       "kind": "function",
       "doc": "Condition a copied DEM along mapped stream lines with monotone profiles.\n\nParameters\n----------\ndem : Raster\n    Elevation raster.\nlines : geopandas.GeoDataFrame\n    Stream LineStrings in the DEM CRS.\nn_threads : int, default=0\n    OpenMP thread count; zero uses the runtime default.\n\nReturns\n-------\nStreamBurnResult\n    Conditioned raster and profile diagnostics.\n\nNotes\n-----\nOnly cells whose monotone stream elevation is lower are changed.\n\nAuthors\n-------\nB. Gailleton",
@@ -5161,11 +5481,11 @@
     {
       "name": "classify_flat_surfaces",
       "kind": "function",
-      "doc": "Classify labelled flats as floodplain or terrace from HAND and channel IDs.\n\n``channel_source_ids`` is a co-registered Raster containing non-negative\nsource IDs on in-scope channel pixels and negative values elsewhere.\n\nParameters\n----------\nlabelled_flat_mask : Raster\n    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).\nheight_above_channel : Raster\n    HAND (m) on the same grid (``FlowInfo.height_above_channel``).\nchannel_source_ids : Raster\n    Source ID of each in-scope channel pixel, negative elsewhere.\nfloodplain_max_height_metres : float, default=1.0\n    A channel-adjacent label is floodplain when its median HAND (m) is at\n    most this.\nterrace_min_height_metres : float, default=0.0\n    A label linked to a channel is terrace when its median HAND (m) is at\n    least this (and it is not floodplain).\nchannel_adjacency_radius_metres : float, default=0.0\n    A label is channel-adjacent when a pixel lies within this distance (m)\n    of an in-scope channel; 0 means touching (8-neighbour).\nterrace_max_distance_to_channel_metres : float, default=0.0\n    A terrace must have a pixel within this distance (m) of a channel,\n    excluding upland flats; 0 means no limit.\nenable_leak_split : bool, default=True\n    Split a label whose HAND distribution is bimodal (a floodplain leaking\n    into a terrace across a broken riser) at the antimode.\nenable_hand_banding : bool, default=False\n    Split labels into reach-relative HAND bands along the channel before\n    classifying.\ndonor_flat : array-like of int or None, default=None\n    HAND banding only: flat index of the channel pixel each pixel drains to\n    (``FlowInfo.height_above_channel_with_donor()[\"channel_donor\"]``).\nchannel_flow_distance : Raster or None, default=None\n    HAND banding only: flow distance (m) used to place donors along the\n    channel.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nFlatSurfaceClassification\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Classify labelled flats as floodplain or terrace from HAND and channel IDs.\n\n``channel_source_ids`` is a co-registered Raster containing non-negative\nsource IDs on in-scope channel pixels and negative values elsewhere.\n\nParameters\n----------\nlabelled_flat_mask : Raster\n    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).\nheight_above_channel : Raster\n    HAND (m) on the same grid (``FlowInfo.height_above_channel``).\nchannel_source_ids : Raster\n    Source ID of each in-scope channel pixel, negative elsewhere.\nmax_floodplain_hand_metres : float, default=1.0\n    A channel-adjacent label is floodplain when its median HAND (m) is at\n    most this. Replaces the deprecated ``floodplain_max_height_metres``.\nmin_terrace_hand_metres : float, default=0.0\n    A label linked to a channel is terrace when its median HAND (m) is at\n    least this (and it is not floodplain). Replaces the deprecated\n    ``terrace_min_height_metres``.\nchannel_adjacency_radius_metres : float, default=0.0\n    A label is channel-adjacent when a pixel lies within this distance (m)\n    of an in-scope channel; 0 means touching (8-neighbour).\nvalley_corridor_half_width_metres : float, default=0.0\n    A terrace must have a pixel within this distance (m) of a channel,\n    excluding upland flats; 0 means no limit (lsdtt-fluvial-surfaces\n    defaults to 5000). Replaces the deprecated\n    ``terrace_max_distance_to_channel_metres``.\nenable_leak_split : bool, default=True\n    Split a label whose HAND distribution is bimodal (a floodplain leaking\n    into a terrace across a broken riser) at the antimode.\nenable_hand_banding : bool, default=False\n    Split labels into reach-relative HAND bands along the channel before\n    classifying.\ndonor_flat : array-like of int or None, default=None\n    HAND banding only: flat index of the channel pixel each pixel drains to\n    (``FlowInfo.height_above_channel_with_donor()[\"channel_donor\"]``).\nchannel_flow_distance : Raster or None, default=None\n    HAND banding only: flow distance (m) used to place donors along the\n    channel.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nFlatSurfaceClassification\n\nAuthors\n-------\nB. Gailleton",
       "members": [],
       "signatures": [
         {
-          "definition": "def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, floodplain_max_height_metres: float = \\0, terrace_min_height_metres: float = \\1, channel_adjacency_radius_metres: float = \\2, terrace_max_distance_to_channel_metres: float = \\3, enable_leak_split: bool = \\4, enable_hand_banding: bool = \\5, donor_flat: object | None = \\6, channel_flow_distance: object | None = \\7, n_threads: int = \\8) -> lsdtt3.FlatSurfaceClassification",
+          "definition": "def classify_flat_surfaces(labelled_flat_mask: lsdtt3.Raster, height_above_channel: lsdtt3.Raster, channel_source_ids: lsdtt3.Raster, max_floodplain_hand_metres: float = \\0, min_terrace_hand_metres: float = \\1, channel_adjacency_radius_metres: float = \\2, valley_corridor_half_width_metres: float = \\3, enable_leak_split: bool = \\4, enable_hand_banding: bool = \\5, donor_flat: object | None = \\6, channel_flow_distance: object | None = \\7, n_threads: int = \\8) -> lsdtt3.FlatSurfaceClassification",
           "defaults": [
             1.0,
             0.0,
@@ -5183,11 +5503,11 @@
     {
       "name": "classify_flat_surfaces_with_scope",
       "kind": "function",
-      "doc": "Classify flat surfaces using a ``ChannelScope``.\n\nHAND, its nearest-channel donors, flow distance, channel mask, and source IDs\nare derived from the scope's retained D8 flow topology.\n\nParameters\n----------\nlabelled_flat_mask : Raster\n    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).\ndem : Raster\n    Elevation (m) on the scope's flow grid.\nscope : ChannelScope\n    In-scope channels (``FlowInfo.channel_scope``).\nfloodplain_max_height_metres : float, default=1.0\n    A channel-adjacent label is floodplain when its median HAND (m) is at\n    most this.\nterrace_min_height_metres : float, default=0.0\n    A label linked to a channel is terrace when its median HAND (m) is at\n    least this (and it is not floodplain).\nchannel_adjacency_radius_metres : float, default=0.0\n    A label is channel-adjacent when a pixel lies within this distance (m)\n    of an in-scope channel; 0 means touching (8-neighbour).\nterrace_max_distance_to_channel_metres : float, default=0.0\n    A terrace must have a pixel within this distance (m) of a channel,\n    excluding upland flats; 0 means no limit.\nenable_leak_split : bool, default=True\n    Split a label whose HAND distribution is bimodal (a floodplain leaking\n    into a terrace across a broken riser) at the antimode.\nenable_hand_banding : bool, default=False\n    Split labels into reach-relative HAND bands along the channel before\n    classifying.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nFlatSurfaceClassification\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Classify flat surfaces using a ``ChannelScope``: the HAND ladder of\n``lsdtt-fluvial-surfaces``.\n\nHAND, its nearest-channel donors, flow distance, channel mask, and source IDs\nare derived from the scope's retained D8 flow topology. Pixels are banded by\nHAND in reach windows along each channel (the reference-field ladder), each\nband is labelled into patches, and patches are classed floodplain or\nterrace. The ladder keywords have the names and meanings of the\nlsdtt-fluvial-surfaces parameters; see that CLI's reference for the method.\nThree defaults differ from the CLI so earlier results are unchanged:\n``min_band_component_pixels`` (CLI 50),\n``ladder_unresolved_window_algorithm_choice`` (CLI ``nearest_resolved``) and\n``valley_corridor_half_width_metres`` (CLI 5000).\n\nParameters\n----------\nlabelled_flat_mask : Raster\n    Flat labels (``FlatSurfaceResult.labelled_flat_mask``).\ndem : Raster\n    Elevation (m) on the scope's flow grid.\nscope : ChannelScope\n    In-scope channels (``FlowInfo.channel_scope``).\nmax_floodplain_hand_metres : float, default=1.0\n    A channel-adjacent label is floodplain when its median HAND (m) is at\n    most this. Replaces the deprecated ``floodplain_max_height_metres``.\nmin_terrace_hand_metres : float, default=0.0\n    A label linked to a channel is terrace when its median HAND (m) is at\n    least this (and it is not floodplain). Replaces the deprecated\n    ``terrace_min_height_metres``.\nchannel_adjacency_radius_metres : float, default=0.0\n    A label is channel-adjacent when a pixel lies within this distance (m)\n    of an in-scope channel; 0 means touching (8-neighbour).\nvalley_corridor_half_width_metres : float, default=0.0\n    A terrace must have a pixel within this distance (m) of a channel,\n    excluding upland flats; 0 means no limit (lsdtt-fluvial-surfaces\n    defaults to 5000). Replaces the deprecated\n    ``terrace_max_distance_to_channel_metres``.\nenable_leak_split : bool, default=True\n    Split a label whose HAND distribution is bimodal (a floodplain leaking\n    into a terrace across a broken riser) at the antimode.\nenable_hand_banding : bool, default=False\n    Split labels into reach-relative HAND bands along the channel before\n    classifying.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nladder_break_algorithm_choice : {\"antimode\", \"jenks\", \"gap\"}, default=\"antimode\"\n    How each window's HAND population is split into levels.\nladder_level_count : int, default=0\n    Force this many levels; 0 picks the largest resolvable number.\nladder_max_level_count : int, default=12\n    Most levels tried.\nvertical_accuracy_metres : float, default=0.0\n    DEM vertical accuracy E_v (m); levels closer than\n    ``ladder_resolvability_kappa`` x E_v are not resolved. 0 disables it.\nvertical_accuracy_algorithm_choice : {\"fixed\", \"slope_dependent\"}, default=\"fixed\"\n    ``slope_dependent`` uses ``vertical_accuracy_gentle_metres`` below and\n    ``vertical_accuracy_steep_metres`` above ``vertical_accuracy_break_gradient``\n    (m/m), the window gradient measured by a polyfit of radius\n    ``vertical_accuracy_gradient_window_radius_metres`` (0: 2.5 cells).\nvertical_accuracy_gentle_metres, vertical_accuracy_steep_metres : float, default=0.0\n    E_v (m) on gentle and steep ground, for ``slope_dependent``.\nvertical_accuracy_break_gradient : float, default=0.20\n    Gradient (m/m) between gentle and steep.\nvertical_accuracy_gradient_window_radius_metres : float, default=0.0\n    Polyfit radius (m) of that gradient; 0 means 2.5 cells.\nladder_resolvability_kappa : float, default=3.0\n    Multiple of E_v two levels must be apart.\nladder_k_bootstrap, ladder_k_bootstrap_seed : int, default=0, 1\n    Bootstrap resamples of each window's level count (0 = none), and seed.\nladder_reach_window_metres : float, default=0.0\n    Reach window length (m) along the channel; 0 is max(2000 m, span / 8).\nladder_min_window_pixels : int, default=1000\n    Smallest window population; smaller windows use the global breaks.\nladder_hist_bins : int, default=64\n    Histogram bins of the antimode finder.\nladder_min_field_metres : float, default=0.05\n    HAND (m) below which pixels are not banded.\nladder_max_valley_fraction : float, default=0.6\n    Antimode: a dip is a break when its smoothed density is below this\n    fraction of the smaller flanking peak.\nladder_gap_break_position : {\"lower\", \"midpoint\", \"upper\"}, default=\"midpoint\"\n    Where in an empty gap the gap finder puts the break.\nladder_gap_rank : {\"lowest\", \"width\"}, default=\"lowest\"\n    Which gaps the gap finder uses first.\nladder_gap_trough_max_ratio : float, default=0.6\n    Gap finder: a local minimum is a candidate break when its floor is below\n    this fraction of the smaller flanking peak; 0 means empty spans only.\nladder_gap_empty_fraction : float, default=0.02\n    Gap finder: a bin below this fraction of the tallest bin is empty.\nladder_gap_min_width_metres : float, default=0.5\n    Gap finder: narrowest gap (m).\nladder_gap_hist_bins : int, default=80\n    Gap finder histogram bins.\nladder_max_separation_ratio : float, default=0.0\n    Reject a partition whose worst break sits where the density is above\n    this fraction of the populations either side; 0 disables it.\nladder_min_break_metres, ladder_max_break_metres : float, default=0.0\n    Breaks outside this HAND range (m) are dropped; 0 disables each bound.\nmin_band_component_pixels : int, default=1\n    Smallest patch kept within a band (lsdtt-fluvial-surfaces default 50).\nladder_unresolved_window_algorithm_choice : {\"single_band\", \"nearest_resolved\"}, default=\"single_band\"\n    A window with no resolvable levels gets one band, or borrows the\n    nearest resolved window's breaks (the CLI default).\nclip_corridor_per_pixel : bool, default=True\n    Apply the valley corridor per pixel as well as per patch, so a patch\n    touching the corridor edge does not carry its class across an\n    interfluve.\nmax_band_spread_metres : float, default=50.0\n    A patch whose robust HAND spread still exceeds this (m) cannot take the\n    terrace class; 0 disables it.\nsegmentation_algorithm_choice : {\"within_bands\", \"whole_mask\"}, default=\"within_bands\"\n    Label within each band, or segment the whole admitted mask (with\n    ``riser_mask`` as barriers).\nriser_mask : Raster or None, default=None\n    ``whole_mask`` only: riser cells (> 0.5) that patches may not cross,\n    for example ``find_risers(...).centreline``.\nbreak_flats_with_channels : bool, default=False\n    Remove channel cells from the flats before classifying.\nsupplied_levels : dict of int to list of float, default={}\n    Level heights (HAND, m) per channel source id, banded at the midpoints\n    between levels (lsdtt-fluvial-surfaces ``supplied_levels``; for\n    example ``ValleyCrossSections.levels()`` grouped by source).\ntraining_surfaces_fname : str, default=\"\"\n    Vector file of floodplain / terraceN training polygons that set the\n    HAND breaks per window (lsdtt-fluvial-surfaces training).\ntraining_surfaces_layer_name : str, default=\"\"\n    Its layer; empty reads the first.\ntraining_surfaces_class_field_name : str, default=\"class\"\n    Its class field (``floodplain``, ``terrace`` or ``terraceN``).\ntraining_spread_factor, training_max_relative_spread : float, default=3.0, 0.25\n    A training polygon whose HAND p75 - p25 exceeds both\n    ``training_spread_factor`` x the global required gap and\n    ``training_max_relative_spread`` x its median is flagged as not one\n    level.\nmin_training_cells_per_class : int, default=20\n    Fewest core cells a training population needs in a window.\n\nReturns\n-------\nFlatSurfaceClassification\n\nAuthors\n-------\nB. Gailleton",
       "members": [],
       "signatures": [
         {
-          "definition": "def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, floodplain_max_height_metres: float = \\0, terrace_min_height_metres: float = \\1, channel_adjacency_radius_metres: float = \\2, terrace_max_distance_to_channel_metres: float = \\3, enable_leak_split: bool = \\4, enable_hand_banding: bool = \\5, n_threads: int = \\6) -> lsdtt3.FlatSurfaceClassification",
+          "definition": "def classify_flat_surfaces_with_scope(labelled_flat_mask: lsdtt3.Raster, dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, max_floodplain_hand_metres: float = \\0, min_terrace_hand_metres: float = \\1, channel_adjacency_radius_metres: float = \\2, valley_corridor_half_width_metres: float = \\3, enable_leak_split: bool = \\4, enable_hand_banding: bool = \\5, n_threads: int = \\6, ladder_break_algorithm_choice: str = \\7, ladder_level_count: int = \\8, ladder_max_level_count: int = \\9, vertical_accuracy_metres: float = \\10, vertical_accuracy_algorithm_choice: str = \\11, vertical_accuracy_gentle_metres: float = \\12, vertical_accuracy_steep_metres: float = \\13, vertical_accuracy_break_gradient: float = \\14, vertical_accuracy_gradient_window_radius_metres: float = \\15, ladder_resolvability_kappa: float = \\16, ladder_k_bootstrap: int = \\17, ladder_k_bootstrap_seed: int = \\18, ladder_reach_window_metres: float = \\19, ladder_min_window_pixels: int = \\20, ladder_hist_bins: int = \\21, ladder_min_field_metres: float = \\22, ladder_max_valley_fraction: float = \\23, ladder_gap_break_position: str = \\24, ladder_gap_rank: str = \\25, ladder_gap_trough_max_ratio: float = \\26, ladder_gap_empty_fraction: float = \\27, ladder_gap_min_width_metres: float = \\28, ladder_gap_hist_bins: int = \\29, ladder_max_separation_ratio: float = \\30, ladder_min_break_metres: float = \\31, ladder_max_break_metres: float = \\32, min_band_component_pixels: int = \\33, ladder_unresolved_window_algorithm_choice: str = \\34, clip_corridor_per_pixel: bool = \\35, max_band_spread_metres: float = \\36, segmentation_algorithm_choice: str = \\37, riser_mask: object | None = \\38, break_flats_with_channels: bool = \\39, supplied_levels: collections.abc.Mapping[int, collections.abc.Sequence[float]] = \\40, training_surfaces_fname: str = \\41, training_surfaces_layer_name: str = \\42, training_surfaces_class_field_name: str = \\43, training_spread_factor: float = \\44, training_max_relative_spread: float = \\45, min_training_cells_per_class: int = \\46) -> lsdtt3.FlatSurfaceClassification",
           "defaults": [
             1.0,
             0.0,
@@ -5195,7 +5515,71 @@
             0.0,
             true,
             false,
-            0
+            0,
+            "antimode",
+            0,
+            12,
+            0.0,
+            "fixed",
+            0.0,
+            0.0,
+            0.2,
+            0.0,
+            3.0,
+            0,
+            1,
+            0.0,
+            1000,
+            64,
+            0.05,
+            0.6,
+            "midpoint",
+            "lowest",
+            0.6,
+            0.02,
+            0.5,
+            80,
+            0.0,
+            0.0,
+            0.0,
+            1,
+            "single_band",
+            true,
+            50.0,
+            "within_bands",
+            null,
+            false,
+            "{}",
+            "",
+            "",
+            "class",
+            3.0,
+            0.25,
+            20
+          ]
+        }
+      ]
+    },
+    {
+      "name": "classify_floodplain_terraces_by_thresholds",
+      "kind": "function",
+      "doc": "Floodplains and terraces from a HAND bound and a gradient bound (Clubb et al. 2017).\n\nThe classifier of lsdtt-fluvial-surfaces' ``clubb2017`` method and of\nlsdtt-hillslope-channel-coupling's floodplain rule. Floodplain: admitted\ncells with HAND below ``max_floodplain_hand_metres`` and gradient below\n``max_floodplain_gradient`` (when > 0), plus the channel cells when\n``seed_channel_pixels``; 8-connected components smaller than\n``min_band_component_pixels`` are dropped, and with\n``require_channel_contact`` only components containing a channel cell are\nkept. Terraces (``find_terraces``): admitted, non-floodplain cells of\ngentle gradient whose ``terrace_field`` lies more than\n``min_terrace_height_above_floodplain_metres`` above the floodplain bound\nand at most ``max_terrace_height_metres`` (when > 0). Pick the bounds from\nthe data with :func:`select_threshold`.\n\nParameters\n----------\nadmitted : Raster\n    Cells > 0.5 may be floodplain or terrace; its mask is the output domain.\nhand : Raster\n    Height above the channel (m), co-registered.\nchannel_mask : Raster\n    Channel cells (> 0.5), for seeding and the contact test.\ngradient : Raster or None, default=None\n    Gradient (m/m); required when ``max_floodplain_gradient`` > 0.\nterrace_field : Raster or None, default=None\n    The terrace reference (HAND, or :func:`relief_above_nearest_baseline`);\n    required with ``find_terraces``.\nmax_floodplain_hand_metres : float, default=0.0\n    Floodplain HAND bound (m).\nmax_floodplain_gradient : float, default=0.0\n    Floodplain gradient bound (m/m); 0 applies none.\nseed_channel_pixels, require_channel_contact : bool, default=True\n    Add the channel cells to the floodplain; keep only components that\n    contain one.\nmin_band_component_pixels : int, default=0\n    Smallest component kept (pixels); 0 or 1 keeps all.\nfill_floodplain_holes : bool, default=False\n    Fill holes in the floodplain components.\nfind_terraces : bool, default=False\n    Also classify terraces.\nmin_terrace_height_above_floodplain_metres : float, default=0.0\n    Terraces start this far (m, >= 0) above the floodplain bound.\nmax_terrace_height_metres : float, default=0.0\n    Terrace ceiling (m) of ``terrace_field``; 0 means none.\n\nReturns\n-------\nFloodplainThresholdResult\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def classify_floodplain_terraces_by_thresholds(admitted: lsdtt3.Raster, hand: lsdtt3.Raster, channel_mask: lsdtt3.Raster, gradient: object | None = \\0, terrace_field: object | None = \\1, max_floodplain_hand_metres: float = \\2, max_floodplain_gradient: float = \\3, seed_channel_pixels: bool = \\4, require_channel_contact: bool = \\5, min_band_component_pixels: int = \\6, fill_floodplain_holes: bool = \\7, find_terraces: bool = \\8, min_terrace_height_above_floodplain_metres: float = \\9, max_terrace_height_metres: float = \\10) -> lsdtt3.FloodplainThresholdResult",
+          "defaults": [
+            null,
+            null,
+            0.0,
+            0.0,
+            true,
+            true,
+            0,
+            false,
+            false,
+            0.0,
+            0.0
           ]
         }
       ]
@@ -5251,6 +5635,21 @@
       ]
     },
     {
+      "name": "cluster_surface_levels",
+      "kind": "function",
+      "doc": "Group surface heights into levels and test whether they cluster.\n\nThe test behind lsdtt-fluvial-surfaces' ``write_patch_level_clusters_csv``:\nsorted heights are split wherever consecutive values are at least\n``required_gap_metres`` apart. The statistic is the empty fraction, the\nshare of the height range taken by those gaps, compared with ``n_null``\nsamples of as many heights drawn uniformly over the same range:\n``p = (1 + #{null >= observed}) / (1 + n_null)``. A small p says the\nheights sit on levels more than random heights would.\n\nParameters\n----------\nvalues : Raster or array-like of float\n    Heights (m), for example the ``median_field`` of\n    ``FlatSurfaceClassification.patches``.\nrequired_gap_metres : float\n    Gap (m, > 0) that separates two levels, typically kappa x E_v.\nn_null : int, default=999\n    Number of uniform null samples.\nseed : int, default=1\n    Random seed of the null samples.\n\nReturns\n-------\ndict\n    ``clusters`` (DataFrame: lower_metres, upper_metres, centre_metres (the\n    median), n_values, ascending), ``n_values``, ``empty_fraction``,\n    ``null_mean_empty_fraction``, ``p_value`` (1 with fewer than 3 values)\n    and ``n_null``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def cluster_surface_levels(values: object, required_gap_metres: float, n_null: int = \\0, seed: int = \\1) -> dict",
+          "defaults": [
+            999,
+            1
+          ]
+        }
+      ]
+    },
+    {
       "name": "coherence_diffusion",
       "kind": "function",
       "doc": "Coherence-enhancing diffusion: smoothing along linear features.\n\nSmooths along the local feature orientation from the structure tensor and\nlittle across it, bridging and denoising ridges, valleys and scarps.\ntime_step must be in (0, 0.25]. A radius of 0 means one cell\n(derivative_radius_metres) or three cells (integration_radius_metres).\ncontrast sets how selective the along-feature smoothing is; min_diffusivity\nis the across-feature floor, in (0, 1). The same smoothing as\nsmooth_algorithm_choice: coherence_diffusion in lsdtt-raster-preprocessing.\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m).\nn_iterations : int, default=10\n    Number of diffusion iterations.\ntime_step : float, default=0.15\n    Explicit time step, in (0, 0.25].\nderivative_radius_metres : float, default=0.0\n    Smoothing radius (m) of the gradients; 0 means one cell.\nintegration_radius_metres : float, default=0.0\n    Radius (m) over which the structure tensor is averaged; 0 means three\n    cells.\ncontrast : float, default=0.2\n    How selective the along-feature smoothing is.\nmin_diffusivity : float, default=0.001\n    Across-feature diffusivity floor, in (0, 1).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRaster\n    Smoothed DEM (m).\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
@@ -5282,6 +5681,18 @@
             false,
             false
           ]
+        }
+      ]
+    },
+    {
+      "name": "compare_surface_classes",
+      "kind": "function",
+      "doc": "Agreement between the surface classes of several methods, pair by pair.\n\nThe comparison lsdtt-fluvial-surfaces writes when it runs several methods.\n\nParameters\n----------\nsurface_classes : dict of str to Raster\n    Method name to a surface-class raster (0 none, 1 floodplain, 2\n    terrace; ``FlatSurfaceClassification.surface_class``), all on one grid.\n    Cells invalid in any raster are not counted.\n\nReturns\n-------\npandas.DataFrame\n    One row per pair (method_a before method_b, in dict order):\n    ``floodplain_iou``, ``terrace_iou`` (NaN when neither method has the\n    class), ``classified_agreement`` (of the cells either method classed,\n    the fraction both gave the same class) and ``confusion`` (3 x 3 counts,\n    ``[class_a][class_b]``).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def compare_surface_classes(surface_classes: dict) -> object",
+          "defaults": []
         }
       ]
     },
@@ -5543,6 +5954,18 @@
       ]
     },
     {
+      "name": "dem_sources",
+      "kind": "function",
+      "doc": "Return the ``fetch_dem`` DEM source catalogue as dictionaries.\n\nThe same rows ``lsdtt-fetch-raster -h dem_source`` describes.\n\nParameters\n----------\nNone\n\nReturns\n-------\nlist of dict\n    One dict per source with keys ``dem_source`` (the ``source`` value for\n    ``fetch_dem``), ``title``, ``provider``, ``description``, ``coverage``,\n    ``native_resolutions_metres``, ``default_resolution_metres``,\n    ``surface_models`` (``\"dtm\"`` and/or ``\"dsm\"``),\n    ``default_surface_model``, ``vertical_datum``, ``collections`` (the\n    ``source_collection_choice`` labels; empty for most sources),\n    ``attribution`` (to cite when you use the data), ``accessed`` (when the\n    access details were last checked) and ``requires_lerc``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def dem_sources() -> list",
+          "defaults": []
+        }
+      ]
+    },
+    {
       "name": "depression_hierarchy",
       "kind": "function",
       "doc": "Build the complete nested depression hierarchy for a DEM.\n\nParameters\n----------\ndem : Raster\n    Projected elevation raster.\nboundary_conditions : str, optional\n    Open edges seed the ocean when ``ocean_from_boundary=True``.\nocean_from_boundary, nodata_is_ocean : bool, optional\n    Define ocean seeds from open edges and/or nodata cells.\nocean_level : float, optional\n    Treat valid cells at this elevation as ocean seeds.\n\nReturns\n-------\nDepressionHierarchyResult\n    Leaf labels, D8 spill-routing directions, and leaf/meta-depression nodes.\n\nAuthors\n-------\nB. Gailleton",
@@ -5682,29 +6105,31 @@
     {
       "name": "extract_valley_centrelines",
       "kind": "function",
-      "doc": "Route centrelines through a supplied valley mask using a resolved ``ChannelScope``.\n\nThis function has 2 call forms:\n\n1. ``extract_valley_centrelines(dem: Raster, scope: ChannelScope, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: Raster) -> ValleyCentrelineResult``\n\n   Route centrelines through a supplied valley mask using a resolved ``ChannelScope``.\n\n2. ``extract_valley_centrelines(dem: Raster, channels: object, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: Raster) -> ValleyCentrelineResult``\n\n   Route centrelines through a supplied valley mask from ordered channel paths.\n\n   ``channels`` is a sequence of upstream-to-downstream ``(row, col)`` arrays.\n   A synthetic trough is carved into the valley floor, deepest along the\n   valley axis, and flow is routed down it, so the centreline follows the\n   middle of the valley rather than the channel. This function has two call\n   forms: pass a ``ChannelScope`` as ``scope`` (its traced channels are used) or\n   the ordered channel paths as ``channels``.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nscope : ChannelScope\n    First call form: channels resolved by ``FlowInfo.channel_scope``.\nchannels : sequence of numpy.ndarray\n    Second call form: N x 2 ``(row, col)`` arrays, upstream to downstream.\ncorridor_width_metres : float, default=5000.0\n    Half-width (m) of the corridor around each channel searched for valley\n    pixels.\nfallback_valley_hand_metres : float or None, default=None\n    Deprecated and ignored when ``valley_mask`` is supplied (a\n    ``DeprecationWarning`` is emitted if set).\nvalley_dilation_pixels : int, default=4\n    Pixels by which valley patches are dilated (towards the channel only) to\n    fill holes.\ntrough_scaling_factor : float, default=0.1\n    Gradient (m/m) of the synthetic trough carved towards the valley axis:\n    the trough is lowered by this times the distance to the valley wall\n    (Clubb et al. 2022 method); doubled on retries.\ncentreline_loops : int, default=5\n    Number of trough-carving and routing iterations.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nvalley_mask : Raster, keyword-only\n    0/1 valley-floor raster on the DEM grid, for example from\n    ``find_valleys`` or ``valley_mask_from_cross_sections``.\n\nReturns\n-------\nValleyCentrelineResult\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Route centrelines through a supplied valley mask using a resolved ``ChannelScope``.\n\nThis function has 2 call forms:\n\n1. ``extract_valley_centrelines(dem: Raster, scope: ChannelScope, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: Raster, centreline_baseline_algorithm_choice: str = 'projected_monotonic') -> ValleyCentrelineResult``\n\n   Route centrelines through a supplied valley mask using a resolved ``ChannelScope``.\n\n2. ``extract_valley_centrelines(dem: Raster, channels: object, corridor_width_metres: float = 5000.0, fallback_valley_hand_metres: object | None = None, valley_dilation_pixels: int = 4, trough_scaling_factor: float = 0.1, centreline_loops: int = 5, n_threads: int = 0, *, valley_mask: Raster, centreline_baseline_algorithm_choice: str = 'projected_monotonic') -> ValleyCentrelineResult``\n\n   Route centrelines through a supplied valley mask from ordered channel paths.\n\n   ``channels`` is a sequence of upstream-to-downstream ``(row, col)`` arrays.\n   A synthetic trough is carved into the valley floor, deepest along the\n   valley axis, and flow is routed down it, so the centreline follows the\n   middle of the valley rather than the channel. This function has two call\n   forms: pass a ``ChannelScope`` as ``scope`` (its traced channels are used) or\n   the ordered channel paths as ``channels``.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nscope : ChannelScope\n    First call form: channels resolved by ``FlowInfo.channel_scope``.\nchannels : sequence of numpy.ndarray\n    Second call form: N x 2 ``(row, col)`` arrays, upstream to downstream.\ncorridor_width_metres : float, default=5000.0\n    Half-width (m) of the corridor around each channel searched for valley\n    pixels.\nfallback_valley_hand_metres : float or None, default=None\n    Deprecated and ignored when ``valley_mask`` is supplied (a\n    ``DeprecationWarning`` is emitted if set).\nvalley_dilation_pixels : int, default=4\n    Pixels by which valley patches are dilated (towards the channel only) to\n    fill holes.\ntrough_scaling_factor : float, default=0.1\n    Gradient (m/m) of the synthetic trough carved towards the valley axis:\n    the trough is lowered by this times the distance to the valley wall\n    (Clubb et al. 2022 method); doubled on retries.\ncentreline_loops : int, default=5\n    Number of trough-carving and routing iterations.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\nvalley_mask : Raster, keyword-only\n    0/1 valley-floor raster on the DEM grid, for example from\n    ``find_valleys`` or ``valley_mask_from_cross_sections``.\ncentreline_baseline_algorithm_choice : {\"projected_monotonic\", \"channel_crossings\"}, default=\"projected_monotonic\"\n    How each centreline's baseline elevation is pinned to its channel, as\n    in lsdtt-valley-centreline: channel elevations projected onto the\n    centreline and made non-increasing, or pinned only where the centreline\n    crosses the channel.\n\nReturns\n-------\nValleyCentrelineResult\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult",
+          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, scope: lsdtt3.ChannelScope, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster, centreline_baseline_algorithm_choice: str = \\6) -> lsdtt3.ValleyCentrelineResult",
           "defaults": [
             5000.0,
             null,
             4,
             0.1,
             5,
-            0
+            0,
+            "projected_monotonic"
           ]
         },
         {
-          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, channels: object, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster) -> lsdtt3.ValleyCentrelineResult",
+          "definition": "def extract_valley_centrelines(dem: lsdtt3.Raster, channels: object, corridor_width_metres: float = \\0, fallback_valley_hand_metres: object | None = \\1, valley_dilation_pixels: int = \\2, trough_scaling_factor: float = \\3, centreline_loops: int = \\4, n_threads: int = \\5, *, valley_mask: lsdtt3.Raster, centreline_baseline_algorithm_choice: str = \\6) -> lsdtt3.ValleyCentrelineResult",
           "defaults": [
             5000.0,
             null,
             4,
             0.1,
             5,
-            0
+            0,
+            "projected_monotonic"
           ]
         }
       ]
@@ -5750,11 +6175,11 @@
     {
       "name": "fetch_dem",
       "kind": "function",
-      "doc": "Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.\n\nThe source tiles are downloaded, mosaicked and warped to a projected grid\n(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)\nstores the sea as exactly 0 m, not as nodata, so mask it before flow\nrouting: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source\nfootprint are nodata.\n\nOr, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,\nfetch a strip along a fault, river or range warped straight from the source\ntiles into an oblique frame (one resampling pass), with the feature along\n+x. The return type is always ``Raster``; keep the ``RotationFrame`` to\nrotate products back with ``rotate_back``.\n\nParameters\n----------\nwest, south, east, north : float, optional\n    WGS84 bounds in decimal degrees (longitude west/east, latitude\n    south/north). Antimeridian-crossing requests are not supported:\n    ``west`` must be less than ``east``. ``VectorBounds.bbox`` from\n    ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.\n    Required unless ``frame`` or ``fetch_from_linear_feature`` gives the\n    area; refused with them.\nsource : {\"cop30_aws\", \"opentopography\", \"planetary_computer\"}, optional\n    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.\n    OpenTopography reads its key only from the ``OT_API_KEY`` or\n    ``OT_API_KEY_FILE`` environment variables (never pass a key as an\n    argument). ``planetary_computer`` is keyless.\ntarget_epsg : int, optional\n    Output EPSG code. Zero selects the UTM zone of the bounding-box centre.\ngrid_spacing : float, optional\n    Output cell size in target CRS units (m for UTM); default 30.\nresampling : str, optional\n    GDAL warp resampling method (``\"cubic\"`` default, ``\"bilinear\"``,\n    ``\"near\"``, ...).\nnodata_value : float, optional\n    Nodata value of the output (default -9999).\nsize_pixels : int, optional\n    If > 0, crop an exact ``size_pixels`` x ``size_pixels`` square from the\n    centre of the warped grid; 0 keeps the full extent.\ncache_dir : str, optional\n    Persistent cache directory. This is the only optional disk output; the\n    returned raster itself is kept in memory. Empty means no caching.\not_dem_type : str, optional\n    OpenTopography dataset, for example ``\"COP30\"``, ``\"SRTMGL1\"``,\n    ``\"NASADEM\"`` (see ``opentopography_datasets()``); other sources ignore it.\npc_collection, pc_asset : str, optional\n    Planetary Computer STAC collection and asset key (defaults\n    ``\"cop-dem-glo-30\"`` and ``\"data\"``); other sources ignore them.\nhttp_timeout_seconds : int, optional\n    Total time limit per HTTP request in seconds.\nhttp_connect_timeout_seconds : int, optional\n    Connection time limit per HTTP request in seconds.\nhttp_max_retry : int, optional\n    Number of retries of a failed HTTP request.\nframe : RotationFrame or None, optional\n    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``\n    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``\n    are refused (the frame carries its rotate-back target).\nfetch_from_linear_feature : bool, optional\n    Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster\n    does; the same as ``frame=RotationFrame.from_feature(fetch_feature_fname,\n    linear_feature_fetch_width, linear_feature_fetch_end_buffer,\n    grid_spacing, fetch_feature_layer)``, which is the frame to keep for\n    ``rotate_back``.\nfetch_feature_fname : str, optional\n    Line, two-point or polygon file (any OGR format and CRS).\nfetch_feature_layer : str, optional\n    Layer of the feature file; empty reads the first.\nlinear_feature_fetch_width : float, optional\n    Full strip width in metres; required for a line or two points.\nlinear_feature_fetch_end_buffer : float, optional\n    Length beyond each axis end in metres (all sides for a polygon);\n    negative means 10 cells.\nrotate_after_fetch : bool, optional\n    With ``fetch_from_linear_feature``: True (default) returns the strip in\n    the oblique frame; False returns the frame's WGS84 envelope in UTM, as a\n    plain fetch.\n\nReturns\n-------\nRaster\n    A projected raster of elevation (m): UTM (or ``target_epsg``), or the\n    oblique frame. Network, GDAL, and invalid-request failures raise\n    ``RuntimeError``; an inconsistent combination of arguments raises\n    ``ValueError``.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.\n\nThe source tiles are downloaded, mosaicked and warped to a projected grid\n(UTM by default), with the same code and the same parameter names as\n``lsdtt-fetch-raster``. The Copernicus DEM (the default ``cop30_aws``\nsource) stores the sea as exactly 0 m, not as nodata, so mask it before\nflow routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source\nfootprint are nodata.\n\nBesides the global 30 m sources there are keyless national and polar\nhigh-resolution DEMs (``us_3dep``, ``arctic_arcticdem``,\n``antarctic_rema``, ``no_dtm``, ``nl_ahn``, ``es_mdt``, ``pl_nmt``,\n``ca_hrdem``, ``ch_swissalti3d``, ``nz_lidar``, ``gb_sct_lidar``,\n``jp_gsi``); ``dem_sources()`` lists each one's resolutions, surface models\n(DSM or DTM), vertical datum, coverage and attribution. Warnings from the\nfetch (partial coverage, overviews read, a LERC-compressed source this GDAL\ncannot read, older Scottish collections covering the area) are issued as\n``UserWarning``.\n\nOr, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,\nfetch a strip along a fault, river or range warped straight from the source\ntiles into an oblique frame (one resampling pass), with the feature along\n+x. The return type is always ``Raster``; keep the ``RotationFrame`` to\nrotate products back with ``rotate_back``.\n\nParameters\n----------\nwest, south, east, north : float, optional\n    WGS84 bounds in decimal degrees (longitude west/east, latitude\n    south/north). Antimeridian-crossing requests are not supported:\n    ``west`` must be less than ``east``. ``VectorBounds.bbox`` from\n    ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.\n    Required unless ``frame`` or ``fetch_from_linear_feature`` gives the\n    area; refused with them.\nsource : str, optional\n    ``cop30_aws`` (default) is a keyless global 30 m Copernicus DEM.\n    OpenTopography reads its key only from the ``OT_API_KEY`` or\n    ``OT_API_KEY_FILE`` environment variables (never pass a key as an\n    argument). ``planetary_computer`` is keyless. The national and polar\n    sources are listed by ``dem_sources()``.\ntarget_epsg : int, optional\n    Output EPSG code. Zero selects the UTM zone of the bounding-box centre.\ngrid_spacing : float or None, optional\n    Output cell size in target CRS units (m for UTM). None (default) uses\n    the frame's cell size with ``frame``, the source's native resolution\n    (``source_resolution_metres`` if set) for a national or polar source,\n    and 30 otherwise. Output cells are always square.\nresampling : str, optional\n    GDAL warp resampling method (``\"cubic\"`` default, ``\"bilinear\"``,\n    ``\"near\"``, ...).\nnodata_value : float, optional\n    Nodata value of the output (default -9999).\nsize_pixels : int, optional\n    If > 0, crop an exact ``size_pixels`` x ``size_pixels`` square from the\n    centre of the warped grid; 0 keeps the full extent.\ncache_dir : str, optional\n    Persistent cache directory. This is the only optional disk output; the\n    returned raster itself is kept in memory. Empty means no caching.\not_dem_type : str, optional\n    OpenTopography dataset, for example ``\"COP30\"``, ``\"SRTMGL1\"``,\n    ``\"NASADEM\"`` (see ``opentopography_datasets()``); other sources ignore it.\npc_collection, pc_asset : str, optional\n    Planetary Computer STAC collection and asset key (defaults\n    ``\"cop-dem-glo-30\"`` and ``\"data\"``); other sources ignore them.\nhttp_timeout_seconds : int, optional\n    Total time limit per HTTP request in seconds.\nhttp_connect_timeout_seconds : int, optional\n    Connection time limit per HTTP request in seconds.\nhttp_max_retry : int, optional\n    Number of retries of a failed HTTP request.\nframe : RotationFrame or None, optional\n    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``,\n    if given, must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``\n    are refused (the frame carries its rotate-back target).\nfetch_from_linear_feature : bool, optional\n    Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster\n    does; the same as ``frame=RotationFrame.from_feature(fetch_feature_fname,\n    linear_feature_fetch_width, linear_feature_fetch_end_buffer,\n    grid_spacing, fetch_feature_layer)``, which is the frame to keep for\n    ``rotate_back``.\nfetch_feature_fname : str, optional\n    Line, two-point or polygon file (any OGR format and CRS).\nfetch_feature_layer : str, optional\n    Layer of the feature file; empty reads the first.\nlinear_feature_fetch_width : float, optional\n    Full strip width in metres; required for a line or two points.\nlinear_feature_fetch_end_buffer : float, optional\n    Length beyond each axis end in metres (all sides for a polygon);\n    negative means 10 cells.\nrotate_after_fetch : bool, optional\n    With ``fetch_from_linear_feature``: True (default) returns the strip in\n    the oblique frame; False returns the frame's WGS84 envelope in UTM, as a\n    plain fetch.\nsource_resolution_metres : float, optional\n    Native resolution (m) to fetch from a source that offers several (for\n    example 1, 2 or 10 for ``arctic_arcticdem``); 0 (default) uses the\n    source's default. Refused for a source that does not offer it.\nsurface_model_choice : {\"source_default\", \"dtm\", \"dsm\"}, optional\n    Terrain (DTM) or surface (DSM) model. ``source_default`` takes the DTM\n    where the source has one. Asking for a model the source lacks raises\n    ``RuntimeError``; the Copernicus sources are DSMs only.\nsource_collection_choice : str, optional\n    ``gb_sct_lidar`` only: ``latest`` (default) uses the newest collection\n    with tiles in the area (a warning names older ones that also cover it);\n    a collection label (``phase-1`` ... ``phase-6``,\n    ``national-lidar-programme``) uses that one. Collections are never mixed.\nmax_output_pixels : int, optional\n    Largest output grid (cells) allowed, checked before any download; for\n    the WCS sources the native cells requested are counted too.\nmax_download_megabytes : float, optional\n    Largest download allowed (MB): an estimate checked before the fetch,\n    and a running count that stops the transfer where lsdtt3 does the HTTP.\nmax_tiles : int, optional\n    Largest number of tiles, source files or service requests allowed.\nrequest_delay_milliseconds : int, optional\n    Pause between requests to tile services (ms).\n\nReturns\n-------\nRaster\n    A projected raster of elevation (m): UTM (or ``target_epsg``), or the\n    oblique frame. Network, GDAL, and invalid-request failures (including\n    an area outside the source's coverage or over a size limit) raise\n    ``RuntimeError``; an inconsistent combination of arguments raises\n    ``ValueError``.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def fetch_dem(west: float = \\0, south: float = \\1, east: float = \\2, north: float = \\3, source: str = \\4, target_epsg: int = \\5, grid_spacing: float = \\6, resampling: str = \\7, nodata_value: float = \\8, size_pixels: int = \\9, cache_dir: str = \\10, ot_dem_type: str = \\11, pc_collection: str = \\12, pc_asset: str = \\13, http_timeout_seconds: int = \\14, http_connect_timeout_seconds: int = \\15, http_max_retry: int = \\16, frame: object | None = \\17, fetch_from_linear_feature: bool = \\18, fetch_feature_fname: str = \\19, fetch_feature_layer: str = \\20, linear_feature_fetch_width: float = \\21, linear_feature_fetch_end_buffer: float = \\22, rotate_after_fetch: bool = \\23) -> lsdtt3.Raster",
+          "definition": "def fetch_dem(west: float = \\0, south: float = \\1, east: float = \\2, north: float = \\3, source: str = \\4, target_epsg: int = \\5, grid_spacing: float | None = \\6, resampling: str = \\7, nodata_value: float = \\8, size_pixels: int = \\9, cache_dir: str = \\10, ot_dem_type: str = \\11, pc_collection: str = \\12, pc_asset: str = \\13, http_timeout_seconds: int = \\14, http_connect_timeout_seconds: int = \\15, http_max_retry: int = \\16, frame: object | None = \\17, fetch_from_linear_feature: bool = \\18, fetch_feature_fname: str = \\19, fetch_feature_layer: str = \\20, linear_feature_fetch_width: float = \\21, linear_feature_fetch_end_buffer: float = \\22, rotate_after_fetch: bool = \\23, source_resolution_metres: float = \\24, surface_model_choice: str = \\25, source_collection_choice: str = \\26, max_output_pixels: int = \\27, max_download_megabytes: float = \\28, max_tiles: int = \\29, request_delay_milliseconds: int = \\30) -> lsdtt3.Raster",
           "defaults": [
             "nan",
             "nan",
@@ -5762,7 +6187,7 @@
             "nan",
             "cop30_aws",
             0,
-            30.0,
+            null,
             "cubic",
             -9999.0,
             0,
@@ -5779,7 +6204,14 @@
             "",
             0.0,
             -1.0,
-            true
+            true,
+            0.0,
+            "source_default",
+            "latest",
+            250000000,
+            2048.0,
+            256,
+            200
           ]
         }
       ]
@@ -5787,11 +6219,11 @@
     {
       "name": "fetch_dem_for_outlets",
       "kind": "function",
-      "doc": "Fetch one or more in-memory DEMs around WGS84 outlet points.\n\nThe initial radius around each point is converted to WGS84 bounds, nearby\noutlets are grouped, and large groups are split before each group is fetched.\nThe input GeoDataFrame is reprojected to WGS84 internally. Each group is\nverified with D8 basin delineation, expanded if a basin reaches an edge or\nnodata, and optionally refetched to its tight basin envelope.\n\nParameters\n----------\noutlets : geopandas.GeoDataFrame\n    Point geometries defining outlet locations, in any declared CRS.\nsource : {\"cop30_aws\", \"opentopography\", \"planetary_computer\"}, optional\n    DEM source, as in ``fetch_dem``.\ntarget_epsg : int, optional\n    Output EPSG code; 0 selects UTM from each group's centre.\ngrid_spacing : float, optional\n    Output cell size in target CRS units (m for UTM).\ninitial_radius_km : float, optional\n    Initial half-width (km) of the box around each outlet before grouping.\nauto_split_disconnected_basins : bool, optional\n    Split groups whose outlets form separate clusters.\nsplit_cluster_gap_km : float, optional\n    Gap (km) between outlet clusters above which a group is split.\nmax_final_dem_area_km2 : float, optional\n    Largest allowed grouped initial extent (km^2) before splitting it.\nsplit_overlap_km : float, optional\n    Overlap (km) between split extents.\nmax_basins_per_dem : int, optional\n    Largest number of outlets per DEM; 0 means no limit.\ncache_dir : str, optional\n    Persistent download cache directory; empty means none.\nresampling : str, optional\n    GDAL warp resampling method.\nnodata_value : float, optional\n    Nodata value of the output DEMs.\nsnapping_method : {\"none\", \"expanding_square\", \"downstream\", \"largest_area\"}, optional\n    Outlet snapping used before each basin delineation; the same rules as\n    ``FlowInfo.snap_points`` and the CLI ``basin_outlet_snapping_method``.\ncontributing_pixels_threshold : int, optional\n    Channel threshold (contributing pixels) that outlets are snapped to.\nedge_buffer_pixels, nodata_buffer_pixels : int, optional\n    Required basin clearance (pixels) from the DEM edge and invalid cells.\ntight_bbox_buffer_pixels : int, optional\n    Margin (pixels) added around the verified basins for the tight refetch.\nverify_expand_factor : float, optional\n    Factor (> 1) by which an extent grows when a basin reaches its edge.\nverify_max_iters : int, optional\n    Largest number of fetch-and-verify attempts per group.\ntight_bbox_refetch : bool, optional\n    Refetch a smaller final DEM around the verified basin footprint.\nmin_search_radius_pixels : int, optional\n    Smallest expanding-square snap radius (pixels).\nmax_search_radius_pixels : int, optional\n    Largest expanding-square snap radius when ``snapping_method`` is\n    ``\"expanding_square\"``, and the half-width of the square searched for\n    ``\"largest_area\"``.\nmask_outside_basins : bool, optional\n    Set cells outside the selected basin union to nodata in returned DEMs.\n\nReturns\n-------\nOutletFetchResult\n    Grouped raster collection and copied outlet/group diagnostic tables.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Fetch one or more in-memory DEMs around WGS84 outlet points.\n\nThe initial radius around each point is converted to WGS84 bounds, nearby\noutlets are grouped, and large groups are split before each group is fetched.\nThe input GeoDataFrame is reprojected to WGS84 internally. Each group is\nverified with D8 basin delineation, expanded if a basin reaches an edge or\nnodata, and optionally refetched to its tight basin envelope.\n\nParameters\n----------\noutlets : geopandas.GeoDataFrame\n    Point geometries defining outlet locations, in any declared CRS.\nsource : {\"cop30_aws\", \"opentopography\", \"planetary_computer\"}, optional\n    DEM source, as in ``fetch_dem``. The national and polar sources are\n    refused here, as in ``lsdtt-fetch-raster`` outlets mode: find the groups\n    with ``cop30_aws``, then ``fetch_dem`` each group's area.\ntarget_epsg : int, optional\n    Output EPSG code; 0 selects UTM from each group's centre.\ngrid_spacing : float, optional\n    Output cell size in target CRS units (m for UTM).\ninitial_radius_km : float, optional\n    Initial half-width (km) of the box around each outlet before grouping.\nauto_split_disconnected_basins : bool, optional\n    Split groups whose outlets form separate clusters.\nsplit_cluster_gap_km : float, optional\n    Gap (km) between outlet clusters above which a group is split.\nmax_final_dem_area_km2 : float, optional\n    Largest allowed grouped initial extent (km^2) before splitting it.\nsplit_overlap_km : float, optional\n    Overlap (km) between split extents.\nmax_basins_per_dem : int, optional\n    Largest number of outlets per DEM; 0 means no limit.\ncache_dir : str, optional\n    Persistent download cache directory; empty means none.\nresampling : str, optional\n    GDAL warp resampling method.\nnodata_value : float, optional\n    Nodata value of the output DEMs.\nsnapping_method : {\"none\", \"expanding_square\", \"downstream\", \"largest_area\"}, optional\n    Outlet snapping used before each basin delineation; the same rules as\n    ``FlowInfo.snap_points`` and the CLI ``basin_outlet_snapping_method``.\ncontributing_pixels_threshold : int, optional\n    Channel threshold (contributing pixels) that outlets are snapped to.\nedge_buffer_pixels, nodata_buffer_pixels : int, optional\n    Required basin clearance (pixels) from the DEM edge and invalid cells.\ntight_bbox_buffer_pixels : int, optional\n    Margin (pixels) added around the verified basins for the tight refetch.\nverify_expand_factor : float, optional\n    Factor (> 1) by which an extent grows when a basin reaches its edge.\nverify_max_iters : int, optional\n    Largest number of fetch-and-verify attempts per group.\ntight_bbox_refetch : bool, optional\n    Refetch a smaller final DEM around the verified basin footprint.\nmin_search_radius_pixels : int, optional\n    Smallest expanding-square snap radius (pixels).\nmax_search_radius_pixels : int, optional\n    Largest expanding-square snap radius when ``snapping_method`` is\n    ``\"expanding_square\"``, and the half-width of the square searched for\n    ``\"largest_area\"``.\nmask_outside_basins : bool, optional\n    Set cells outside the selected basin union to nodata in returned DEMs.\nmax_output_pixels, max_download_megabytes, max_tiles, request_delay_milliseconds\n    Size limits and request pacing for each group's fetch, as in\n    ``fetch_dem``.\n\nReturns\n-------\nOutletFetchResult\n    Grouped raster collection and copied outlet/group diagnostic tables.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def fetch_dem_for_outlets(outlets: object, source: str = \\0, target_epsg: int = \\1, grid_spacing: float = \\2, initial_radius_km: float = \\3, auto_split_disconnected_basins: bool = \\4, split_cluster_gap_km: float = \\5, max_final_dem_area_km2: float = \\6, split_overlap_km: float = \\7, max_basins_per_dem: int = \\8, cache_dir: str = \\9, resampling: str = \\10, nodata_value: float = \\11, snapping_method: str = \\12, contributing_pixels_threshold: int = \\13, edge_buffer_pixels: int = \\14, nodata_buffer_pixels: int = \\15, tight_bbox_buffer_pixels: int = \\16, verify_expand_factor: float = \\17, verify_max_iters: int = \\18, tight_bbox_refetch: bool = \\19, min_search_radius_pixels: int = \\20, max_search_radius_pixels: int = \\21, mask_outside_basins: bool = \\22) -> lsdtt3.OutletFetchResult",
+          "definition": "def fetch_dem_for_outlets(outlets: object, source: str = \\0, target_epsg: int = \\1, grid_spacing: float = \\2, initial_radius_km: float = \\3, auto_split_disconnected_basins: bool = \\4, split_cluster_gap_km: float = \\5, max_final_dem_area_km2: float = \\6, split_overlap_km: float = \\7, max_basins_per_dem: int = \\8, cache_dir: str = \\9, resampling: str = \\10, nodata_value: float = \\11, snapping_method: str = \\12, contributing_pixels_threshold: int = \\13, edge_buffer_pixels: int = \\14, nodata_buffer_pixels: int = \\15, tight_bbox_buffer_pixels: int = \\16, verify_expand_factor: float = \\17, verify_max_iters: int = \\18, tight_bbox_refetch: bool = \\19, min_search_radius_pixels: int = \\20, max_search_radius_pixels: int = \\21, mask_outside_basins: bool = \\22, max_output_pixels: int = \\23, max_download_megabytes: float = \\24, max_tiles: int = \\25, request_delay_milliseconds: int = \\26) -> lsdtt3.OutletFetchResult",
           "defaults": [
             "cop30_aws",
             0,
@@ -5815,7 +6247,11 @@
             true,
             0,
             25,
-            false
+            false,
+            250000000,
+            2048.0,
+            256,
+            200
           ]
         }
       ]
@@ -6012,11 +6448,11 @@
     {
       "name": "find_flat_surfaces",
       "kind": "function",
-      "doc": "Detect and label flat surfaces from texture and local relief.\n\nEach enabled roughness metric is computed in a moving window and thresholded\nat a percentile of its own distribution (low roughness = flat); the metric\nmasks are combined, local relief must also be below\n``relief_threshold_metres``, and connected flats are labelled.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nuse_madk2 : bool, default=True\n    Use MADk2 roughness (median absolute deviation of second differences;\n    insensitive to uniform slope).\nmadk2_window_radius_metres : float, default=100.0\n    MADk2 window radius (m).\nmadk2_threshold_percentile : float, default=25.0\n    Pixels below this percentile of MADk2 count as flat.\nuse_residual_iqr : bool, default=True\n    Use the interquartile range of residuals to a smooth reference surface.\niqr_method : {\"fftw_highpass\", \"wavelet_quadratic\", \"moving_window_mean\"}, default=\"fftw_highpass\"\n    How the reference surface is removed (the first two need FFTW).\niqr_fit_lambda_metres : float, default=500.0\n    Reference-surface wavelength (m) for ``fftw_highpass`` and\n    ``wavelet_quadratic``.\niqr_detrend_radius_metres : float, default=500.0\n    Moving-window radius (m) for ``moving_window_mean``.\niqr_window_radius_metres : float, default=50.0\n    Radius (m) of the window in which the IQR is computed.\niqr_window_shape : {\"circular\", \"square\"}, default=\"circular\"\n    Shape of that window.\niqr_threshold_percentile : float, default=25.0\n    Pixels below this percentile of the IQR count as flat.\nuse_nvd : bool, default=False\n    Use normal-vector dispersion (needs FFTW).\nnvd_polyfit_lambda : float, default=10.0\n    Wavelength (m) of the surface fit giving the normals.\nnvd_window_radius_metres : float, default=100.0\n    NVD window radius (m).\nnvd_window_shape : {\"circular\", \"square\"}, default=\"circular\"\n    NVD window shape.\nnvd_threshold_percentile : float, default=25.0\n    Pixels below this percentile of NVD count as flat.\nrequire_all_metrics_pass : bool, default=True\n    True: a pixel must pass every enabled metric (AND); False: any (OR).\ndirectional_close_line_length_pixels : int, default=0\n    Length (pixels) of the line used to close small gaps in narrow non-flat\n    corridors (channels, scarps) before labelling; below 3 disables it.\ndirectional_close_n_angles : int, default=18\n    Number of line orientations tried (18 = 10-degree steps).\nmin_component_pixels : int, default=100\n    Smallest labelled flat (pixels).\nrelief_window_side_pixels : int, default=5\n    Side (pixels, odd, >= 3) of the square local-relief window.\nrelief_threshold_metres : float, default=1.0\n    Pixels with local relief (max - min, m) at or above this are not flat.\nremove_risers : bool, default=False\n    Fit a plane to each flat and remove pixels with high residual relief\n    (risers between terrace levels), then relabel.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nFlatSurfaceResult\n    Roughness rasters, per-metric and combined masks, and labelled flats.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "Detect and label flat surfaces from texture and local relief.\n\nEach enabled roughness metric is computed in a moving window and thresholded\nat a percentile of its own distribution (low roughness = flat); the metric\nmasks are combined, local relief must also be below\n``max_relief_metres``, and connected flats are labelled.\n\nParameters\n----------\ndem : Raster\n    Elevation raster (m).\nuse_madk2 : bool, default=True\n    Use MADk2 roughness (median absolute deviation of second differences;\n    insensitive to uniform slope).\nmadk2_window_radius_metres : float, default=100.0\n    MADk2 window radius (m).\nmadk2_threshold_percentile : float, default=25.0\n    Pixels below this percentile of MADk2 count as flat.\nuse_residual_iqr : bool, default=True\n    Use the interquartile range of residuals to a smooth reference surface.\niqr_method : {\"fftw_highpass\", \"wavelet_quadratic\", \"moving_window_mean\"}, default=\"fftw_highpass\"\n    How the reference surface is removed (the first two need FFTW).\niqr_fit_lambda_metres : float, default=500.0\n    Reference-surface wavelength (m) for ``fftw_highpass`` and\n    ``wavelet_quadratic``.\niqr_detrend_radius_metres : float, default=500.0\n    Moving-window radius (m) for ``moving_window_mean``.\niqr_window_radius_metres : float, default=50.0\n    Radius (m) of the window in which the IQR is computed.\niqr_window_shape : {\"circular\", \"square\"}, default=\"circular\"\n    Shape of that window.\niqr_threshold_percentile : float, default=25.0\n    Pixels below this percentile of the IQR count as flat.\nuse_nvd : bool, default=False\n    Use normal-vector dispersion (needs FFTW).\nnvd_polyfit_lambda : float, default=10.0\n    Wavelength (m) of the surface fit giving the normals.\nnvd_window_radius_metres : float, default=100.0\n    NVD window radius (m).\nnvd_window_shape : {\"circular\", \"square\"}, default=\"circular\"\n    NVD window shape.\nnvd_threshold_percentile : float, default=25.0\n    Pixels below this percentile of NVD count as flat.\nrequire_all_metrics_pass : bool, default=True\n    True: a pixel must pass every enabled metric (AND); False: any (OR).\ndirectional_close_line_length_pixels : int, default=0\n    Length (pixels) of the line used to close small gaps in narrow non-flat\n    corridors (channels, scarps) before labelling; below 3 disables it.\ndirectional_close_n_angles : int, default=18\n    Number of line orientations tried (18 = 10-degree steps).\nmin_component_pixels : int, default=100\n    Smallest labelled flat (pixels).\nrelief_window_radius_metres : float, default=0.0\n    Radius (m) of the square local-relief window, converted to the nearest\n    whole number of cells (at least one); a radius of r cells is a\n    (2r + 1)-cell side. 0 means 2 cells (a 5 x 5 window). Replaces the\n    deprecated ``relief_window_side_pixels`` (a full side in cells).\nmax_relief_metres : float, default=1.0\n    Pixels with local relief (max - min, m) at or above this are not flat.\n    Replaces the deprecated ``relief_threshold_metres``.\nremove_risers : bool, default=False\n    Fit a plane to each flat and remove pixels with high residual relief\n    (risers between terrace levels), then relabel.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nFlatSurfaceResult\n    Roughness rasters, per-metric and combined masks, and labelled flats.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [],
       "signatures": [
         {
-          "definition": "def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = \\0, madk2_window_radius_metres: float = \\1, madk2_threshold_percentile: float = \\2, use_residual_iqr: bool = \\3, iqr_method: str = \\4, iqr_fit_lambda_metres: float = \\5, iqr_detrend_radius_metres: float = \\6, iqr_window_radius_metres: float = \\7, iqr_window_shape: str = \\8, iqr_threshold_percentile: float = \\9, use_nvd: bool = \\10, nvd_polyfit_lambda: float = \\11, nvd_window_radius_metres: float = \\12, nvd_window_shape: str = \\13, nvd_threshold_percentile: float = \\14, require_all_metrics_pass: bool = \\15, directional_close_line_length_pixels: int = \\16, directional_close_n_angles: int = \\17, min_component_pixels: int = \\18, relief_window_side_pixels: int = \\19, relief_threshold_metres: float = \\20, remove_risers: bool = \\21, n_threads: int = \\22) -> lsdtt3.FlatSurfaceResult",
+          "definition": "def find_flat_surfaces(dem: lsdtt3.Raster, use_madk2: bool = \\0, madk2_window_radius_metres: float = \\1, madk2_threshold_percentile: float = \\2, use_residual_iqr: bool = \\3, iqr_method: str = \\4, iqr_fit_lambda_metres: float = \\5, iqr_detrend_radius_metres: float = \\6, iqr_window_radius_metres: float = \\7, iqr_window_shape: str = \\8, iqr_threshold_percentile: float = \\9, use_nvd: bool = \\10, nvd_polyfit_lambda: float = \\11, nvd_window_radius_metres: float = \\12, nvd_window_shape: str = \\13, nvd_threshold_percentile: float = \\14, require_all_metrics_pass: bool = \\15, directional_close_line_length_pixels: int = \\16, directional_close_n_angles: int = \\17, min_component_pixels: int = \\18, relief_window_radius_metres: float = \\19, max_relief_metres: float = \\20, remove_risers: bool = \\21, n_threads: int = \\22) -> lsdtt3.FlatSurfaceResult",
           "defaults": [
             true,
             100.0,
@@ -6037,7 +6473,7 @@
             0,
             18,
             100,
-            5,
+            0.0,
             1.0,
             false,
             0
@@ -6087,6 +6523,66 @@
             true,
             false,
             0.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "find_perimeter_sources",
+      "kind": "function",
+      "doc": "Find channel sources where valley floors cross the DEM perimeter.\n\nlsdtt-channel-extraction ``run_perimeter_sources``; each keyword is that\nCLI's ``perimeter_*`` parameter without the prefix (``n_outlets`` is\n``n_perimeter_outlets``). For a floodplain that crosses the edge of the\nDEM, the channel enters from outside, so no head exists inside the DEM.\nThe perimeter is traced, gentle wide low runs are found, and each is kept\nas a source when the path inward from it is gentle and drains to one of\nthe ``n_outlets`` largest outlets.\n\nParameters\n----------\ndem : Raster\n    The DEM after nodata handling: its mask is the valid region, and its\n    elevations give the profile and gradients.\nrouted_dem : Raster\n    The filled / flat-resolved DEM ``flow`` was built on.\nflow : FlowInfo\n    D8 routing on ``routed_dem`` with open boundaries on every edge\n    (``boundary_conditions=\"oooo\"``).\nn_outlets : int, default=1\n    Number of outer outlets (largest summed drainage area) sources must\n    drain to.\nmin_valley_width_metres : float, default=300.0\n    Narrowest gentle run (m) that counts as a valley-floor crossing.\nmax_gradient : float, default=0.05\n    Largest perimeter gradient (m/m) that counts as gentle.\ngradient_radius_metres : float, default=-1.0\n    Plane-fit radius (m) of the perimeter gradient; negative is\n    max(5 cells, 10 m).\ngap_closing_metres : float, default=-1.0\n    Steep gaps up to this length (m) inside a gentle run are absorbed;\n    negative is max(2 cells, 20 m), 0 turns it off.\nmin_relief_metres : float, default=5.0\n    Rise (m) needed on both sides for a run to be a low spot.\ninward_check_distance_metres : float, default=500.0\n    Length (m) of the path inward that is checked.\ninward_max_gradient : float, default=0.10\n    Steepest windowed gradient (m/m) allowed on that path.\ninward_gradient_window_metres : float, default=-1.0\n    Window (m) of that gradient; negative is max(5 cells, 25 m).\nmin_source_path_metres : float, default=-1.0\n    Shortest path to the outlet (m) a source may have; negative is twice\n    ``min_valley_width_metres``.\ntrim_pixels : int, default=0\n    Erode the valid region by this many cells before tracing, moving the\n    trace off interpolated edge values; trimmed cells still route flow.\n\nReturns\n-------\nPerimeterSources\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def find_perimeter_sources(dem: lsdtt3.Raster, routed_dem: lsdtt3.Raster, flow: lsdtt3.FlowInfo, n_outlets: int = \\0, min_valley_width_metres: float = \\1, max_gradient: float = \\2, gradient_radius_metres: float = \\3, gap_closing_metres: float = \\4, min_relief_metres: float = \\5, inward_check_distance_metres: float = \\6, inward_max_gradient: float = \\7, inward_gradient_window_metres: float = \\8, min_source_path_metres: float = \\9, trim_pixels: int = \\10) -> lsdtt3.PerimeterSources",
+          "defaults": [
+            1,
+            300.0,
+            0.05,
+            -1.0,
+            -1.0,
+            5.0,
+            500.0,
+            0.1,
+            -1.0,
+            -1.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "find_risers",
+      "kind": "function",
+      "doc": "Find risers: short steep steps between gentler surfaces, as open line segments.\n\nlsdtt-feature-finder ``feature_type: find_risers``; each keyword is that\nCLI's ``riser_*`` parameter without the prefix. A break-of-slope edge field\nis adaptively thresholded and thinned, optionally gap-closed, split at\njunctions into segments, and each segment gets a step height\n``|2 dz(d) - dz(2d)|`` across it (0 on a planar slope, H across a step of\nheight H between treads of equal tilt). Segments below\n``min_step_height_metres`` or ``min_segment_pixels`` are dropped. Risers\nrarely close, so the product is segments, not polygons.\n\nParameters\n----------\ndem : Raster\n    Elevation (m).\nsearch_mask : Raster or None, default=None\n    Cells (> 0.5) where risers are looked for, for example a valley mask;\n    None searches every valid cell.\nedge_metric : {\"vertical_excess_curvature\", \"curvedness\", \"maximum_curvature\", \"multidirectional_hillshade\"}, default=\"vertical_excess_curvature\"\n    Edge field the lines are drawn on. The first three come from the\n    polyfit; ``multidirectional_hillshade`` is the negated mean hillshade\n    over ``multidirectional_hillshade_n_directions`` azimuths.\nmultidirectional_hillshade_n_directions : int, default=8\n    Azimuths for ``multidirectional_hillshade``.\npolyfit_lambda_metres : float, default=100.0\n    Polyfit window (m) of the curvature metrics; also sets the default step\n    window.\nvec_adaptive_method : {\"mean_std\", \"mean\", \"gaussian\"}, default=\"mean_std\"\n    Adaptive threshold of the edge field.\nvec_adaptive_std_factor : float, default=0.5\n    ``mean_std``: local standard deviations above the local mean.\nvec_adaptive_block_size_pixels : int, default=51\n    Adaptive window side (odd, >= 3): wider than a riser, narrower than the\n    spacing between risers.\nvec_adaptive_C : float, default=0.0\n    ``mean`` / ``gaussian``: offset below the local mean.\nvec_adaptive_gaussian_sigma : float, default=0.0\n    ``mean`` / ``gaussian``: pre-blur sigma; 0 means none.\nclosing_radius_metres : float, default=0.0\n    Closing radius (m) of the binary mask before thinning; 0 means none.\nbinary_min_component_pixels : int, default=1\n    Smallest binary component kept before thinning.\nmax_spur_pixels, max_terminal_loop_pixels : int, default=10\n    Longest spur and terminal loop pruned from the skeleton.\nmin_component_pixels : int, default=1\n    Smallest skeleton component kept.\ngap_closing_algorithm_choice : {\"none\", \"astar\"}, default=\"none\"\n    ``astar`` bridges skeleton endpoints within ``connect_search_radius_metres``\n    whose elevations differ by at most ``connect_elevation_tolerance_metres``.\nconnect_search_radius_metres : float, default=200.0\n    Bridge search radius (m).\nconnect_elevation_tolerance_metres : float, default=2.0\n    Largest elevation difference (m) a bridge may join; keep it below the\n    smallest riser height.\nconnect_corridor_half_width_pixels : float, default=12.0\n    Half-width (pixels) of the corridor a bridge is routed in.\nconnect_same_component : bool, default=False\n    Also bridge endpoints of the same skeleton component.\nstep_window_radius_metres : float, default=0.0\n    Step window d (m); 0 is half the polyfit window, at least three cells.\nmin_step_height_metres : float, default=1.0\n    Smallest step height (m) kept.\nmin_segment_pixels : int, default=5\n    Shortest segment kept (pixels).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRiserResult\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def find_risers(dem: lsdtt3.Raster, search_mask: object | None = \\0, edge_metric: str = \\1, multidirectional_hillshade_n_directions: int = \\2, polyfit_lambda_metres: float = \\3, vec_adaptive_method: str = \\4, vec_adaptive_std_factor: float = \\5, vec_adaptive_block_size_pixels: int = \\6, vec_adaptive_C: float = \\7, vec_adaptive_gaussian_sigma: float = \\8, closing_radius_metres: float = \\9, binary_min_component_pixels: int = \\10, max_spur_pixels: int = \\11, max_terminal_loop_pixels: int = \\12, min_component_pixels: int = \\13, gap_closing_algorithm_choice: str = \\14, connect_search_radius_metres: float = \\15, connect_elevation_tolerance_metres: float = \\16, connect_corridor_half_width_pixels: float = \\17, connect_same_component: bool = \\18, step_window_radius_metres: float = \\19, min_step_height_metres: float = \\20, min_segment_pixels: int = \\21, n_threads: int = \\22) -> lsdtt3.RiserResult",
+          "defaults": [
+            null,
+            "vertical_excess_curvature",
+            8,
+            100.0,
+            "mean_std",
+            0.5,
+            51,
+            0.0,
+            0.0,
+            0.0,
+            1,
+            10,
+            10,
+            1,
+            "none",
+            200.0,
+            2.0,
+            12.0,
+            false,
+            0.0,
+            1.0,
+            5,
             0
           ]
         }
@@ -6913,6 +7409,21 @@
       ]
     },
     {
+      "name": "relief_above_nearest_baseline",
+      "kind": "function",
+      "doc": "Height of each cell above its nearest baseline cell (swath baseline relief).\n\nlsdtt-fluvial-surfaces' ``terrace_reference_field_algorithm_choice\nswath_baseline`` with the channel as the baseline.\n\nParameters\n----------\ndem : Raster\n    Elevation (m).\nbaseline_mask : Raster\n    Baseline cells (> 0.5), for example the channel mask.\nswath_half_width_metres : float, default=0.0\n    Largest distance (m) from the baseline at which relief is computed; 0\n    means no limit.\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRaster\n    Elevation minus the elevation of the nearest baseline cell (m).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def relief_above_nearest_baseline(dem: lsdtt3.Raster, baseline_mask: lsdtt3.Raster, swath_half_width_metres: float = \\0, n_threads: int = \\1) -> lsdtt3.Raster",
+          "defaults": [
+            0.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
       "name": "relief_ratio",
       "kind": "function",
       "doc": "Return short-scale local relief divided by broad-scale local relief.\n\nLocal relief is the elevation range in a circular window; narrow incised\nfeatures have high short-range relief compared with their surroundings.\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m).\nshort_radius_metres, long_radius_metres : float, default=1.8, 8.0\n    Radii (m) of the short and broad windows.\n\nReturns\n-------\nRaster\n    Dimensionless relief ratio.\n\nAuthors\n-------\nB. Gailleton",
@@ -7221,6 +7732,38 @@
       ]
     },
     {
+      "name": "score_risers_against_mapped",
+      "kind": "function",
+      "doc": "Score detected risers against mapped terrace edges, cell by cell.\n\nlsdtt-feature-finder's ``mapped_risers_*`` scoring. A detected cell is\nmatched when a mapped cell lies within the tolerance of it, and a mapped\ncell when a detected cell does; only cells inside the surveyed extent count.\n\nParameters\n----------\nriser_centreline : Raster\n    Detected riser lines (1/0), for example ``RiserResult.centreline``.\nmapped_risers_fname : str\n    Vector file of mapped terrace-edge lines (burned with all-touched cells).\nmapped_risers_extent_fname : str, default=\"\"\n    Polygons of the surveyed extent (majority coverage); empty counts the\n    whole raster.\nmapped_risers_tolerance_metres : float, default=20.0\n    Matching distance (m, centre to centre).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\ndict\n    ``tolerance_metres``, ``n_scored_cells``, ``n_detected``,\n    ``n_detected_matched``, ``n_mapped``, ``n_mapped_matched``,\n    ``precision``, ``recall`` and ``f1`` (NaN on an empty denominator).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def score_risers_against_mapped(riser_centreline: lsdtt3.Raster, mapped_risers_fname: str, mapped_risers_extent_fname: str = \\0, mapped_risers_tolerance_metres: float = \\1, n_threads: int = \\2) -> dict",
+          "defaults": [
+            "",
+            20.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "score_surface_classes",
+      "kind": "function",
+      "doc": "Score a surface classification against mapped floodplains and terraces.\n\nAs lsdtt-fluvial-surfaces' ``mapped_surfaces_*`` parameters: the polygons\nare burned by cell centre, and only cells inside the surveyed extent (and\nvalid in ``surface_class``) count.\n\nParameters\n----------\nsurface_class : Raster\n    0 none, 1 floodplain, 2 terrace.\nmapped_surfaces_fname : str\n    Vector file of mapped polygons classed ``floodplain``, ``terrace`` or\n    ``terraceN``.\nmapped_surfaces_layer_name : str, default=\"\"\n    Its layer; empty reads the first.\nmapped_surfaces_class_field_name : str, default=\"class\"\n    Its class field.\nmapped_surfaces_extent_fname : str, default=\"\"\n    Polygons of the surveyed extent (majority coverage); empty counts the\n    whole raster as surveyed.\n\nReturns\n-------\ndict\n    ``n_scored``; ``floodplain_precision``, ``floodplain_recall``,\n    ``floodplain_iou`` and the same for terrace (NaN on an empty\n    denominator); ``confusion`` (3 x 3 counts, ``[mapped][method]``).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def score_surface_classes(surface_class: lsdtt3.Raster, mapped_surfaces_fname: str, mapped_surfaces_layer_name: str = \\0, mapped_surfaces_class_field_name: str = \\1, mapped_surfaces_extent_fname: str = \\2) -> dict",
+          "defaults": [
+            "",
+            "class",
+            ""
+          ]
+        }
+      ]
+    },
+    {
       "name": "sediment_connectivity_index",
       "kind": "function",
       "doc": "Compute sediment connectivity using D8 topology; drainage area may be D8, MFD, or D-infinity.\n\nCavalli et al. (2013) index ``IC = log10(D_up / D_down)`` with\n``D_up = mean(W) * mean(S) * sqrt(A)`` over the upslope area and\n``D_down`` the sum of ``d / (W S)`` along the D8 path to the nearest sink;\n``W = max(1 - R / R_max, 0.001)`` from the roughness R.\n\nParameters\n----------\nflow : FlowInfo\n    D8 flow topology.\nroughness : Raster\n    Surface roughness on the flow grid (for example a local standard\n    deviation of residual elevation, m).\nslope : Raster\n    Gradient (m/m); values below 0.001 are clipped in ``D_down``.\ndrainage_area : Raster\n    Drainage area (m^2) from any routing scheme.\narea_threshold_m2 : float\n    Pixels with at least this drainage area (m^2) are sinks (channels).\n\nReturns\n-------\nConnectivityResult\n    ``index``, ``weight`` (W), ``upstream`` (D_up) and ``downstream``\n    (D_down) Rasters.\n\nAuthors\n-------\nB. Gailleton",
@@ -7229,6 +7772,24 @@
         {
           "definition": "def sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult",
           "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "select_threshold",
+      "kind": "function",
+      "doc": "Pick a threshold from a sample, as lsdtt-fluvial-surfaces picks its floodplain bounds.\n\nThe routine behind ``floodplain_threshold_algorithm_choice`` (and the\n``qq_upper_departure`` floodplain second pass).\n\nParameters\n----------\nvalues : Raster or array-like of float\n    The sample; for a Raster, its valid cells. Non-finite values are dropped.\nthreshold_algorithm_choice : {\"fixed\", \"qq_gaussian\", \"cdf_divergence\", \"qq_upper_departure\"}, default=\"qq_gaussian\"\n    ``qq_gaussian`` is Clubb et al. (2017): the lowest value at which the\n    quantile-quantile plot rejoins a Gaussian drawn through two percentiles\n    and stays on it. ``cdf_divergence`` fits a family of distributions and\n    takes the value where the empirical CDF most exceeds the best fit.\n    ``qq_upper_departure`` mirrors ``qq_gaussian`` for the upper tail.\n    ``fixed`` returns ``fixed_value``.\nfixed_value : float, default=0.0\n    The threshold for ``fixed``.\nqq_lower_percentile, qq_upper_percentile : float, default=25.0, 75.0\n    Percentiles the Gaussian reference line is drawn through.\nqq_threshold_fraction : float, default=0.01\n    Fraction of the data range within which a quantile counts as on the line.\n\nReturns\n-------\ndict\n    ``threshold``, ``found`` (False when no threshold could be chosen, and\n    ``threshold`` is then meaningless), ``n_values``, and for\n    ``cdf_divergence`` ``best_family``, ``threshold_percentile`` and\n    ``max_cdf_divergence``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def select_threshold(values: object, threshold_algorithm_choice: str = \\0, fixed_value: float = \\1, qq_lower_percentile: float = \\2, qq_upper_percentile: float = \\3, qq_threshold_fraction: float = \\4) -> dict",
+          "defaults": [
+            "qq_gaussian",
+            0.0,
+            25.0,
+            75.0,
+            0.01
+          ]
         }
       ]
     },
@@ -7342,6 +7903,20 @@
         {
           "definition": "def subtract(a: lsdtt3.Raster, b: lsdtt3.Raster) -> lsdtt3.Raster",
           "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "surface_class_agreement",
+      "kind": "function",
+      "doc": "Which methods gave each cell a class, as a bit field.\n\nParameters\n----------\nsurface_classes : dict of str to Raster\n    As in :func:`compare_surface_classes` (at most 8 methods).\nsurface_class : {\"floodplain\", \"terrace\"}, default=\"floodplain\"\n    The class to count.\n\nReturns\n-------\nRaster\n    Bit k set where method k (dict order) gave ``surface_class``; 0 elsewhere.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def surface_class_agreement(surface_classes: dict, surface_class: str = \\0) -> lsdtt3.Raster",
+          "defaults": [
+            "floodplain"
+          ]
         }
       ]
     },

@@ -128,6 +128,7 @@ import re
 import struct
 import sys
 import textwrap
+import warnings
 import types
 import typing
 from pathlib import Path
@@ -237,6 +238,10 @@ from ._core import (
     ChiInversion,
     ConnectivityResult,
     FlatSurfaceClassification,
+    FloodplainThresholdResult,
+    RiserResult,
+    PerimeterSources,
+    ValleyWidthNetwork,
     FlatSurfaceResult,
     MarshPlatformResult,
     MountainFrontResult,
@@ -412,6 +417,18 @@ from ._core import (
     hillslope_transport_adi,
     hillslope_transport_cellular,
     opentopography_datasets,
+    dem_sources,
+    select_threshold,
+    classify_floodplain_terraces_by_thresholds,
+    cluster_surface_levels,
+    compare_surface_classes,
+    surface_class_agreement,
+    score_surface_classes,
+    relief_above_nearest_baseline,
+    find_risers,
+    score_risers_against_mapped,
+    find_perimeter_sources,
+    build_valley_width_network,
     crn_apparent_erosion_rate,
     crn_burial_pair,
     crn_step_change_pair,
@@ -476,6 +493,10 @@ __all__ = [
     "ChiInversion",
     "ConnectivityResult",
     "FlatSurfaceClassification",
+    "FloodplainThresholdResult",
+    "RiserResult",
+    "PerimeterSources",
+    "ValleyWidthNetwork",
     "FlatSurfaceResult",
     "MarshPlatformResult",
     "MountainFrontResult",
@@ -653,6 +674,18 @@ __all__ = [
     "hillslope_transport_adi",
     "hillslope_transport_cellular",
     "opentopography_datasets",
+    "dem_sources",
+    "select_threshold",
+    "classify_floodplain_terraces_by_thresholds",
+    "cluster_surface_levels",
+    "compare_surface_classes",
+    "surface_class_agreement",
+    "score_surface_classes",
+    "relief_above_nearest_baseline",
+    "find_risers",
+    "score_risers_against_mapped",
+    "find_perimeter_sources",
+    "build_valley_width_network",
     "crn_apparent_erosion_rate",
     "crn_burial_pair",
     "crn_step_change_pair",
@@ -1560,9 +1593,55 @@ for _graphflood_name in (
         ("median_dhw_relative_convergence_tolerance", "tol_median_rel_dhw"),
     )
 
-find_flat_surfaces = _with_deprecated_keywords(
-    find_flat_surfaces, ("relief_window_side_pixels", "relief_window_pixels")
-)
+def _with_relief_window_side(function):
+    """Accept the deprecated full-side relief window, converted to a radius.
+
+    ``relief_window_side_pixels`` (and the older ``relief_window_pixels``)
+    gave the window as a full side in cells; ``relief_window_radius_metres``
+    gives it as a radius in metres. A side of s cells is a radius of
+    (s - 1) / 2 cells, converted with the DEM cell size exactly as
+    lsdtt-flat-surface-finder converts the same old parameter.
+    """
+    @wraps(function)
+    def compatible(*args, **kwargs):
+        side = kwargs.pop("relief_window_side_pixels", _MISSING)
+        legacy = kwargs.pop("relief_window_pixels", _MISSING)
+        side = _resolve_deprecated_keyword(
+            "relief_window_side_pixels", side, "relief_window_pixels", legacy,
+            stacklevel=3)
+        if side is not _MISSING:
+            if "relief_window_radius_metres" in kwargs:
+                raise TypeError(
+                    "'relief_window_radius_metres' and deprecated "
+                    "'relief_window_side_pixels' cannot both be supplied")
+            warnings.warn(
+                "'relief_window_side_pixels' is deprecated; use "
+                "'relief_window_radius_metres'", DeprecationWarning, stacklevel=2)
+            side = int(side)
+            if side < 3 or side % 2 == 0:
+                raise ValueError(
+                    f"relief_window_side_pixels must be odd and >= 3; got {side}")
+            dem = args[0] if args else kwargs["dem"]
+            kwargs["relief_window_radius_metres"] = (
+                (side - 1) // 2) * dem.metadata.cell_size
+        return function(*args, **kwargs)
+    signature = _native_signature(function)
+    if signature is not None:
+        compatible.__signature__ = signature
+    return compatible
+
+
+find_flat_surfaces = _with_relief_window_side(_with_deprecated_keywords(
+    find_flat_surfaces, ("max_relief_metres", "relief_threshold_metres")
+))
+
+for _classify_name in ("classify_flat_surfaces", "classify_flat_surfaces_with_scope"):
+    globals()[_classify_name] = _with_deprecated_keywords(
+        globals()[_classify_name],
+        ("max_floodplain_hand_metres", "floodplain_max_height_metres"),
+        ("min_terrace_hand_metres", "terrace_min_height_metres"),
+        ("valley_corridor_half_width_metres", "terrace_max_distance_to_channel_metres"),
+    )
 
 wiener_filter = _with_deprecated_keywords(
     wiener_filter,

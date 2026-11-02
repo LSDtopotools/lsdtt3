@@ -4,7 +4,9 @@
 #include <stdexcept>
 #include <string>
 #include <cstdint>
+#include <optional>
 
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -28,24 +30,62 @@ lsdtt::lsdtt_dem_source source_from_name(const std::string& source)
     if (!lsdtt::parse_dem_source(source, parsed))
     {
         throw std::invalid_argument(
-            "source must be cop30_aws, opentopography, or planetary_computer"
+            "source must be one of " + lsdtt::dem_source_name_list()
         );
     }
     return parsed;
 }
 
+// The catalogue sources (national and polar DEMs), as opposed to the frozen
+// Copernicus / OpenTopography / Planetary Computer paths.
+bool is_catalogue_source(lsdtt::lsdtt_dem_source source)
+{
+    return !lsdtt::dem_source_info(source).legacy_path;
+}
+
+void warn(const std::string& text)
+{
+    if (PyErr_WarnEx(PyExc_UserWarning, text.c_str(), 2) < 0) throw nb::python_error();
+}
+
+// The limits lsdtt-fetch-raster applies to every source.
+void set_fetch_limits(lsdtt::lsdtt_fetch_options& options, std::int64_t max_output_pixels,
+                      double max_download_megabytes, int max_tiles,
+                      int request_delay_milliseconds)
+{
+    options.max_output_pixels = max_output_pixels;
+    options.max_download_megabytes = max_download_megabytes;
+    options.max_tiles = max_tiles;
+    options.request_delay_milliseconds = request_delay_milliseconds;
+}
+
 Raster fetch_dem(
     double west, double south, double east, double north,
     const std::string& source, int target_epsg,
-    double grid_spacing, const std::string& resampling, double nodata_value,
+    std::optional<double> grid_spacing_given, const std::string& resampling, double nodata_value,
     int size_pixels, const std::string& cache_dir, const std::string& ot_dem_type,
     const std::string& pc_collection, const std::string& pc_asset,
     int http_timeout_seconds, int http_connect_timeout_seconds, int http_max_retry,
     nb::object frame, bool fetch_from_linear_feature, const std::string& fetch_feature_fname,
     const std::string& fetch_feature_layer, double linear_feature_fetch_width,
-    double linear_feature_fetch_end_buffer, bool rotate_after_fetch)
+    double linear_feature_fetch_end_buffer, bool rotate_after_fetch,
+    double source_resolution_metres, const std::string& surface_model_choice,
+    const std::string& source_collection_choice, std::int64_t max_output_pixels,
+    double max_download_megabytes, int max_tiles, int request_delay_milliseconds)
 {
     lsdtt::gdal_init();
+    const lsdtt::lsdtt_dem_source parsed_source = source_from_name(source);
+    // grid_spacing not given: the frame's cell size, a catalogue source's
+    // native resolution (source_resolution_metres if set), as
+    // lsdtt-fetch-raster does, or 30 m.
+    double grid_spacing = 30.0;
+    if (grid_spacing_given) grid_spacing = *grid_spacing_given;
+    else if (!frame.is_none())
+        grid_spacing = nb::cast<const RotationFrame&>(frame).native().frame.cell_size;
+    else if (is_catalogue_source(parsed_source))
+        grid_spacing = source_resolution_metres > 0.0
+                     ? source_resolution_metres
+                     : lsdtt::dem_source_info(parsed_source).default_resolution_metres;
     lsdtt::lsdtt_fetch_options options;
     options.west = west;
     options.south = south;
@@ -119,7 +159,7 @@ Raster fetch_dem(
                                         options.east, options.north);
         }
     }
-    options.source = source_from_name(source);
+    options.source = parsed_source;
     options.target_epsg = target_epsg;
     options.grid_spacing = grid_spacing;
     options.resampling = resampling;
@@ -132,6 +172,13 @@ Raster fetch_dem(
     options.http_timeout_seconds = http_timeout_seconds;
     options.http_connect_timeout_seconds = http_connect_timeout_seconds;
     options.http_max_retry = http_max_retry;
+    options.source_resolution_metres = source_resolution_metres;
+    options.surface_model_choice = surface_model_choice;
+    options.source_collection_choice = source_collection_choice;
+    set_fetch_limits(options, max_output_pixels, max_download_megabytes, max_tiles,
+                     request_delay_milliseconds);
+    const std::string lerc_warning = lsdtt::lerc_source_warning(options.source);
+    if (!lerc_warning.empty()) warn(lerc_warning);
 
     if (options.source == lsdtt::lsdtt_dem_source::opentopography)
     {
@@ -149,6 +196,7 @@ Raster fetch_dem(
     {
         throw std::runtime_error(result.message);
     }
+    for (const std::string& w : result.warnings) warn(w);
 
     try
     {
@@ -171,6 +219,7 @@ Raster fetch_with_options(const lsdtt::lsdtt_fetch_options& options)
     const lsdtt::lsdtt_fetch_result result =
         lsdtt::fetch_dem(options, temporary_path);
     if (!result.ok) throw std::runtime_error(result.message);
+    for (const std::string& w : result.warnings) warn(w);
     try
     {
         Raster raster = Raster::read(temporary_path);
@@ -343,10 +392,18 @@ OutletFetchResult fetch_dem_for_outlets(
     int contributing_pixels_threshold, int edge_buffer_pixels,
     int nodata_buffer_pixels, int tight_bbox_buffer_pixels,
     double verify_expand_factor, int verify_max_iters, bool tight_bbox_refetch,
-    int min_search_radius_pixels, int max_search_radius_pixels, bool mask_outside_basins)
+    int min_search_radius_pixels, int max_search_radius_pixels, bool mask_outside_basins,
+    std::int64_t max_output_pixels, double max_download_megabytes, int max_tiles,
+    int request_delay_milliseconds)
 {
     lsdtt::gdal_init();
     const lsdtt::lsdtt_dem_source parsed_source = source_from_name(source);
+    // As lsdtt-fetch-raster's bounds_mode: outlets.
+    if (is_catalogue_source(parsed_source))
+        throw std::invalid_argument(
+            "source " + source + " cannot be used with fetch_dem_for_outlets in this "
+            "version: fetch the outlet groups with cop30_aws, then fetch each "
+            "group's area with fetch_dem(..., source=\"" + source + "\")");
     lsdtt::lsdtt_outlet_bounds_discovery_options discovery_options;
     discovery_options.initial_radius_km = initial_radius_km;
     const auto discovery = lsdtt::discover_outlet_bounds(
@@ -379,6 +436,8 @@ OutletFetchResult fetch_dem_for_outlets(
         options.resampling = resampling;
         options.no_data_value = nodata_value;
         options.cache_dir = cache_dir;
+        set_fetch_limits(options, max_output_pixels, max_download_megabytes, max_tiles,
+                         request_delay_milliseconds);
         if (parsed_source == lsdtt::lsdtt_dem_source::opentopography)
         {
             const lsdtt::lsdtt_secret_result secret = lsdtt::resolve_secret({
@@ -479,6 +538,33 @@ nb::list opentopography_datasets()
     return result;
 }
 
+nb::list dem_sources()
+{
+    nb::list result;
+    for (const auto& info : lsdtt::dem_source_catalogue())
+    {
+        nb::dict item;
+        item["dem_source"] = info.name;
+        item["title"] = info.title;
+        item["provider"] = info.provider;
+        item["description"] = info.description;
+        item["coverage"] = info.coverage_text;
+        item["native_resolutions_metres"] = info.native_resolutions_metres;
+        item["default_resolution_metres"] = info.default_resolution_metres;
+        item["surface_models"] = info.surface_models;
+        item["default_surface_model"] = info.default_surface_model;
+        item["vertical_datum"] = info.vertical_datum;
+        nb::list collections;
+        for (const auto& c : info.grid_collections) collections.append(c.label);
+        item["collections"] = std::move(collections);
+        item["attribution"] = info.licence_attribution;
+        item["accessed"] = info.accessed;
+        item["requires_lerc"] = info.requires_lerc;
+        result.append(std::move(item));
+    }
+    return result;
+}
+
 } // namespace
 
 void bind_raster_fetch(nb::module_& module)
@@ -534,7 +620,7 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
         nb::arg("west") = no_edge, nb::arg("south") = no_edge,
         nb::arg("east") = no_edge, nb::arg("north") = no_edge,
         nb::arg("source") = "cop30_aws",
-        nb::arg("target_epsg") = 0, nb::arg("grid_spacing") = 30.0,
+        nb::arg("target_epsg") = 0, nb::arg("grid_spacing") = nb::none(),
         nb::arg("resampling") = "cubic", nb::arg("nodata_value") = -9999.0,
         nb::arg("size_pixels") = 0, nb::arg("cache_dir") = "",
         nb::arg("ot_dem_type") = "COP30", nb::arg("pc_collection") = "cop-dem-glo-30",
@@ -545,14 +631,31 @@ corners. Geometry is transformed to WGS84 before its bounds are calculated.
         nb::arg("linear_feature_fetch_width") = 0.0,
         nb::arg("linear_feature_fetch_end_buffer") = -1.0,
         nb::arg("rotate_after_fetch") = true,
+        nb::arg("source_resolution_metres") = 0.0,
+        nb::arg("surface_model_choice") = "source_default",
+        nb::arg("source_collection_choice") = "latest",
+        nb::arg("max_output_pixels") = 250000000,
+        nb::arg("max_download_megabytes") = 2048.0,
+        nb::arg("max_tiles") = 256, nb::arg("request_delay_milliseconds") = 200,
         R"doc(
 Fetch a DEM for a WGS84 bounding box as an in-memory projected raster.
 
 The source tiles are downloaded, mosaicked and warped to a projected grid
-(UTM by default). The Copernicus DEM (the default ``cop30_aws`` source)
-stores the sea as exactly 0 m, not as nodata, so mask it before flow
-routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
+(UTM by default), with the same code and the same parameter names as
+``lsdtt-fetch-raster``. The Copernicus DEM (the default ``cop30_aws``
+source) stores the sea as exactly 0 m, not as nodata, so mask it before
+flow routing: ``dem = mask_to_nodata(dem, 0.0)``. Cells outside the source
 footprint are nodata.
+
+Besides the global 30 m sources there are keyless national and polar
+high-resolution DEMs (``us_3dep``, ``arctic_arcticdem``,
+``antarctic_rema``, ``no_dtm``, ``nl_ahn``, ``es_mdt``, ``pl_nmt``,
+``ca_hrdem``, ``ch_swissalti3d``, ``nz_lidar``, ``gb_sct_lidar``,
+``jp_gsi``); ``dem_sources()`` lists each one's resolutions, surface models
+(DSM or DTM), vertical datum, coverage and attribution. Warnings from the
+fetch (partial coverage, overviews read, a LERC-compressed source this GDAL
+cannot read, older Scottish collections covering the area) are issued as
+``UserWarning``.
 
 Or, with ``frame`` (a ``RotationFrame``) or ``fetch_from_linear_feature``,
 fetch a strip along a fault, river or range warped straight from the source
@@ -569,15 +672,19 @@ west, south, east, north : float, optional
     ``bounds_from_vector`` can be unpacked here: ``fetch_dem(*b.bbox)``.
     Required unless ``frame`` or ``fetch_from_linear_feature`` gives the
     area; refused with them.
-source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
-    ``cop30_aws`` is a keyless global 30 m Copernicus DEM default.
+source : str, optional
+    ``cop30_aws`` (default) is a keyless global 30 m Copernicus DEM.
     OpenTopography reads its key only from the ``OT_API_KEY`` or
     ``OT_API_KEY_FILE`` environment variables (never pass a key as an
-    argument). ``planetary_computer`` is keyless.
+    argument). ``planetary_computer`` is keyless. The national and polar
+    sources are listed by ``dem_sources()``.
 target_epsg : int, optional
     Output EPSG code. Zero selects the UTM zone of the bounding-box centre.
-grid_spacing : float, optional
-    Output cell size in target CRS units (m for UTM); default 30.
+grid_spacing : float or None, optional
+    Output cell size in target CRS units (m for UTM). None (default) uses
+    the frame's cell size with ``frame``, the source's native resolution
+    (``source_resolution_metres`` if set) for a national or polar source,
+    and 30 otherwise. Output cells are always square.
 resampling : str, optional
     GDAL warp resampling method (``"cubic"`` default, ``"bilinear"``,
     ``"near"``, ...).
@@ -602,8 +709,8 @@ http_connect_timeout_seconds : int, optional
 http_max_retry : int, optional
     Number of retries of a failed HTTP request.
 frame : RotationFrame or None, optional
-    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``
-    must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
+    Fetch the frame's rectangle, warped into the frame. ``grid_spacing``,
+    if given, must equal ``frame.cell_size``; ``target_epsg`` and ``size_pixels``
     are refused (the frame carries its rotate-back target).
 fetch_from_linear_feature : bool, optional
     Build the frame from ``fetch_feature_fname`` here, as lsdtt-fetch-raster
@@ -624,12 +731,36 @@ rotate_after_fetch : bool, optional
     With ``fetch_from_linear_feature``: True (default) returns the strip in
     the oblique frame; False returns the frame's WGS84 envelope in UTM, as a
     plain fetch.
+source_resolution_metres : float, optional
+    Native resolution (m) to fetch from a source that offers several (for
+    example 1, 2 or 10 for ``arctic_arcticdem``); 0 (default) uses the
+    source's default. Refused for a source that does not offer it.
+surface_model_choice : {"source_default", "dtm", "dsm"}, optional
+    Terrain (DTM) or surface (DSM) model. ``source_default`` takes the DTM
+    where the source has one. Asking for a model the source lacks raises
+    ``RuntimeError``; the Copernicus sources are DSMs only.
+source_collection_choice : str, optional
+    ``gb_sct_lidar`` only: ``latest`` (default) uses the newest collection
+    with tiles in the area (a warning names older ones that also cover it);
+    a collection label (``phase-1`` ... ``phase-6``,
+    ``national-lidar-programme``) uses that one. Collections are never mixed.
+max_output_pixels : int, optional
+    Largest output grid (cells) allowed, checked before any download; for
+    the WCS sources the native cells requested are counted too.
+max_download_megabytes : float, optional
+    Largest download allowed (MB): an estimate checked before the fetch,
+    and a running count that stops the transfer where lsdtt3 does the HTTP.
+max_tiles : int, optional
+    Largest number of tiles, source files or service requests allowed.
+request_delay_milliseconds : int, optional
+    Pause between requests to tile services (ms).
 
 Returns
 -------
 Raster
     A projected raster of elevation (m): UTM (or ``target_epsg``), or the
-    oblique frame. Network, GDAL, and invalid-request failures raise
+    oblique frame. Network, GDAL, and invalid-request failures (including
+    an area outside the source's coverage or over a size limit) raise
     ``RuntimeError``; an inconsistent combination of arguments raises
     ``ValueError``.
 )doc");
@@ -655,6 +786,9 @@ Raster
         nb::arg("min_search_radius_pixels") = 0,
         nb::arg("max_search_radius_pixels") = 25,
         nb::arg("mask_outside_basins") = false,
+        nb::arg("max_output_pixels") = 250000000,
+        nb::arg("max_download_megabytes") = 2048.0,
+        nb::arg("max_tiles") = 256, nb::arg("request_delay_milliseconds") = 200,
         R"doc(
 Fetch one or more in-memory DEMs around WGS84 outlet points.
 
@@ -669,7 +803,9 @@ Parameters
 outlets : geopandas.GeoDataFrame
     Point geometries defining outlet locations, in any declared CRS.
 source : {"cop30_aws", "opentopography", "planetary_computer"}, optional
-    DEM source, as in ``fetch_dem``.
+    DEM source, as in ``fetch_dem``. The national and polar sources are
+    refused here, as in ``lsdtt-fetch-raster`` outlets mode: find the groups
+    with ``cop30_aws``, then ``fetch_dem`` each group's area.
 target_epsg : int, optional
     Output EPSG code; 0 selects UTM from each group's centre.
 grid_spacing : float, optional
@@ -715,6 +851,9 @@ max_search_radius_pixels : int, optional
     ``"largest_area"``.
 mask_outside_basins : bool, optional
     Set cells outside the selected basin union to nodata in returned DEMs.
+max_output_pixels, max_download_megabytes, max_tiles, request_delay_milliseconds
+    Size limits and request pacing for each group's fetch, as in
+    ``fetch_dem``.
 
 Returns
 -------
@@ -781,6 +920,23 @@ Returns
 -------
 list of str
     Tile identifiers of the 1 x 1 degree tiles intersecting the box.
+)doc");
+    module.def("dem_sources", &dem_sources,
+        R"doc(Return the ``fetch_dem`` DEM source catalogue as dictionaries.
+
+The same rows ``lsdtt-fetch-raster -h dem_source`` describes.
+
+Returns
+-------
+list of dict
+    One dict per source with keys ``dem_source`` (the ``source`` value for
+    ``fetch_dem``), ``title``, ``provider``, ``description``, ``coverage``,
+    ``native_resolutions_metres``, ``default_resolution_metres``,
+    ``surface_models`` (``"dtm"`` and/or ``"dsm"``),
+    ``default_surface_model``, ``vertical_datum``, ``collections`` (the
+    ``source_collection_choice`` labels; empty for most sources),
+    ``attribution`` (to cite when you use the data), ``accessed`` (when the
+    access details were last checked) and ``requires_lerc``.
 )doc");
     module.def("opentopography_datasets", &opentopography_datasets,
         R"doc(Return OpenTopography DEM catalogue records as dictionaries.

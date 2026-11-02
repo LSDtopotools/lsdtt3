@@ -13,7 +13,7 @@ dem = lsdtt3.Raster.from_numpy(terrain, np.ones((size, size), dtype=bool), meta)
 
 flats = lsdtt3.find_flat_surfaces(
     dem, madk2_window_radius_metres=3.0, use_residual_iqr=False,
-    min_component_pixels=1, relief_window_side_pixels=5, relief_threshold_metres=1.0,
+    min_component_pixels=1, relief_window_radius_metres=2.0, max_relief_metres=1.0,
 )
 roads = lsdtt3.find_roads(dem, smoothing_window_metres=3.0)
 road_flow = lsdtt3.find_road_flow_discrimination(

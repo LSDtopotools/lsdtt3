@@ -81,7 +81,7 @@ lsdtt3/
 ├── debian/                                 — Debian package definition (see debian_packaging.md)
 ├── docs/                                   — MkDocs source, organised by purpose
 │   ├── index.md                            — documentation site root
-│   ├── what_is_lsdtt3/                     — overview, install, data, routing, workflows
+│   ├── what_is_lsdtt3/                     — overview, install, data, benchmarks, workflows (one page per module)
 │   ├── design_and_algorithms/              — scientific design and algorithms
 │   ├── cli_reference/                      — one parameter reference per CLI
 │   ├── developer_notes/                    — how to work on the code: architecture, building, packaging, testing
@@ -128,6 +128,7 @@ lsdtt3/
 │   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
 │   │   ├── lsdtt_backend_factory.hpp/.cpp   — make_raster_engine(), gpu_available()
 │   │   ├── lsdtt_param_parser.hpp/.cpp      — parameter file parser
+│   │   ├── lsdtt_run_record.hpp/.cpp        — run record: closing line, failure box, <stem>_run_summary.json
 │   │   ├── lsdtt_common_parameters.hpp/.cpp — shared parameter declarations reused across CLIs
 │   │   ├── lsdtt_csv_table.hpp/.cpp         — minimal header-keyed CSV reader for CLI input tables
 │   │   ├── lsdtt_secret.hpp/.cpp            — credential resolution and masking (API keys never in parameter files)
@@ -140,19 +141,23 @@ lsdtt3/
 │   │   ├── lsdtt_crs_suggest.hpp/.cpp       — CRS inspection and projection recommendation
 │   │   ├── lsdtt_raster_reproject.hpp/.cpp  — CRS reprojection
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
+│   │   ├── lsdtt_oblique_frame.hpp/.cpp     — feature-aligned oblique Mercator analysis frames (omerc)
+│   │   ├── lsdtt_rotation_frame_file.hpp/.cpp — <stem>_rotation_frame.txt: reading and writing the frame record
+│   │   ├── lsdtt_true_north.hpp/.cpp        — grid convergence; grid bearings to bearings from true north
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
 │   │   ├── lsdtt_outlet_bounds_discovery.hpp/.cpp— WGS84 outlet points to fetch bounds
 │   │   ├── lsdtt_outlet_clusters.hpp/.cpp   — grouping outlets into fetch clusters
 │   │   ├── lsdtt_dem_grouping.hpp/.cpp      — grouping bounding boxes for higher-resolution re-fetching
 │   │   ├── lsdtt_coastal_mask.hpp/.cpp      — stops bulk tile downloads over the ocean (with dem_grouping)
 │   │   ├── lsdtt_raster_fetch.hpp/.cpp      — native DEM fetching: WGS84 box to analysis-ready raster
+│   │   ├── lsdtt_raster_fetch_detail.hpp    — fetch internals exposed for offline tests (cache key, STAC bodies, warp args)
 │   │   ├── lsdtt_http_fetch.hpp/.cpp        — HTTP GET/POST through GDAL's curl (timeouts, retries)
 │   │   ├── lsdtt_macrostrat_fetch.hpp/.cpp  — Macrostrat map units for a box (vector tiles + API)
 │   │   ├── lsdtt_octopus_fetch.hpp/.cpp     — OCTOPUS basin erosion rates for a box (keyless WFS)
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   ├── lsdtt_distributed_hydrology_forcing.hpp/.cpp— per-timestep CSV forcing readers for lsdtt-distributed-hydrology
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
-│   ├── cpu/                                   — 154 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
+│   ├── cpu/                                   — 165 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
 │   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
@@ -189,6 +194,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_spectral_cpu.hpp/.cpp                — wavelet quadratic fit; spectral filters; fftw2D_masked_surface_recovery
 │   │   ├── lsdtt_raster_image_ops_cpu.hpp/.cpp               — Otsu, adaptive threshold, Canny, probabilistic Hough (native; replaced OpenCV)
 │   │   ├── lsdtt_raster_feature_finder_cpu.hpp/.cpp          — feature-specific raster workflows
+│   │   ├── lsdtt_riser_finder_cpu.hpp/.cpp                   — risers: steep steps between gentler surfaces (feature_type find_risers)
 │   │   ├── lsdtt_raster_linear_features_cpu.hpp/.cpp         — curvilinear primitives; path opening, feature_type classification
 │   │   ├── lsdtt_raster_binary_mask_cpu.hpp/.cpp             — binary mask morphology (dilation, erosion, opening, closing, labelling)
 │   │   ├── lsdtt_raster_binary_mask_vectorise_cpu.hpp/.cpp   — binary mask to vector polygon conversion
@@ -236,6 +242,10 @@ lsdtt3/
 │   │   ├── lsdtt_flat_surface_plane_analysis.hpp/.cpp        — plane analysis on detected flat surfaces
 │   │   ├── lsdtt_flat_surface_channel_classify_cpu.hpp/.cpp  — classify flat surfaces against a channel; shared surface/patch/ladder CSV writers
 │   │   ├── lsdtt_reference_field_ladder_cpu.hpp/.cpp        — reference-field ladder: band a height field, label components WITHIN each band
+│   │   ├── lsdtt_floodplain_thresholds_cpu.hpp/.cpp          — Clubb et al. (2017) floodplains and terraces from HAND + gradient bounds
+│   │   ├── lsdtt_surface_training_cpu.hpp/.cpp               — training polygons: supervised floodplain / terrace thresholds
+│   │   ├── lsdtt_surface_level_clustering_cpu.hpp/.cpp       — do the surfaces cluster in height? (empty-fraction test)
+│   │   ├── lsdtt_surface_method_comparison_cpu.hpp/.cpp      — confusion matrices and agreement between fluvial-surface methods
 │   │   ├── lsdtt_hydraulic_graph_cpu.hpp/.cpp                — CPU hydraulic routing (lsdtt_hydraulic_base impl, Gailleton et al. 2024)
 │   │   ├── lsdtt_graphflood_optimised_cpu.hpp/.cpp               — native coarse-to-fine coordinator for the v2 GraphFlood solver
 │   │   ├── lsdtt_manning_formula_cpu.hpp/.cpp                    — Manning's equation for mean flow velocity
@@ -268,11 +278,15 @@ lsdtt3/
 │   │   ├── lsdtt_channel_extent_cpu.hpp/.cpp                     — channel extent: where the channels are
 │   │   ├── lsdtt_channel_sources_wiener_cpu.hpp/.cpp         — channel source detection via Wiener filtering
 │   │   ├── lsdtt_channel_scope_cpu.hpp/.cpp                  — channel scope resolution; shared CLI plumbing (point loading, scope diagnostics, network-layer writer)
+│   │   ├── lsdtt_perimeter_sources_cpu.hpp/.cpp              — channel sources where big valleys enter a DEM across its edge
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
 │   │   ├── lsdtt_ridgeline_cpu.hpp/.cpp                      — ridgeline extraction and analysis
 │   │   ├── lsdtt_valley_centreline_cpu.hpp/.cpp              — valley centreline extraction and tracing
 │   │   ├── lsdtt_valley_cross_sections_cpu.hpp/.cpp          — valley cross-section analysis
+│   │   ├── lsdtt_valley_width_network_cpu.hpp/.cpp           — valley widths for every channel segment (run_valley_width_network)
+│   │   ├── lsdtt_valley_relative_elevation_cpu.hpp/.cpp      — relative elevation raster (RER) against valley centrelines
+│   │   ├── lsdtt_valley_terrace_profile_cpu.hpp/.cpp         — terrace patches binned along a valley floor profile
 │   │   ├── lsdtt_valley_spacing_cpu.hpp/.cpp                     — characteristic valley spacing (spectral and two other measures)
 │   │   ├── lsdtt_water_area_centreline_cpu.hpp/.cpp          — water/floodplain centreline extraction
 │   │   ├── lsdtt_marsh_platform_cpu.hpp/.cpp                 — marsh and tidal platform analysis
@@ -327,11 +341,13 @@ lsdtt3/
 │       ├── lsdtt_splines.hpp/.cpp           — 1D spline interpolation
 │       ├── lsdtt_regression.hpp/.cpp        — linear and polynomial regression helpers
 │       ├── lsdtt_natural_breaks.hpp/.cpp    — Jenks natural-break thresholds
+│       ├── lsdtt_threshold_selection.hpp/.cpp — thresholds from a distribution: fixed, qq_gaussian (Clubb 2017), cdf_divergence
 │       ├── lsdtt_signal1d.hpp/.cpp          — 1-D profile signal processing (moving average, LOWESS, derivative)
 │       ├── lsdtt_boundary_conditions.hpp    — header-only: parsing the four-character N E S W boundary-condition string
 │       ├── lsdtt_connected_components.hpp   — header-only: connected-component labelling on a row-major grid
 │       ├── lsdtt_grid_geodesic.hpp          — header-only: Dijkstra on an 8-connected grid
 │       ├── lsdtt_grid_neighbours.hpp        — header-only: neighbour offset tables for row-major rasters
+│       ├── lsdtt_point_bucket_index.hpp     — header-only: uniform-grid bucket index for nearest / within-radius point queries
 │       ├── lsdtt_junction_graph_orders.hpp  — header-only: traversal orders on a compact junction graph
 │       ├── lsdtt_numeric_utils.hpp          — header-only: inclusive numeric sweeps
 │       ├── lsdtt_output_file.hpp            — header-only: open_output_file(): open for writing or throw with a caller's message
@@ -339,7 +355,11 @@ lsdtt3/
 │       └── lsdtt_statistics_detail.hpp      — internal helpers shared by the statistics implementation
 ├── tests/                                  — CTest suite: cpp/ drivers, scripts/, data/, cmake/
 ├── tools/                                  — release and packaging scripts, set_version.py, generate_cli_reference.py
-├── workflows/                              — Snakemake layer for multi-stage pipelines
+├── workflows/                              — Snakemake layer for multi-stage pipelines (pixi env `workflows`)
+│   ├── Snakefile                           — entry point; per-module includes, shell prefix that clears pixi GDAL/PROJ vars
+│   ├── config/                             — one YAML per module (valley_widths, chi_region, lithology_channels, cosmo_*, ...)
+│   ├── rules/                              — common_*.smk stages, domain_*.smk modules, common_params.smk helpers
+│   └── scripts/                            — table gathering and ensemble statistics
 ├── CMakeLists.txt                          — project(lsdtt3 VERSION ...): the one version number
 ├── LICENSE                                 — AGPL-3.0-or-later
 └── README.md
@@ -365,20 +385,20 @@ the utility-layer numerical functions.
 modules by subsystem so you can find your way around; they are not maintained
 line-by-line against the build. To see exactly what is compiled, read
 `LSDTT3_CORE_SOURCES`, `LSDTT3_UTILS_SOURCES` and `LSDTT3_CPU_SOURCES` in
-`CMakeLists.txt`. At the time of writing that is 25 core, 10 utils and 148 CPU
+`CMakeLists.txt`. At the time of writing (2026-11-02) that is 29 core, 11 utils and 157 CPU
 translation units, plus `lsdtt_chi_ksn_inversion_cpu` when Eigen3 is found.
 
 
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_vector_utils`, `lsdtt_distributed_hydrology_forcing`
+`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
 raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 
-`lsdtt_binary_array2d_tracing`, `lsdtt_distributions`, `lsdtt_histogram`, `lsdtt_image_filters`, `lsdtt_natural_breaks`, `lsdtt_regression`, `lsdtt_signal1d`, `lsdtt_splines`, `lsdtt_statistical_tests`, `lsdtt_statistics`
+`lsdtt_binary_array2d_tracing`, `lsdtt_distributions`, `lsdtt_histogram`, `lsdtt_image_filters`, `lsdtt_natural_breaks`, `lsdtt_regression`, `lsdtt_signal1d`, `lsdtt_splines`, `lsdtt_statistical_tests`, `lsdtt_statistics`, `lsdtt_threshold_selection`
 
 
 **`lsdtt3_cpu` sources** (`src/cpu/`), by subsystem:
@@ -393,7 +413,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_fill_flat_resolution_reporting_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
 
 
-*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_network_grouping_cpu`, `lsdtt_channel_bearing_statistics_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`
+*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_network_grouping_cpu`, `lsdtt_channel_bearing_statistics_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`, `lsdtt_perimeter_sources_cpu`
 
 
 *Basins*: `lsdtt_basin_cpu`, `lsdtt_basin_outline_cpu`, `lsdtt_basin_outline_metrics_cpu`, `lsdtt_basin_stats_cpu`, `lsdtt_junction_basin_cpu`, `lsdtt_junction_basin_manager_cpu`, `lsdtt_zero_order_basin_manager_cpu`, `lsdtt_side_tributary_basins_cpu`, `lsdtt_outlet_basin_verification_cpu`, `lsdtt_outlet_resolution_cpu`
@@ -417,13 +437,13 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Landslides*: `lsdtt_landslide_crn_cpu`, `lsdtt_landslide_event_cpu`, `lsdtt_landslide_placement_cpu`, `lsdtt_landslide_size_cpu`
 
 
-*Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`
+*Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`, `lsdtt_floodplain_thresholds_cpu`, `lsdtt_surface_training_cpu`, `lsdtt_surface_level_clustering_cpu`, `lsdtt_surface_method_comparison_cpu`, `lsdtt_valley_width_network_cpu`, `lsdtt_valley_relative_elevation_cpu`, `lsdtt_valley_terrace_profile_cpu`
 
 
 *Coastal and tidal*: `lsdtt_marsh_platform_cpu`, `lsdtt_tidal_channel_cpu`, `lsdtt_tidal_skeleton_metrics_cpu`
 
 
-*Feature detection and image analysis*: `lsdtt_raster_feature_finder_cpu`, `lsdtt_raster_linear_features_cpu`, `lsdtt_raster_skeleton_graph_cpu`, `lsdtt_raster_binary_mask_cpu`, `lsdtt_raster_binary_mask_vectorise_cpu`, `lsdtt_raster_contours_cpu`, `lsdtt_mountain_front_cpu`
+*Feature detection and image analysis*: `lsdtt_raster_feature_finder_cpu`, `lsdtt_raster_linear_features_cpu`, `lsdtt_raster_skeleton_graph_cpu`, `lsdtt_raster_binary_mask_cpu`, `lsdtt_raster_binary_mask_vectorise_cpu`, `lsdtt_raster_contours_cpu`, `lsdtt_mountain_front_cpu`, `lsdtt_riser_finder_cpu`
 
 
 *Vector I/O and conversion*: `lsdtt_vector_ops_cpu`, `lsdtt_vector_rasterise_cpu`, `lsdtt_raster_vectorise_cpu`, `lsdtt_vector_line_repair_cpu`, `lsdtt_vector_network_d8_clean_cpu`
@@ -813,7 +833,11 @@ Current CLI programs are:
 
 - **`lsdtt-raster-preprocessing.cpp`**  
   Raster preprocessing workflow: projection enforcement/reprojection, masking,
-  nodata filling, breaching, pit filling, hillshade, and related outputs.
+  nodata filling, breaching, pit filling, hillshade, and related outputs. It can
+  also warp a DEM into a feature-aligned oblique frame
+  (`declare_linear_feature_rotation_parameters`; `lsdtt_oblique_frame`), writing
+  `<stem>_oblique_rotation_frame.txt` beside it, and rotate products back onto the
+  original lattice (`declare_rotate_back_parameters`).
 
 - **`lsdtt-synthetic-surfaces.cpp`**
   Synthetic raster generation and testing utilities.
@@ -868,6 +892,12 @@ Current CLI programs are:
   Builds or reuses a pit-filled DEM, constructs D8 flow routing, extracts source
   pixels from a contributing-pixel threshold, builds the junction/channel
   network, and writes channel-network output to CSV, GeoPackage, or FlatGeobuf.
+  `run_perimeter_sources` (requires `boundary_conditions: oooo`) instead finds
+  where large valleys enter the DEM across its edge, from the DEM alone
+  (`lsdtt_perimeter_sources_cpu`): the perimeter profile, gentle low-spot runs
+  at least `perimeter_min_valley_width_metres` wide, and the D8 outlets ranked
+  by summed drainage area; writes the sources and outlets for the
+  floodplain / terrace methods.
 
 - **`lsdtt-basin-extraction.cpp`**  
   Builds D8 flow routing, extracts a channel/junction network, and optionally
@@ -901,7 +931,12 @@ Current CLI programs are:
   metrics joined to their basin polygons.
 
 - **`lsdtt-feature-finder.cpp`**  
-  Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope morphology).
+  Feature-detection workflows on DEMs (e.g. terrace, piedmont, hillslope
+  morphology), selected by `feature_type`. `find_risers`
+  (`lsdtt_riser_finder_cpu`) finds risers — short steep steps between gentler
+  surfaces (terrace risers, shorelines, scarps): the vertical-excess-curvature
+  skeleton, optional A* gap closing along contours, and a step height per
+  segment; `score_risers_against_mapped` scores them against mapped lines.
 
 - **`lsdtt-mountain-front.cpp`**  
   Identifies mountain fronts using multi-scale relief, piedmont surface fitting, and
@@ -925,35 +960,54 @@ Current CLI programs are:
   is that tool's `flat_mask_fname` input.
 
 - **`lsdtt-fluvial-surfaces.cpp`**  
-  **Which fluvial level is each flat surface on?** Takes a flat mask (or falls
-  back to a built-in relief/slope admission), resolves a channel scope, builds a
-  REFERENCE FIELD, bands it, and labels connected components WITHIN each band.
+  **Floodplains, terraces and valleys, by a selectable method.** A method is a
+  choice at each of six stages, set together by the preset
+  `fluvial_surface_algorithm_choice` and individually by the stage parameters
+  (each defaults to `preset`):
 
-  Two reference fields, one ladder. `hand` is height above the in-scope channel
-  network — the right field for a terrace flight, where treads sit at a roughly
-  constant height above the channel. `fitted_surface` is the signed residual to
-  a surface fitted to the flat ground — the right field for a fan, which climbs
-  continuously in HAND and would be cut into meaningless arcs by a HAND ladder.
-  The fitted surface may be a `cone` (the default, and the fan option), a
-  RANSAC `plane`, or a `poly2`.
+  | Stage | Parameter | Options |
+  |---|---|---|
+  | which ground is admitted | `admission_algorithm_choice` | `flat_mask` (from `lsdtt-flat-surface-finder`), `relief`, `gradient`, `floodplain_thresholds` |
+  | how bounds are chosen | `floodplain_threshold_algorithm_choice` | `fixed`, `qq_gaussian` (Clubb et al. 2017), `cdf_divergence` (`lsdtt_threshold_selection`) |
+  | what counts as a channel | `channel_definition_algorithm_choice` | `contributing_pixels`, `stream_order` (`min_channel_stream_order`) |
+  | how surfaces get levels | `level_algorithm_choice` | `ladder`, `fixed_thresholds`, `supplied_levels` |
+  | what terrace height is measured from | `terrace_reference_field_algorithm_choice` | `same`, `swath_baseline` |
+  | how admitted ground becomes patches | `segmentation_algorithm_choice` | `within_bands`, `whole_mask` (optionally cut by a `riser_mask_fname`) |
 
-  **Band first, then label.** Two pixels can only share a label if they share a
-  band, so two treads at different heights cannot merge — and the riser between
-  them never has to be found or be continuous. This replaces four separate
-  repair mechanisms that existed to detect that merge after the fact.
+  The presets: `ladder` (the default; band a REFERENCE FIELD and label connected
+  components WITHIN each band, `lsdtt_reference_field_ladder_cpu`), `clubb2017`
+  (HAND and gradient bounds read off quantile–quantile plots, floodplain patches
+  that touch a channel, terraces above the floodplain bound;
+  `lsdtt_floodplain_thresholds_cpu`), and `cross_section_levels` (levels
+  clustered from `lsdtt-valley-centreline` cross-section hydraulic breaks).
+  `floodplain_second_pass_algorithm_choice: qq_upper_departure` reads a second
+  HAND bound off the first-pass floodplain.
 
-  **There is no valley mode and no terrace mode**, only a level count: the
-  valley floor is the lowest band of a two-band cut, a terrace flight is an
-  n-band ladder on the same population. Set `ladder_level_count` to 2, to n, or
-  leave it at 0 and let the resolvability floor decide how many levels the DEM
-  can carry — reporting UNRESOLVED where it cannot.
+  The reference field (`reference_field_algorithm_choice`) is `hand` (height
+  above the in-scope channel network — right for a terrace flight),
+  `relative_elevation` (above valley-centreline baselines, needs
+  `relative_elevation_floor_mask_fname`), or `fitted_surface` (signed residual to
+  a `cone`, RANSAC `plane` or `poly2` fitted to the flat ground — right for a
+  fan, which climbs continuously in HAND). **Band first, then label:** two
+  pixels share a label only if they share a band, so treads at different
+  heights cannot merge and the riser between them never has to be found. There
+  is no valley mode and no terrace mode, only a level count; the ladder reports
+  UNRESOLVED where the DEM cannot carry the levels (`_ladder_windows.csv`).
 
-  Outputs `_band_index.tif`, `_banded_labels.tif`, `_valley_mask.tif` (band 0,
-  the input to `lsdtt-valley-centreline`), `_surface_class.tif`,
-  `_surface_patches.csv` (the join key for everything downstream) and
-  `_ladder_windows.csv` (the resolvability report — read it first).
-  `hand_fname` lets a precomputed HAND be supplied, which is what makes
-  iterating on the level count affordable.
+  Several presets can run in one invocation (a list in
+  `fluvial_surface_algorithm_choice`); `lsdtt_surface_method_comparison_cpu`
+  then writes confusion matrices and agreement rasters, and `_method_record.csv`
+  records the resolved stages of each. Training polygons
+  (`lsdtt_surface_training_cpu`) choose thresholds from cells the user is sure
+  of; mapped floodplain / terrace polygons are scored against;
+  `lsdtt_surface_level_clustering_cpu` tests whether patch heights cluster.
+
+  Outputs include `_floodplain_mask.tif`, `_valley_mask.tif` (the input to
+  `lsdtt-valley-centreline`), `_surface_class.tif` (0 none, 1 floodplain,
+  2 terrace), `_band_index.tif`, `_banded_labels.tif`, `_surface_patches.csv`
+  (the join key for everything downstream), `_floodplain_thresholds.csv`, the
+  QQ tables and optional polygons. `hand_fname` lets a precomputed HAND be
+  supplied.
 
 - **`lsdtt-graphflood.cpp`**
   Graph-based hydraulic routing on a fixed D-inf or MFD flow graph. Constructs
@@ -987,13 +1041,28 @@ Current CLI programs are:
   area-decade collapse table), and per-junction basin centre-of-mass bearings
   (`write_junction_centre_of_mass_bearings` — for each junction the basin is the
   upslope area of the pixel just before the next downstream junction; outputs the
-  outlet→centre-of-mass bearing). Writes CSV, GeoPackage, or FlatGeobuf.
+  outlet→centre-of-mass bearing). With `write_channel_bearing_statistics` /
+  `write_junction_angle_statistics` it groups link bearings and junction
+  angles (`channel_bearing_group_by`: Strahler order, basin, region from
+  `channel_region_fname`, or lithologic unit from `lithology_fname`), optionally
+  stratified, and compares the groups with circular Wasserstein and Kuiper
+  statistics and block-permutation p-values
+  (`lsdtt_channel_network_grouping_cpu`,
+  `lsdtt_channel_bearing_statistics_cpu`; this replaced the removed
+  `lsdtt-bearing-comparison`). Writes CSV, GeoPackage, or FlatGeobuf.
 
 - **`lsdtt-chi-analysis.cpp`** *(requires Eigen3)*  
   End-to-end chi workflow: chi extraction on threshold-defined channel networks,
   piecewise-linear chi-network fitting, disorder metrics with jackknife/bootstrap
   uncertainty, and spatial k_sn/u* inversion with m/n model selection.
-  Outlets can be supplied as a CSV of lat/lon points; otherwise the largest basin is used.
+  Outlets can be supplied (`basin_outlet_fname`: CSV of lat/lon, FlatGeobuf or
+  GeoPackage); otherwise the `n_largest_basins` (default 5) complete basins are
+  used. With `lithology_fname` it summarises k_sn by lithologic unit
+  (`lsdtt_lithology_channel_stats_cpu`: per-unit and per-reach statistics,
+  bootstrap intervals, histograms) and can write relative erodibility
+  (`lsdtt_lithology_relative_erodibility_cpu`); with `erosion_rate_fname` it
+  calibrates stream-power K (and n) from basin-averaged erosion rates
+  (`lsdtt_erodibility_calibration_cpu`).
 
 - **`lsdtt-spectral-analysis.cpp`** *(requires FFTW3)*  
   Spectral surface analysis workflows using the FFTW double API.
@@ -1086,6 +1155,20 @@ Current CLI programs are:
   `lsdtt-fluvial-surfaces`. It requires an explicit `refine_max_height_metres`,
   because there is no longer a derived break to reuse.
 
+  `run_valley_width_network` measures valley widths for every channel segment
+  instead of supplied sources (`lsdtt_valley_width_network_cpu`): channels are
+  traced longest-first so each valley is measured once, each segment gets a
+  centreline that does not follow meanders (`medial_path`, the least-cost walk,
+  or `smoothed_channel`), and sections are kept or excluded
+  (`not_in_valley`, `near_parent_channel`, `tributary_crossing`,
+  `side_not_found`). `write_relative_elevation_raster` writes elevation above
+  the centrelines' baselines (`lsdtt_valley_relative_elevation_cpu`;
+  `centreline_baseline_algorithm_choice` `projected_monotonic` or the LSDTopoTools2
+  `channel_crossings`); `write_terrace_profile_csv` bins `lsdtt-fluvial-surfaces`
+  patches along the centrelines (`lsdtt_valley_terrace_profile_cpu`); and
+  `write_cross_section_levels_csv` clusters section hydraulic breaks into levels
+  for the `cross_section_levels` preset.
+
 - **`lsdtt-water-centreline.cpp`**  
   Water/floodplain centreline extraction. Combines multiple methods to identify 
   river and floodplain centrelines. Outputs polyline networks.
@@ -1115,9 +1198,19 @@ Current CLI programs are:
   multiplication, division, powers, and other mathematical functions.
 
 - **`lsdtt-fetch-raster.cpp`**  
-  Raster data fetching from remote sources. Downloads and processes elevation data 
-  from cloud providers (COP30, Planetary Computer, etc.) with optional tiling, 
-  reprojection, and mosaicking.
+  **A WGS84 box (or a bounds file, or outlet points) to an analysis-ready DEM.**
+  Sources (`dem_source`): the keyless global Copernicus GLO-30 (`cop30_aws`, the
+  default; `planetary_computer`), OpenTopography (API key from `OT_API_KEY` or a
+  key file, never a parameter — `lsdtt_secret`), and a catalogue of keyless
+  national and polar high-resolution sources (US 3DEP, ArcticDEM / REMA, Norway,
+  Netherlands, Spain, Poland, Canada HRDEM, swissALTI3D, New Zealand, Scotland,
+  Japan) reached by STAC, WCS or grid-keyed buckets
+  (`dem_source_catalogue()` in `lsdtt_raster_fetch`). Size limits
+  (`max_output_pixels`, `max_download_megabytes`, `max_tiles`) are checked
+  before downloading; every output carries provenance metadata. Outlets mode
+  fetches complete upstream basins (`lsdtt_outlet_bounds_discovery`,
+  `lsdtt_outlet_clusters`, `lsdtt_dem_grouping`). It can also fetch straight
+  into an oblique frame aligned with a feature (`lsdtt_oblique_frame`).
 
 - **`lsdtt-fetch-lithology.cpp`**  
   **Geological map units from Macrostrat for a bounding box.** Reads Macrostrat's
@@ -1167,23 +1260,38 @@ Current CLI programs are:
 
 - **`lsdtt-distributed-hydrology.cpp`**  
   A raster TOPMODEL: a time-evolving, rainfall-driven simulation built on the
-  same wetness index as `lsdtt-drainage-analysis`. The CLI contains no hydrology
-  of its own. It assembles library modules (`lsdtt_wetness_index_cpu`,
-  `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu`,
+  same wetness index `lsdtt-drainage-analysis` reports. The driver contains no
+  hydrology of its own — it assembles `lsdtt_wetness_index_cpu`,
+  `lsdtt_landcover_scenario_cpu`, `lsdtt_channel_extent_cpu`,
+  `lsdtt_hydro_roughness_cpu`, `lsdtt_hydro_velocity_field_cpu`,
   `lsdtt_canopy_interception_cpu`, `lsdtt_infiltration_excess_cpu`,
-  `lsdtt_hydro_routing_cpu`, ...). Routing is D-infinity or MFD through
-  `lsdtt_flowgraph_cpu`.
+  `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu` and
+  `lsdtt_hydro_routing_cpu` in order. Routing is D-infinity or MFD through
+  `lsdtt_flowgraph_cpu`; D8 is deliberately not offered, because sending all of
+  a cell's area to one neighbour stripes the wetness index and therefore the
+  deficit field built on it.
 
 - **`lsdtt-hillslope-channel-coupling.cpp`**  
   Couples hillslope form to channel form. For every ridgeline pixel it measures
-  hilltop curvature, traces the flow path to the channel it drains to, and
-  reports hillslope length, relief and the non-dimensional E* / R* pair
-  (Hurst et al. 2012; Grieve et al. 2016).
+  hilltop curvature, traces the flow path down to the channel that pixel drains
+  to, and reports hillslope length, relief and the non-dimensional pair
+  E\* / R\* (Hurst et al. 2012; Grieve et al. 2016). Divides are traced on the
+  pixel-corner divide grid, so a divide runs *between* DEM pixels: hilltop
+  pixels are the pixels a ridgeline separates, one either side, and because the
+  ridgeline is ordered each pixel carries its position along the divide and
+  which side it sits on. That side partitions a divide's hilltops into the two
+  opposing hillslopes, so E\*/R\* can be compared across a divide rather than
+  only pooled.
 
 - **`lsdtt-outlet-matching.cpp`**  
-  Matches outlets on a reference DEM to cells on a target DEM by comparing D8
-  contributing-basin areas, preferring the closest-area candidate that is not
-  influenced by the DEM edge. Writes matched-outlet and diagnostic CSVs.
+  Matches reference-DEM outlets to target-DEM cells by comparing reference and
+  target D8 contributing-basin areas. Loads both DEMs and a reference outlet
+  CSV, validates CRS and transformed-extent overlap, builds D8 flow plus
+  target contributing-pixel and edge-influence rasters, then selects the
+  closest-area non-edge candidate. Writes matched-outlet and diagnostic CSVs.
+  Uses the outlet-resolution stack (`lsdtt_outlet_bounds_discovery`,
+  `lsdtt_outlet_clusters`, `lsdtt_outlet_resolution_cpu`,
+  `lsdtt_outlet_basin_verification_cpu`).
 
 ### Polyfit method rule
 
@@ -1469,40 +1577,18 @@ After adoption, renaming that parameter is a one-line change in one file, not a
 twenty-CLI edit. This is why parameter renames are low-risk:
 the shared layer makes them self-enforcing.
 
-- **`lsdtt-distributed-hydrology.cpp`**  
-  A raster TOPMODEL: a time-evolving, rainfall-driven simulation built on the
-  same wetness index `lsdtt-drainage-analysis` reports. The driver contains no
-  hydrology of its own — it assembles `lsdtt_wetness_index_cpu`,
-  `lsdtt_landcover_scenario_cpu`, `lsdtt_channel_extent_cpu`,
-  `lsdtt_hydro_roughness_cpu`, `lsdtt_hydro_velocity_field_cpu`,
-  `lsdtt_canopy_interception_cpu`, `lsdtt_infiltration_excess_cpu`,
-  `lsdtt_topmodel_cpu`, `lsdtt_topmodel_dynamic_cpu` and
-  `lsdtt_hydro_routing_cpu` in order. Routing is D-infinity or MFD through
-  `lsdtt_flowgraph_cpu`; D8 is deliberately not offered, because sending all of
-  a cell's area to one neighbour stripes the wetness index and therefore the
-  deficit field built on it.
+**Declaration families** (`declare_*` in `lsdtt_common_parameters.hpp`, 2026-11-02):
 
-- **`lsdtt-hillslope-channel-coupling.cpp`**  
-  Couples hillslope form to channel form. For every ridgeline pixel it measures
-  hilltop curvature, traces the flow path down to the channel that pixel drains
-  to, and reports hillslope length, relief and the non-dimensional pair
-  E\* / R\* (Hurst et al. 2012; Grieve et al. 2016). Divides are traced on the
-  pixel-corner divide grid, so a divide runs *between* DEM pixels: hilltop
-  pixels are the pixels a ridgeline separates, one either side, and because the
-  ridgeline is ordered each pixel carries its position along the divide and
-  which side it sits on. That side partitions a divide's hilltops into the two
-  opposing hillslopes, so E\*/R\* can be compared across a divide rather than
-  only pooled.
-
-- **`lsdtt-outlet-matching.cpp`**  
-  Matches reference-DEM outlets to target-DEM cells by comparing reference and
-  target D8 contributing-basin areas. Loads both DEMs and a reference outlet
-  CSV, validates CRS and transformed-extent overlap, builds D8 flow plus
-  target contributing-pixel and edge-influence rasters, then selects the
-  closest-area non-edge candidate. Writes matched-outlet and diagnostic CSVs.
-  Uses the outlet-resolution stack (`lsdtt_outlet_bounds_discovery`,
-  `lsdtt_outlet_clusters`, `lsdtt_outlet_resolution_cpu`,
-  `lsdtt_outlet_basin_verification_cpu`).
+| Concept | Functions |
+|---|---|
+| Routing, fill and channels | `declare_routing_core_parameters`, `declare_raster_is_filled_parameter`, `declare_fill_before_routing_parameter`, `declare_fill_min_slope_parameter`, `declare_fill_flat_resolution_parameter`, `declare_channel_initiation_parameters` |
+| DEM preparation | `declare_interior_nodata_parameters` (`interior_nodata_method`: `sink` or `fill`, in preprocessing and the analysis CLIs) |
+| Outputs | `declare_raster_output_format_parameter`, `declare_vector_output_format_parameter`, `declare_spatial_index_parameter`, `declare_true_north_bearing_parameters` (`bearings_relative_to_true_north`; `lsdtt_true_north`) |
+| Basins and regions | `declare_basin_outlet_parameters`, `declare_channel_region_parameters` |
+| Fetching | `declare_fetch_bbox_parameters`, `declare_fetch_bounds_file_parameters`, `declare_fetch_request_limit_parameters`, `declare_http_request_parameters`, `declare_linear_feature_fetch_parameters`, `declare_linear_feature_rotation_parameters`, `declare_rotate_back_parameters` |
+| Lithology and erodibility | `declare_lithology_map_parameters`, `declare_write_lithology_code_raster_parameter`, `declare_lithology_ksn_summary_parameters`, `declare_lithology_network_summary_parameters`, `declare_lithology_bootstrap_parameters`, `declare_erosion_rate_input_parameters`, `declare_erodibility_calibration_parameters`, `declare_stream_power_n_values_parameter` |
+| Fluvial surfaces and valleys | `declare_relief_window_parameter`, `declare_max_relief_parameter`, `declare_relief_threshold_algorithm_parameter`, `declare_max_admission_gradient_parameter`, `declare_max_floodplain_hand_parameter`, `declare_max_floodplain_gradient_parameter`, `declare_floodplain_threshold_algorithm_parameter`, `declare_qq_threshold_parameters`, `declare_ladder_selection_parameters`, `declare_surface_fitting_parameters`, `declare_relative_elevation_parameters`, `declare_valley_mask_morphology_parameters` |
+| Synthetic surfaces | `declare_synthetic_*` (dimensions, cell size, CRS WKT, domain, noise, random seed), `declare_diamond_square_parameters` |
 
 **Migration status:** Not all CLIs have adopted the shared layer yet. Legacy CLIs
 that predate the shared layer still hand-declare their parameters, and are migrated
@@ -1634,6 +1720,58 @@ The `-te` extent is passed to GDAL at 17 significant digits. Until 2026-10-16 it
 went through a default `ostringstream` (6 digits), which turned a northing of
 5000202 into `5.0002e+06` and shifted any warp or clip with 7-digit coordinates
 (every UTM northing) by up to several metres.
+
+## Oblique analysis frames and true north
+
+Files: `src/core/lsdtt_oblique_frame.hpp/.cpp`,
+`src/core/lsdtt_rotation_frame_file.hpp/.cpp`, `src/core/lsdtt_true_north.hpp/.cpp`
+
+**`lsdtt_oblique_frame`** — an analysis frame aligned with a feature (fault,
+trunk river, coastline, elongated landscape): a Hotine Oblique Mercator
+(variant B, PROJ `omerc`) CRS whose central line runs along the feature, so a
+raster warped into it is an ordinary north-up raster with the feature along
++x. Scale is exact on the central line; the error grows about as
+d² / (2R²) with distance d from it. Built from two end points, a polygon, or
+an existing DEM, on the base geographic CRS (WGS84 for a fetch, the DEM's own
+when rotating) so no datum transformation enters the warp; geodesics go
+through PROJ via OGR. Builders throw on bad input and run an axis self-check
+(a point placed along the azimuth must land on +x). Frame warps use
+`-et 0` and explicit scales, because GDAL otherwise smooths rotated warps.
+
+**`lsdtt_rotation_frame_file`** — `<stem>_rotation_frame.txt`, written beside
+every DEM warped into a frame: the frame, how it was defined, provenance, and
+the lattice to rotate products back onto. `key: value` lines that are also a
+flat YAML mapping (17 significant digits, quoted WKT); read by its own reader,
+not `lsdtt_param_parser`. Reading refuses a missing or newer version, a WKT
+that disagrees with the stored centre and azimuth, or a failed self-check.
+
+**`lsdtt_true_north`** — every bearing lsdtt3 computes is clockwise from GRID
+up (+y). `lsdtt_grid_convergence` gives the angle of true north at a point
+(about 3° at most in UTM; the frame azimuth in an oblique frame), and
+`bearings_relative_to_true_north` converts each output at its own location
+(`convert_angle_raster_to_true_north` for rasters, on a coarse convergence
+lattice). Hillshade illumination is never converted. Not thread safe: one
+converter per thread.
+
+## lsdtt_raster_fetch
+
+Files: `src/core/lsdtt_raster_fetch.hpp/.cpp`, `lsdtt_raster_fetch_detail.hpp`
+
+`fetch_dem()` turns a WGS84 box into an analysis-ready raster in a pinned EPSG
+and grid spacing (it deliberately does not reuse `lsdtt_reproject_if_needed`,
+whose CRS and spacing heuristics a fetch must not apply). Sources:
+`cop30_aws` and `planetary_computer` (keyless Copernicus GLO-30),
+`opentopography` (key via `lsdtt_secret`), and the catalogue
+`dem_source_catalogue()` — one `lsdtt_dem_source_info` row per source
+(resolutions, surface models, vertical datum, coverage, attribution, access by
+STAC, WCS or grid-keyed bucket): `us_3dep`, `arctic_arcticdem`,
+`antarctic_rema`, `no_dtm`, `nl_ahn`, `es_mdt`, `pl_nmt`, `ca_hrdem`,
+`ch_swissalti3d`, `nz_lidar`, `gb_sct_lidar`, `jp_gsi`. Size limits are
+checked before any download; every output carries provenance metadata.
+`lsdtt_raster_fetch_detail.hpp` exposes the cache key, STAC request bodies and
+warp arguments so offline tests pin exactly what a fetch asks GDAL to do.
+
+---
 
 ## lsdtt_raster_base
 
@@ -2453,10 +2591,19 @@ first and then pass the resulting flat sample into `src/utils/` routines.
 
 File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_status`: stable
 
-**Preprocessing pipeline (in order):**
+**Preprocessing pipeline (in order, as in the CLI's header comment):**
 1. **Projection** — detect and reproject geographic / Web Mercator rasters
-2. **Threshold masking** — remove pixels outside elevation range
-3. **Interior nodata filling** — fill enclosed voids
+   (output suffix `_utm`, `_polar`, `_lambert`), or rotate into an oblique
+   frame (`rotate_to_linear_feature` / `rotate_to_data_footprint`; suffix
+   `_oblique`, with `<stem>_oblique_rotation_frame.txt`)
+2. **Threshold masking** — remove pixels outside the elevation range;
+   optional binary mask application and clip to a polygon
+3. **Interior nodata** — `interior_nodata_method` (shared,
+   `declare_interior_nodata_parameters`): `sink` (default; enclosed voids are
+   outlets, as for real internal drainage) or `fill` (interpolated with
+   `nodata_fill_method_choice` before any filling or routing). Nodata connected
+   to the edge (e.g. sea removed by `min_elevation`) is never filled and is an
+   open boundary.
 4. **Clip to rectangle** — largest valid rectangle
 5. **Depression breaching** — Lindsay 2016 complete breaching (default) or
    Lindsay 2020 least-cost (`breach_algorithm_choice: least_cost`, with its own
@@ -2464,14 +2611,22 @@ File: `cli/lsdtt-raster-preprocessing.cpp`  |  `k_status`: stable
 6. **Pit filling** — Barnes 2014 Priority-Flood (default), Vincent 1993
    reconstruction, or Fill-Spill-Merge; flats by the inline gradient or Barnes
    2014b (`fill_flat_resolution_choice`)
-7. **Hillshade** — Zevenbergen & Thorne 1987
+7. **Depression polygons**
+8. **Hillshade** — Zevenbergen & Thorne 1987; optional multidirectional hillshade
+9. **Vector clipping**, then **sampling rasters to points**
 
-Steps 2–7 always operate on the (possibly reprojected) raster. If reprojection
-occurs the new file is reopened before step 2.
+`run_rotate_back` is a separate mode: the rasters in `rotate_back_file_list`
+are warped from the frame back onto the frame file's target lattice and no
+other step runs.
+
+Steps 2 onward operate on the (possibly reprojected or rotated) raster; if it
+was reprojected the new file is reopened before step 2. See
+[Oblique analysis frames and true north](#oblique-analysis-frames-and-true-north).
 
 **Threshold masking semantics:**
 `min_elevation` masks pixels **at or below** the threshold (i.e. `value <= min_elev`).
 Default is `0.0`, which catches ocean pixels that raster providers commonly set to exactly 0.
+Negative values apply as given (a basin below sea level); `-9999` or lower disables masking.
 `maximum_elevation` masks pixels above the threshold (`value > max_elev`); default `30000.0`.
 
 **Projection parameters:**
@@ -2501,7 +2656,7 @@ fill_min_slope, min_elevation, maximum_elevation
 breach_lc_max_dist (default 1000 outlet / 100 whitebox), breach_lc_max_cost,
 breach_lc_minimize_dist (false), breach_lc_edge_policy (outlet / whitebox),
 breach_lc_flat_increment (0 = auto)
-n_threads, nodata_fill_max_iter
+n_threads, nodata_fill_max_iter, interior_nodata_method: sink / fill
 ```
 
 **Diff raster outputs** (use `lsdtt::algebra::raster_subtract` from `lsdtt_raster_algebra.hpp`):
@@ -2782,6 +2937,20 @@ Each record includes (using descriptive names that map to Strong & Mudd 2023):
 
 Writer: `write_junction_angle_data(...)`, `write_junction_angle_bearing_vectors(...)` (visual QA)
 
+### Grouped statistics
+
+`lsdtt_channel_network_grouping_cpu` attaches grouping keys to link and junction
+records (Strahler order, basin, region from a polygon or code raster — vectors
+reprojected to the DEM — and lithologic unit, with purity; records below
+`lithology_min_majority_fraction` form a descriptive "mixed" group that is never
+compared). `lsdtt_channel_bearing_statistics_cpu` summarises each group
+(circular mean, mean resultant length, count- and length-weighted, directional
+and axial) and compares groups pairwise or one-vs-rest with the circular
+Wasserstein distance and the Kuiper test, plus block-permutation p-values over
+independence blocks (basins of an automatically chosen order), because links in
+one valley are not independent. This replaced the removed
+`lsdtt-bearing-comparison` CLI.
+
 ---
 
 ## lsdtt_strahler_tokunaga_analysis_cpu
@@ -2962,7 +3131,7 @@ surfaces qualify.
 
 **Thresholding:** each metric is thresholded at a user-specified percentile of its own distribution. The QQ-plot CSV output helps identify the break-point between flat and rough terrain in the lower tail. Metrics are combined with AND or OR logic.
 
-**Scope:** this module answers "which ground is flat?" and nothing more. Sorting flat ground into fluvial levels needs a channel and a height reference, and lives in `lsdtt_reference_field_ladder_cpu` behind `lsdtt-fluvial-surfaces`.
+**Scope:** this module answers "which ground is flat?" and nothing more. Sorting flat ground into fluvial levels needs a channel and a height reference, and lives in `lsdtt-fluvial-surfaces` (the `ladder` preset in `lsdtt_reference_field_ladder_cpu`, the others in [Fluvial surface methods](#fluvial-surface-methods)); its `_combined_flat_mask.tif` is that tool's `flat_mask_fname`.
 
 ---
 
@@ -2971,7 +3140,8 @@ surfaces qualify.
 File: `src/cpu/lsdtt_reference_field_ladder_cpu.hpp/.cpp`
 
 Stratifies a REFERENCE FIELD into height bands and labels connected components
-**within each band**. The engine behind `lsdtt-fluvial-surfaces`.
+**within each band**. The engine behind the `ladder` preset (the default) of
+`lsdtt-fluvial-surfaces`; the other methods are in the next section.
 
 **One operation, two tasks.** Finding a valley floor and segmenting a terrace
 flight are the same computation at different band counts: the valley floor is
@@ -3010,6 +3180,112 @@ monotone under median centres). Both are argued in the header. This file WRAPS
 `find_population_breaks` from `lsdtt_flat_surface_channel_classify_cpu` and must
 not modify it — that function is shared, so a change there moves two tools at
 once.
+
+---
+
+## Fluvial surface methods
+
+`lsdtt-fluvial-surfaces` assembles its stages from these modules (see the CLI
+entry above for the stage parameters and presets). Following Simon's decision,
+`clubb2017` follows the paper (Clubb et al. 2017), not the LSDTopoTools2 code,
+and is not tested against legacy outputs.
+
+- **`lsdtt_threshold_selection`** (`src/utils/`) — a threshold from the
+  distribution of a quantity rather than from the user: `fixed`,
+  `qq_gaussian` (Clubb et al. 2017: a Gaussian reference line through two
+  percentiles of the QQ cloud; the lowest quantile where the data agree with
+  it, and keep agreeing for `qq_persistence_points`), or `cdf_divergence`
+  (lsdtt3: best-fitting distribution by KS, threshold where the empirical CDF
+  most exceeds it). Used for relief, HAND and gradient bounds.
+- **`lsdtt_floodplain_thresholds_cpu`** — floodplain = admitted, HAND below its
+  bound, gradient below its bound; connected components above a minimum size
+  that touch a channel (the test that makes it the floodplain rather than any
+  low flat patch), optionally with holes filled. Terraces = admitted, not
+  floodplain, gentle, and above the floodplain bound on `terrace_field`. Also
+  the simple floodplain rule of `lsdtt-hillslope-channel-coupling`.
+- **`lsdtt_surface_training_cpu`** — training polygons: per polygon the median
+  and its 25th–75th percentile core, so a gully crossed while drawing does not
+  move it; a polygon whose IQR exceeds both an absolute limit and a fraction of
+  its median is "not a single level"; terrace numbers are ignored.
+- **`lsdtt_surface_level_clustering_cpu`** — do patch median heights cluster?
+  Clusters split at gaps of at least the resolvability floor (κ·E_v); the
+  statistic is the empty fraction of the value range, against a uniform null
+  (p = (1 + #{E_null ≥ E_obs}) / (1 + n_null)).
+- **`lsdtt_surface_method_comparison_cpu`** — for several methods' class
+  rasters on one grid: a 3 × 3 confusion matrix per pair, floodplain and
+  terrace intersection-over-union, and per-cell agreement bit masks. A pure
+  function of the rasters, so the bindings and a later compare-earlier-runs
+  mode can reuse it.
+
+---
+
+## Valley width network, relative elevation and terrace profile
+
+Files: `src/cpu/lsdtt_valley_width_network_cpu.hpp/.cpp`,
+`lsdtt_valley_relative_elevation_cpu.hpp/.cpp`,
+`lsdtt_valley_terrace_profile_cpu.hpp/.cpp` (all driven by
+`lsdtt-valley-centreline`)
+
+- **Width network** — the network mode of LSDTopoTools2 `lsdtt-valley-metrics`
+  (Clubb et al. 2022) against a supplied valley mask. Channel heads are traced
+  downstream longest-first, each trace stopping at a pixel an earlier one
+  claimed, so the first trace of a basin is its trunk and each valley is
+  measured once. Each segment gets a centreline that does not follow meanders:
+  `medial_path` (default) is the least-cost walk with cost
+  (w_max − distance to the wall), confined to the mask plus the segment's own
+  channel, computed in a window round the segment (a filled D8 trough fails in
+  wide valleys); `smoothed_channel` is the channel smoothed by a spline whose
+  width scales with the valley, kept inside the mask. Tributary sections stop
+  where they reach the parent's half-width (`run_tributary_stop_at_parent`),
+  and parent sections that cross a tributary's kept sections are excluded
+  (`run_tributary_crossing_removal`). Stations are matched to channel pixels
+  in downstream order, so drainage area never decreases down a segment.
+- **Relative elevation (RER)** — each valley pixel's elevation minus a
+  centreline baseline rather than minus the channel its flow reaches (HAND), so
+  a meandering or wall-hugging channel does not imprint on the field. Baselines:
+  `projected_monotonic` (lsdtt3: every channel pixel pins its nearest node,
+  then a pinned monotonic fit) or `channel_crossings` (LSDTopoTools2: pins only
+  where the channel crosses the centreline). Ownership separates the FLOOR
+  (centrelines and discs of radius = distance to the wall; the larger drainage
+  area wins) from the DOMAIN (valley mask, supplied, or whole DEM; elsewhere
+  floor-width-scaled ground distance). Never trace centrelines through a
+  terrace-inclusive mask: the medial axis crosses the terrace plain.
+- **Terrace profile** — every pixel of every `lsdtt-fluvial-surfaces` patch is
+  tied to a centreline node (the centreline owning most of the patch under the
+  RER ownership) and binned by distance along it; a port of LSDTopoTools2
+  `make_swaths_from_categorised`.
+
+---
+
+## lsdtt_perimeter_sources_cpu
+
+Channel sources where large valleys enter a DEM across its edge, from the DEM
+alone (`lsdtt-channel-extraction` `run_perimeter_sources`). The outer edge of
+the largest valid block is Moore-traced into a circular perimeter profile;
+gradient (m/m) comes from a least-squares plane within
+`perimeter_gradient_radius_metres` (not polyfit); a gentle run is a valley
+crossing if it is at least `perimeter_min_valley_width_metres` long (default
+300 m, for 30 m DEMs) and a low spot with relief on both sides. The D8 outlet
+cells of one low-spot run are grouped (a wide floodplain leaves through many
+parallel D8 basins) and outlet runs are ranked by summed drainage area. The
+source start is the lowest floor cell that reaches a selected outlet, because a
+real entering channel often has an edge cell a few cm low that D8 makes an
+outlet. Open: a gentle coast spanning the DEM is a low spot and groups into one
+outlet run.
+
+---
+
+## lsdtt_riser_finder_cpu
+
+Risers — short steep steps between gentler surfaces (terrace risers,
+shorelines, fault scarps, agricultural terraces, road cuts); behind
+`lsdtt-feature-finder` `feature_type: find_risers`. The break-of-slope
+skeleton (vertical excess curvature, adaptively thresholded and thinned,
+`find_vec_skeleton`), optional gap closing by A* bridges between endpoints at
+similar elevation (`connect_skeleton_by_elevation`; contour tracing was tried
+and is not offered — it wanders across tilted treads), then a step height per
+segment, step(p) = |2·dz(d) − dz(2d)| across the line.
+`score_risers_against_mapped` scores the result against mapped lines.
 
 ---
 
@@ -3065,6 +3341,10 @@ Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis �
 **`lsdtt_thread_utils.hpp`** — header-only: `resolve_thread_count(n_threads)` returns `n_threads` if > 0, otherwise the OpenMP or hardware maximum.
 
 **`lsdtt_binary_array2d_tracing.hpp/.cpp`** — binary array tracing utilities (used by skeleton graph and related morphology code).
+
+**`lsdtt_threshold_selection.hpp/.cpp`** — thresholds picked from a distribution (`fixed`, `qq_gaussian`, `cdf_divergence`); see [Fluvial surface methods](#fluvial-surface-methods).
+
+**`lsdtt_point_bucket_index.hpp`** — header-only uniform-grid bucket index over a fixed set of 2-D points (polyline nodes on a raster): exact `nearest(x, y)` and `within(x, y, r)` queries where a kd-tree is not worth it.
 
 ---
 
@@ -3594,7 +3874,7 @@ This matters for packaging: the whole tree is single-licence, which is why
 14. `src/core/lsdtt_crs_suggest` inspects CRS; `src/core/lsdtt_raster_reproject`
     acts on it — these are deliberately separate so suggestion logic can be used
     without triggering I/O
-15. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert)
+15. Reprojected rasters always receive a projection suffix (_utm / _polar / _lambert / _oblique)
     so the provenance of every output file is unambiguous from its filename
 16. `lsdtt_raster_algebra` lives in `src/cpu/lsdtt_raster_algebra.hpp/.cpp`; include from `src/cpu/`.
     Use `lsdtt::algebra::raster_subtract(a, b)` etc. for diff rasters in CLIs.
@@ -3625,3 +3905,15 @@ This matters for packaging: the whole tree is single-licence, which is why
     so `src/core` stays CUDA-free. GPU kernels take POD pointers only (no
     `lsdtt_raster_cpu`/GDAL), accumulate in double for CPU parity, and always have
     a CPU fallback. See `docs/developer_notes/gpu_compute.md`.
+27. Parameter parsing is strict: an unknown key stops the run, a renamed key
+    runs with a deprecation warning naming its successor, and `-h json` prints
+    the machine-readable parameter list. Every run ends with
+    `lsdtt_run_record`: a closing line or a failure box, and
+    `<stem>_run_summary.json` (see "Deprecated, removed and unknown parameter
+    keys" and the CLI design rule).
+28. Bearings, aspects and orientations are measured clockwise from GRID up.
+    `bearings_relative_to_true_north` converts outputs to true north at their
+    own location (`lsdtt_true_north`); hillshade illumination is never converted.
+29. One concept, one parameter name across CLIs, declared once in
+    `lsdtt_common_parameters` (check `cli_parameter_conventions.md` first).
+    Slope is a gradient (m/m), never an angle.

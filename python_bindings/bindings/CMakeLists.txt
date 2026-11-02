@@ -13,6 +13,7 @@ nanobind_add_module(_core
     raster_mountain_front.cpp
     raster_feature_finder.cpp
     raster_flat_surfaces.cpp
+    fluvial_surfaces.cpp
     raster_marsh.cpp
     raster_ridgeline.cpp
     valley_helpers.cpp

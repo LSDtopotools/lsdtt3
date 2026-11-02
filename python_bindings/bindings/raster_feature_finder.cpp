@@ -8,6 +8,10 @@
 #include <nanobind/stl/vector.h>
 
 #include <cpu/lsdtt_raster_feature_finder_cpu.hpp>
+#include <cpu/lsdtt_riser_finder_cpu.hpp>
+#include <cpu/lsdtt_vector_rasterise_cpu.hpp>
+
+#include <core/lsdtt_gdal_init.hpp>
 
 #include <core/lsdtt_true_north.hpp>
 
@@ -271,6 +275,124 @@ std::vector<Raster> raster_vector(const std::vector<Result>& rasters)
     return output;
 }
 
+class RiserResult {
+public:
+    explicit RiserResult(lsdtt::riser_result result) : result_(std::move(result)) {}
+    const lsdtt::riser_result& native() const noexcept { return result_; }
+private:
+    lsdtt::riser_result result_;
+};
+
+RiserResult find_risers(
+    const Raster& dem, nb::object search_mask, const std::string& edge_metric,
+    int multidirectional_hillshade_n_directions, double polyfit_lambda_metres,
+    const std::string& vec_adaptive_method, double vec_adaptive_std_factor,
+    int vec_adaptive_block_size_pixels, double vec_adaptive_C,
+    double vec_adaptive_gaussian_sigma, double closing_radius_metres,
+    int binary_min_component_pixels, int max_spur_pixels, int max_terminal_loop_pixels,
+    int min_component_pixels, const std::string& gap_closing_algorithm_choice,
+    double connect_search_radius_metres, double connect_elevation_tolerance_metres,
+    double connect_corridor_half_width_pixels, bool connect_same_component,
+    double step_window_radius_metres, double min_step_height_metres,
+    int min_segment_pixels, int n_threads)
+{
+    // The request as lsdtt-feature-finder feature_type find_risers builds it
+    // from its riser_* parameters.
+    lsdtt::riser_request request;
+    lsdtt::vec_skeleton_request& vsr = request.skeleton;
+    vsr.edge_metric = lsdtt::parse_skeleton_edge_metric(edge_metric);
+    vsr.hillshade_n_directions = multidirectional_hillshade_n_directions;
+    vsr.polyfit_lambda_metres = polyfit_lambda_metres;
+    vsr.adaptive_method = vec_adaptive_method;
+    vsr.adaptive_std_factor = vec_adaptive_std_factor;
+    vsr.adaptive_block_size = vec_adaptive_block_size_pixels;
+    vsr.adaptive_C = vec_adaptive_C;
+    vsr.adaptive_gaussian_sigma = vec_adaptive_gaussian_sigma;
+    vsr.closing_radius_metres = closing_radius_metres;
+    vsr.binary_min_component_pixels = binary_min_component_pixels;
+    vsr.spur_max_pixels = max_spur_pixels;
+    vsr.terminal_loop_max_pixels = max_terminal_loop_pixels;
+    vsr.min_component_pixels = min_component_pixels;
+    vsr.elevation_connect.search_radius_metres = connect_search_radius_metres;
+    vsr.elevation_connect.elevation_tolerance_metres = connect_elevation_tolerance_metres;
+    vsr.elevation_connect.corridor_half_width_pixels = connect_corridor_half_width_pixels;
+    vsr.elevation_connect.connect_same_component = connect_same_component;
+    request.gap_closing = lsdtt::parse_riser_gap_closing_choice(gap_closing_algorithm_choice);
+    request.step_window_radius_metres = step_window_radius_metres;
+    request.min_step_height_metres = min_step_height_metres;
+    request.min_segment_pixels = min_segment_pixels;
+    request.n_threads = n_threads;
+
+    // The search mask as 1/0 on the DEM's valid cells, as the CLI reads it.
+    const auto& meta = dem.native().get_meta();
+    lsdtt::lsdtt_raster_cpu mask;
+    if (!search_mask.is_none()) {
+        const auto& m = nb::cast<const Raster&>(search_mask).native();
+        const auto& mm = m.get_meta();
+        if (mm.n_rows != meta.n_rows || mm.n_cols != meta.n_cols)
+            throw std::invalid_argument("search_mask must be on the DEM grid");
+        std::vector<float> md(m.get_data().size(), 0.0f);
+        for (std::size_t i = 0; i < md.size(); ++i)
+            if (m.get_mask()[i] && m.get_data()[i] > 0.5f) md[i] = 1.0f;
+        mask = lsdtt::lsdtt_raster_cpu(std::move(md),
+            std::vector<std::uint8_t>(dem.native().get_mask()), meta);
+    }
+    return RiserResult(lsdtt::find_risers(dem.native(), mask, request));
+}
+
+nb::object riser_segment_table(const RiserResult& result)
+{
+    nb::list ids, n_pixels, length, step, face, elevation, loop, geometry;
+    nb::object line_string = nb::module_::import_("shapely.geometry").attr("LineString");
+    for (const auto& seg : result.native().segments) {
+        ids.append(seg.id); n_pixels.append(seg.n_pixels); length.append(seg.length_m);
+        step.append(seg.step_height_m); face.append(seg.face_gradient);
+        elevation.append(seg.mean_elevation_m); loop.append(seg.is_loop);
+        nb::list coords;
+        for (const auto& p : seg.polyline) coords.append(nb::make_tuple(p.x, p.y));
+        geometry.append(nb::len(coords) >= 2 ? line_string(coords) : nb::none());
+    }
+    nb::dict data;
+    data["segment_id"] = ids; data["n_pixels"] = n_pixels; data["length_metres"] = length;
+    data["step_height_metres"] = step; data["face_gradient"] = face;
+    data["mean_elevation_metres"] = elevation; data["is_loop"] = loop;
+    nb::object ctor = nb::module_::import_("geopandas").attr("GeoDataFrame");
+    const std::string& crs = result.native().centreline.get_meta().crs_wkt;
+    return crs.empty() ? ctor(data, nb::arg("geometry") = geometry)
+                       : ctor(data, nb::arg("geometry") = geometry, nb::arg("crs") = crs);
+}
+
+nb::dict score_risers_against_mapped(const Raster& riser_centreline,
+                                     const std::string& mapped_risers_fname,
+                                     const std::string& mapped_risers_extent_fname,
+                                     double mapped_risers_tolerance_metres, int n_threads)
+{
+    // Burned and scored as lsdtt-feature-finder does with mapped_risers_*.
+    lsdtt::gdal_init();
+    const auto& detected = riser_centreline.native();
+    const lsdtt::lsdtt_raster_cpu mapped = lsdtt::rasterise_polylines(detected, mapped_risers_fname);
+    std::vector<std::uint8_t> scored(detected.get_mask().begin(), detected.get_mask().end());
+    if (!mapped_risers_extent_fname.empty()) {
+        const lsdtt::lsdtt_raster_cpu extent = lsdtt::rasterise_polygons(
+            detected, mapped_risers_extent_fname, lsdtt::polygon_rasterise_rule::majority_coverage);
+        for (std::size_t i = 0; i < scored.size(); ++i)
+            if (!(extent.get_data()[i] > 0.5f)) scored[i] = 0;
+    }
+    const lsdtt::riser_mapped_score score = lsdtt::score_risers_against_mapped(
+        detected, mapped, scored, mapped_risers_tolerance_metres, n_threads);
+    nb::dict out;
+    out["tolerance_metres"] = score.tolerance_m;
+    out["n_scored_cells"] = score.n_scored_cells;
+    out["n_detected"] = score.n_detected;
+    out["n_detected_matched"] = score.n_detected_matched;
+    out["n_mapped"] = score.n_mapped;
+    out["n_mapped_matched"] = score.n_mapped_matched;
+    out["precision"] = score.precision;
+    out["recall"] = score.recall;
+    out["f1"] = score.f1;
+    return out;
+}
+
 } // namespace
 
 void bind_raster_feature_finder(nb::module_& m)
@@ -385,6 +507,148 @@ opening, and ``mask`` the final 0/1 line mask.
         .def_prop_ro("binary", [](const ThinLinesResult& r) { return Raster(r.native().binary); })
         .def_prop_ro("blob_free", [](const ThinLinesResult& r) { return Raster(r.native().blob_free); })
         .def_prop_ro("mask", [](const ThinLinesResult& r) { return Raster(r.native().mask); });
+
+    nb::class_<RiserResult>(m, "RiserResult", R"doc(
+Riser (break-of-slope step) detection output from :func:`find_risers`.
+
+``centreline`` is 1 on the kept riser segments; ``segments`` has one row
+and line per segment. ``edge_field``, ``adaptive_binary`` and ``skeleton``
+are the break-of-slope products the segments were drawn from, and
+``gap_closing_mask`` the cells added by gap closing.
+)doc")
+        .def_prop_ro("centreline", [](const RiserResult& r) { return Raster(r.native().centreline); })
+        .def_prop_ro("gap_closing_mask", [](const RiserResult& r) { return Raster(r.native().gap_closing_mask); })
+        .def_prop_ro("edge_field", [](const RiserResult& r) { return Raster(r.native().skeleton.edge_field); })
+        .def_prop_ro("adaptive_binary", [](const RiserResult& r) { return Raster(r.native().skeleton.adaptive_binary); })
+        .def_prop_ro("skeleton", [](const RiserResult& r) { return Raster(r.native().skeleton.skeleton); })
+        .def_prop_ro("n_segments_found", [](const RiserResult& r) { return r.native().n_segments_found; })
+        .def_prop_ro("n_dropped_short", [](const RiserResult& r) { return r.native().n_dropped_short; })
+        .def_prop_ro("n_dropped_low_step", [](const RiserResult& r) { return r.native().n_dropped_low_step; })
+        .def_prop_ro("segments", &riser_segment_table, nb::sig("def segments(self) -> geopandas.GeoDataFrame"),
+            "One row per kept segment: segment_id, n_pixels, length_metres, step_height_metres (median step across the segment), face_gradient (m/m), mean_elevation_metres, is_loop, and the line geometry.");
+
+    m.def("find_risers", &find_risers, nb::arg("dem"), nb::arg("search_mask") = nb::none(),
+        nb::arg("edge_metric") = "vertical_excess_curvature",
+        nb::arg("multidirectional_hillshade_n_directions") = 8,
+        nb::arg("polyfit_lambda_metres") = 100.0,
+        nb::arg("vec_adaptive_method") = "mean_std",
+        nb::arg("vec_adaptive_std_factor") = 0.5,
+        nb::arg("vec_adaptive_block_size_pixels") = 51,
+        nb::arg("vec_adaptive_C") = 0.0, nb::arg("vec_adaptive_gaussian_sigma") = 0.0,
+        nb::arg("closing_radius_metres") = 0.0, nb::arg("binary_min_component_pixels") = 1,
+        nb::arg("max_spur_pixels") = 10, nb::arg("max_terminal_loop_pixels") = 10,
+        nb::arg("min_component_pixels") = 1,
+        nb::arg("gap_closing_algorithm_choice") = "none",
+        nb::arg("connect_search_radius_metres") = 200.0,
+        nb::arg("connect_elevation_tolerance_metres") = 2.0,
+        nb::arg("connect_corridor_half_width_pixels") = 12.0,
+        nb::arg("connect_same_component") = false,
+        nb::arg("step_window_radius_metres") = 0.0,
+        nb::arg("min_step_height_metres") = 1.0, nb::arg("min_segment_pixels") = 5,
+        nb::arg("n_threads") = 0,
+        R"doc(Find risers: short steep steps between gentler surfaces, as open line segments.
+
+lsdtt-feature-finder ``feature_type: find_risers``; each keyword is that
+CLI's ``riser_*`` parameter without the prefix. A break-of-slope edge field
+is adaptively thresholded and thinned, optionally gap-closed, split at
+junctions into segments, and each segment gets a step height
+``|2 dz(d) - dz(2d)|`` across it (0 on a planar slope, H across a step of
+height H between treads of equal tilt). Segments below
+``min_step_height_metres`` or ``min_segment_pixels`` are dropped. Risers
+rarely close, so the product is segments, not polygons.
+
+Parameters
+----------
+dem : Raster
+    Elevation (m).
+search_mask : Raster or None, default=None
+    Cells (> 0.5) where risers are looked for, for example a valley mask;
+    None searches every valid cell.
+edge_metric : {"vertical_excess_curvature", "curvedness", "maximum_curvature", "multidirectional_hillshade"}, default="vertical_excess_curvature"
+    Edge field the lines are drawn on. The first three come from the
+    polyfit; ``multidirectional_hillshade`` is the negated mean hillshade
+    over ``multidirectional_hillshade_n_directions`` azimuths.
+multidirectional_hillshade_n_directions : int, default=8
+    Azimuths for ``multidirectional_hillshade``.
+polyfit_lambda_metres : float, default=100.0
+    Polyfit window (m) of the curvature metrics; also sets the default step
+    window.
+vec_adaptive_method : {"mean_std", "mean", "gaussian"}, default="mean_std"
+    Adaptive threshold of the edge field.
+vec_adaptive_std_factor : float, default=0.5
+    ``mean_std``: local standard deviations above the local mean.
+vec_adaptive_block_size_pixels : int, default=51
+    Adaptive window side (odd, >= 3): wider than a riser, narrower than the
+    spacing between risers.
+vec_adaptive_C : float, default=0.0
+    ``mean`` / ``gaussian``: offset below the local mean.
+vec_adaptive_gaussian_sigma : float, default=0.0
+    ``mean`` / ``gaussian``: pre-blur sigma; 0 means none.
+closing_radius_metres : float, default=0.0
+    Closing radius (m) of the binary mask before thinning; 0 means none.
+binary_min_component_pixels : int, default=1
+    Smallest binary component kept before thinning.
+max_spur_pixels, max_terminal_loop_pixels : int, default=10
+    Longest spur and terminal loop pruned from the skeleton.
+min_component_pixels : int, default=1
+    Smallest skeleton component kept.
+gap_closing_algorithm_choice : {"none", "astar"}, default="none"
+    ``astar`` bridges skeleton endpoints within ``connect_search_radius_metres``
+    whose elevations differ by at most ``connect_elevation_tolerance_metres``.
+connect_search_radius_metres : float, default=200.0
+    Bridge search radius (m).
+connect_elevation_tolerance_metres : float, default=2.0
+    Largest elevation difference (m) a bridge may join; keep it below the
+    smallest riser height.
+connect_corridor_half_width_pixels : float, default=12.0
+    Half-width (pixels) of the corridor a bridge is routed in.
+connect_same_component : bool, default=False
+    Also bridge endpoints of the same skeleton component.
+step_window_radius_metres : float, default=0.0
+    Step window d (m); 0 is half the polyfit window, at least three cells.
+min_step_height_metres : float, default=1.0
+    Smallest step height (m) kept.
+min_segment_pixels : int, default=5
+    Shortest segment kept (pixels).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+RiserResult
+)doc");
+
+    m.def("score_risers_against_mapped", &score_risers_against_mapped,
+        nb::arg("riser_centreline"), nb::arg("mapped_risers_fname"),
+        nb::arg("mapped_risers_extent_fname") = "",
+        nb::arg("mapped_risers_tolerance_metres") = 20.0, nb::arg("n_threads") = 0,
+        R"doc(Score detected risers against mapped terrace edges, cell by cell.
+
+lsdtt-feature-finder's ``mapped_risers_*`` scoring. A detected cell is
+matched when a mapped cell lies within the tolerance of it, and a mapped
+cell when a detected cell does; only cells inside the surveyed extent count.
+
+Parameters
+----------
+riser_centreline : Raster
+    Detected riser lines (1/0), for example ``RiserResult.centreline``.
+mapped_risers_fname : str
+    Vector file of mapped terrace-edge lines (burned with all-touched cells).
+mapped_risers_extent_fname : str, default=""
+    Polygons of the surveyed extent (majority coverage); empty counts the
+    whole raster.
+mapped_risers_tolerance_metres : float, default=20.0
+    Matching distance (m, centre to centre).
+n_threads : int, default=0
+    OpenMP thread count; 0 uses the runtime default.
+
+Returns
+-------
+dict
+    ``tolerance_metres``, ``n_scored_cells``, ``n_detected``,
+    ``n_detected_matched``, ``n_mapped``, ``n_mapped_matched``,
+    ``precision``, ``recall`` and ``f1`` (NaN on an empty denominator).
+)doc");
 
     m.def("find_channel_candidates", &find_channel_candidates, nb::arg("raster"),
         nb::arg("lambda_min_metres") = 3.0, nb::arg("lambda_max_metres") = 20.0,

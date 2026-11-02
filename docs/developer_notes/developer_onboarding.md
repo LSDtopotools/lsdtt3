@@ -4,6 +4,11 @@ This document is for developers porting analysis code from earlier versions of
 LSDTopoTools (LSDRaster, LSDFlowInfo, etc.) or writing new analyses against the
 lsdtt3 architecture.
 
+IMPORTANT NOTE: The codebase has become large, with interdependencies. 
+We have aimed to cover a reasonable amount of this code with ctest, 
+but if you try to modify the code without the assistance of a (good) LLM there is a very high chance your will break something.
+If you want to modify things you should feed your LLM both `lsdtt3_architecture.md` and `cli_parameter_conventions.md` at a minimum.  
+
 ---
 
 ## Code style
@@ -87,12 +92,12 @@ any `cli/` source has no binary. Also add its reference page under
 
 In CLI files:
 - parameters should **not** be declared `const`
-- parameters should be grouped by workflow theme
+- parameters should be grouped by workflow theme (where possible)
 - every `help_map` entry should appear **immediately after** the corresponding
   parameter default declaration
 
 This pattern is now the standard for all CLIs because it makes developer-facing
-options easy to inspect and keeps the parameter contract readable in one place.
+options easy to inspect and keeps the parameters readable in one place.
 
 ### Parameter naming conventions
 
@@ -300,8 +305,8 @@ query functions on `lsdtt_flowinfo`:
 ```
 
 This attribute tells the compiler to emit a warning if the return value is
-discarded by the caller. It is used on query and analysis functions — functions
-with no side effects — because discarding their return value is almost certainly
+discarded by the caller. It is used on query and analysis functions, that is functions
+with no side effects, because discarding their return value is almost certainly
 a mistake. For example:
 
 ```cpp
@@ -309,13 +314,14 @@ fi.upslope_nodes(flat);      // compiler warns — result thrown away, probably 
 dem.add_constant(1.0f);      // compiler warns — new raster thrown away, definitely a bug
 ```
 
-Without `[[nodiscard]]` these would silently compile and do nothing useful.
+Without `[[nodiscard]]` these would silently compile and do nothing useful (and potentially something bad).
 It is not used on functions that act through side effects (e.g. `clear()`,
 `print_raster_info()`), where a void return or ignored return is normal.
 
 ### Cell indices and sentinel values
 
-For a handful of data members in `lsdtt_flowinfo` we need to be able to hold very large integer numbers. For example a 50000x500000 DEM will have more pixels than there are integers available using a 32 bit integer. So we use `std::int64_t` for these. 
+For a handful of data members in `lsdtt_flowinfo` we need to be able to hold very large integer numbers. 
+For example a 50000x500000 DEM will have more pixels than there are integers available using a 32 bit integer. So we use `std::int64_t` for these. 
 
 All flow routing code uses `std::int64_t` for cell indices throughout. There is
 no `flat_index_type` typedef — using the concrete type directly makes the code

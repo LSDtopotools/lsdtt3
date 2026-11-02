@@ -10,8 +10,10 @@ files.
 1. [Load, inspect, and save a DEM](getting_started.md).
 2. [Fetch a DEM](fetching.md) when you do not already have one.
 3. Build a [flow, channel, and basin workflow](flow_networks.md).
-4. Continue with [chi and ksn](chi_ksn.md), channel-head extraction, or the
-   cosmogenic and GraphFlood tools as needed.
+4. Continue with [chi and ksn](chi_ksn.md), channel-head extraction,
+   [floodplains, terraces and valleys](fluvial_surfaces.md),
+   [ridgeline profiles](ridgelines.md), or the cosmogenic
+   and GraphFlood tools as needed.
 
 ## Core ideas
 

@@ -39,6 +39,11 @@ plugins:
   - search
 
 markdown_extensions:
+  # `!!! note "Title"` call-out boxes; details makes `??? note` collapsible, and
+  # superfences lets a fenced code block sit inside one.
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
   - pymdownx.snippets:
       base_path: .
       check_paths: true
@@ -64,7 +69,11 @@ nav:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
-    - Workflows: what_is_lsdtt3/workflows.md
+    - Workflows:
+      - Running workflows: what_is_lsdtt3/workflows.md
+      - Valley-floor widths: what_is_lsdtt3/workflow_valley_widths.md
+      - Chi analysis of a region: what_is_lsdtt3/workflow_chi_region.md
+      - Lithology and channels: what_is_lsdtt3/workflow_lithology_channels.md
   - Design and algorithms:
     - Flow routing: design_and_algorithms/flow_routing.md
     - Choosing a synthetic landscape tool: design_and_algorithms/synthetic_cli_cluster.md
@@ -137,6 +146,8 @@ nav:
       - Flow, channels, and basins: python/flow_networks.md
       - Chi and ksn: python/chi_ksn.md
       - Channel-head extraction: python/channel_extraction.md
+      - Floodplains, terraces, and valleys: python/fluvial_surfaces.md
+      - Ridgeline profiles: python/ridgelines.md
       - Cosmogenic erosion: python/cosmogenic.md
       - GraphFlood: python/graphflood.md
     - API reference:

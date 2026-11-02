@@ -1,5 +1,18 @@
+import os
+
 configfile: "config/config.yaml"
 
+# The workflows environment ships its own GDAL and PROJ and exports their data
+# paths. A CLI that inherits them loads the wrong GDAL plugins and PROJ
+# database, so every shell command starts without them. An installed lsdtt3
+# package needs its own paths back: lsdtt_setenv_script names its setenv.sh,
+# which is sourced after the unset (and puts the CLIs on PATH).
+_setenv = config.get("lsdtt_setenv_script") or ""
+shell.prefix(
+    "set -euo pipefail; unset GDAL_DATA GDAL_DRIVER_PATH PROJ_DATA PROJ_LIB PROJ_NETWORK; "
+    + (f"set +u; source {os.path.abspath(os.path.expanduser(_setenv))}; set -u; " if _setenv else ""))
+
+include: "rules/common_params.smk"
 include: "rules/common_fetch.smk"
 include: "rules/common_preprocess.smk"
 include: "rules/common_extract.smk"
@@ -8,6 +21,10 @@ include: "rules/domain_cosmo_step_change.smk"
 include: "rules/domain_cosmo_landslides_synthetic.smk"
 include: "rules/domain_cosmo_transient_landslides.smk"
 include: "rules/domain_check_basins.smk"
+include: "rules/domain_valley_widths.smk"
+include: "rules/common_regions.smk"
+include: "rules/domain_chi_region.smk"
+include: "rules/domain_lithology_channels.smk"
 include: "rules/reporting.smk"
 
 
@@ -71,6 +88,12 @@ def _targets():
             f"{reports}/ensemble_anchor_check.csv",
             f"{reports}/ensemble_report.txt",
         ])
+    if MODULE == "valley_widths":
+        outs.extend(valley_widths_targets())
+    if MODULE == "chi_region":
+        outs.extend(chi_region_targets())
+    if MODULE == "lithology_channels":
+        outs.extend(lithology_channels_targets())
     if config["stages"].get("report", False):
         outs.append(f"{root}/{RUN_ID}/reports/{RUN_ID}_RUN_MANIFEST.json")
     return outs

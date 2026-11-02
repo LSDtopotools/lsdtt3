@@ -224,7 +224,7 @@ the legacy implementation.
 | 3. Levels | `level_algorithm_choice` | How the admitted ground is split into levels: `ladder` (breaks found in the data), `fixed_thresholds` (a floodplain bound and a terrace bound) or `supplied_levels` (read from a file) |
 | 4. Segmentation | `segmentation_algorithm_choice` | How the admitted ground becomes patches: `within_bands` or `whole_mask` |
 
-Two more stage parameters sit beside these. `channel_definition_algorithm_choice` says which pixels count as channel (`contributing_pixels`, or `stream_order` with `min_channel_stream_order`). `terrace_reference_field_algorithm_choice` says what a terrace's height is measured from (`same` as the reference field, or `swath_baseline`). The floodplain bounds are chosen by `floodplain_threshold_algorithm_choice` (`fixed` or `qq_gaussian`).
+Two more stage parameters sit beside these. `channel_definition_algorithm_choice` says which pixels count as channel (`contributing_pixels`, or `stream_order` with `min_channel_stream_order`). `terrace_reference_field_algorithm_choice` says what a terrace's height is measured from (`same` as the reference field, or `swath_baseline`). The floodplain bounds are chosen by `floodplain_threshold_algorithm_choice` (`fixed`, `qq_gaussian` or `cdf_divergence`).
 
 The three presets set these stages as follows. The reference field is not set by a preset, so it is `hand` unless `reference_field_algorithm_choice` says otherwise.
 
@@ -846,6 +846,43 @@ cross_section_spacing_metres: 200
 
 Read `mydem_ladder_windows.csv` after step 2 and before describing anything as a
 terrace level.
+
+---
+
+## From Python
+
+The Python package (`lsdtt3`) wraps the same C++ routines with the same
+parameter names. It offers the stages as separate calls rather than as a
+method preset, so a script composes them in the order the CLI does. The
+[Python guide to floodplains, terraces and valleys](../python/fluvial_surfaces.md)
+has worked examples.
+
+| CLI stage or option | Python |
+|---|---|
+| `lsdtt-flat-surface-finder` admission | `find_flat_surfaces` (`relief_window_radius_metres`, `max_relief_metres`) |
+| Channel scope, `channel_definition_algorithm_choice` | `FlowInfo.channel_scope(..., channel_definition_algorithm_choice=..., min_channel_stream_order=...)` |
+| `ladder` levels on `hand`, with training polygons, `supplied_levels_fname`, `segmentation_algorithm_choice: whole_mask` | `classify_flat_surfaces_with_scope` (the ladder keywords, `training_surfaces_fname`, `supplied_levels` as a dict, `riser_mask`) |
+| `floodplain_threshold_algorithm_choice`, `floodplain_second_pass_algorithm_choice: qq_upper_departure` | `select_threshold` |
+| `clubb2017` admission and classes | `classify_floodplain_terraces_by_thresholds` |
+| `terrace_reference_field_algorithm_choice: swath_baseline` | `relief_above_nearest_baseline` |
+| `write_patch_level_clusters_csv` | `cluster_surface_levels` |
+| Comparison outputs and `mapped_surfaces_fname` | `compare_surface_classes`, `surface_class_agreement`, `score_surface_classes` |
+| `lsdtt-feature-finder` `find_risers`, `mapped_risers_fname` | `find_risers`, `score_risers_against_mapped` |
+| `lsdtt-valley-centreline` centrelines, `run_valley_width_network` | `extract_valley_centrelines`, `build_valley_width_network` |
+| `write_relative_elevation_raster`, `write_terrace_profile_csv` | `ValleyCentrelineResult.relative_elevation`, `.terrace_profile` |
+| `write_cross_section_levels_csv` | `ValleyCrossSections.levels` |
+| `lsdtt-channel-extraction` `run_perimeter_sources` | `find_perimeter_sources` |
+
+Three defaults of `classify_flat_surfaces_with_scope` differ from the CLI,
+so that results from earlier versions of the package are unchanged:
+`min_band_component_pixels` (1 against 50),
+`ladder_unresolved_window_algorithm_choice` (`single_band` against
+`nearest_resolved`) and `valley_corridor_half_width_metres` (0, no limit,
+against 5000). Set them to the CLI values to reproduce a CLI run. Some
+features are CLI only: the ladder on a reference field other than HAND
+(`reference_field_algorithm_choice: relative_elevation` or
+`fitted_surface`), and the method record and list runs
+(`fluvial_surface_algorithm_choice: ladder,clubb2017`).
 
 ---
 

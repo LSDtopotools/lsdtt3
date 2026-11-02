@@ -1,0 +1,110 @@
+# valley_widths: floodplain mask -> valley centrelines -> valley widths and
+# cross sections, for every DEM in a folder (or a listed set of DEMs).
+#
+# Copy this file, edit the copy, and run it with
+#
+#   pixi run -e workflows snakemake --cores 1 --snakefile workflows/Snakefile \
+#       --directory workflows --configfile workflows/config/my_valleys.yaml
+#
+# Relative paths are relative to the workflows/ directory. Every block of CLI
+# parameters below is copied into that CLI's parameter file as written, so any
+# parameter from the CLI reference can be added: see
+#   docs/cli_reference/cli_reference_lsdtt_fluvial_surfaces.md
+#   docs/cli_reference/cli_reference_lsdtt_valley_centreline.md
+# or run the CLI with -h. The workflow sets read_path, read_fname, write_path,
+# write_fname, valley_mask_fname and run_valley_width_network itself.
+
+workflow_name: "valley_widths"
+run_id: "valley-widths-example"     # outputs go to workflows/results/<run_id>/
+
+analysis:
+  module: "valley_widths"
+
+stages:
+  report: true                      # write a manifest of inputs and outputs with sha256 hashes
+
+valley_widths:
+  # --- which DEMs -----------------------------------------------------------
+  # Either point at a folder: every file matching dem_glob is a DEM, named
+  # after its file stem (glen_a.tif -> glen_a) ...
+  dem_dir: "dems"
+  dem_glob: "*.tif"
+  # ... or list them under `dems`, which then wins over the folder. A listed
+  # DEM can carry its own parameters, merged over the shared ones below, and
+  # can be fetched instead of read (a `fetch:` block of lsdtt-fetch-raster
+  # parameters in place of `file:`). The shipped example fetches one 30 m
+  # Copernicus tile so it runs without any data of your own; delete it, or the
+  # whole `dems` block, to use dem_dir.
+  dems:
+    spey:
+      fetch:
+        west: -4.20
+        south: 57.03
+        east: -3.95
+        north: 57.12
+        dem_source: "cop30_aws"
+    # my_valley:
+    #   file: "my_valley_5m.tif"          # in dem_dir, or an absolute path
+    #   shared_parameters:
+    #     threshold_contributing_pixels: 40000
+    #   valley_centreline:
+    #     cross_section_spacing_metres: 50
+
+  # Width is measured against the floodplain mask (floodplain) or the wider
+  # valley mask (valley) written by lsdtt-fluvial-surfaces.
+  width_mask: "floodplain"
+
+  # --- parameters given to both CLIs ----------------------------------------
+  # The channel network must be the same in both, so the channel threshold
+  # lives here. It is in pixels: 1000 pixels is 0.9 km^2 on a 30 m DEM but
+  # 0.025 km^2 on a 5 m DEM, where 40000 gives 1 km^2.
+  shared_parameters:
+    threshold_contributing_pixels: 1000
+
+  # --- lsdtt-fluvial-surfaces: finding the floodplain -----------------------
+  fluvial_surfaces:
+    # clubb2017 = Clubb et al. (2017): HAND and gradient bounds read off
+    # quantile-quantile plots, floodplain patches that touch a channel.
+    # Alternatives: ladder (the CLI default), cross_section_levels.
+    fluvial_surface_algorithm_choice: "clubb2017"
+    # A second HAND bound read from the first-pass floodplain; trims fans
+    # and low terraces the first pass takes in. "none" to switch off.
+    floodplain_second_pass_algorithm_choice: "qq_upper_departure"
+    # clubb2017 defines channels by Strahler order; lower this on a small
+    # DEM whose network does not reach order 3.
+    min_channel_stream_order: 3
+    write_output_format: "gtiff"
+    write_floodplain_polygons: true
+    write_reference_field_raster: true   # HAND (m)
+    write_surface_class_raster: true     # 0 none, 1 floodplain, 2 terrace
+
+  # --- lsdtt-valley-centreline: centrelines, widths and cross sections ------
+  valley_centreline:
+    # medial_path: least-cost walk along the valley's medial axis (default);
+    # smoothed_channel: the D8 channel smoothed, kept inside the mask.
+    network_centreline_algorithm_choice: "medial_path"
+    cross_section_spacing_metres: 100
+    # Section lines, plus the elevation samples along each one (the
+    # cross-section profiles, <dem>_valley_cross_section_samples.csv):
+    write_valley_cross_sections: true
+    # Walls, channel crossings and slope breaks along each section:
+    write_cross_section_features: false
+    # Stage-by-stage flow width, area and hydraulic depth of each section:
+    write_cross_section_hydraulics: false
+    # Elevation above the valley centreline's baseline, within the mask:
+    write_relative_elevation_raster: false
+    write_output_format: "gtiff"
+
+# Figures (lsdviztools3: valley-width maps and profiles, floodplain map, HAND
+# QQ plots). auto draws them when lsdviztools3 is found and skips them when it
+# is not; true requires it; false never looks. See config/config.yaml.
+figures:
+  enabled: "auto"
+  lsdviz3_command_prefix: ""        # e.g. "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+
+# Paths to the CLIs. ../build/ is a source build; for an installed release
+# whose CLIs are on your PATH give the bare names (lsdtt-fluvial-surfaces).
+executables:
+  fetch_raster: "../build/lsdtt-fetch-raster"
+  fluvial_surfaces: "../build/lsdtt-fluvial-surfaces"
+  valley_centreline: "../build/lsdtt-valley-centreline"

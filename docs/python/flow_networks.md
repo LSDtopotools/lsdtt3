@@ -18,6 +18,20 @@ channels = network.lines_geodataframe()
 basins = lsdtt3.junction_basins(network)
 ```
 
+The threshold definition counts every traced pixel above the threshold as a
+channel pixel. To keep only the pixels of Strahler order `min_channel_stream_order` or
+higher, pass `channel_definition_algorithm_choice="stream_order"`, the same
+choice that `lsdtt-fluvial-surfaces` offers. The threshold still decides which
+first-order channels exist:
+
+```python
+scope = flow.channel_scope(threshold_contributing_pixels=500,
+                           channel_definition_algorithm_choice="stream_order",
+                           min_channel_stream_order=3)
+```
+
+The default `min_channel_stream_order` is 3, the order Clubb et al. (2017) use.
+
 `junction_basins` selects basins at channel junctions. To get the basins
 upstream of outlets you choose, pass their pixels to `flow.basins` as an N by 2
 array of `(row, col)`:

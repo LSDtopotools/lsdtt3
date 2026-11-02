@@ -1,13 +1,16 @@
 # Your first analysis
 
-This page takes you from a DEM sitting on disk to a hillshade and a channel
-network. It assumes you have lsdtt3 installed and the tools on your `PATH` —
+This page takes you from a DEM sitting on disk to a hillshade raster and a channel
+network vector file. It assumes you have lsdtt3 installed and the tools on your `PATH` —
 if not, start with [Installing lsdtt3](install_lsdtt3.md).
+
+These instricutions are for the command line tools, which is the way the developers use this software. 
+If you prefer python or QGIS you will need to look at those sections in the documentation. 
 
 The one thing to understand before anything else: **lsdtt3 tools are driven by
 a parameter file, not by command-line flags.** There is no `--dem` or
 `--output-directory`. You write a short text file that says what to read, where
-to write it, and what to compute; then you hand that file to a tool.
+to write it, and what to compute; then you hand that file to a tool. The rationale for this structure is that every `lsdtt` analysis is associated with a (semi)-permanent file, wather than an ephemeral command line flag. 
 
 ---
 
@@ -168,7 +171,7 @@ viewer if you wrote PNG. A hillshade is the fastest way to confirm that your
 DEM loaded with the geometry you expected — if it looks inverted or striped,
 something is wrong with the data before any analysis starts.
 
-!!! warning "Check your vertical units" (applies to people working in the USA, which inexplicably still uses imperial units)
+!!! warning "Check your vertical units (applies to people working in the USA, which inexplicably still uses imperial units)"
 
     A DEM in feet on a metre grid is undetectable from the file alone and
     produces plausible-looking but wrong slopes everywhere downstream. If your
