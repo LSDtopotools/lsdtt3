@@ -161,7 +161,7 @@ class ScopeBasedTests(unittest.TestCase):
         every = self.flow.channel_scope(threshold_contributing_pixels=10)
         ordered = self.flow.channel_scope(
             threshold_contributing_pixels=10,
-            channel_definition_algorithm_choice="stream_order", min_stream_order=2)
+            channel_definition_algorithm_choice="stream_order", min_channel_stream_order=2)
         n_every = int(every.mask.to_numpy().sum())
         n_ordered = int(ordered.mask.to_numpy().sum())
         self.assertGreater(n_every, 0)

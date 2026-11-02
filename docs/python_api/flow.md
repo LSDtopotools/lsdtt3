@@ -1188,7 +1188,7 @@ channel_mask(threshold_contributing_pixels: int) -> Raster
     Return a 0/1 raster where contributing pixels meet the threshold.
 channel_network(scope: ChannelScope) -> ChannelNetwork
     Build a compact junction graph from a ChannelScope.
-channel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_stream_order: int = 3) -> ChannelScope
+channel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> ChannelScope
     Resolve threshold or supplied source paths into a ChannelScope.
 chi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster
     Integrate zero-based chi across complete upstream raster domains.
@@ -1370,7 +1370,7 @@ def channel_network(self, scope: lsdtt3.ChannelScope) -> lsdtt3.ChannelNetwork
 
 #### `channel_scope`
 
-channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_stream_order: int = 3) -> lsdtt3.ChannelScope
+channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> lsdtt3.ChannelScope
 
 Resolve threshold or supplied source paths into a ChannelScope.
 
@@ -1408,10 +1408,10 @@ auto_detect_roles : bool, default=False
 channel_definition_algorithm_choice : {"contributing_pixels", "stream_order"}, default="contributing_pixels"
     What counts as a channel pixel, as in lsdtt-fluvial-surfaces:
     ``contributing_pixels`` keeps every traced pixel; ``stream_order``
-    keeps only traced pixels of Strahler order >= ``min_stream_order``
+    keeps only traced pixels of Strahler order >= ``min_channel_stream_order``
     (Clubb et al. 2017 use 3). The threshold still decides which
     first-order channels exist, and so the order every pixel reaches.
-min_stream_order : int, default=3
+min_channel_stream_order : int, default=3
     Lowest Strahler order kept under ``stream_order``.
 
 Returns
@@ -1420,7 +1420,7 @@ ChannelScope
     Selected channel pixels, resolved sources and outlets.
 
 ```python
-def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_stream_order: int = 3) -> lsdtt3.ChannelScope
+def channel_scope(self, threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> lsdtt3.ChannelScope
 ```
 
 #### `chi_from_outlets`

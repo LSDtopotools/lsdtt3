@@ -356,7 +356,7 @@ int main(int argc, char* argv[])
         "Class values: floodplain or fp; terrace, terraceN, tN or 'terrace N' "
         "(case and spaces ignored). Terrace numbers are ignored: the levels come "
         "from the HAND inside the polygons. Each polygon is summarised by its "
-        "median and its 10-90 percentile core; per reach window (the ladder's "
+        "median and its 25-75 percentile core; per reach window (the ladder's "
         "windows) the floodplain / terrace bound and the breaks between "
         "terrace levels are chosen by best separation (Youden's J) of those "
         "cores. clubb2017: the bound replaces the data-chosen HAND bound per "
@@ -365,7 +365,7 @@ int main(int argc, char* argv[])
         "one. A window with too little training takes the fit over all "
         "training cells. Writes <stem>_training_levels.tif, "
         "<stem>_training_fit.csv and <stem>_training_polygons.csv. Needs "
-        "reference_field_choice hand.",
+        "reference_field_algorithm_choice hand.",
         "Training","param",""};
     string_default_map["training_surfaces_layer_name"] = "";
     help_map["training_surfaces_layer_name"] = {"string","",
@@ -3127,8 +3127,8 @@ int main(int argc, char* argv[])
         if (!use_hand)
         {
             std::cerr << "FATAL: training_surfaces_fname sets HAND bounds and "
-                         "breaks; reference_field_choice "
-                      << sf["reference_field_choice"] << " has no HAND.\n";
+                         "breaks; reference_field_algorithm_choice "
+                      << sf["reference_field_algorithm_choice"] << " has no HAND.\n";
             return 1;
         }
         const std::string tp =
