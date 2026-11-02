@@ -120,6 +120,21 @@ fetch_extent grid_search_extent(const lsdtt_fetch_options&   options,
                                 const lsdtt_dem_source_info& info,
                                 int                          target_epsg);
 
+// ---- XYZ elevation tiles (GSI) ----
+
+// One GSI elevation pixel: x = 65536 R + 256 G + B; x == 2^23 is NoData
+// (returns false); h = 0.01 x below 2^23, 0.01 (x - 2^24) above.
+bool gsi_decode_rgb(int r, int g, int b, double& height_metres);
+
+// Decode one GSI PNG tile (bytes) into a Float32 GeoTIFF at out_path
+// (/vsimem), georeferenced to the tile's EPSG:3857 bounds, nodata -9999.
+bool gsi_tile_to_geotiff(const std::string& png_bytes, int z, int x, int y,
+                         const std::string& out_path, std::string& error);
+
+// The output area as a WGS84 box (west, south, east, north), padded by two
+// output cells. Throws std::runtime_error if a transform fails.
+fetch_extent output_area_wgs84(const lsdtt_fetch_options& options, int target_epsg);
+
 // True if this GDAL build can decode LERC-compressed GeoTIFFs.
 bool gdal_has_lerc();
 

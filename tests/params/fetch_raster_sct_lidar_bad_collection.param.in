@@ -1,0 +1,13 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: fetch_sct_collection
+
+# gb_sct_lidar with a collection that does not exist: refused before any
+# request (offline), listing the collections it has.
+west: -4.93
+south: 55.717
+east: -4.885
+north: 55.745
+
+dem_source: gb_sct_lidar
+source_collection_choice: phase-9

@@ -3,6 +3,12 @@
 Downloads a DEM for an area and writes it as an analysis-ready projected
 GeoTIFF. No Python environment, and by default no account or API key.
 
+Besides the global 30 m Copernicus DEM, it reaches national and polar
+high-resolution DEMs keylessly: USGS 3DEP (10 m), ArcticDEM and REMA (2–32 m),
+and national lidar models for Norway, the Netherlands, Spain, Poland, Canada,
+Switzerland, New Zealand, Scotland and Japan (0.5–10 m). See
+[High-resolution national and polar sources](#high-resolution-national-and-polar-sources).
+
 Design notes and rationale: `docs/developer_notes/testing_and_benchmarking.md`.
 
 ```sh
@@ -103,8 +109,11 @@ When `bounds_mode: outlets`, output is grouped:
 The raster is:
 
 - reprojected to a **metric** CRS (UTM by default, derived from the area centre)
-- on a fixed grid spacing (30 m by default)
+- on a fixed grid of square cells (30 m by default; a high-resolution source
+  defaults to its own native resolution when `grid_spacing` is not given)
 - given an explicit NoData value of −9999
+- stamped with its provenance (source, surface or terrain model, vertical
+  datum, …) as `LSDTT_*` metadata; see [Provenance](#provenance-written-into-the-dem)
 
 The reprojection happens here rather than downstream, so the output can be fed
 directly to any other lsdtt3 tool with `enforce_projection: false`.
@@ -460,14 +469,20 @@ retry cap.
 | `ot_dem_type` | string | `COP30` | OpenTopography dataset (that source only); see the table below |
 | `pc_collection` | string | `cop-dem-glo-30` | Planetary Computer STAC collection (that source only) |
 | `pc_asset` | string | `data` | Asset key within each STAC item |
+| `source_resolution_metres` | float | `0` | Native product to fetch (high-resolution sources); `0` is the source's default |
+| `surface_model_choice` | string | `source_default` | `dtm` (bare earth) or `dsm` (canopy and buildings), where a source offers both |
+| `source_collection_choice` | string | `latest` | Survey collection, for `gb_sct_lidar` |
 
 | `dem_source` | Key needed? | Notes |
 |---|---|---|
 | `cop30_aws` | **no** | Copernicus GLO-30 on AWS Open Data. Global 30 m. The default; start here. |
 | `planetary_computer` | **no** | Microsoft Planetary Computer. Asset URLs are signed automatically. Opens up many other STAC collections. |
 | `opentopography` | **yes** | OpenTopography REST API. Free key; needed for its other datasets. |
+| `us_3dep`, `arctic_arcticdem`, `antarctic_rema`, `no_dtm`, `nl_ahn`, `es_mdt`, `pl_nmt`, `ca_hrdem`, `ch_swissalti3d`, `nz_lidar`, `gb_sct_lidar`, `jp_gsi` | **no** | National and polar high-resolution DEMs; see the next section. |
 
 Anything else is an error, never a silent substitution to a different provider.
+`lsdtt-fetch-raster -h dem_source` prints every source with its surface or
+terrain model, datum, resolutions and coverage, without a network connection.
 
 `cop30_aws` and `planetary_computer` serve the same underlying Copernicus data;
 verified to produce byte-identical output. Prefer `planetary_computer` when you
@@ -539,12 +554,197 @@ Foundation (NSF awards 2410799, 2410800, 2410801).
 The citation is printed on a cached reuse too: the obligation follows the data,
 not the download.
 
+#### High-resolution national and polar sources
+
+These sources are named country first (ISO 3166 code, then the product). The
+polar mosaics have no country and are named `arctic_` / `antarctic_`. None needs
+an account or a key.
+
+| `dem_source` | Product | Model | Resolutions, m (default) | Vertical datum | Coverage |
+|---|---|---|---|---|---|
+| `us_3dep` | USGS 3DEP seamless | DTM | 10, 30 (10) | NAVD88 | conterminous US, Alaska, Hawaii, Puerto Rico, US territories |
+| `arctic_arcticdem` | ArcticDEM mosaic v4.1 (PGC) | **DSM** | 2, 10, 32 (10) | **WGS84 ellipsoid** | land north of 60 N, Greenland, Alaska, Kamchatka |
+| `antarctic_rema` | REMA mosaic v2.0 (PGC) | **DSM** | 2, 10, 32 (10) | **WGS84 ellipsoid** | Antarctica |
+| `no_dtm` | Kartverket national height model | DTM | 1 | NN2000 | mainland Norway |
+| `nl_ahn` | AHN (PDOK) | DTM or DSM | 0.5 | NAP | the Netherlands |
+| `es_mdt` | IGN MDT05 | DTM | 5 | REDNAP (Alicante) | mainland Spain and the Balearics |
+| `pl_nmt` | GUGiK NMT | DTM | 1 | PL-KRON86-NH | Poland |
+| `ca_hrdem` | NRCan HRDEM mosaic | DTM or DSM | 1, 2 (1) | CGVD2013 | Canada where lidar exists |
+| `ch_swissalti3d` | swisstopo swissALTI3D | DTM | 0.5, 2 (2) | LN02 | Switzerland, Liechtenstein |
+| `nz_lidar` | LINZ national lidar DEM / DSM | DTM or DSM | 1 | NZVD2016 | New Zealand |
+| `gb_sct_lidar` | Lidar for Scotland (SRSP) | DTM or DSM | 0.5 or 1 by survey phase | ODN | parts of Scotland |
+| `jp_gsi` | GSI elevation tiles | DTM | 1, 5, 10 (10) | Tokyo Bay mean sea level | Japan (10 m everywhere; 5 m and 1 m where lidar exists) |
+
+Resolutions are nominal. Every output is reprojected onto square cells at
+`grid_spacing` in the target CRS with `resampling_method` (cubic by default),
+the same as for Copernicus. When `grid_spacing` is not given, it defaults to the
+native resolution of the product being fetched.
+
+**How each source is reached.** You do not need to know this to use them, but it
+explains their behaviour:
+
+- *STAC catalogues* (`us_3dep` through Planetary Computer, `arctic_arcticdem`
+  and `antarctic_rema` through the Polar Geospatial Center, `ca_hrdem`,
+  `ch_swissalti3d`): the catalogue is searched for the files covering the
+  area, which are read directly as cloud-optimised GeoTIFFs. `ch_swissalti3d`
+  uses the latest acquisition of each 1 km tile.
+- *Web Coverage Services* (`no_dtm`, `nl_ahn`, `es_mdt`, `pl_nmt`): the
+  mapping agency's server is asked for exact windows of its stored grid, split
+  into requests of a few thousand pixels a side. A response that is not exactly
+  the requested native grid is refused, so the server never resamples and the
+  only resampling is lsdtt3's own.
+- *Public buckets keyed by tile name* (`nz_lidar`, `gb_sct_lidar`): file names
+  are computed from the area (NZTopo50 sheets; Ordnance Survey grid squares). A
+  file that does not exist means there is no data there.
+- *Map tiles* (`jp_gsi`): GSI's elevation PNG tiles on the Web Mercator tile
+  grid. GSI has already interpolated these tiles from its base DEM, so lsdtt3's
+  reprojection is a second resampling. There is no fallback from a missing 5 m
+  or 1 m tile to the 10 m layer: missing tiles are reported, and you can ask for
+  `source_resolution_metres: 10`.
+
+#### Surface or terrain model, and vertical datum
+
+A **DSM** (digital surface model) includes canopy and buildings; a **DTM**
+(digital terrain model) is bare earth. Analysed as ground, a DSM turns forest
+into roughness and buildings into hills. `surface_model_choice` picks one where
+a source offers both (`nl_ahn`, `ca_hrdem`, `nz_lidar`, `gb_sct_lidar`). Asking
+for a product a source does not have is an error, never a substitution.
+
+**No vertical datum conversion is done.** The datum is recorded in the output
+and printed after the fetch. Gradients and curvature are unaffected by a smooth
+datum offset, but absolute elevations and differences between sources are not.
+
+**ArcticDEM and REMA heights are above the WGS84 ellipsoid**, not a geoid or sea
+level, and the two differ by tens of metres. As an example, on a Svalbard window
+(15.4–15.6 E, 78.20–78.25 N) ArcticDEM was a median 31.6 m above Copernicus
+(5th–95th percentile 30.3–32.8 m), where the EGM2008 geoid lies 32.3 m above the
+ellipsoid. Set coastlines and sea level accordingly.
+
+#### Choosing a resolution and a grid
+
+- `source_resolution_metres` picks the native product (for example
+  `us_3dep` 30 instead of 10, `ch_swissalti3d` 0.5 instead of 2). A value the
+  source does not offer is an error listing the ones it does. For
+  `planetary_computer`, a non-zero value keeps only the STAC items whose `gsd`
+  equals it (for example 10 for `3dep-seamless`).
+- `grid_spacing` is the output cell size. Coarser than the source resamples
+  down; finer interpolates and adds no detail. When the output is at least twice
+  as coarse as the source, GDAL reads the source's own overviews (built by the
+  provider), and the run says so with a warning.
+- A coarse output from a WCS source still downloads the native grid (`nl_ahn`
+  is served at 0.5 m only, so a 10 m AHN output downloads 0.5 m cells); the
+  size limits below count those cells.
+- UTM, the default output CRS, is not defined beyond 84 N and 80 S. Near the
+  poles set `target_epsg: 3413` (Arctic) or `3031` (Antarctic); the run warns
+  when it is needed.
+
+#### Size limits
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `max_output_pixels` | int | `250000000` | Refuse an output grid larger than this (and, for WCS sources, a native download larger than this) |
+| `max_download_megabytes` | float | `2048` | Refuse a fetch estimated to download more than this |
+| `max_tiles` | int | `256` | Refuse an area needing more tiles, source files or service requests than this |
+| `request_delay_milliseconds` | int | `200` | Pause between requests to a tile or WCS service |
+
+All three limits are checked **before anything is downloaded**, from the area
+and the source resolution, and the message says what would have been needed and
+how to get under the limit (a smaller area, a coarser product, or a higher
+limit). The download estimate assumes uncompressed Float32 cells, so it errs
+high. Where lsdtt3 does the HTTP itself (OpenTopography, the WCS sources, the
+GSI tiles) the transfer is also counted and stopped when it passes
+`max_download_megabytes`. `max_tiles` and `request_delay_milliseconds` have
+the same meaning and defaults as in `lsdtt-fetch-lithology`. `0` disables a
+limit.
+
+#### Coverage, gaps and NoData
+
+- A request outside a source's coverage is refused before any request is made,
+  with a pointer to `cop30_aws` for global coverage.
+- Coverage inside the national boundaries is often patchy (`ca_hrdem`,
+  `gb_sct_lidar`, the 5 m and 1 m `jp_gsi` layers). Whenever part of the output
+  is NoData the run prints a warning with the percentage, and
+  `LSDTT_VALID_PERCENT` records it.
+- `nl_ahn`'s terrain model has gaps where buildings and water were removed.
+- `no_dtm`, `es_mdt` and `pl_nmt`: the services return 0 at sea and outside the
+  country, with no NoData value. lsdtt3 treats 0 as NoData for these three, so
+  a border is not a cliff down to 0 m (which cubic resampling would turn into
+  spurious negative heights). Cells of exactly 0 m on land, rare in lidar
+  heights, become NoData too.
+
+#### Scottish survey phases (`source_collection_choice`)
+
+Scotland's lidar was flown in separate campaigns, each published as its own
+collection with its own tile scheme, resolution and survey dates: `phase-1` and
+`phase-2` (1 m), `phase-3` to `phase-6` and `national-lidar-programme`
+(0.5 m). They overlap in places. One collection is used per DEM, never a mix:
+
+- `latest` (the default) uses the newest collection that has tiles in the area.
+  If older collections also cover the area, the run names them.
+- A collection name uses that one only, for example
+  `source_collection_choice: phase-3`.
+
+The collection used is recorded as `LSDTT_SOURCE_COLLECTIONS`. Each phase has
+its own attribution; see its record on spatialdata.gov.scot.
+
+#### New Zealand and LERC
+
+The LINZ files are LERC-compressed, which needs a GDAL built with the LERC
+codec (conda-forge GDAL has it; many system GDAL packages do not). Whenever
+`nz_lidar` is chosen, the run prints a warning that says whether this GDAL has
+LERC. Without it the fetch is refused before any download. The LINZ lidar DEMs
+are also available from OpenTopography (<https://opentopography.org>) with an
+API key.
+
+#### Provenance written into the DEM
+
+Outputs carry these GeoTIFF metadata items, and the same keys appear in
+`<write_fname>_run_summary.json`. Every source writes the source, model, datum,
+units, resolution, item count, resampling and overview items. The
+high-resolution sources add the coverage, valid-cell and download items.
+`planetary_computer` and `opentopography` outputs add `LSDTT_SOURCE_DATASET`
+(the collection or dataset). Where their model or datum depends on the dataset
+chosen, the item says `not recorded (depends on the dataset)` rather than guess.
+
+| Item | Meaning |
+|---|---|
+| `LSDTT_DEM_SOURCE` | the `dem_source` |
+| `LSDTT_SURFACE_MODEL` | `DSM` or `DTM` |
+| `LSDTT_VERTICAL_DATUM`, `LSDTT_VERTICAL_UNITS` | as published; units are always metres |
+| `LSDTT_SOURCE_RESOLUTION_METRES` | the native product fetched |
+| `LSDTT_SOURCE_ITEM_COUNT` | files, tiles or requests used |
+| `LSDTT_RESAMPLING` | the warp method |
+| `LSDTT_OVERVIEW_USED` | whether provider overviews were read |
+| `LSDTT_COVERAGE_PERCENT`, `LSDTT_VALID_PERCENT` | share of the area the source covers; share of output cells with data |
+| `LSDTT_SOURCE_COLLECTIONS` | collection or tile layer used (`gb_sct_lidar`, `jp_gsi`) |
+| `LSDTT_DOWNLOAD_MEGABYTES` | bytes transferred, where lsdtt3 counts them |
+
+A source whose files declare vertical units other than metres is refused, not
+converted.
+
+#### Attribution is printed for you
+
+After a fetch from any of the high-resolution sources, the run prints the
+provider's required attribution (licence and credit line), as it does the
+citation for OpenTopography datasets. The licences are open (public domain,
+CC0, CC BY 4.0, the Open Government Licences, and the swisstopo and GSI terms),
+but most require that credit.
+
+#### Not supported
+
+| Source | Why |
+|---|---|
+| France, RGE ALTI (IGN) | No Web Coverage Service could be found on the national platform, and its map service returns tiles already resampled from a coarser geographic grid, so no native-grid fetch is possible. |
+| England, Environment Agency 1 m composite; Finland (NLS); Denmark; Australia (GA); Austria; Copernicus EEA-10; TanDEM-X 12 m | Not keyless, or no confirmed public access. |
+| AWS Terrain Tiles (`elevation-tiles-prod`) | A composite of mixed native resolutions, upsampled from 30–90 m data in most places: a fine tile grid there would advertise detail the data does not have. |
+| Copernicus Data Space (CDSE) | See below. |
+
 ### Output grid
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `target_epsg` | int | `0` | Output EPSG. `0` derives the UTM zone from the area centre |
-| `grid_spacing` | float | `30.0` | Grid spacing in projection units (metres for UTM) |
+| `grid_spacing` | float | `30.0` | Grid spacing in projection units (metres for UTM); a high-resolution source defaults to its native resolution |
 | `resampling_method` | string | `cubic` | GDAL warp method. Cubic is the default for continuous fetched DEM elevations, not categorical rasters. Options: `near`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `average`, `mode`, `max`, `min`, `med`, `q1`, `q3`. |
 | `size_pixels` | int | `0` | Crop an exact square of this many pixels from the centre. `0` keeps the full extent |
 | `no_data_value` | float | `-9999.0` | NoData value written into the output |
@@ -578,8 +778,8 @@ those.
 
 ## API keys
 
-**Only `opentopography` needs one.** The default source and Planetary Computer
-need no account at all.
+**Only `opentopography` needs one.** The default source, Planetary Computer and
+all the high-resolution national and polar sources need no account at all.
 
 Get a free key from <https://opentopography.org>, then supply it in one of these
 ways — checked in this order:
@@ -721,6 +921,76 @@ ot_dem_type: SRTMGL1
 
 with `OT_API_KEY` set in the environment — not in this file.
 
+### USGS 3DEP at 10 m
+
+```
+write_path: ./dem
+write_fname: front_range
+
+west:  -105.30
+south:   39.95
+east:  -105.25
+north:   40.00
+
+dem_source: us_3dep
+```
+
+`grid_spacing` is not given, so the output is at the native 10 m. Add
+`source_resolution_metres: 30` for the 1 arc-second product.
+
+### ArcticDEM on a polar stereographic grid
+
+```
+write_path: ./dem
+write_fname: svalbard
+
+west:  15.40
+south: 78.20
+east:  15.60
+north: 78.25
+
+dem_source: arctic_arcticdem
+target_epsg: 3413
+```
+
+UTM would also work at 78 N; above 84 N use `3413`. Remember the heights are
+above the WGS84 ellipsoid.
+
+### AHN surface model, resampled to 5 m
+
+```
+write_path: ./dem
+write_fname: utrecht_dsm
+
+west:  5.10
+south: 52.08
+east:  5.12
+north: 52.09
+
+dem_source: nl_ahn
+surface_model_choice: dsm
+grid_spacing: 5
+```
+
+The 0.5 m grid is downloaded and resampled once, to 5 m. For larger areas
+watch `max_output_pixels` and `max_download_megabytes`, which count the 0.5 m
+cells.
+
+### One Scottish survey phase
+
+```
+write_path: ./dem
+write_fname: clyde_phase3
+
+bounds_fname: study_area.gpkg
+
+dem_source: gb_sct_lidar
+source_collection_choice: phase-3
+```
+
+Leave `source_collection_choice` out to take the newest phase with tiles in the
+area; the run names any older phases that also cover it.
+
 ---
 
 ## Troubleshooting
@@ -767,6 +1037,48 @@ is not being printed.
 `bounds_fname` is not a readable vector file. Check the path (it resolves
 against `bounds_path`, then `read_path`) and that the format is one GDAL builds
 support.
+
+**`FATAL: ... lies outside <source> coverage`**
+The area is outside the source's coverage. No request was sent. `cop30_aws`
+covers the whole globe at 30 m.
+
+**`FATAL: <source> offers ... m (nominal); source_resolution_metres ... is not one of them`**
+Pick one of the listed resolutions, or leave `source_resolution_metres` at 0.
+
+**`FATAL: <source> has no dsm product (it offers: dtm)`**
+The source has only the other model. Leave `surface_model_choice` at
+`source_default`, or choose a source that has the model you need.
+
+**`FATAL: the output grid would be N pixels, more than max_output_pixels`**,
+**`... download is estimated at N MB, more than max_download_megabytes`**,
+**`... needs N ... tiles/requests, more than max_tiles`**
+The area is large for this resolution. Use a smaller area, a coarser
+`grid_spacing` or `source_resolution_metres`, or raise the limit deliberately.
+Nothing was downloaded.
+
+**`... passed max_download_megabytes ... and the fetch was stopped`**
+The estimate was too low for this area; the transfer was stopped at the limit
+and the partial data discarded. Raise the limit or use a smaller area.
+
+**`FATAL: no <source> ... tiles exist in this area`**
+The area is inside the coverage outline but no data exists there (lidar
+coverage is patchy). For `jp_gsi` at 5 m or 1 m, the 10 m layer covers all of
+Japan. For `gb_sct_lidar` with a named collection, try `latest`.
+
+**`FATAL: nz_lidar files are LERC-compressed and this GDAL build ... cannot decode LERC`**
+Use an lsdtt3 built against a GDAL with LERC (for example from conda-forge), or
+get the LINZ lidar DEMs from OpenTopography with an API key.
+
+**`... the service returned a ... grid ..., not the requested native ... grid`**
+A WCS server answered with a resampled grid. lsdtt3 refuses it rather than
+resample twice. This means the service changed; please report it.
+
+**`WARNING: N % of the output cells are NoData`**
+Part of the area has no data: outside the coverage, at sea, across a border, or
+in a gap in the survey. Check the output before analysing it.
+
+**`WARNING: the area is centred beyond the UTM latitude limits`**
+Set `target_epsg: 3413` (Arctic) or `3031` (Antarctic).
 
 ---
 
@@ -851,10 +1163,11 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `dem_source` | `string` | `cop30_aws` | `param` | - | Which provider to fetch from. | cop30_aws: Copernicus GLO-30 on AWS Open Data. Public and keyless, global 30 m coverage -- start here. opentopography: the OpenTopography REST API, which offers other datasets but needs a free API key (see ot_dem_type). planetary_computer: Microsoft Planetary Computer. Also keyless -- its asset URLs are signed automatically for you -- and gives access to many other STAC collections (see pc_collection). us_3dep: USGS 3DEP seamless, a bare-earth terrain model at nominal 10 m (default) or 30 m, keyless, US coverage only. arctic_arcticdem / antarctic_rema: the Polar Geospatial Center ArcticDEM and REMA mosaics, SURFACE models at nominal 10 m (default), 2 m or 32 m, keyless, heights above the WGS84 ellipsoid. no_dtm (Norway, 1 m), nl_ahn (Netherlands, 0.5 m, dtm or dsm), es_mdt (Spain, 5 m), pl_nmt (Poland, 1 m): national lidar terrain models from the mapping agencies' WCS services, keyless, fetched on their native grid. ca_hrdem (Canada, 1 or 2 m, dtm or dsm, patchy) and ch_swissalti3d (Switzerland, 2 or 0.5 m): national lidar models from STAC catalogues, keyless. nz_lidar (New Zealand, 1 m, dtm or dsm; needs a GDAL with LERC) and gb_sct_lidar (Scotland, 0.5 m over 1 m, dtm or dsm, patchy): lidar tiles read straight from public buckets, keyless. Run -h dem_source for every source with its surface or terrain model, datum, resolutions and coverage. Any other value is an error rather than a silent substitution. |
+| `dem_source` | `string` | `cop30_aws` | `param` | - | Which provider to fetch from. | cop30_aws: Copernicus GLO-30 on AWS Open Data. Public and keyless, global 30 m coverage -- start here. opentopography: the OpenTopography REST API, which offers other datasets but needs a free API key (see ot_dem_type). planetary_computer: Microsoft Planetary Computer. Also keyless -- its asset URLs are signed automatically for you -- and gives access to many other STAC collections (see pc_collection). us_3dep: USGS 3DEP seamless, a bare-earth terrain model at nominal 10 m (default) or 30 m, keyless, US coverage only. arctic_arcticdem / antarctic_rema: the Polar Geospatial Center ArcticDEM and REMA mosaics, SURFACE models at nominal 10 m (default), 2 m or 32 m, keyless, heights above the WGS84 ellipsoid. no_dtm (Norway, 1 m), nl_ahn (Netherlands, 0.5 m, dtm or dsm), es_mdt (Spain, 5 m), pl_nmt (Poland, 1 m): national lidar terrain models from the mapping agencies' WCS services, keyless, fetched on their native grid. ca_hrdem (Canada, 1 or 2 m, dtm or dsm, patchy) and ch_swissalti3d (Switzerland, 2 or 0.5 m): national lidar models from STAC catalogues, keyless. nz_lidar (New Zealand, 1 m, dtm or dsm; needs a GDAL with LERC, otherwise OpenTopography has the LINZ lidar with an API key) and gb_sct_lidar (Scotland, 0.5 or 1 m by survey phase, dtm or dsm, patchy; see source_collection_choice): lidar tiles read straight from public buckets, keyless. jp_gsi (Japan, 10 m national; 5 m and 1 m where lidar exists): GSI elevation tiles, keyless. Run -h dem_source for every source with its surface or terrain model, datum, resolutions and coverage. Any other value is an error rather than a silent substitution. |
 | `pc_collection` | `string` | `cop-dem-glo-30` | `param` | - | Planetary Computer STAC collection (only used when dem_source is planetary_computer). | Examples: cop-dem-glo-30, cop-dem-glo-90, nasadem, alos-dem, 3dep-seamless. Browse the full catalogue at https://planetarycomputer.microsoft.com/catalog. No account or key is needed: asset URLs are signed automatically. |
-| `source_resolution_metres` | `float` | `0` | `param` | - | Native resolution of the product to fetch (nominal metres). | 0 takes the source's default product (us_3dep, arctic_arcticdem, antarctic_rema: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources, nz_lidar and gb_sct_lidar offer one resolution each). For planetary_computer, 0 uses every item the search returns and a value keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). A value the source does not offer is an error listing what it offers. Not used by cop30_aws or opentopography. |
+| `source_resolution_metres` | `float` | `0` | `param` | - | Native resolution of the product to fetch (nominal metres). | 0 takes the source's default product (us_3dep, arctic_arcticdem, antarctic_rema, jp_gsi: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources, nz_lidar and gb_sct_lidar offer one resolution each). For planetary_computer, 0 uses every item the search returns and a value keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). A value the source does not offer is an error listing what it offers. Not used by cop30_aws or opentopography. |
 | `surface_model_choice` | `string` | `source_default` | `param` | - | Surface model (dsm: canopy and buildings) or terrain model (dtm: bare earth). | source_default, dtm or dsm. source_default takes the terrain model where the source has one. Asking for a product the source lacks is an error; cop30_aws is a surface model only. |
+| `source_collection_choice` | `string` | `latest` | `param` | - | Which survey collection to use, for sources published as several (gb_sct_lidar). | latest takes the newest collection with tiles in the area and warns if older ones also cover it. A collection name uses that one only: for gb_sct_lidar phase-1, phase-2 (1 m), phase-3, phase-4, phase-5, phase-6 or national-lidar-programme (0.5 m). Collections are never mixed in one DEM. Any other value, or a value other than latest for another source, is an error. |
 | `pc_asset` | `string` | `data` | `param` | - | Asset key within each Planetary Computer STAC item. | Most elevation collections expose the raster as 'data'. Change this only if the collection you are using names it differently. |
 | `ot_dem_type` | `string` | `COP30` | `param` | - | OpenTopography dataset identifier (only used when dem_source is opentopography). | One of: COP30, COP90, SRTMGL1, SRTMGL1_E, SRTMGL3, NASADEM, AW3D30, AW3D30_E, GEDTM30, EU_DTM, ANADEM, CA_MRDEM_DTM, CA_MRDEM_DSM, SRTM15Plus, GEBCOIceTopo, GEBCOSubIceTopo, GEDI_L3. Run -h ot_dem_type for a table giving data type, grid spacing, coverage and purpose, or see https://portal.opentopography.org/apidocs/#/Public/getGlobalDem. Anything else is rejected before the request is sent. Every one of these datasets carries a citation requirement; the citation for the dataset you used is printed at the end of a successful run. THE API KEY IS NOT A PARAMETER: set the OT_API_KEY environment variable, or set OT_API_KEY_FILE to a file containing it. Parameter files are routinely committed and every parameter is echoed at the end of a run, so a key must never be written here. |
 | `prefetch_source` | `string` | `cop30_aws` | `param` | - | Source for coarse prefetch in bounds_mode: outlets. | Defaults to keyless cop30_aws. Can be cop30_aws, planetary_computer, or opentopography. |
@@ -888,7 +1201,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `max_output_pixels` | `int` | `250000000` | `param` | - | Refuse a fetch whose output grid has more pixels than this. | Checked before anything is downloaded. 250 million Float32 cells is about 1 GB, a 15.8 km square at 1 m. 0 disables the check. |
+| `max_output_pixels` | `int` | `250000000` | `param` | - | Refuse a fetch whose output grid has more pixels than this. | Checked before anything is downloaded. 250 million Float32 cells is about 1 GB, a 15.8 km square at 1 m. For the WCS sources (no_dtm, nl_ahn, es_mdt, pl_nmt) the native cells downloaded are checked too, since a coarse output still downloads the native grid. 0 disables the check. |
 | `max_download_megabytes` | `float` | `2048` | `param` | - | Refuse a fetch that would download more than this (megabytes, 10^6 bytes). | Estimated before any request from the area and the source resolution (Float32 cells, compression ignored, so the estimate errs high). Where lsdtt3 does the HTTP itself (opentopography) the transfer is also counted and stopped when it passes the limit; reads of cloud-optimised GeoTIFFs (cop30_aws, planetary_computer and the catalogue sources) rely on the estimate. 0 disables the check. |
 | `max_tiles` | `int` | `256` | `param` | - | Refuse a request needing more tiles, source files or service requests than this. | A guard against an accidental continental request, checked before anything is downloaded. Raise it deliberately for large areas. |
 | `request_delay_milliseconds` | `int` | `200` | `param` | - | Pause after every request to the DEM source. | Keeps a large fetch polite to a service that publishes no rate limit. |

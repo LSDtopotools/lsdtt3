@@ -6867,6 +6867,35 @@ add_lsdtt_cli_smoke_test(
 )
 
 add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_nz_lidar_lerc_warning
+    lsdtt-fetch-raster
+    fetch_raster_nz_lidar_lerc_warning.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "LERC-compressed"
+    --stderr-contains "OpenTopography (opentopography.org) with an API key"
+    --stderr-contains "outside nz_lidar coverage"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_gsi_bad_resolution
+    lsdtt-fetch-raster
+    fetch_raster_gsi_bad_resolution.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "jp_gsi offers 1, 5, 10 m"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_raster_sct_lidar_bad_collection
+    lsdtt-fetch-raster
+    fetch_raster_sct_lidar_bad_collection.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "gb_sct_lidar has no collection 'phase-9'"
+)
+
+add_lsdtt_cli_smoke_test(
     failure_fetch_raster_copernicus_surface_model
     lsdtt-fetch-raster
     fetch_raster_copernicus_surface_model.param.in
@@ -6921,7 +6950,13 @@ add_test(NAME smoke_fetch_raster_help_dem_source_grid_keyed
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_grid_keyed PROPERTIES
     LABELS "smoke;cli;fetch"
-    PASS_REGULAR_EXPRESSION "nz_lidar.*NZVD2016.*LERC.*gb_sct_lidar.*newer phases on top")
+    PASS_REGULAR_EXPRESSION "nz_lidar.*NZVD2016.*LERC.*gb_sct_lidar.*source_collection_choice")
+
+add_test(NAME smoke_fetch_raster_help_dem_source_gsi
+         COMMAND lsdtt-fetch-raster -h dem_source)
+lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_gsi PROPERTIES
+    LABELS "smoke;cli;fetch"
+    PASS_REGULAR_EXPRESSION "jp_gsi.*DIGITAL TERRAIN MODEL.*second.*resampling")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)

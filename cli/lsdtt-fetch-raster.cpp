@@ -243,9 +243,13 @@ int main(int argc, char* argv[])
         "the mapping agencies' WCS services, keyless, fetched on their native grid. "
         "ca_hrdem (Canada, 1 or 2 m, dtm or dsm, patchy) and ch_swissalti3d "
         "(Switzerland, 2 or 0.5 m): national lidar models from STAC catalogues, keyless. "
-        "nz_lidar (New Zealand, 1 m, dtm or dsm; needs a GDAL with LERC) and "
-        "gb_sct_lidar (Scotland, 0.5 m over 1 m, dtm or dsm, patchy): lidar tiles "
+        "nz_lidar (New Zealand, 1 m, dtm or dsm; needs a GDAL with LERC, otherwise "
+        "OpenTopography has the LINZ lidar with an API key) and "
+        "gb_sct_lidar (Scotland, 0.5 or 1 m by survey phase, dtm or dsm, patchy; see "
+        "source_collection_choice): lidar tiles "
         "read straight from public buckets, keyless. "
+        "jp_gsi (Japan, 10 m national; 5 m and 1 m where lidar exists): GSI "
+        "elevation tiles, keyless. "
         "Run -h dem_source for every source with its surface or terrain model, "
         "datum, resolutions and coverage. "
         "Any other value is an error rather than a silent substitution.",
@@ -264,7 +268,7 @@ int main(int argc, char* argv[])
     help_map["source_resolution_metres"] = {"float","0",
         "Native resolution of the product to fetch (nominal metres).",
         "0 takes the source's default product (us_3dep, arctic_arcticdem, "
-        "antarctic_rema: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources, "
+        "antarctic_rema, jp_gsi: 10 m; ca_hrdem: 1 m; ch_swissalti3d: 2 m; the WCS sources, "
         "nz_lidar and gb_sct_lidar offer one resolution each). For "
         "planetary_computer, 0 uses every item the search returns and a value "
         "keeps only items whose STAC gsd equals it (e.g. 10 for 3dep-seamless). "
@@ -278,6 +282,17 @@ int main(int argc, char* argv[])
         "source_default, dtm or dsm. source_default takes the terrain model where "
         "the source has one. Asking for a product the source lacks is an error; "
         "cop30_aws is a surface model only.",
+        "Source", "param", ""};
+
+    string_default_map["source_collection_choice"] = "latest";
+    help_map["source_collection_choice"] = {"string","latest",
+        "Which survey collection to use, for sources published as several (gb_sct_lidar).",
+        "latest takes the newest collection with tiles in the area and warns if "
+        "older ones also cover it. A collection name uses that one only: for "
+        "gb_sct_lidar phase-1, phase-2 (1 m), phase-3, phase-4, phase-5, phase-6 "
+        "or national-lidar-programme (0.5 m). Collections are never mixed in one "
+        "DEM. Any other value, or a value other than latest for another source, "
+        "is an error.",
         "Source", "param", ""};
 
     string_default_map["pc_asset"] = "data";
@@ -607,7 +622,9 @@ int main(int argc, char* argv[])
     help_map["max_output_pixels"] = {"int","250000000",
         "Refuse a fetch whose output grid has more pixels than this.",
         "Checked before anything is downloaded. 250 million Float32 cells is "
-        "about 1 GB, a 15.8 km square at 1 m. 0 disables the check.",
+        "about 1 GB, a 15.8 km square at 1 m. For the WCS sources (no_dtm, "
+        "nl_ahn, es_mdt, pl_nmt) the native cells downloaded are checked too, "
+        "since a coarse output still downloads the native grid. 0 disables the check.",
         "Size limits", "param", ""};
 
     float_default_map["max_download_megabytes"] = 2048.0f;
@@ -1149,6 +1166,7 @@ int main(int argc, char* argv[])
     options.pc_asset                     = sf["pc_asset"];
     options.source_resolution_metres     = static_cast<double>(ff["source_resolution_metres"]);
     options.surface_model_choice         = to_lower_copy(sf["surface_model_choice"]);
+    options.source_collection_choice     = to_lower_copy(sf["source_collection_choice"]);
     options.max_output_pixels            = ifs["max_output_pixels"];
     options.max_download_megabytes       = static_cast<double>(ff["max_download_megabytes"]);
     options.max_tiles                    = ifs["max_tiles"];
@@ -1160,6 +1178,8 @@ int main(int argc, char* argv[])
         std::cerr << "WARNING: source_resolution_metres is not used by "
                   << lsdtt::dem_source_name(options.source) << " and is ignored.\n";
     }
+    const std::string lerc_warning = lsdtt::lerc_source_warning(options.source);
+    if (!lerc_warning.empty()) std::cerr << "WARNING: " << lerc_warning << "\n";
 
     if (rotate_after_fetch)
     {

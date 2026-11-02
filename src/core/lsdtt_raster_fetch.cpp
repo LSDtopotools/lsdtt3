@@ -13,6 +13,7 @@
 #include "lsdtt_raster_fetch_detail.hpp"
 #include "lsdtt_gdal_init.hpp"
 #include "lsdtt_secret.hpp"
+#include "lsdtt_macrostrat_fetch.hpp"   // slippy_tiles_for_bbox (XYZ tiles)
 
 #include <algorithm>
 #include <cctype>
@@ -856,6 +857,8 @@ std::string fetch_cache_key(const lsdtt_fetch_options& o)
                                    o.surface_model_choice == "source_default")
                                 ? info.default_surface_model : o.surface_model_choice;
         key << "_src" << format_double(res, 3) << '_' << model;
+        if (!o.source_collection_choice.empty() && o.source_collection_choice != "latest")
+            key << '_' << o.source_collection_choice;
     }
 
     // Frame mode: the frame defines the grid. Added only in frame mode so
@@ -1118,6 +1121,105 @@ fetch_extent grid_search_extent(const lsdtt_fetch_options&   o,
 {
     fetch_extent area = output_area_in(o, info.grid_epsg, target_epsg);
     const double pad = 2.0 * o.grid_spacing;
+    area.x_min -= pad; area.y_min -= pad; area.x_max += pad; area.y_max += pad;
+    return area;
+}
+
+
+bool gsi_decode_rgb(int r, int g, int b, double& height_metres)
+{
+    const long x = 65536L * r + 256L * g + b;
+    if (x == (1L << 23)) return false;
+    height_metres = 0.01 * static_cast<double>(x < (1L << 23) ? x : x - (1L << 24));
+    return true;
+}
+
+
+bool gsi_tile_to_geotiff(const std::string& png_bytes, int z, int x, int y,
+                         const std::string& out_path, std::string& error)
+{
+    const std::string png_path = out_path + ".png";
+    {
+        VSILFILE* f = VSIFOpenL(png_path.c_str(), "wb");
+        if (f == nullptr ||
+            VSIFWriteL(png_bytes.data(), 1, png_bytes.size(), f) != png_bytes.size())
+        {
+            if (f) VSIFCloseL(f);
+            error = "could not stage the tile in memory";
+            return false;
+        }
+        VSIFCloseL(f);
+    }
+    GDALDatasetH png = nullptr;
+    {
+        quiet_gdal_errors quiet;
+        png = GDALOpen(png_path.c_str(), GA_ReadOnly);
+    }
+    if (png == nullptr || GDALGetRasterCount(png) < 3)
+    {
+        if (png) GDALClose(png);
+        VSIUnlink(png_path.c_str());
+        error = "the tile is not an RGB PNG";
+        return false;
+    }
+    const int w = GDALGetRasterXSize(png);
+    const int h = GDALGetRasterYSize(png);
+    std::vector<unsigned char> rgb(static_cast<std::size_t>(w) * h * 3);
+    int bands[3] = {1, 2, 3};
+    const CPLErr read = GDALDatasetRasterIO(png, GF_Read, 0, 0, w, h, rgb.data(), w, h,
+                                            GDT_Byte, 3, bands, 3, 3 * w, 1);
+    GDALClose(png);
+    VSIUnlink(png_path.c_str());
+    if (read != CE_None)
+    {
+        error = "could not read the tile's pixels";
+        return false;
+    }
+    std::vector<float> z_values(static_cast<std::size_t>(w) * h);
+    for (std::size_t i = 0; i < z_values.size(); ++i)
+    {
+        double height = 0.0;
+        z_values[i] = gsi_decode_rgb(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2], height)
+                    ? static_cast<float>(height) : -9999.0f;
+    }
+
+    lsdtt_slippy_tile tile;
+    tile.z = z; tile.x = x; tile.y = y;
+    double x_min = 0, y_min = 0, x_max = 0, y_max = 0;
+    slippy_tile_bounds_3857(tile, x_min, y_min, x_max, y_max);
+    GDALDriverH gtiff = GDALGetDriverByName("GTiff");
+    GDALDatasetH ds = gtiff ? GDALCreate(gtiff, out_path.c_str(), w, h, 1, GDT_Float32, nullptr)
+                            : nullptr;
+    if (ds == nullptr)
+    {
+        error = "could not create the decoded tile";
+        return false;
+    }
+    double gt[6] = {x_min, (x_max - x_min) / w, 0.0, y_max, 0.0, -(y_max - y_min) / h};
+    GDALSetGeoTransform(ds, gt);
+    OGRSpatialReferenceH srs = OSRNewSpatialReference(nullptr);
+    OSRImportFromEPSG(srs, 3857);
+    GDALSetSpatialRef(ds, srs);
+    OSRDestroySpatialReference(srs);
+    GDALRasterBandH band = GDALGetRasterBand(ds, 1);
+    GDALSetRasterNoDataValue(band, -9999.0);
+    const CPLErr written = GDALRasterIO(band, GF_Write, 0, 0, w, h, z_values.data(), w, h,
+                                        GDT_Float32, 0, 0);
+    GDALClose(ds);
+    if (written != CE_None)
+    {
+        VSIUnlink(out_path.c_str());
+        error = "could not write the decoded tile";
+        return false;
+    }
+    return true;
+}
+
+
+fetch_extent output_area_wgs84(const lsdtt_fetch_options& o, int target_epsg)
+{
+    fetch_extent area = output_area_in(o, 4326, target_epsg);
+    const double pad = 2.0 * o.grid_spacing / 111320.0;
     area.x_min -= pad; area.y_min -= pad; area.x_max += pad; area.y_max += pad;
     return area;
 }
@@ -1625,6 +1727,7 @@ std::string dem_source_name(lsdtt_dem_source source)
         case lsdtt_dem_source::ch_swissalti3d:     return "ch_swissalti3d";
         case lsdtt_dem_source::nz_lidar:           return "nz_lidar";
         case lsdtt_dem_source::gb_sct_lidar:       return "gb_sct_lidar";
+        case lsdtt_dem_source::jp_gsi:             return "jp_gsi";
     }
     return "unknown";
 }
@@ -2038,7 +2141,9 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
             "LINZ national elevation: a DIGITAL TERRAIN MODEL (dtm, the default: bare "
             "earth from airborne lidar) or a DIGITAL SURFACE MODEL (dsm) at 1 m on "
             "NZTM2000 (EPSG:2193), in NZTopo50 sheets. Heights in metres above "
-            "NZVD2016. The files are LERC-compressed: needs a GDAL built with LERC.";
+            "NZVD2016. The files are LERC-compressed: needs a GDAL built with LERC "
+            "(otherwise the LINZ lidar DEMs are available from OpenTopography with "
+            "an API key).";
         nz.accessed = "2026-11-01";
         nz.native_resolutions_metres = {1.0};
         nz.default_resolution_metres = 1.0;
@@ -2073,10 +2178,10 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         sct.description =
             "Lidar for Scotland: a DIGITAL TERRAIN MODEL (dtm, the default) or a "
             "DIGITAL SURFACE MODEL (dsm) on the British National Grid (EPSG:27700), "
-            "composited from the survey phases: 0.5 m (phases 3-6, national "
-            "programme) over 1 m (phases 1-2), newer phases on top where they "
-            "overlap. Surveys span 2011 onwards, so dates differ across a tile "
-            "edge. Heights in metres above ODN (Newlyn).";
+            "from one survey collection at a time: phases 1-2 (1 m), phases 3-6 and "
+            "the national lidar programme (0.5 m). By default the newest collection "
+            "with tiles in the area; source_collection_choice names another. "
+            "Heights in metres above ODN (Newlyn).";
         sct.accessed = "2026-11-01";
         sct.native_resolutions_metres = {0.5};
         sct.default_resolution_metres = 0.5;
@@ -2088,7 +2193,7 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
         sct.grid_base_url = "https://srsp-open-data.s3.eu-west-2.amazonaws.com/";
         sct.grid_epsg = 27700;
         // Oldest first (phase numbers follow release order; the national
-        // programme is the newest), so newer surveys overwrite older ones.
+        // programme is the newest): "latest" takes the last one with tiles.
         sct.grid_collections = {
             {"phase-1", "lidar/phase-1/{model}/27700/gridded/{os10}_1M_{MODEL}_PHASE1.tif",
              10000.0, 10000.0, 0.0, 0.0},
@@ -2107,6 +2212,35 @@ const std::vector<lsdtt_dem_source_info>& dem_source_catalogue()
              1000.0, 1000.0, 0.0, 0.0}};
         sct.grid_sentinel_key = "lidar/phase-1/dtm/27700/gridded/NH24_1M_DTM_PHASE1.tif";
         rows.push_back(sct);
+
+        lsdtt_dem_source_info jp;
+        jp.id = lsdtt_dem_source::jp_gsi;
+        jp.name = "jp_gsi";
+        jp.title = "Japan GSI elevation tiles (DEM10B / DEM5A / DEM1A)";
+        jp.provider = "Geospatial Information Authority of Japan (GSI), elevation tiles";
+        jp.licence_attribution =
+            "Source: Geospatial Information Authority of Japan, GSI tiles (elevation "
+            "tiles), https://maps.gsi.go.jp/development/ichiran.html";
+        jp.coverage_text = "Japan (10 m everywhere; 5 m and 1 m where lidar exists)";
+        jp.description =
+            "GSI elevation tiles -- a DIGITAL TERRAIN MODEL from the national base "
+            "DEMs: 10 m (DEM10B, the default, national), 5 m (DEM5A, airborne lidar, "
+            "patchy) or 1 m (DEM1A, patchy). Served as Web Mercator PNG tiles that GSI "
+            "has already interpolated from the base DEM, so lsdtt3's warp is a second "
+            "resampling. Heights in metres above Tokyo Bay mean sea level (T.P.).";
+        jp.accessed = "2026-11-01";
+        jp.native_resolutions_metres = {1.0, 5.0, 10.0};
+        jp.default_resolution_metres = 10.0;
+        jp.surface_models = {"dtm"};
+        jp.default_surface_model = "dtm";
+        jp.vertical_datum = "TP (Tokyo Bay mean sea level)";
+        jp.coverage_envelopes = {{122.9, 24.0, 154.0, 45.6}};
+        jp.native_grid_projected = true;
+        jp.xyz_layers = {
+            {1.0, 17, "dem1a_png", "https://cyberjapandata.gsi.go.jp/xyz/dem1a_png/{z}/{x}/{y}.png"},
+            {5.0, 15, "dem5a_png", "https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/{z}/{x}/{y}.png"},
+            {10.0, 14, "dem_png", "https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png"}};
+        rows.push_back(jp);
 
         return rows;
     }();
@@ -2697,6 +2831,28 @@ lsdtt_bounds_from_vector_result bounds_from_vector_file(
 }
 
 
+bool gdal_can_read_lerc()
+{
+    return fetch_detail::gdal_has_lerc();
+}
+
+
+std::string lerc_source_warning(lsdtt_dem_source source)
+{
+    const lsdtt_dem_source_info& info = dem_source_info(source);
+    if (!info.requires_lerc) return "";
+    const std::string gdal = GDALVersionInfo("RELEASE_NAME");
+    return info.name + " files are LERC-compressed, which needs a GDAL built with LERC. "
+           "This GDAL (" + gdal + ") " +
+           (gdal_can_read_lerc() ? std::string("has LERC, so the fetch can go ahead.")
+                                 : std::string("does NOT have LERC, so the fetch will be "
+                                               "refused; use an lsdtt3 built against a "
+                                               "GDAL with LERC (e.g. conda-forge).")) +
+           " The LINZ lidar DEMs are also available from OpenTopography "
+           "(opentopography.org) with an API key.";
+}
+
+
 bool http_available()
 {
     // CPLHTTPEnabled() reports whether GDAL was built with curl at all. It says
@@ -2755,6 +2911,30 @@ bool preflight_source(const lsdtt_fetch_options& o, std::string& error)
                 model_choice + "')";
         return false;
     }
+    const std::string collection_choice = o.source_collection_choice.empty()
+                                        ? std::string("latest") : o.source_collection_choice;
+    if (collection_choice != "latest")
+    {
+        if (info.grid_collections.size() < 2)
+        {
+            error = "source_collection_choice applies to sources published as several "
+                    "survey collections (gb_sct_lidar); leave it at latest for " + info.name;
+            return false;
+        }
+        std::string labels;
+        bool known = false;
+        for (const auto& c : info.grid_collections)
+        {
+            labels += (labels.empty() ? "" : ", ") + c.label;
+            if (c.label == collection_choice) known = true;
+        }
+        if (!known)
+        {
+            error = info.name + " has no collection '" + collection_choice +
+                    "' (it has: latest, " + labels + ")";
+            return false;
+        }
+    }
     if (info.legacy_path)
     {
         if (model_choice != "source_default")
@@ -2807,11 +2987,17 @@ bool preflight_source(const lsdtt_fetch_options& o, std::string& error)
                 "). No data was fetched; use cop30_aws for global 30 m coverage";
         return false;
     }
+    if (!info.xyz_layers.empty() && GDALGetDriverByName("PNG") == nullptr)
+    {
+        error = info.name + " tiles are PNG and this GDAL build has no PNG driver";
+        return false;
+    }
     if (info.requires_lerc && !fetch_detail::gdal_has_lerc())
     {
         error = info.name + " files are LERC-compressed and this GDAL build (" +
                 std::string(GDALVersionInfo("RELEASE_NAME")) + ") cannot decode LERC; "
-                "use an lsdtt3 built against a GDAL with LERC support (e.g. conda-forge)";
+                "use an lsdtt3 built against a GDAL with LERC support (e.g. conda-forge), "
+                "or get the data from OpenTopography (opentopography.org) with an API key";
         return false;
     }
     return true;
@@ -3221,8 +3407,138 @@ lsdtt_fetch_result fetch_wcs_source(const lsdtt_fetch_options&   options,
     return written;
 }
 
+// XYZ elevation tiles (GSI): fetch each tile of the layer, decode it to a
+// Float32 GeoTIFF on its Web Mercator bounds (a 404 means no data there),
+// then the common warp. No fallback to a coarser layer.
+lsdtt_fetch_result fetch_xyz_source(const lsdtt_fetch_options&   options,
+                                    const lsdtt_dem_source_info& info,
+                                    double                       res,
+                                    const std::string&           model,
+                                    const std::string&           out_path,
+                                    lsdtt_fetch_result           result)
+{
+    const lsdtt_dem_source_info::xyz_layer* layer = nullptr;
+    for (const auto& l : info.xyz_layers)
+        if (std::abs(l.resolution_metres - res) <= 1e-6 * res) layer = &l;
+    if (layer == nullptr)
+        return make_error("lsdtt::fetch_dem: " + info.name + " has no layer at " +
+                          list_of({res}) + " m");
+
+    std::vector<lsdtt_slippy_tile> tiles;
+    try
+    {
+        const fetch_detail::fetch_extent box =
+            fetch_detail::output_area_wgs84(options, options.use_frame ? 0 : result.epsg);
+        tiles = slippy_tiles_for_bbox(box.x_min, box.y_min, box.x_max, box.y_max, layer->zoom);
+    }
+    catch (const std::exception& e)
+    {
+        return make_error(std::string("lsdtt::fetch_dem: ") + e.what());
+    }
+    if (options.max_tiles > 0 && static_cast<int>(tiles.size()) > options.max_tiles)
+    {
+        return make_error("lsdtt::fetch_dem: this area needs " + std::to_string(tiles.size()) +
+                          " " + layer->label + " tiles, more than max_tiles (" +
+                          std::to_string(options.max_tiles) + "); raise max_tiles, use a "
+                          "coarser source_resolution_metres, or fetch a smaller area");
+    }
+
+    std::vector<std::string> paths;
+    auto remove_tiles = [&paths]() {
+        for (const std::string& path : paths) VSIUnlink(path.c_str());
+    };
+    double bytes_so_far = 0.0;
+    const double max_bytes = options.max_download_megabytes * 1.0e6;
+    std::size_t n_missing = 0;
+    for (std::size_t i = 0; i < tiles.size(); ++i)
+    {
+        if (i > 0 && options.request_delay_milliseconds > 0)
+            CPLSleep(options.request_delay_milliseconds / 1000.0);
+        const lsdtt_slippy_tile& t = tiles[i];
+        std::string url = layer->url_template;
+        for (const auto& token : {std::make_pair(std::string("{z}"), t.z),
+                                  std::make_pair(std::string("{x}"), t.x),
+                                  std::make_pair(std::string("{y}"), t.y)})
+        {
+            const std::size_t at = url.find(token.first);
+            if (at != std::string::npos) url.replace(at, token.first.size(), std::to_string(token.second));
+        }
+        std::string body, content_type, error;
+        bool over_limit = false;
+        const double remaining = max_bytes > 0.0 ? std::max(1.0, max_bytes - bytes_so_far) : 0.0;
+        const bool ok = wcs_download(url, options.http_timeout_seconds, options.http_max_retry,
+                                     remaining, body, content_type, over_limit, error);
+        const std::string tile_name = layer->label + "/" + std::to_string(t.z) + "/" +
+                                      std::to_string(t.x) + "/" + std::to_string(t.y);
+        if (over_limit)
+        {
+            remove_tiles();
+            return make_error("lsdtt::fetch_dem: " + info.name + " passed "
+                              "max_download_megabytes (" +
+                              format_double(options.max_download_megabytes, 1) +
+                              " MB) and the fetch was stopped");
+        }
+        // A missing tile is an HTTP 404 with S3's NoSuchKey XML; GDAL may hand
+        // the body over as a successful transfer.
+        const bool not_image = content_type.find("image/") == std::string::npos;
+        if ((ok && not_image && body.find("NoSuchKey") != std::string::npos) ||
+            (!ok && error.find("404") != std::string::npos))
+        {
+            ++n_missing;   // no data in this tile
+            continue;
+        }
+        if (ok && not_image)
+        {
+            remove_tiles();
+            return make_error("lsdtt::fetch_dem: " + info.name + " tile " + tile_name +
+                              ": the service returned '" + content_type + "', not a PNG: " +
+                              body.substr(0, 200));
+        }
+        if (!ok)
+        {
+            remove_tiles();
+            return make_skip("lsdtt::fetch_dem: " + info.name + " tile " + tile_name + ": " +
+                             error);
+        }
+        bytes_so_far += static_cast<double>(body.size());
+        const std::string tile_path =
+            "/vsimem/lsdtt_xyz_" + info.name + "_" + std::to_string(i) + ".tif";
+        if (!fetch_detail::gsi_tile_to_geotiff(body, t.z, t.x, t.y, tile_path, error))
+        {
+            remove_tiles();
+            return make_error("lsdtt::fetch_dem: " + info.name + " tile " + tile_name + ": " +
+                              error);
+        }
+        paths.push_back(tile_path);
+        result.tiles.push_back(tile_name);
+    }
+    if (paths.empty())
+    {
+        return make_error("lsdtt::fetch_dem: no " + layer->label + " tiles exist in this area (" +
+                          std::to_string(tiles.size()) + " checked)" +
+                          (res < 10.0 ? std::string("; the 10 m layer covers all of Japan "
+                                                    "(source_resolution_metres: 10)")
+                                      : std::string()));
+    }
+    const double coverage = 100.0 * static_cast<double>(paths.size()) /
+                            static_cast<double>(tiles.size());
+    if (n_missing > 0)
+    {
+        result.warnings.push_back(std::to_string(n_missing) + " of " +
+                                  std::to_string(tiles.size()) + " " + layer->label +
+                                  " tiles have no data (no fallback to a coarser layer)");
+    }
+    result.provenance.push_back({"LSDTT_SOURCE_COLLECTIONS", layer->label});
+    result.provenance.push_back({"LSDTT_DOWNLOAD_MEGABYTES", format_double(bytes_so_far / 1.0e6, 1)});
+    lsdtt_fetch_result written = warp_catalogue_files(options, info, res, model, paths,
+                                                      out_path, result, coverage);
+    remove_tiles();
+    return written;
+}
+
 // Grid-keyed buckets: compute the candidate file names, keep those that
-// exist (a missing file means no data there), then the common warp.
+// exist (a missing file means no data there), pick one collection, then the
+// common warp.
 lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
                                      const lsdtt_dem_source_info& info,
                                      double                       res,
@@ -3234,12 +3550,15 @@ lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
     for (const auto& entry : info.grid_model_names)
         if (entry.first == model) bucket_model = entry.second;
 
+    const std::string choice = options.source_collection_choice.empty()
+                             ? std::string("latest") : options.source_collection_choice;
     std::vector<std::pair<std::string, std::string>> candidates;   // (collection, key)
     try
     {
         const fetch_detail::fetch_extent area = fetch_detail::grid_search_extent(
             options, info, options.use_frame ? 0 : result.epsg);
         for (const auto& collection : info.grid_collections)
+            if (choice == "latest" || collection.label == choice)
             for (const std::string& key :
                  fetch_detail::grid_keys_for_extent(collection, area, bucket_model))
                 candidates.emplace_back(collection.label, key);
@@ -3257,23 +3576,37 @@ lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
                           "fetch a smaller area");
     }
 
-    std::vector<std::string> paths;
-    std::vector<std::string> collections_used;
-    for (const auto& candidate : candidates)
+    // Which collections have tiles here: the named one, or all of them (for
+    // "latest", the newest with any tile here is used).
+    std::vector<std::pair<std::string, std::vector<std::string>>> found;   // oldest first
+    for (const auto& collection : info.grid_collections)
     {
-        const std::string path = "/vsicurl/" + info.grid_base_url + candidate.second;
-        VSIStatBufL stat;
-        bool exists = false;
+        if (choice != "latest" && collection.label != choice) continue;
+        std::vector<std::string> existing;
+        for (const auto& candidate : candidates)
         {
-            quiet_gdal_errors quiet;
-            exists = VSIStatExL(path.c_str(), &stat, VSI_STAT_EXISTS_FLAG) == 0;
+            if (candidate.first != collection.label) continue;
+            const std::string path = "/vsicurl/" + info.grid_base_url + candidate.second;
+            VSIStatBufL stat;
+            bool exists = false;
+            {
+                quiet_gdal_errors quiet;
+                exists = VSIStatExL(path.c_str(), &stat, VSI_STAT_EXISTS_FLAG) == 0;
+            }
+            if (exists) existing.push_back(candidate.second);
         }
-        if (!exists) continue;
-        paths.push_back(path);
-        result.tiles.push_back(candidate.second.substr(candidate.second.rfind('/') + 1));
-        if (std::find(collections_used.begin(), collections_used.end(), candidate.first) ==
-            collections_used.end())
-            collections_used.push_back(candidate.first);
+        if (!existing.empty()) found.emplace_back(collection.label, existing);
+    }
+    std::vector<std::string> paths;
+    std::string used;
+    if (!found.empty())
+    {
+        used = found.back().first;
+        for (const std::string& key : found.back().second)
+        {
+            paths.push_back("/vsicurl/" + info.grid_base_url + key);
+            result.tiles.push_back(key.substr(key.rfind('/') + 1));
+        }
     }
     if (paths.empty())
     {
@@ -3286,10 +3619,12 @@ lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
         }
         if (!reachable)
             return make_skip("lsdtt::fetch_dem: the " + info.name + " bucket is unreachable");
-        return make_error("lsdtt::fetch_dem: no " + info.name + " " + model + " tiles exist "
-                          "in this area (" + std::to_string(candidates.size()) +
+        return make_error("lsdtt::fetch_dem: no " + info.name + " " + model + " tiles " +
+                          (choice == "latest" ? std::string() : "of " + choice + " ") +
+                          "exist in this area (" + std::to_string(candidates.size()) +
                           " checked; coverage: " + info.coverage_text + ")");
     }
+
     std::vector<fetch_detail::stac_item> envelopes;
     for (const auto& box : info.coverage_envelopes)
     {
@@ -3300,13 +3635,14 @@ lsdtt_fetch_result fetch_grid_source(const lsdtt_fetch_options&   options,
     const double coverage = footprint_coverage_percent(options, envelopes);
     if (info.grid_collections.size() > 1)
     {
-        std::string used;
-        for (const std::string& c : collections_used) used += (used.empty() ? "" : ", ") + c;
         result.provenance.push_back({"LSDTT_SOURCE_COLLECTIONS", used});
-        if (collections_used.size() > 1)
-            result.warnings.push_back(info.name + " output composites " + used +
-                                      " (later ones on top): survey dates and "
-                                      "resolutions differ across tile edges");
+        std::string others;
+        for (std::size_t k = 0; k + 1 < found.size(); ++k)
+            others += (others.empty() ? "" : ", ") + found[k].first;
+        if (!others.empty())
+            result.warnings.push_back(info.name + " used " + used + " (the newest collection "
+                                      "with tiles here); " + others + " also cover parts of "
+                                      "this area: set source_collection_choice to use one");
     }
     return warp_catalogue_files(options, info, res, model, paths, out_path, result, coverage);
 }
@@ -3324,6 +3660,8 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
         return fetch_wcs_source(options, info, res, model, out_path, result);
     if (!info.grid_base_url.empty())
         return fetch_grid_source(options, info, res, model, out_path, result);
+    if (!info.xyz_layers.empty())
+        return fetch_xyz_source(options, info, res, model, out_path, result);
 
     // ---- discovery: STAC search, following rel=next ----
     std::vector<fetch_detail::stac_item> items;

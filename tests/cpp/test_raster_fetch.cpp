@@ -41,6 +41,7 @@
 
 #include "lsdtt_raster_fetch.hpp"
 #include "lsdtt_raster_fetch_detail.hpp"
+#include "lsdtt_macrostrat_fetch.hpp"
 
 namespace
 {
@@ -688,6 +689,14 @@ std::string raster_content_hash(const raster_content& c)
 // =============================================================================
 // The DEM source catalogue and the catalogue path (offline)
 // =============================================================================
+std::string list_number(double v)
+{
+    std::string text = std::to_string(v);
+    while (!text.empty() && text.back() == '0') text.pop_back();
+    if (!text.empty() && text.back() == '.') text.pop_back();
+    return text;
+}
+
 bool contains(const std::string& text, const std::string& part)
 {
     return text.find(part) != std::string::npos;
@@ -721,6 +730,15 @@ void test_dem_source_catalogue()
         }
         check("catalogue: " + info.name + " has a datum and metres",
               !info.vertical_datum.empty() && info.vertical_units == "metre");
+        if (!info.xyz_layers.empty())
+        {
+            bool layers_ok = info.xyz_layers.size() == info.native_resolutions_metres.size();
+            for (const auto& l : info.xyz_layers)
+                if (l.zoom <= 0 || l.url_template.find("{z}/{x}/{y}") == std::string::npos)
+                    layers_ok = false;
+            check("catalogue: " + info.name + " has an XYZ layer per resolution", layers_ok);
+            continue;
+        }
         if (!info.grid_base_url.empty())
         {
             bool templates_ok = !info.grid_collections.empty();
@@ -1267,6 +1285,98 @@ void test_polar_warp_offline()
         VSIUnlink(f);
 }
 
+// GSI elevation tiles: the decoder, a synthetic PNG through the tile step,
+// pre-flight refusals.
+void test_gsi_tiles()
+{
+    namespace fd = lsdtt::fetch_detail;
+    double h = 0.0;
+    check("gsi: (128,0,0) is NoData", !fd::gsi_decode_rgb(128, 0, 0, h));
+    check("gsi: (0,0,0) is 0 m", fd::gsi_decode_rgb(0, 0, 0, h) && h == 0.0);
+    check("gsi: (0,185,203) is 475.63 m (a real Mt Takao pixel)",
+          fd::gsi_decode_rgb(0, 185, 203, h) && std::abs(h - 475.63) < 1e-9, std::to_string(h));
+    check("gsi: (255,255,255) is -0.01 m", fd::gsi_decode_rgb(255, 255, 255, h) &&
+          std::abs(h + 0.01) < 1e-9, std::to_string(h));
+    check("gsi: (127,255,255) is the maximum, 83886.07 m",
+          fd::gsi_decode_rgb(127, 255, 255, h) && std::abs(h - 83886.07) < 1e-6);
+    check("gsi: (255,254,12) is -5.00 m (x - 2^24 = -500)",
+          fd::gsi_decode_rgb(255, 254, 12, h) && std::abs(h + 5.0) < 1e-9, std::to_string(h));
+
+    // A synthetic 256 x 256 RGB PNG: heights encoded by the GSI rule, one
+    // NoData pixel, one negative pixel.
+    const int n = 256;
+    GDALDatasetH mem = GDALCreate(GDALGetDriverByName("MEM"), "", n, n, 3, GDT_Byte, nullptr);
+    std::vector<unsigned char> bands[3];
+    for (auto& b : bands) b.assign(static_cast<std::size_t>(n) * n, 0);
+    auto encode = [&](int idx, double height) {
+        long x = std::lround(height * 100.0);
+        if (x < 0) x += (1L << 24);
+        bands[0][idx] = static_cast<unsigned char>((x >> 16) & 255);
+        bands[1][idx] = static_cast<unsigned char>((x >> 8) & 255);
+        bands[2][idx] = static_cast<unsigned char>(x & 255);
+    };
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c) encode(r * n + c, 100.0 + 0.5 * c + 0.25 * r);
+    bands[0][0] = 128; bands[1][0] = 0; bands[2][0] = 0;   // NoData
+    encode(1, -2.37);
+    bool written = true;
+    for (int b = 0; b < 3; ++b)
+        written = written && GDALRasterIO(GDALGetRasterBand(mem, b + 1), GF_Write, 0, 0, n, n,
+                                          bands[b].data(), n, n, GDT_Byte, 0, 0) == CE_None;
+    GDALDatasetH png = GDALCreateCopy(GDALGetDriverByName("PNG"), "/vsimem/gsi_tile.png", mem,
+                                      FALSE, nullptr, nullptr, nullptr);
+    GDALClose(mem);
+    if (png) GDALClose(png);
+    vsi_l_offset size = 0;
+    GByte* data = VSIGetMemFileBuffer("/vsimem/gsi_tile.png", &size, FALSE);
+    const std::string bytes = data ? std::string(reinterpret_cast<const char*>(data),
+                                                 static_cast<std::size_t>(size)) : "";
+    std::string error;
+    const bool ok = written && !bytes.empty() &&
+                    fd::gsi_tile_to_geotiff(bytes, 15, 29057, 12909, "/vsimem/gsi_tile.tif", error);
+    check("gsi: synthetic PNG tile decoded", ok, error);
+    if (ok)
+    {
+        const raster_content c = read_raster_content("/vsimem/gsi_tile.tif");
+        lsdtt::lsdtt_slippy_tile t;
+        t.z = 15; t.x = 29057; t.y = 12909;
+        double x0, y0, x1, y1;
+        lsdtt::slippy_tile_bounds_3857(t, x0, y0, x1, y1);
+        check("gsi: tile georeferenced to its Web Mercator bounds",
+              c.ok && std::abs(c.geotransform[0] - x0) < 1e-6 &&
+              std::abs(c.geotransform[3] - y1) < 1e-6 &&
+              std::abs(c.geotransform[1] - (x1 - x0) / 256.0) < 1e-9);
+        check("gsi: heights decoded, NoData and negative pixels kept",
+              c.ok && c.values[0] == -9999.0f && std::abs(c.values[1] + 2.37f) < 1e-4f &&
+              std::abs(c.values[n * 10 + 20] - (100.0f + 10.0f + 2.5f)) < 1e-4f);
+        GDALDatasetH ds = GDALOpen("/vsimem/gsi_tile.tif", GA_ReadOnly);
+        check("gsi: tile CRS is EPSG:3857", ds && contains(GDALGetProjectionRef(ds), "3857"));
+        if (ds) GDALClose(ds);
+    }
+    VSIUnlink("/vsimem/gsi_tile.png");
+    VSIUnlink("/vsimem/gsi_tile.tif");
+
+    auto refused = [](const lsdtt::lsdtt_fetch_result& r, const std::string& part) {
+        return !r.ok && !r.skipped && contains(r.message, part);
+    };
+    lsdtt::lsdtt_fetch_options o;
+    o.source = lsdtt::lsdtt_dem_source::jp_gsi;
+    o.west = 2.30; o.south = 48.80; o.east = 2.35; o.north = 48.85;
+    o.grid_spacing = 10.0;
+    auto r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("gsi: Paris is refused", refused(r, "outside jp_gsi coverage"), r.message);
+    o.west = 139.22; o.south = 35.61; o.east = 139.26; o.north = 35.64;
+    o.source_resolution_metres = 2.0;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("gsi: resolutions listed", refused(r, "jp_gsi offers 1, 5, 10 m"), r.message);
+    o.source_resolution_metres = 5.0;
+    o.grid_spacing = 5.0;
+    o.max_tiles = 10;
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("gsi: the tile count is refused before any request",
+          refused(r, "dem5a_png tiles, more than max_tiles (10)"), r.message);
+}
+
 // Grid-keyed buckets: NZTopo50 sheets and OS grid references (truth points
 // read from the buckets' own files), key templates, pre-flight refusals.
 void test_grid_keyed_sources()
@@ -1333,18 +1443,41 @@ void test_grid_keyed_sources()
     auto r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
     check("grid: Scottish lidar over Paris is refused",
           refused(r, "outside gb_sct_lidar coverage"), r.message);
+    o.west = -4.93; o.south = 55.717; o.east = -4.885; o.north = 55.745;
+    o.source_collection_choice = "phase-9";
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("grid: an unknown Scottish collection is refused, listing the valid ones",
+          refused(r, "has no collection 'phase-9'") && contains(r.message, "phase-6") &&
+          contains(r.message, "national-lidar-programme"), r.message);
+    o.source = lsdtt_dem_source::us_3dep;
+    o.west = -105.30; o.south = 39.95; o.east = -105.25; o.north = 40.00;
+    o.source_collection_choice = "phase-3";
+    r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
+    check("grid: source_collection_choice is refused for a source without collections",
+          refused(r, "leave it at latest for us_3dep"), r.message);
+    o.source_collection_choice = "latest";
     o.source = lsdtt_dem_source::nz_lidar;
     o.west = 174.75; o.south = -41.30; o.east = 174.78; o.north = -41.28;
     o.source_resolution_metres = 2.0;
     r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
     check("grid: LINZ offers 1 m only (checked before the codec)",
           refused(r, "nz_lidar offers 1 m"), r.message);
+    const std::string lerc_warning = lsdtt::lerc_source_warning(lsdtt_dem_source::nz_lidar);
+    check("grid: nz_lidar screen warning names LERC, this GDAL's status and OpenTopography",
+          contains(lerc_warning, "LERC") && contains(lerc_warning, "OpenTopography") &&
+          contains(lerc_warning, "API key") &&
+          contains(lerc_warning, fd::gdal_has_lerc() ? "has LERC" : "does NOT have LERC"),
+          lerc_warning);
+    check("grid: no LERC warning for sources that do not need it",
+          lsdtt::lerc_source_warning(lsdtt_dem_source::gb_sct_lidar).empty() &&
+          lsdtt::lerc_source_warning(lsdtt_dem_source::cop30_aws).empty());
     if (!fd::gdal_has_lerc())
     {
         o.source_resolution_metres = 0.0;
         r = lsdtt::fetch_dem(o, "/vsimem/never_written.tif");
-        check("grid: without LERC in GDAL, nz_lidar is refused before any request",
-              refused(r, "LERC"), r.message);
+        check("grid: without LERC in GDAL, nz_lidar is refused before any request, "
+              "pointing to OpenTopography",
+              refused(r, "LERC") && contains(r.message, "OpenTopography"), r.message);
     }
 }
 
@@ -2029,6 +2162,27 @@ int run_network_tests(const std::string& output_dir)
                   metadata_item(path, "LSDTT_VERTICAL_DATUM") == "ODN" &&
                   metadata_item(path, "LSDTT_SOURCE_COLLECTIONS") == "phase-1");
         }
+        // Clyde coast: phases 1, 2, 4 and 6 all have tiles; latest takes
+        // phase-6 alone, a named phase that phase alone.
+        for (const char* choice : {"latest", "phase-4"})
+        {
+            lsdtt::lsdtt_fetch_options co;
+            co.source = lsdtt::lsdtt_dem_source::gb_sct_lidar;
+            co.west = -4.93; co.south = 55.717; co.east = -4.885; co.north = 55.745;
+            co.grid_spacing = 10.0;
+            co.source_collection_choice = choice;
+            const std::string cpath = output_dir + "/fetch_gb_sct_" + choice + ".tif";
+            const auto cr = lsdtt::fetch_dem(co, cpath);
+            if (cr.skipped) continue;
+            const std::string want = std::string(choice) == "latest" ? "phase-6" : "phase-4";
+            bool one_collection = !cr.tiles.empty();
+            for (const std::string& t : cr.tiles)
+                if (!contains(t, want == "phase-6" ? "PHASE6" : "PHASE4")) one_collection = false;
+            check(std::string("network: gb_sct_lidar ") + choice + " uses " + want + " only",
+                  cr.ok && one_collection &&
+                  metadata_item(cpath, "LSDTT_SOURCE_COLLECTIONS") == want,
+                  cr.message + " " + join(cr.tiles));
+        }
     }
     if (!lsdtt::fetch_detail::gdal_has_lerc())
     {
@@ -2055,6 +2209,42 @@ int run_network_tests(const std::string& output_dir)
                   metadata_item(path, "LSDTT_SURFACE_MODEL") == "DTM" &&
                   metadata_item(path, "LSDTT_VERTICAL_DATUM") == "NZVD2016");
         }
+    }
+
+    // ---- GSI tiles near Tokyo (Mt Takao), 10 m and 5 m ------------------------
+    for (double gsi_res : {10.0, 5.0})
+    {
+        lsdtt::lsdtt_fetch_options jo;
+        jo.source = lsdtt::lsdtt_dem_source::jp_gsi;
+        jo.west = 139.22; jo.south = 35.61; jo.east = 139.26; jo.north = 35.64;
+        jo.source_resolution_metres = gsi_res;
+        jo.grid_spacing = gsi_res;
+        jo.size_px = 256;
+        const std::string label = "jp_gsi " + list_number(gsi_res) + " m";
+        const std::string path = output_dir + "/fetch_jp_gsi_" + list_number(gsi_res) + ".tif";
+        const auto j = lsdtt::fetch_dem(jo, path);
+        if (j.skipped)
+        {
+            std::cout << "SKIP(" << label << "): " << j.message << "\n";
+            continue;
+        }
+        check("network: " + label + " fetch succeeded", j.ok, j.message);
+        bool right_layer = !j.tiles.empty();
+        for (const std::string& t : j.tiles)
+            if (t.rfind(gsi_res == 10.0 ? "dem_png/14/" : "dem5a_png/15/", 0) != 0)
+                right_layer = false;
+        const raster_content c = read_raster_content(path);
+        float lo = 1e30f, hi = -1e30f;
+        std::int64_t valid = 0;
+        for (float v : c.values)
+        {
+            if (v == -9999.0f) continue;
+            ++valid; lo = std::min(lo, v); hi = std::max(hi, v);
+        }
+        check("network: " + label + " used only its layer, 256 x 256, Takao heights",
+              right_layer && c.ok && c.cols == 256 && c.rows == 256 && j.epsg == 32654 &&
+              valid > 0.99 * 256 * 256 && lo > 100.0f && hi < 700.0f,
+              join(j.tiles) + " [" + std::to_string(lo) + ", " + std::to_string(hi) + "]");
     }
 
     // ---- WCS sources: one small window each ---------------------------------
@@ -2188,6 +2378,8 @@ int main(int argc, char** argv)
     test_hrdem_swiss_sources();
     std::cout << "\n";
     test_grid_keyed_sources();
+    std::cout << "\n";
+    test_gsi_tiles();
     std::cout << "\n";
     test_wcs_sources();
     std::cout << "\n";

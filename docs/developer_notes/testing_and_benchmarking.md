@@ -157,7 +157,7 @@ the codebase it exercises. The expensive ones additionally carry `heavy`.
 | Domain | Tests | Covers |
 |---|---|---|
 | `cosmo` | 29 | cosmogenic physics, the three cosmo CLIs, CRONUS comparisons |
-| `fetch` | 24 | DEM fetching, offline logic by default |
+| `fetch` | 74 | DEM, lithology and erosion-rate fetching, offline logic by default |
 | `network` | 14 | chi, channels, drainage, basins, flow properties |
 | `divide_migration` | 11 | divide migration |
 | `raster` | 11 | preprocessing, filling, nodata, the raster calculator |
@@ -5766,6 +5766,68 @@ in **2.8 s**.
   `GDAL_DISABLE_READDIR_ON_OPEN` already provides most of the latency win.
   Relatedly, unsigned access to Planetary Computer assets returns HTTP 409 — the
   signing endpoint needs no account but *is* required.
+
+### High-resolution national and polar sources (2026-11-01)
+
+Twelve keyless sources were added to `lsdtt-fetch-raster` (`us_3dep`,
+`arctic_arcticdem`, `antarctic_rema`, `no_dtm`, `nl_ahn`, `es_mdt`, `pl_nmt`,
+`ca_hrdem`, `ch_swissalti3d`, `nz_lidar`, `gb_sct_lidar`, `jp_gsi`). They share
+one fetch path (pre-flight checks, discovery, one GDALWarp straight from the
+source files, a provenance stamp). The original three sources keep their own
+code.
+
+**The Copernicus path is frozen and guarded.** Before any change, the
+`cop30_aws` and `planetary_computer` outputs were recorded. `unit_raster_fetch`
+pins the pure functions that determine that path exactly: cache keys, the
+Planetary Computer search body, and the warp argument vector. The network driver
+asserts that `cop30_aws` and `planetary_computer` stay raster-identical, and
+pins a content hash per GDAL release: FNV-1a 64 over band values and
+geotransform, metadata ignored, `9f55ea5e672c03d0` on GDAL 3.4.1. Because the
+hash ignores metadata, adding provenance items to Copernicus outputs needed no
+re-pin. The new sources get no hash pins: their datum transforms depend on the
+PROJ grids installed, so sizes, ranges and metadata are asserted instead.
+
+**How correctness is established, per access route** (all in
+`tests/cpp/test_raster_fetch.cpp`, offline unless marked):
+
+| Route | Checks |
+|---|---|
+| shared warp | a synthetic EPSG:4269 plane and a synthetic EPSG:3413 plane are reproduced within 1e-2 m after warping to UTM (cubic is exact on a plane); square cells; extents on the `grid_spacing` lattice; the overview warning; a source in feet refused; the 84 N UTM warning and its silencing by `target_epsg: 3413` |
+| STAC | trimmed real responses: gsd filter, asset by surface model (HRDEM) and by gsd and media type (swissALTI3D, never the XYZ text twin), latest acquisition per tile, rel=next paging with the next body **merged** into the original (swisstopo's next body is a bare cursor that drops the filter), out-of-area items dropped |
+| WCS | native extent on the service's pixel lattice and covering the output corners, chunk plan (abutting, exact cover), pinned GetCoverage URLs for all four services, OWS 2.0 and WCS 1.0 exception parsing, multipart extraction, staging that refuses a half-pixel shift or a coarser grid |
+| tile keys | NZTopo50 sheet and Ordnance Survey references against truth points read from the buckets' own file origins; the expected key set for a known box |
+| GSI tiles | the decoder truth table (NoData, -0.01 m, -5.00 m, maximum); a PNG generated at test time through the tile step, with georeferencing, NoData and a negative pixel |
+| pre-flight | out of coverage, unoffered resolution or model, unknown collection, size limits, tile counts and the LERC refusal: all errors, never skips, before any request |
+| network (opt-in) | one 256² window per source: size, square cells, epsg, valid share, plausible height band, provenance; the Scottish collection selector; `nz_lidar` skips where GDAL lacks LERC |
+
+**Measurements that back the design:**
+
+- WCS exactness: a two-request `no_dtm` fetch on the service's own grid
+  (`target_epsg: 25833`, `grid_spacing: 1`) was identical to one direct
+  GetCoverage of the same window in all 4 326 960 cells (max |d| 0.0). So the
+  chunks have no seam, and nothing is resampled twice.
+- Ellipsoidal heights: ArcticDEM minus Copernicus on a Svalbard window: median
+  31.6 m (p5 30.3, p95 32.8) against an EGM2008 undulation of 32.3 m.
+- GSI decoding: 10 m GSI minus Copernicus near Mt Takao: median -13.0 m
+  (p5 -25.8, p95 0.3), a terrain model under a forest-canopy surface model.
+- Zero as NoData (`no_dtm`, `es_mdt`, `pl_nmt`): with 0 kept as data, a Tatra
+  window across the Slovak border reached -228.7 m from cubic overshoot at the
+  border cliff; with 0 as NoData the minimum was 1324.6 m.
+- Server-side formats: the Spanish WCS GeoTIFF is Int16 (whole metres), so its
+  millimetre ASCII output is used; its geographic coverage resamples to fit the
+  request, so the UTM 30N coverage is used.
+
+**Bugs the tests or live runs caught:**
+
+- A grid-origin tolerance scaled with the coordinate (1e-6 × 637 000 m =
+  0.64 m) let a half-pixel server shift through. Caught by the offline staging
+  test; now 1e-4 pixel.
+- swisstopo's cursor-only next body, sent alone, returned tiles from the whole
+  country.
+- GSI's missing tiles are HTTP 404 with S3 `NoSuchKey` XML that GDAL 3.4 hands
+  over as a successful transfer; at first they failed as "not an RGB PNG".
+- A stale `.aux.xml` statistics file made a corrected output look unchanged:
+  clear it before reading `gdalinfo -stats` on a rewritten file.
 
 ---
 

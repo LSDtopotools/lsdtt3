@@ -85,7 +85,8 @@ enum class lsdtt_dem_source
     ca_hrdem,             // NRCan HRDEM mosaic 1/2 m (Canada), STAC. No key.
     ch_swissalti3d,       // swisstopo swissALTI3D 0.5/2 m (Switzerland), STAC. No key.
     nz_lidar,             // LINZ national 1 m DEM/DSM (New Zealand), public S3. No key.
-    gb_sct_lidar          // Scottish Remote Sensing Portal lidar, public S3. No key.
+    gb_sct_lidar,         // Scottish Remote Sensing Portal lidar, public S3. No key.
+    jp_gsi                // GSI elevation tiles 1/5/10 m (Japan), XYZ PNG. No key.
 };
 
 // Parse a user-facing source name ("cop30_aws", ...). Returns false if unknown.
@@ -185,8 +186,8 @@ struct lsdtt_dem_source_info
     bool   wcs_zero_is_nodata = false;
     // Grid-keyed public bucket (no catalogue): file names are computed from
     // coordinates in grid_epsg, and a file that does not exist means no data
-    // there. Collections are listed oldest first; where they overlap the
-    // later one wins wherever it has data.
+    // there. Collections are listed oldest first; one is used per fetch
+    // (source_collection_choice), never a mix.
     struct grid_collection
     {
         std::string label;         // "phase-3", recorded in the provenance
@@ -204,6 +205,17 @@ struct lsdtt_dem_source_info
     std::string grid_sentinel_key;           // a file that exists: tells "no data
                                              // here" from "host unreachable"
     bool requires_lerc = false;              // files are LERC-compressed
+
+    // XYZ elevation PNG tiles (GSI encoding, EPSG:3857): one layer per
+    // resolution. A tile that does not exist (404) means no data there.
+    struct xyz_layer
+    {
+        double      resolution_metres = 0.0;   // nominal
+        int         zoom = 0;
+        std::string label;                     // "dem5a_png", recorded in the provenance
+        std::string url_template;              // with {z} {x} {y}
+    };
+    std::vector<xyz_layer> xyz_layers;
 };
 
 // The whole catalogue, in the order shown to users.
@@ -315,6 +327,10 @@ struct lsdtt_fetch_options
     // "source_default", "dtm" or "dsm". Asking for a product a source does
     // not have is an error.
     std::string surface_model_choice = "source_default";
+    // Sources published as several survey collections (gb_sct_lidar): "latest"
+    // takes the newest collection with tiles in the area; a collection label
+    // ("phase-3", "national-lidar-programme") takes that one only.
+    std::string source_collection_choice = "latest";
 
     // Size limits, checked before any download (and, where lsdtt3 does the
     // HTTP itself, while downloading). 0 disables a limit.
@@ -423,6 +439,14 @@ std::string cop30_tile_url(const std::string& tile_name);
 
 // True if GDAL can make HTTP requests at all (built with curl).
 bool http_available();
+
+// True if this GDAL build can decode LERC-compressed GeoTIFFs (needed by
+// sources with requires_lerc, e.g. nz_lidar).
+bool gdal_can_read_lerc();
+
+// The screen warning for a source whose files are LERC-compressed: what it
+// needs, whether this GDAL has it, and the alternative. Empty for others.
+std::string lerc_source_warning(lsdtt_dem_source source);
 
 
 // -----------------------------------------------------------------------------
