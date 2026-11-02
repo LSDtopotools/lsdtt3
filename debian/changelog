@@ -1,3 +1,9 @@
+lsdtt3 (0.8.0) jammy; urgency=medium
+
+  * Release 0.8.0.
+
+ -- Simon M. Mudd <simon.m.mudd@ed.ac.uk>  Mon, 02 Nov 2026 17:13:07 +0000
+
 lsdtt3 (0.7.1) jammy; urgency=medium
 
   * Release 0.7.1.
