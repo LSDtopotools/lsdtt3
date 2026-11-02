@@ -39,6 +39,11 @@ plugins:
   - search
 
 markdown_extensions:
+  # `!!! note "Title"` call-out boxes; details makes `??? note` collapsible, and
+  # superfences lets a fenced code block sit inside one.
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
   - pymdownx.snippets:
       base_path: .
       check_paths: true

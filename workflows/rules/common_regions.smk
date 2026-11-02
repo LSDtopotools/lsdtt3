@@ -2,7 +2,9 @@
 # DEM per region, fetched or read from a file, and the basins analysed in it.
 #
 #   results/<run_id>/<region>/dem/        lsdtt-fetch-raster output
-#   results/<run_id>/<region>/basins/     lsdtt-basin-extraction output
+#   results/<run_id>/<region>/basins/     lsdtt-basin-extraction output (the
+#                                         region's own outlets, or basins picked
+#                                         automatically)
 #   results/<run_id>/<region>/lithology/  lsdtt-fetch-lithology output
 #   results/<run_id>/<region>/logs/       one log per CLI run
 #
@@ -55,12 +57,34 @@ def rg_fetch_text(wc):
     )
 
 
+def rg_outlets_file(wc):
+    """The region's own outlet points (CSV, FlatGeobuf or GeoPackage), or None.
+
+    `basin_outlet_fname` under the region wins over one for the whole section.
+    """
+    entry = RG_ITEMS[wc.region]
+    path = entry.get("basin_outlet_fname", RG.get("basin_outlet_fname"))
+    return workflow_path(path) if path else None
+
+
 def rg_basins_text(wc):
+    """Basin selection: the supplied outlets if there are any, else the auto block.
+
+    With outlets the `basin_extraction_from_outlets` block applies (snapping);
+    without, `basin_extraction` (which basins to pick automatically).
+    """
+    outlets = rg_outlets_file(wc)
+    forced = {"write_selected_basin_outlets_csv": True}
+    if outlets:
+        block = "basin_extraction_from_outlets"
+        forced.update({"select_basins_from_outlets": True, "basin_outlet_fname": outlets})
+    else:
+        block = "basin_extraction"
     return render_param_file(
-        f"{RG_SECTION} ({wc.region}, basin_extraction)",
+        f"{RG_SECTION} ({wc.region}, {block})",
         io_block(rg_dem(wc), f"{ROOT}/{RUN_ID}/{wc.region}/basins", wc.region),
-        rg_block(wc, "basin_extraction"),
-        {"write_selected_basin_outlets_csv": True},
+        rg_block(wc, block),
+        forced,
         comment=f"{RG_SECTION} workflow, run {RUN_ID}: lsdtt-basin-extraction",
     )
 
@@ -124,7 +148,8 @@ rule rg_fetch_dem:
 
 rule rg_write_basins_params:
     input:
-        dem=rg_dem
+        dem=rg_dem,
+        outlets=lambda wc: [rg_outlets_file(wc)] if rg_outlets_file(wc) else []
     output:
         param=f"{RG_DIR}/basins/basin_extraction.param"
     params:

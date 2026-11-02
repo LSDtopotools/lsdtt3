@@ -16,6 +16,13 @@ Set up the Snakemake environment first: see [Workflows](workflows.md#setting-up)
 The methods themselves are described in
 [Floodplains, terraces and valleys](../design_and_algorithms/fluvial_surfaces_and_valleys.md).
 
+!!! warning "Figures need lsdviztools3"
+    The figures listed on this page are drawn only if
+    [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) is installed
+    and the workflow can find it ([how to set it up](workflows.md#setting-up),
+    step 4). Without it the run says the figures were skipped and writes
+    everything else.
+
 ---
 
 ## Quick start

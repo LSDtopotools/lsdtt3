@@ -3,12 +3,14 @@
 # Per region (rules in common_regions.smk for the first two):
 #   1. (optional) lsdtt-fetch-raster fetches the DEM, for regions with a
 #      `fetch:` block instead of a `file:`;
-#   2. lsdtt-basin-extraction picks the basins (by default every complete,
-#      non-nested basin above a minimum area) and writes their outlets;
+#   2. lsdtt-basin-extraction makes the basins: above the region's own outlet
+#      points (basin_outlet_fname: CSV, FlatGeobuf or GeoPackage), or, without
+#      them, every complete, non-nested basin above a minimum area;
 #   3. lsdtt-chi-analysis runs on those basins: chi, k_sn, m/n disorder and
 #      the piecewise chi fits;
-#   4. when lsdviztools3 is found (see `figures`), a map of the chi
-#      coordinate draped on the shaded DEM.
+#   4. when lsdviztools3 is found (see `figures`): a k_sn map, a stacked
+#      chi-elevation plot of the basins, and the chi coordinate over the
+#      shaded DEM.
 #
 # Configuration: config/chi_region.yaml. Outputs:
 #   results/<run_id>/<region>/chi/       lsdtt-chi-analysis outputs
@@ -35,8 +37,10 @@ def chi_region_text(wc):
         "basin_outlet_snapping_method": "none",
     }
     user = rg_block(wc, "chi_analysis")
-    if figures_enabled():
-        user["write_chi_coordinate_raster"] = True   # the chi map draws it
+    if lsdviz3_has("lsdviz3-chi"):
+        # what the figures draw: the chi raster, the fitted network and its tables
+        user.update({"write_chi_coordinate_raster": True, "fit_chi_networks": True,
+                     "write_fit_tables": True, "write_chi_fit_segment_lines": True})
     return render_param_file(
         f"chi_region ({wc.region}, chi_analysis)",
         io_block(rg_dem(wc), f"{ROOT}/{RUN_ID}/{wc.region}/chi", wc.region),
@@ -82,16 +86,30 @@ rule chi_region_figures:
         readme=f"{RG_DIR}/chi/{{region}}_README.csv",
         dem=rg_dem
     output:
+        ksn=f"{RG_DIR}/figures/{{region}}_ksn_map.png",
+        stacked=f"{RG_DIR}/figures/{{region}}_chi_stacked.png",
         chi=f"{RG_DIR}/figures/{{region}}_chi_coordinate.png"
     log:
-        f"{RG_DIR}/logs/figures_chi.log"
+        chi_plots=f"{RG_DIR}/logs/figures_chi_plots.log",
+        chi_map=f"{RG_DIR}/logs/figures_chi_map.log"
     params:
-        chi=lambda wc: f"{ROOT}/{RUN_ID}/{wc.region}/chi/{wc.region}_chi_coordinate_mn_{mn_suffix(wc, 'chi_analysis')}.tif"
+        chi_dir=lambda wc: f"{ROOT}/{RUN_ID}/{wc.region}/chi",
+        out_dir=lambda wc: f"{ROOT}/{RUN_ID}/{wc.region}/figures",
+        mn=lambda wc: mn_suffix(wc, "chi_analysis"),
+        per_basin=lambda wc: bool(RG.get("figures_per_basin_profiles", False))
     message:
         "chi_region [{wildcards.region}]: figures (lsdviztools3)"
     run:
-        run_lsdviz3(log[0], "lsdviz3-drape", "--base", input.dem, "--shade-base",
-                    "--drape", params.chi, "--out", output.chi, "--cmap", "viridis",
+        # k_sn of the fitted segments over the hillshade, and the stacked
+        # chi-elevation plot of every basin (plus one profile per basin when
+        # figures_per_basin_profiles is true).
+        run_lsdviz3(log.chi_plots, "lsdviz3-chi", "--data-dir", params.chi_dir,
+                    "--prefix", wildcards.region, "--m-over-n", params.mn,
+                    "--dem", input.dem, "--out-dir", params.out_dir,
+                    *(["--per-basin"] if params.per_basin else []))
+        chi_raster = f"{params.chi_dir}/{wildcards.region}_chi_coordinate_mn_{params.mn}.tif"
+        run_lsdviz3(log.chi_map, "lsdviz3-drape", "--base", input.dem, "--shade-base",
+                    "--drape", chi_raster, "--out", output.chi, "--cmap", "viridis",
                     "--colorbar", "--colorbar-label", "chi (m)")
 
 
@@ -99,8 +117,8 @@ def chi_region_targets():
     if RG_SECTION != "chi_region":
         return []
     outs = [f"{ROOT}/{RUN_ID}/{r}/chi/{r}_README.csv" for r in RG_ITEMS]
-    if figures_enabled():
-        outs += [f"{ROOT}/{RUN_ID}/{r}/figures/{r}_chi_coordinate.png" for r in RG_ITEMS]
+    if lsdviz3_has("lsdviz3-chi"):
+        outs += [f"{ROOT}/{RUN_ID}/{r}/figures/{r}_chi_stacked.png" for r in RG_ITEMS]
     return outs
 
 

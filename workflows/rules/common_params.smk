@@ -258,3 +258,35 @@ def run_lsdviz3(log, command, *args):
         tail = Path(log).read_text(encoding="utf-8").splitlines()[-25:]
         print("\n".join(tail), file=_sys.stderr)
         raise RuntimeError(f"{command} failed (exit {result.returncode}); log: {log}")
+
+
+def lsdviz3_has(command):
+    """Whether this lsdviztools3 provides `command` (checked once, cached like the probe).
+
+    For commands newer than lsdviz3-drape: an older lsdviztools3 passes the main
+    probe but lacks them. auto skips those figures with a message; true stops.
+    """
+    if not figures_enabled():
+        return False
+    key = f"has:{command}"
+    if key in _FIGURES_STATE:
+        return _FIGURES_STATE[key]
+    env_key = "LSDTT_WORKFLOW_HAS_" + command.upper().replace("-", "_")
+    cached = _os.environ.get(env_key)
+    if cached in ("0", "1"):
+        found = cached == "1"
+    else:
+        try:
+            found = _subprocess.run(lsdviz3_argv(command, "--help"), env=_figure_env(),
+                                    capture_output=True, timeout=600).returncode == 0
+        except (OSError, _subprocess.TimeoutExpired):
+            found = False
+        _os.environ[env_key] = "1" if found else "0"
+        if not found:
+            message = (f"lsdviztools3 was found but has no {command}; update lsdviztools3 "
+                       f"(git pull, then pixi run install) for these figures")
+            if _figures_mode() == "true":
+                raise ValueError(f"figures.enabled is true but {message}")
+            print(f"Figures skipped: {message}.", file=_sys.stderr)
+    _FIGURES_STATE[key] = found
+    return found

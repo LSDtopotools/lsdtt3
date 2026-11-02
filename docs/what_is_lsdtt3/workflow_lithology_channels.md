@@ -29,6 +29,13 @@ and [Channel-link bearing statistics](../design_and_algorithms/channel_bearing_s
 
 Set up the Snakemake environment first: see [Workflows](workflows.md#setting-up).
 
+!!! warning "Figures need lsdviztools3"
+    The figures listed on this page are drawn only if
+    [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) is installed
+    and the workflow can find it ([how to set it up](workflows.md#setting-up),
+    step 4). Without it the run says the figures were skipped and writes
+    everything else.
+
 ## Quick start
 
 ```bash
@@ -43,7 +50,10 @@ Macrostrat coverage is most complete in North America; elsewhere check
 
 ## Your own region
 
-Regions are given as in the [chi workflow](workflow_chi_region.md#your-own-region).
+Regions, and your own outlet points (`basin_outlet_fname`: CSV, FlatGeobuf
+or GeoPackage), are given as in the
+[chi workflow](workflow_chi_region.md#your-own-region); see
+[Your own outlets](workflow_chi_region.md#your-own-outlets).
 lsdtt lays the lithology polygons on the DEM grid without reprojecting them,
 so the map has to come back in the DEM's coordinate system:
 

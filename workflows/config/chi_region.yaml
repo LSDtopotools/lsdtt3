@@ -12,8 +12,8 @@
 # parameters is copied into that CLI's parameter file as written; any
 # parameter in the CLI's reference page (or its -h output) can be added. The
 # workflow sets read_path, read_fname, write_path, write_fname,
-# write_selected_basin_outlets_csv, basin_outlet_fname and
-# basin_outlet_snapping_method itself.
+# write_selected_basin_outlets_csv, select_basins_from_outlets, and (in the
+# chi analysis) basin_outlet_fname and basin_outlet_snapping_method itself.
 
 workflow_name: "chi_region"
 run_id: "chi-region-example"        # outputs go to workflows/results/<run_id>/
@@ -40,6 +40,7 @@ chi_region:
         dem_source: "cop30_aws"
     # my_area:
     #   file: "my_dem.tif"
+    #   basin_outlet_fname: "/data/my_outlets.gpkg"   # this region's own outlets
     #   chi_analysis:
     #     m_over_n: 0.5
   # With no `regions`, every dem_glob file in dem_dir is a region.
@@ -50,10 +51,26 @@ chi_region:
   shared_parameters:
     threshold_contributing_pixels: 1000
 
-  # --- lsdtt-basin-extraction: which basins -----------------------------------
-  # Every complete (not cut by the DEM edge), non-nested basin of at least
-  # basins_min_area_pixels. To analyse your own outlets instead, replace these
-  # with select_basins_from_outlets: true and basin_outlet_fname: <file>.
+  # --- which basins: your own outlets ------------------------------------------
+  # Outlet points as a CSV (latitude and longitude columns, WGS84), FlatGeobuf
+  # (.fgb) or GeoPackage (.gpkg); give an absolute path. One basin is made above
+  # each point. Set it here for every region, or under a region for that region
+  # only. Points outside a region's DEM are skipped.
+  # basin_outlet_fname: "/data/my_outlets.csv"
+
+  # lsdtt-basin-extraction parameters used when there are outlets: how each
+  # point is moved onto the channel network.
+  basin_extraction_from_outlets:
+    basin_outlet_snapping_method: "downstream"
+    basin_outlet_contributing_pixels_threshold: 1000
+    basin_outlet_snap_max_search_radius_pixels: 25
+    write_basin_outlet_points: true
+    write_basin_outlines: true
+    write_basin_outlines_as_polygon: true
+
+  # --- which basins: picked automatically ---------------------------------------
+  # Used when a region has no outlets: every complete (not cut by the DEM
+  # edge), non-nested basin of at least basins_min_area_pixels.
   basin_extraction:
     select_all_basins: true
     filter_incomplete_basins: true
@@ -62,6 +79,9 @@ chi_region:
     basins_min_area_pixels: 5000
     write_basin_outlines: true
     write_basin_outlines_as_polygon: true
+
+  # With figures: also one chi-elevation profile per basin.
+  figures_per_basin_profiles: false
 
   # --- lsdtt-chi-analysis -------------------------------------------------------
   chi_analysis:
@@ -77,7 +97,9 @@ chi_region:
     write_chi_data_maps: true
     write_output_format: "gtiff"
 
-# Figures (lsdviztools3: the chi coordinate draped on the shaded DEM). auto draws them when lsdviztools3 is found
+# Figures (lsdviztools3: a k_sn map of the fitted channel segments, a stacked
+# chi-elevation plot of the basins, and the chi coordinate over the shaded
+# DEM; they need m_over_n set above). auto draws them when lsdviztools3 is found
 # and skips them when it is not; true requires it; false never looks.
 # See config/config.yaml.
 figures:

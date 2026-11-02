@@ -43,6 +43,7 @@ lithology_channels:
     # my_area:
     #   file: "my_dem.tif"
     #   epsg: 32617
+    #   basin_outlet_fname: "/data/my_outlets.gpkg"
   dem_dir: "dems"
   dem_glob: "*.tif"
 
@@ -53,7 +54,18 @@ lithology_channels:
   fetch_lithology:
     macrostrat_tile_zoom: 10         # higher = more detailed polygons, more tiles
 
-  # --- lsdtt-basin-extraction ---------------------------------------------------
+  # --- which basins ---------------------------------------------------------------
+  # Your own outlets (CSV with latitude/longitude, .fgb or .gpkg; absolute path),
+  # here for every region or under one region:
+  # basin_outlet_fname: "/data/my_outlets.csv"
+  # lsdtt-basin-extraction parameters used with outlets:
+  basin_extraction_from_outlets:
+    basin_outlet_snapping_method: "downstream"
+    basin_outlet_contributing_pixels_threshold: 1000
+    basin_outlet_snap_max_search_radius_pixels: 25
+    write_basin_outlines: true
+    write_basin_outlines_as_polygon: true
+  # ... and without outlets (every complete, non-nested basin above a size):
   basin_extraction:
     select_all_basins: true
     filter_incomplete_basins: true

@@ -18,8 +18,10 @@ runs the tools in order, and reruns only what a change affects.
 
 ## Setting up
 
-You need three things: the lsdtt3 repository, the command-line tools, and the
-Snakemake environment.
+You need three things to run the analyses: the lsdtt3 repository, the
+command-line tools, and the Snakemake environment. **For figures you also need
+lsdviztools3** (step 4), a separate install. Without it the workflows still run
+and write every table, raster and vector file, but draw no figures.
 
 **1. The repository.** The workflows are files in the repository, not part of
 the installed package:
@@ -53,6 +55,32 @@ pixi run -e workflows snakemake --version
 The second command prints the Snakemake version, which means the environment is ready.
 `pixi install` is needed only once; `pixi run -e workflows` uses the
 environment without activating anything.
+
+**4. lsdviztools3, for figures (optional).** The Snakemake environment holds no
+plotting software. Every figure is drawn by a command from
+[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3)
+(`lsdviz3-valley-widths`, `lsdviz3-drape`, `lsdviz3-lithology-map`, ...), which
+lives in its own pixi environment with GMT, PyGMT and geopandas, roughly 2 GB.
+Install it next to lsdtt3:
+
+```bash
+cd ..        # the folder that holds lsdtt3
+git clone https://github.com/LSDtopotools/lsdviztools3.git
+cd lsdviztools3
+pixi install
+pixi run install
+pixi run lsdviz3-drape --help      # prints the help: lsdviztools3 is ready
+```
+
+Then tell the workflow how to run it, in the `figures` block of your config:
+
+```yaml
+figures:
+  lsdviz3_command_prefix: "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+```
+
+If lsdviztools3's commands are already on your `PATH`, leave the prefix empty.
+See [Figures](#figures) for what happens when lsdviztools3 is not found.
 
 ---
 
@@ -167,9 +195,10 @@ The package must include every tool the module uses.
 
 `valley_widths`, `chi_region` and `lithology_channels` can also draw figures,
 using the `lsdviz3-*` commands of
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3). lsdviztools3 is
-a separate install with a much larger environment (GMT, PyGMT, geopandas), so
-the workflows do not depend on it. They look for it once per run, and the
+[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3). **The figures
+need lsdviztools3 installed** (see [Setting up](#setting-up), step 4); it is a
+separate install with a much larger environment (GMT, PyGMT, geopandas), so
+the workflows do not depend on it for anything else. They look for it once per run, and the
 `figures` block of the config decides what happens:
 
 ```yaml
