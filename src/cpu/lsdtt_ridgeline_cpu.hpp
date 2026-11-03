@@ -54,6 +54,25 @@ struct lsdtt_ridgeline_topological_flowpath
     std::int64_t junction_flat = -1;
 };
 
+struct lsdtt_ridgeline_topological_distance
+{
+    float distance = -9999.0f;
+    std::int64_t junction_flat = -1;
+};
+
+struct lsdtt_ridgeline_triple_divide
+{
+    int node_index = -1;
+    std::array<std::int32_t, 4> surrounding_junctions{{-1, -1, -1, -1}};
+};
+
+struct lsdtt_ridgeline_topological_triple_divide
+{
+    int node_index = -1;
+    lsdtt_ridgeline_topological_distance left;
+    lsdtt_ridgeline_topological_distance right;
+};
+
 // =============================================================================
 // lsdtt_ridgeline_cpu
 // =============================================================================
@@ -229,12 +248,13 @@ public:
     // Return internal divide nodes that are triple/quadruple junctions, either
     // by the surrounding-basin test or by the left/right flow-topological
     // distance threshold.
-    [[nodiscard]] std::vector<int> get_triple_divide_node_indices(
+    [[nodiscard]] std::vector<lsdtt_ridgeline_triple_divide> get_triple_divides(
         const lsdtt_flow_base&             flow,
         const lsdtt_junction_network_base& junction_network
     ) const;
 
-    [[nodiscard]] std::vector<int> get_topological_distance_triple_divide_node_indices(
+    [[nodiscard]] std::vector<lsdtt_ridgeline_topological_triple_divide>
+    get_topological_distance_triple_divides(
         const lsdtt_flow_base& flow,
         float                  threshold
     ) const;

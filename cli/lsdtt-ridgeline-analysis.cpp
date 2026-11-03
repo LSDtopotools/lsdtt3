@@ -79,7 +79,6 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_basin_manager_cpu.hpp"
-#include "../src/cpu/lsdtt_zero_order_basin_manager_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../src/cpu/lsdtt_junction_network_cpu.hpp"
 #include "../src/cpu/lsdtt_paired_flowpaths_cpu.hpp"
@@ -875,28 +874,16 @@ int main(int argc, char* argv[])
         "The surrounding-basin test is used.",
         "Triple divide outputs", "switch", ""};
 
-    bool_default_map["write_zero_order_triple_divides_on_selected_ridglines"] = false;
-    help_map["write_zero_order_triple_divides_on_selected_ridglines"] = {"bool", "false",
-        "Write triple divide join/leave nodes bounding zero-order basins.",
-        "Uses the existing basin-outline traversal; zero-order means a first-order source basin in the Strahler network.",
-        "Triple divide outputs", "switch", ""};
-
-    bool_default_map["write_zero_order_basins_touching_selected_ridgelines"] = false;
-    help_map["write_zero_order_basins_touching_selected_ridgelines"] = {"bool", "false",
-        "Write source-based zero-order basin outlines that touch selected ridgelines.",
-        "Uses the same exact ridgeline-grid contact test as zero-order TDJ detection.",
-        "Triple divide outputs", "switch", ""};
-
     bool_default_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = false;
     help_map["write_topological_distance_triple_divides_on_selected_ridgelines"] = {"bool", "false",
-        "Write nodes where either flanking flow topological distance exceeds the threshold.",
-        "Results are written with the other selected triple-divide modes in one metadata-compatible layer.",
+        "Write nodes where the maximum left/right flow topological distance exceeds the threshold.",
+        "Writes separate per-threshold CSV and point/paired-path FlatGeobuf outputs.",
         "Triple divide outputs", "switch", ""};
 
     float_default_map["topological_distance_triple_divide_threshold"] = 0.0f;
     help_map["topological_distance_triple_divide_threshold"] = {"float", "0.0",
         "Flow topological distance threshold for topological triple divides.",
-        "A node qualifies when the left OR right distance is greater than this value.",
+        "A node qualifies when max(left distance, right distance) is greater than this value.",
         "Triple divide outputs", "param", ""};
 
     string_default_map["topological_distance_triple_divide_thresholds"] = "";
@@ -909,7 +896,7 @@ int main(int argc, char* argv[])
 
     string_default_map["native_tdj_channel_thresholds"] = "";
     help_map["native_tdj_channel_thresholds"] = {"string", "",
-        "Comma-separated channel-area thresholds in square metres for native TDJs.",
+        "Comma-separated contributing-pixel thresholds for native TDJs.",
         "Native TDJs are recalculated on the selected ridgelines for each value.",
         "Triple divide outputs", "param", ""};
 
@@ -1498,9 +1485,8 @@ int main(int argc, char* argv[])
     jn_opts.build_s_vector          = true;
     
     lsdtt::lsdtt_junction_network_cpu junction_network;
-    std::vector<std::int64_t> source_flats;
     try {
-        source_flats = flow->get_sources_index_threshold(
+        const std::vector<std::int64_t> source_flats = flow->get_sources_index_threshold(
             ifs["threshold_contributing_pixels"]);
         junction_network.create(*flow, source_flats, jn_opts);
     } catch (const std::exception& e) {
@@ -2396,334 +2382,6 @@ int main(int argc, char* argv[])
     }
 
     // =========================================================================
-    // Phase 5a - Consolidated triple-divide point outputs
-    //
-    // This deliberately runs on the selected/extracted ridgeline geometry,
-    // before profile processing can alter any node positions.
-    // =========================================================================
-    if (bf["write_triple_divides_on_selected_ridgelines"] ||
-        bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
-        bf["write_zero_order_basins_touching_selected_ridgelines"] ||
-        bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
-    {
-        std::cout << "\n--- Writing selected-ridgeline triple divides ---\n";
-        struct triple_point
-        {
-            std::size_t ridgeline_index;
-            int node_index;
-            std::string mode;
-            float threshold = std::numeric_limits<float>::quiet_NaN();
-        };
-        std::vector<triple_point> points;
-        std::set<std::size_t> touching_zero_order_basin_indices;
-        struct topological_flowpath_point
-        {
-            std::size_t ridgeline_index;
-            int node_index;
-            float threshold;
-            lsdtt::lsdtt_ridgeline_topological_flowpath flowpath;
-        };
-        std::vector<topological_flowpath_point> topological_flowpaths;
-        std::set<std::string> seen;
-
-        auto add_point = [&](std::size_t r, int n, const std::string& mode,
-                             float threshold = std::numeric_limits<float>::quiet_NaN())
-        {
-            if (n < 0 || static_cast<std::size_t>(n) >= all_ridgelines[r].ridgeline.size()) return;
-            const std::string key = std::to_string(r) + ":" + std::to_string(n) + ":" +
-                mode + ":" + (std::isnan(threshold) ? "none" : std::to_string(threshold));
-            if (seen.insert(key).second) points.push_back({r, n, mode, threshold});
-        };
-
-        std::unique_ptr<lsdtt::lsdtt_zero_order_basin_manager_cpu> zero_order_basins;
-        if (bf["write_zero_order_triple_divides_on_selected_ridglines"] ||
-            bf["write_zero_order_basins_touching_selected_ridgelines"])
-        {
-            zero_order_basins = std::make_unique<lsdtt::lsdtt_zero_order_basin_manager_cpu>(
-                *flow);
-            zero_order_basins->select_all_zero_order_basins(source_flats);
-        }
-
-        if (bf["write_triple_divides_on_selected_ridgelines"])
-        {
-            for (const int threshold : native_tdj_thresholds)
-            {
-                const std::vector<std::int64_t> native_sources =
-                    flow->get_sources_index_threshold(threshold);
-                lsdtt::lsdtt_junction_network_cpu native_network;
-                native_network.create(*flow, native_sources, jn_opts);
-                for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
-                {
-                    for (const int node : all_ridgelines[r].ridgeline
-                             .get_triple_divide_node_indices(*flow, native_network))
-                        add_point(r, node, "native_threshold", static_cast<float>(threshold));
-                }
-            }
-        }
-
-        for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
-        {
-            const auto& rec = all_ridgelines[r];
-            if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
-            {
-                for (const float threshold : topological_distance_thresholds)
-                {
-                    for (int n = 1; n + 1 < static_cast<int>(rec.ridgeline.size()); ++n)
-                    {
-                        const auto flowpaths = rec.ridgeline
-                            .get_topological_distance_flowpaths(*flow, n);
-                        std::set<std::string> qualifying_sides;
-                        for (const auto& flowpath : flowpaths)
-                        {
-                            if (flowpath.pair_distance > threshold)
-                                qualifying_sides.insert(flowpath.side);
-                        }
-                        for (const auto& side : qualifying_sides)
-                        {
-                            add_point(r, n, "topological_distance_" + side, threshold);
-                            for (const auto& flowpath : flowpaths)
-                                if (flowpath.side == side)
-                                    topological_flowpaths.push_back({r, n, threshold, flowpath});
-                        }
-                    }
-                }
-            }
-
-            if (bf["write_zero_order_triple_divides_on_selected_ridglines"])
-            {
-                for (std::size_t bi = 0; bi < zero_order_basins->size(); ++bi)
-                {
-                const auto& basin = zero_order_basins->basin_at(bi);
-                const auto outline = basin.get_basin_outline();
-                const auto& outline_nodes = outline.outline_divide_rc();
-                std::vector<int> contact_ridge_nodes(outline_nodes.size(), -1);
-                for (std::size_t oi = 0; oi < outline_nodes.size(); ++oi)
-                {
-                    for (std::size_t n = 0; n < rec.ridgeline.nodes().size(); ++n)
-                    {
-                        const auto& ridge_node = rec.ridgeline.nodes()[n];
-                        if (ridge_node.row == outline_nodes[oi].row &&
-                            ridge_node.col == outline_nodes[oi].col)
-                        {
-                            contact_ridge_nodes[oi] = static_cast<int>(n);
-                            break;
-                        }
-                    }
-                }
-
-                if (!contact_ridge_nodes.empty())
-                {
-                    const bool closed = outline.outlet_is_diagonal() &&
-                        contact_ridge_nodes.size() > 1 &&
-                        contact_ridge_nodes.front() == contact_ridge_nodes.back();
-                    const std::size_t n_outline = closed
-                        ? contact_ridge_nodes.size() - 1 : contact_ridge_nodes.size();
-                    if (n_outline > 0)
-                    {
-                        for (std::size_t oi = 0; oi < n_outline; ++oi)
-                        {
-                            const bool on_contact = contact_ridge_nodes[oi] >= 0;
-                            const bool previous_contact = oi > 0
-                                ? contact_ridge_nodes[oi - 1] >= 0
-                                : (closed ? contact_ridge_nodes[n_outline - 1] >= 0 : false);
-                            const bool next_contact = oi + 1 < n_outline
-                                ? contact_ridge_nodes[oi + 1] >= 0
-                                : (closed ? contact_ridge_nodes[0] >= 0 : false);
-
-                            if (on_contact &&
-                                (bf["write_zero_order_basins_touching_selected_ridgelines"] ||
-                                 !previous_contact))
-                                touching_zero_order_basin_indices.insert(bi);
-                            if (on_contact && !previous_contact &&
-                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
-                                add_point(r, contact_ridge_nodes[oi], "zero_order_join");
-                            if (on_contact && !next_contact &&
-                                bf["write_zero_order_triple_divides_on_selected_ridglines"])
-                                add_point(r, contact_ridge_nodes[oi], "zero_order_leave");
-                        }
-                    }
-                }
-                }
-            }
-        }
-
-        try
-        {
-            if (bf["write_zero_order_basins_touching_selected_ridgelines"])
-            {
-                lsdtt::lsdtt_vector_schema basin_schema;
-                basin_schema.field_names = {"zero_order_id", "source_flat"};
-                basin_schema.field_types = {
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type};
-                lsdtt::lsdtt_data_loader basin_loader;
-                basin_loader.begin_vector_write(
-                    pp.make_output_path("_zero_order_basins_touching_ridgelines", ".fgb"),
-                    "zero_order_basins_touching_ridgelines", basin_schema,
-                    dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf, true);
-                for (const std::size_t basin_index : touching_zero_order_basin_indices)
-                {
-                    const auto& basin = zero_order_basins->basin_at(basin_index);
-                    const auto outline = basin.get_basin_outline();
-                    const auto record = outline.get_outline_as_line_record(
-                        static_cast<std::int32_t>(basin_index));
-                    if (std::holds_alternative<std::monostate>(record.geometry)) continue;
-                    const auto& line = std::get<lsdtt::lsdtt_line_geom>(record.geometry);
-                    if (line.points.size() < 2) continue;
-                    basin_loader.write_line(line.points, {
-                        static_cast<std::int64_t>(basin_index),
-                        basin.get_basin_outlet_flat_index()});
-                }
-                basin_loader.finish_vector_write();
-                std::cout << "Wrote " << touching_zero_order_basin_indices.size()
-                          << " zero-order basin outlines touching selected ridgelines.\n";
-            }
-
-            const std::vector<std::string> headers = {
-                "ridgeline_number", "ridgeline_type", "triple_divide_mode",
-                "node_index", "distance_along_ridgeline_m", "elevation",
-                "primary_junction", "secondary_junction", "latitude", "longitude"
-            };
-            lsdtt::lsdtt_coordinate_transform to_wgs84;
-            to_wgs84.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
-            auto write_points = [&](const std::string& suffix,
-                                    const std::set<std::string>& modes,
-                                    float threshold = std::numeric_limits<float>::quiet_NaN())
-            {
-                lsdtt::lsdtt_vector_schema schema;
-                schema.field_names = {
-                    "ridgeline_number", "ridgeline_type", "triple_divide_mode",
-                    "node_index", "distance_along_ridgeline_m", "elevation",
-                    "primary_junction", "secondary_junction"
-                };
-                schema.field_types = {
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::string_type,
-                    lsdtt::lsdtt_vector_field_type::string_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::double_type,
-                    lsdtt::lsdtt_vector_field_type::double_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type
-                };
-                lsdtt::lsdtt_data_loader vector_loader;
-                std::vector<std::vector<std::string>> csv_rows;
-                std::size_t count = 0;
-                const std::string fgb_path = pp.make_output_path(suffix, ".fgb");
-                vector_loader.begin_vector_write(
-                    fgb_path, "triple_divides", schema, dem.get_meta().crs_wkt,
-                    lsdtt::vector_output_format::flatgeobuf, true);
-                for (const auto& p : points)
-                {
-                    if (modes.count(p.mode) == 0) continue;
-                    if (std::isnan(threshold))
-                    {
-                        if (!std::isnan(p.threshold)) continue;
-                    }
-                    else if (std::isnan(p.threshold) || p.threshold != threshold)
-                    {
-                        continue;
-                    }
-                    const auto& rec = all_ridgelines[p.ridgeline_index];
-                    const auto& rl = rec.ridgeline;
-                    const auto& xy = rl.positions()[static_cast<std::size_t>(p.node_index)];
-                    const auto ll = lsdtt::xy_to_lonlat(xy.x, xy.y, to_wgs84);
-                    const std::int64_t rid = rec.ridgeline_number;
-                    const float elevation = (static_cast<std::size_t>(p.node_index) < rl.elevations().size())
-                        ? rl.elevations()[static_cast<std::size_t>(p.node_index)] : dem.get_meta().no_data_value;
-                    csv_rows.push_back({
-                        std::to_string(rid), rec.feature_type, p.mode,
-                        std::to_string(p.node_index), lsdtt::csv_number(rl.distances()[p.node_index]),
-                        lsdtt::csv_number(elevation), std::to_string(rec.primary_id),
-                        std::to_string(rec.secondary_id), lsdtt::csv_number(ll.latitude),
-                        lsdtt::csv_number(ll.longitude)
-                    });
-                    vector_loader.write_point(xy.x, xy.y, {
-                        rid, rec.feature_type, p.mode,
-                        static_cast<std::int64_t>(p.node_index), rl.distances()[p.node_index],
-                        static_cast<double>(elevation), static_cast<std::int64_t>(rec.primary_id),
-                        static_cast<std::int64_t>(rec.secondary_id)
-                    });
-                    ++count;
-                }
-                vector_loader.finish_vector_write();
-                lsdtt::lsdtt_data_loader csv_loader;
-                csv_loader.write_csv(pp.make_output_path(suffix, ".csv"), headers, csv_rows);
-                std::cout << "Wrote " << count << " triple-divide points to " << suffix << ".\n";
-            };
-
-            for (const int threshold : native_tdj_thresholds)
-                write_points(
-                    "_native_triple_divides_area_" + std::to_string(threshold) + "m2",
-                    {"native_threshold"}, static_cast<float>(threshold));
-            write_points("_zero_order_triple_divides", {"zero_order_join", "zero_order_leave"});
-            auto threshold_label = [](float threshold)
-            {
-                std::ostringstream label;
-                label << std::fixed << std::setprecision(6) << threshold;
-                std::string value = label.str();
-                while (!value.empty() && value.back() == '0') value.pop_back();
-                if (!value.empty() && value.back() == '.') value.pop_back();
-                return value;
-            };
-            auto write_flowpaths = [&](float threshold)
-            {
-                lsdtt::lsdtt_vector_schema schema;
-                schema.field_names = {
-                    "ridgeline_number", "ridgeline_type", "node_index",
-                    "threshold_m", "side", "branch",
-                    "topological_distance_m", "junction_flat"};
-                schema.field_types = {
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::string_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type,
-                    lsdtt::lsdtt_vector_field_type::double_type,
-                    lsdtt::lsdtt_vector_field_type::string_type,
-                    lsdtt::lsdtt_vector_field_type::string_type,
-                    lsdtt::lsdtt_vector_field_type::double_type,
-                    lsdtt::lsdtt_vector_field_type::int64_type};
-                lsdtt::lsdtt_data_loader loader;
-                loader.begin_vector_write(
-                    pp.make_output_path(
-                        "_topological_distance_paired_flowpaths_" +
-                        threshold_label(threshold) + "m", ".fgb"),
-                    "paired_flowpaths", schema, dem.get_meta().crs_wkt,
-                    lsdtt::vector_output_format::flatgeobuf, true);
-                for (const auto& record : topological_flowpaths)
-                {
-                    if (record.threshold != threshold) continue;
-                    const auto& ridge = all_ridgelines[record.ridgeline_index];
-                    if (record.flowpath.positions.size() < 2) continue;
-                    loader.write_line(record.flowpath.positions, {
-                        static_cast<std::int64_t>(ridge.ridgeline_number),
-                        ridge.feature_type,
-                        static_cast<std::int64_t>(record.node_index),
-                        static_cast<double>(threshold),
-                        record.flowpath.side,
-                        record.flowpath.branch,
-                        static_cast<double>(record.flowpath.pair_distance),
-                        record.flowpath.junction_flat});
-                }
-                loader.finish_vector_write();
-            };
-            if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
-                for (const float threshold : topological_distance_thresholds)
-                {
-                    write_points(
-                        "_topological_distance_triple_divides_" +
-                            threshold_label(threshold) + "m",
-                        {"topological_distance_left", "topological_distance_right"}, threshold);
-                    write_flowpaths(threshold);
-                }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Fatal Error writing triple-divide outputs: " << e.what() << "\n";
-            return 1;
-        }
-    }
-
-    // =========================================================================
     // Phase 5b - Paired flow path statistics (Goren & Shelef 2024)
     //
     // Runs on the RAW ridgeline geometry, before Phase 6 fills elevations and
@@ -2944,6 +2602,248 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Fatal Error processing ridgelines: " << e.what() << "\n";
         return 1;
+    }
+
+    // =========================================================================
+    // Phase 6b - Triple-divide outputs on final processed ridgelines
+    // =========================================================================
+    if (bf["write_triple_divides_on_selected_ridgelines"] ||
+        bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
+    {
+        std::cout << "\n--- Writing selected-ridgeline triple divides ---\n";
+        try
+        {
+            lsdtt::lsdtt_coordinate_transform to_wgs84;
+            to_wgs84.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+            lsdtt::lsdtt_coordinate_transform from_wgs84;
+            from_wgs84.initialise_from_source_epsg(4326, dem.get_meta().crs_wkt);
+            const double csv_nodata = dem.get_meta().no_data_value;
+            const std::string csv_nodata_text = lsdtt::csv_number(csv_nodata);
+            auto threshold_label = [](float threshold)
+            {
+                std::ostringstream label;
+                label << std::fixed << std::setprecision(6) << threshold;
+                std::string value = label.str();
+                while (!value.empty() && value.back() == '0') value.pop_back();
+                if (!value.empty() && value.back() == '.') value.pop_back();
+                return value;
+            };
+            auto node_coordinates = [](const lsdtt::lsdtt_ridgeline_cpu& ridge,
+                                      int node_index)
+            {
+                const auto& node = ridge.nodes()[static_cast<std::size_t>(node_index)];
+                return std::pair<int, int>{node.row, node.col};
+            };
+            auto ridge_ll = [&](const lsdtt::lsdtt_ridgeline_cpu& ridge,
+                                int node_index)
+            {
+                const auto& xy = ridge.positions()[static_cast<std::size_t>(node_index)];
+                return lsdtt::xy_to_lonlat(xy.x, xy.y, to_wgs84);
+            };
+            auto point_common = std::vector<std::string>{
+                "ridgeline_number", "ridgeline_type", "row", "col",
+                "distance_along_ridgeline_m", "elevation", "latitude", "longitude"};
+            auto write_point_layer = [&](const std::string& suffix,
+                                         const std::vector<std::string>& headers,
+                                         const std::vector<std::vector<std::string>>& rows)
+            {
+                lsdtt::lsdtt_vector_schema schema;
+                schema.field_names = headers;
+                schema.field_types.reserve(headers.size());
+                for (const auto& header : headers)
+                {
+                    if (header == "ridgeline_number" || header == "row" || header == "col")
+                        schema.field_types.push_back(lsdtt::lsdtt_vector_field_type::int64_type);
+                    else if (header == "ridgeline_type")
+                        schema.field_types.push_back(lsdtt::lsdtt_vector_field_type::string_type);
+                    else
+                        schema.field_types.push_back(lsdtt::lsdtt_vector_field_type::double_type);
+                }
+                lsdtt::lsdtt_data_loader loader;
+                loader.begin_vector_write(
+                    pp.make_output_path(suffix, ".fgb"), "triple_divides", schema,
+                    dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf, true);
+                for (const auto& row : rows)
+                {
+                    const auto xy = from_wgs84.transform_xy(
+                        std::stod(row[7]), std::stod(row[6]));
+                    std::vector<lsdtt::lsdtt_vector_field_value> fields;
+                    fields.reserve(row.size());
+                    for (std::size_t i = 0; i < row.size(); ++i)
+                    {
+                        if (headers[i] == "ridgeline_number" || headers[i] == "row" || headers[i] == "col")
+                            fields.emplace_back(static_cast<std::int64_t>(std::stoll(row[i])));
+                        else if (headers[i] == "ridgeline_type")
+                            fields.emplace_back(row[i]);
+                        else
+                            fields.emplace_back(std::stod(row[i]));
+                    }
+                    loader.write_point(xy.x, xy.y, fields);
+                }
+                loader.finish_vector_write();
+            };
+
+            if (bf["write_triple_divides_on_selected_ridgelines"])
+            {
+                for (const int threshold : native_tdj_thresholds)
+                {
+                    const auto native_sources = flow->get_sources_index_threshold(threshold);
+                    lsdtt::lsdtt_junction_network_cpu native_network;
+                    native_network.create(*flow, native_sources, jn_opts);
+                    std::vector<std::vector<std::string>> rows;
+                    for (const auto& rec : all_ridgelines)
+                    {
+                        const auto divides = rec.ridgeline.get_triple_divides(
+                            *flow, native_network);
+                        for (const auto& divide : divides)
+                        {
+                            const int n = divide.node_index;
+                            const auto [row, col] = node_coordinates(rec.ridgeline, n);
+                            const auto ll = ridge_ll(rec.ridgeline, n);
+                            const float elevation = static_cast<std::size_t>(n) < rec.ridgeline.elevations().size()
+                                ? rec.ridgeline.elevations()[static_cast<std::size_t>(n)]
+                                : static_cast<float>(dem.get_meta().no_data_value);
+                            std::vector<std::string> output = {
+                                std::to_string(rec.ridgeline_number), rec.feature_type,
+                                std::to_string(row), std::to_string(col),
+                                lsdtt::csv_number(rec.ridgeline.distances()[static_cast<std::size_t>(n)]),
+                                lsdtt::csv_number(elevation), lsdtt::csv_number(ll.latitude),
+                                lsdtt::csv_number(ll.longitude)};
+                            for (const std::int32_t junction : divide.surrounding_junctions)
+                                output.push_back(junction < 0
+                                    ? csv_nodata_text : std::to_string(junction));
+                            rows.push_back(std::move(output));
+                        }
+                    }
+                    auto headers = point_common;
+                    headers.insert(headers.end(), {
+                        "basin_junction_number_NW_pixel", "basin_junction_number_NE_pixel",
+                        "basin_junction_number_SE_pixel", "basin_junction_number_SW_pixel"});
+                    const std::string suffix = "_native_triple_divides_area_" +
+                        std::to_string(threshold);
+                    lsdtt::lsdtt_data_loader csv_loader;
+                    csv_loader.write_csv(pp.make_output_path(suffix, ".csv"), headers, rows);
+                    write_point_layer(suffix, headers, rows);
+                    std::cout << "Wrote " << rows.size() << " native triple-divide points to "
+                              << suffix << ".\n";
+                }
+            }
+
+            struct topological_flowpath_point
+            {
+                std::size_t ridgeline_index;
+                int node_index;
+                float threshold;
+                lsdtt::lsdtt_ridgeline_topological_flowpath flowpath;
+            };
+            std::vector<topological_flowpath_point> topological_flowpaths;
+            if (bf["write_topological_distance_triple_divides_on_selected_ridgelines"])
+            {
+                for (const float threshold : topological_distance_thresholds)
+                {
+                    std::vector<std::vector<std::string>> rows;
+                    for (std::size_t r = 0; r < all_ridgelines.size(); ++r)
+                    {
+                        const auto& rec = all_ridgelines[r];
+                        const auto divides = rec.ridgeline.get_topological_distance_triple_divides(
+                            *flow, threshold);
+                        for (const auto& divide : divides)
+                        {
+                            const int n = divide.node_index;
+                            const auto [row, col] = node_coordinates(rec.ridgeline, n);
+                            const auto ll = ridge_ll(rec.ridgeline, n);
+                            const float elevation = static_cast<std::size_t>(n) < rec.ridgeline.elevations().size()
+                                ? rec.ridgeline.elevations()[static_cast<std::size_t>(n)]
+                                : static_cast<float>(dem.get_meta().no_data_value);
+                            auto junction_ll = [&](const lsdtt::lsdtt_ridgeline_topological_distance& side)
+                            {
+                                if (side.junction_flat < 0)
+                                    return lsdtt::lsdtt_lonlat{csv_nodata, csv_nodata};
+                                const int jr = flow->row_from_flat_unchecked(side.junction_flat);
+                                const int jc = flow->col_from_flat_unchecked(side.junction_flat);
+                                const auto xy = lsdtt::cell_center_from_row_col(
+                                    dem.get_meta(), jr, jc);
+                                return lsdtt::xy_to_lonlat(xy.x, xy.y, to_wgs84);
+                            };
+                            const auto left_ll = junction_ll(divide.left);
+                            const auto right_ll = junction_ll(divide.right);
+                            const double left_distance = divide.left.junction_flat >= 0
+                                ? divide.left.distance : csv_nodata;
+                            const double right_distance = divide.right.junction_flat >= 0
+                                ? divide.right.distance : csv_nodata;
+                            const double max_distance = divide.left.junction_flat < 0
+                                ? right_distance
+                                : (divide.right.junction_flat < 0
+                                    ? left_distance
+                                    : std::max(left_distance, right_distance));
+                            rows.push_back({
+                                std::to_string(rec.ridgeline_number), rec.feature_type,
+                                std::to_string(row), std::to_string(col),
+                                lsdtt::csv_number(rec.ridgeline.distances()[static_cast<std::size_t>(n)]),
+                                lsdtt::csv_number(elevation), lsdtt::csv_number(ll.latitude),
+                                lsdtt::csv_number(ll.longitude), lsdtt::csv_number(left_distance),
+                                lsdtt::csv_number(right_distance), lsdtt::csv_number(max_distance),
+                                lsdtt::csv_number(left_ll.latitude), lsdtt::csv_number(left_ll.longitude),
+                                lsdtt::csv_number(right_ll.latitude), lsdtt::csv_number(right_ll.longitude)});
+
+                            for (const auto& flowpath : rec.ridgeline.get_topological_distance_flowpaths(*flow, n))
+                                if (flowpath.pair_distance > threshold)
+                                    topological_flowpaths.push_back({r, n, threshold, flowpath});
+                        }
+                    }
+                    auto headers = point_common;
+                    headers.insert(headers.end(), {
+                        "topological_distance_left", "topological_distance_right", "topological_distance",
+                        "common_junction_left_latitude", "common_junction_left_longitude",
+                        "common_junction_right_latitude", "common_junction_right_longitude"});
+                    const std::string label = threshold_label(threshold);
+                    const std::string suffix = "_topological_distance_triple_divides_" + label + "m";
+                    lsdtt::lsdtt_data_loader csv_loader;
+                    csv_loader.write_csv(pp.make_output_path(suffix, ".csv"), headers, rows);
+                    std::cout << "Wrote " << rows.size() << " topological triple-divide points to "
+                              << suffix << ".\n";
+
+                    write_point_layer(suffix, headers, rows);
+
+                    lsdtt::lsdtt_vector_schema path_schema;
+                    path_schema.field_names = {
+                        "ridgeline_number", "ridgeline_type", "row", "col", "threshold_m",
+                        "side", "branch", "topological_distance"};
+                    path_schema.field_types = {
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::string_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::int64_type,
+                        lsdtt::lsdtt_vector_field_type::double_type,
+                        lsdtt::lsdtt_vector_field_type::string_type,
+                        lsdtt::lsdtt_vector_field_type::string_type,
+                        lsdtt::lsdtt_vector_field_type::double_type};
+                    lsdtt::lsdtt_data_loader path_loader;
+                    path_loader.begin_vector_write(
+                        pp.make_output_path("_topological_distance_paired_flowpaths_" + label + "m", ".fgb"),
+                        "paired_flowpaths", path_schema, dem.get_meta().crs_wkt,
+                        lsdtt::vector_output_format::flatgeobuf, true);
+                    for (const auto& record : topological_flowpaths)
+                    {
+                        if (record.threshold != threshold || record.flowpath.positions.size() < 2) continue;
+                        const auto& ridge = all_ridgelines[record.ridgeline_index].ridgeline;
+                        const auto [row, col] = node_coordinates(ridge, record.node_index);
+                        path_loader.write_line(record.flowpath.positions, {
+                            static_cast<std::int64_t>(all_ridgelines[record.ridgeline_index].ridgeline_number),
+                            all_ridgelines[record.ridgeline_index].feature_type,
+                            static_cast<std::int64_t>(row), static_cast<std::int64_t>(col),
+                            static_cast<double>(threshold), record.flowpath.side,
+                            record.flowpath.branch, static_cast<double>(record.flowpath.pair_distance)});
+                    }
+                    path_loader.finish_vector_write();
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Fatal Error writing triple-divide outputs: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     // Setup transform mappings needed by Phase 7 and Phase 9

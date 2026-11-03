@@ -794,46 +794,56 @@ float lsdtt_ridgeline_cpu::find_distance_to_closest_tdj(
     return found_tdj ? distance_to_tdj : -9999.0f;
 }
 
-std::vector<int> lsdtt_ridgeline_cpu::get_triple_divide_node_indices(
+std::vector<lsdtt_ridgeline_triple_divide> lsdtt_ridgeline_cpu::get_triple_divides(
     const lsdtt_flow_base&             flow,
     const lsdtt_junction_network_base& junction_network
 ) const
 {
-    std::vector<int> result;
+    std::vector<lsdtt_ridgeline_triple_divide> result;
     for (std::size_t i = 1; i + 1 < nodes_.size(); ++i)
     {
         std::set<std::int32_t> basins;
         const lsdtt_pixel_rc& rc = nodes_[i];
-        for (int r = rc.row - 1; r <= rc.row; ++r)
-            for (int c = rc.col - 1; c <= rc.col; ++c)
+        lsdtt_ridgeline_triple_divide divide;
+        divide.node_index = static_cast<int>(i);
+        const std::array<std::pair<int, int>, 4> offsets{{
+            {-1, -1}, {-1, 0}, {0, 0}, {0, -1}}}; // NW, NE, SE, SW
+        for (std::size_t pixel = 0; pixel < offsets.size(); ++pixel)
+        {
+            const int r = rc.row + offsets[pixel].first;
+            const int c = rc.col + offsets[pixel].second;
+            if (!flow.in_bounds(r, c)) continue;
+            std::int64_t flat = flow.flat_index_unchecked(r, c);
+            if (!flow.is_valid_cell(flat)) continue;
+            while (!flow.is_outlet_unchecked(flat) &&
+                   !junction_network.is_channel(flat))
             {
-                if (!flow.in_bounds(r, c)) continue;
-                std::int64_t flat = flow.flat_index_unchecked(r, c);
-                if (!flow.is_valid_cell(flat)) continue;
-                while (!flow.is_outlet_unchecked(flat) &&
-                       !junction_network.is_channel(flat))
+                flat = flow.receiver_of_unchecked(flat);
+                if (flat < 0) break;
+            }
+            if (flat >= 0 && junction_network.is_channel(flat))
+            {
+                const std::int32_t j =
+                    junction_network.junction_upstream_of_flat(flat);
+                if (j >= 0)
                 {
-                    flat = flow.receiver_of_unchecked(flat);
-                    if (flat < 0) break;
-                }
-                if (flat >= 0 && junction_network.is_channel(flat))
-                {
-                    const std::int32_t j =
-                        junction_network.junction_upstream_of_flat(flat);
-                    if (j >= 0) basins.insert(j);
+                    divide.surrounding_junctions[pixel] = j;
+                    basins.insert(j);
                 }
             }
-        if (basins.size() > 2) result.push_back(static_cast<int>(i));
+        }
+        if (basins.size() > 2) result.push_back(divide);
     }
     return result;
 }
 
-std::vector<int> lsdtt_ridgeline_cpu::get_topological_distance_triple_divide_node_indices(
+std::vector<lsdtt_ridgeline_topological_triple_divide>
+lsdtt_ridgeline_cpu::get_topological_distance_triple_divides(
     const lsdtt_flow_base& flow,
     float                  threshold
 ) const
 {
-    std::vector<int> result;
+    std::vector<lsdtt_ridgeline_topological_triple_divide> result;
     if (nodes_.size() < 3) return result;
     for (std::size_t i = 1; i + 1 < nodes_.size(); ++i)
     {
@@ -847,12 +857,23 @@ std::vector<int> lsdtt_ridgeline_cpu::get_topological_distance_triple_divide_nod
         const std::int64_t lo = flat(out_edge.left_r, out_edge.left_c);
         const std::int64_t ri = flat(in_edge.right_r, in_edge.right_c);
         const std::int64_t ro = flat(out_edge.right_r, out_edge.right_c);
-        bool qualifies = false;
-        if (li >= 0 && lo >= 0)
-            qualifies = calculate_flow_topological_distance(li, lo, flow).distance > threshold;
-        if (!qualifies && ri >= 0 && ro >= 0)
-            qualifies = calculate_flow_topological_distance(ri, ro, flow).distance > threshold;
-        if (qualifies) result.push_back(static_cast<int>(i));
+        lsdtt_ridgeline_topological_triple_divide divide;
+        divide.node_index = static_cast<int>(i);
+        if (flow.is_valid_cell(li) && flow.is_valid_cell(lo))
+        {
+            const auto metrics = calculate_flow_topological_distance(li, lo, flow);
+            divide.left = {metrics.distance, metrics.junction_flat};
+        }
+        if (flow.is_valid_cell(ri) && flow.is_valid_cell(ro))
+        {
+            const auto metrics = calculate_flow_topological_distance(ri, ro, flow);
+            divide.right = {metrics.distance, metrics.junction_flat};
+        }
+        const bool left_qualifies = divide.left.junction_flat >= 0 &&
+                                    divide.left.distance > threshold;
+        const bool right_qualifies = divide.right.junction_flat >= 0 &&
+                                     divide.right.distance > threshold;
+        if (left_qualifies || right_qualifies) result.push_back(divide);
     }
     return result;
 }
