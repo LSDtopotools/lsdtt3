@@ -75,9 +75,13 @@ def test_line_frame_built_for_a_source_dem(line_frame):
 
 def test_frame_file_from_the_cli_matches_the_python_frame(line_frame):
     f = lsdtt3.RotationFrame.read(str(ROTATION / "lakeland_line_oblique_rotation_frame.txt"))
-    assert f.azimuth_degrees == pytest.approx(line_frame.azimuth_degrees, abs=1e-12)
+    # The frame file was written by a CLI built against one PROJ; a wheel
+    # links its own, and the reprojected line differs in the 11th digit
+    # (2e-11 deg, ~1e-9 m across the frame). 1e-9 is far below anything
+    # that would move a cell.
+    assert f.azimuth_degrees == pytest.approx(line_frame.azimuth_degrees, abs=1e-9)
     assert f.extent == line_frame.extent
-    assert f.centre_longitude == pytest.approx(line_frame.centre_longitude, abs=1e-12)
+    assert f.centre_longitude == pytest.approx(line_frame.centre_longitude, abs=1e-9)
     assert f.target_epsg == line_frame.target_epsg
     assert f.target_origin == line_frame.target_origin
     assert f.source_dem_fname == "flat_resolution_lakeland_crop_dem.tif"
