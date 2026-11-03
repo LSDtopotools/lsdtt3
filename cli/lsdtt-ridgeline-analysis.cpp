@@ -2615,6 +2615,8 @@ int main(int argc, char* argv[])
         {
             lsdtt::lsdtt_coordinate_transform to_wgs84;
             to_wgs84.initialise_from_epsg(dem.get_meta().crs_wkt, 4326);
+            lsdtt::lsdtt_coordinate_transform from_wgs84;
+            from_wgs84.initialise_from_source_epsg(4326, dem.get_meta().crs_wkt);
             const double csv_nodata = dem.get_meta().no_data_value;
             const std::string csv_nodata_text = lsdtt::csv_number(csv_nodata);
             auto threshold_label = [](float threshold)
@@ -2663,9 +2665,8 @@ int main(int argc, char* argv[])
                     dem.get_meta().crs_wkt, lsdtt::vector_output_format::flatgeobuf, true);
                 for (const auto& row : rows)
                 {
-                    const int r = std::stoi(row[2]);
-                    const int c = std::stoi(row[3]);
-                    const auto xy = lsdtt::cell_center_from_row_col(dem.get_meta(), r, c);
+                    const auto xy = from_wgs84.transform_xy(
+                        std::stod(row[7]), std::stod(row[6]));
                     std::vector<lsdtt::lsdtt_vector_field_value> fields;
                     fields.reserve(row.size());
                     for (std::size_t i = 0; i < row.size(); ++i)
