@@ -296,10 +296,11 @@ Tests are grouped by label, so you can run just the part you care about:
 
 | Label | What it covers |
 |---|---|
-| `smoke` | Each CLI runs end to end on a tiny fixture and produces its expected output |
-| `rigorous` | Exact checks on outputs — raster checksums, sizes, feature counts, file hashes |
-| `failure` | Bad parameters are rejected with the expected error message |
-| `unit` | C++ unit tests: parameter parser, cosmogenic physics, flow-routing properties |
+| `smoke` | The program runs to completion and writes its expected outputs |
+| `negative` | Invalid input or configuration is refused with the expected message |
+| `exact_solution`, `property`, `metamorphic`, `differential`, `characterisation`, `conformance` | How the test knows the right answer; see [Testing and benchmarking](docs/developer_notes/testing_and_benchmarking.md#evidence-and-level-labels) |
+| `unit` | Calls lsdtt3 routines in process (C++ drivers), or checks repository files |
+| `system` | Judges outputs written by a shipped program run end to end (a CLI, the configure, the Python package) |
 | `cosmo` | Cosmogenic-nuclide physics against CRONUS and pinned numerics sentinels |
 | `flow` | Flow routing and depression handling: properties, and RichDEM comparison |
 | `fetch` | Native DEM fetching (`lsdtt_raster_fetch`); offline logic by default |

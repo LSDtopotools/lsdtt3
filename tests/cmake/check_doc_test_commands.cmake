@@ -11,7 +11,8 @@
 #   * every -DLSDTT_<NAME> option it names is declared by an option() in
 #     CMakeLists.txt or tests/CMakeLists.txt;
 #   * every ANCHORED label it selects (-L '^x$', -LE '^(a|b)$') is a label the
-#     test CMake can assign -- a LABELS value, a domain rule, or one of the
+#     test CMake can assign -- a LABELS value, a domain rule, an evidence or
+#     level label (tests/cmake/evidence_labels.cmake), or one of the
 #     tier / flag / component / cost labels;
 #   * the `test_report` target and `run_tests.cmake` it names exist.
 #
@@ -60,6 +61,20 @@ string(REGEX MATCHALL "(LABELS[ \t\n]+|(test_labels|lbl) +)\"[^\"]*\"" _label_pr
 foreach(_lp IN LISTS _label_props)
     string(REGEX REPLACE "^[^\"]*\"([^\"]*)\"$" "\\1" _v "${_lp}")
     string(REPLACE "," ";" _v "${_v}")
+    foreach(_one IN LISTS _v)
+        if(_one MATCHES "^[a-z_][a-z0-9_]*$")
+            list(APPEND _labels "${_one}")
+        endif()
+    endforeach()
+endforeach()
+# Evidence and level labels: the two lists in tests/cmake/evidence_labels.cmake,
+# which is the only place that assigns them.
+file(READ "${SOURCE_DIR}/tests/cmake/evidence_labels.cmake" _ev_text)
+foreach(_list LSDTT_EVIDENCE_LABELS LSDTT_LEVEL_LABELS)
+    if(NOT _ev_text MATCHES "set\\(${_list}([^)]*)\\)")
+        message(FATAL_ERROR "check_doc_test_commands: ${_list} not found in tests/cmake/evidence_labels.cmake")
+    endif()
+    string(REGEX REPLACE "[ \t\n]+" ";" _v "${CMAKE_MATCH_1}")
     foreach(_one IN LISTS _v)
         if(_one MATCHES "^[a-z_][a-z0-9_]*$")
             list(APPEND _labels "${_one}")

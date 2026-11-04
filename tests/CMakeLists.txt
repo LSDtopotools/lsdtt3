@@ -222,6 +222,16 @@ set(LSDTT_HARNESS_GDAL_TOOL_ARGS
 
 # Marks a run_cli_smoke.py registration: Python runtime, plus gdal_tools when
 # its arguments use one of the assertions above.
+#
+# It also records the test's EVIDENCE and LEVEL labels from the same arguments
+# (tests/cmake/evidence_labels.cmake writes them, and its hand table adds to
+# them). Every harness run is a system test. It is `negative` when it expects
+# the CLI to fail, and otherwise `smoke` (exit 0, the expected files, the run
+# record), plus:
+#   characterisation  a stored GDAL checksum or sha256 of an output
+#   property          an output with no nodata or NaN: --expect-valid-percent-100,
+#                     --expect-raster-min (which also requires 100 % valid), or
+#                     --expect-file-not-contains <file>:nan / :-9999
 function(lsdtt_mark_harness_test TEST_NAME)
     lsdtt_mark_test_runtime(python ${TEST_NAME})
     foreach(_arg IN LISTS ARGN)
@@ -230,6 +240,47 @@ function(lsdtt_mark_harness_test TEST_NAME)
             break()
         endif()
     endforeach()
+
+    set(_negative FALSE)
+    set(_evidence "")
+    set(_previous "")
+    foreach(_arg IN LISTS ARGN)
+        if(_arg STREQUAL "--expect-failure")
+            set(_negative TRUE)
+        elseif(_previous STREQUAL "--expect-exit-code" AND NOT _arg STREQUAL "0")
+            set(_negative TRUE)
+        elseif(_arg MATCHES "^--expect-(raster-checksum|sha256)$")
+            list(APPEND _evidence characterisation)
+        elseif(_arg MATCHES "^--expect-(valid-percent-100|raster-min)$")
+            list(APPEND _evidence property)
+        elseif(_previous STREQUAL "--expect-file-not-contains" AND _arg MATCHES ":(nan|-9999)$")
+            list(APPEND _evidence property)
+        endif()
+        set(_previous "${_arg}")
+    endforeach()
+    if(_negative)
+        list(APPEND _evidence negative)
+    else()
+        list(APPEND _evidence smoke)
+    endif()
+    list(REMOVE_DUPLICATES _evidence)
+    lsdtt_record_evidence(${TEST_NAME} system ${_evidence})
+endfunction()
+
+# Records evidence and level labels for a test at registration; see
+# tests/cmake/evidence_labels.cmake, which is the only writer of those labels.
+function(lsdtt_record_evidence TEST_NAME LEVEL)
+    set_property(GLOBAL APPEND PROPERTY LSDTT_EVIDENCE_${TEST_NAME} ${ARGN})
+    set_property(GLOBAL PROPERTY LSDTT_LEVEL_${TEST_NAME} ${LEVEL})
+endfunction()
+
+# A run_cli_smoke.py test registered directly rather than through
+# add_lsdtt_cli_smoke_test: ARGN is the harness's arguments, exactly as they
+# would follow "${LSDTT_TEST_SCRIPT}" in add_test. Marks it like the helper.
+function(lsdtt_add_harness_test TEST_NAME)
+    add_test(NAME ${TEST_NAME}
+             COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}" ${ARGN})
+    lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
 endfunction()
 set(LSDTT_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
 set(LSDTT_TEST_PARAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/params")
@@ -334,16 +385,9 @@ function(add_lsdtt_cli_smoke_test TEST_NAME TARGET_NAME PARAM_TEMPLATE EXPECTED_
     )
     lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
 
-    set(test_labels "cli")
-    if(TEST_NAME MATCHES "^rigorous_")
-        list(APPEND test_labels "rigorous")
-    elseif(TEST_NAME MATCHES "^failure_")
-        list(APPEND test_labels "failure")
-    else()
-        list(APPEND test_labels "smoke")
-    endif()
-
-    lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${test_labels}")
+    # Evidence and level labels (smoke, negative, ...) are written by
+    # tests/cmake/evidence_labels.cmake, never here.
+    lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES LABELS "cli")
 endfunction()
 
 # =============================================================================
@@ -382,7 +426,7 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_synthetic_networks_help
          COMMAND lsdtt-synthetic-networks -h)
 lsdtt_set_tests_properties(smoke_synthetic_networks_help PROPERTIES
-    LABELS "smoke;cli;synthetic_networks"
+    LABELS "cli;synthetic_networks"
     PASS_REGULAR_EXPRESSION "energy_exponent_gamma")
 
 add_lsdtt_cli_smoke_test(
@@ -443,10 +487,7 @@ add_lsdtt_cli_smoke_test(
 # lsdtt-test-synthetic-networks, so the expected 14x14 is exact arithmetic
 # (ceil(3000/250) = 12 plus a one-cell margin each side) rather than a band.
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(
-        NAME smoke_synthetic_networks_polygon_area
-        COMMAND
-            ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_synthetic_networks_polygon_area
             --exe "$<TARGET_FILE:lsdtt-synthetic-networks>"
             --param-template "${LSDTT_TEST_PARAM_DIR}/synthetic_networks_polygon.param.in"
             --read-path "${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR}"
@@ -458,13 +499,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
         --stdout-contains "Domain: polygon - 144 land pixels of 196"
         --stderr-contains "'polygon_file' is deprecated"
     )
-    lsdtt_mark_test_runtime(python smoke_synthetic_networks_polygon_area)
-    lsdtt_mark_test_needs(gdal_tools smoke_synthetic_networks_polygon_area)
 else()
     lsdtt_mark_test_unregistered(python smoke_synthetic_networks_polygon_area)
 endif()
 lsdtt_set_tests_properties(smoke_synthetic_networks_polygon_area PROPERTIES
-    LABELS "smoke;cli;synthetic_networks"
+    LABELS "cli;synthetic_networks"
     FIXTURES_REQUIRED synthetic_networks_fixture)
 
 # B5: OCN -> equilibrate in one invocation. Asserts the stage actually ran and
@@ -949,7 +988,7 @@ endforeach()
 add_test(NAME smoke_raster_preprocessing_help_rotation
          COMMAND lsdtt-raster-preprocessing -h rotate_to_linear_feature)
 lsdtt_set_tests_properties(smoke_raster_preprocessing_help_rotation PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "minimum-area")
 
 # bearings_relative_to_true_north. Fixtures in tests/data/true_north: two
@@ -1120,7 +1159,7 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_drainage_analysis_threshold_equivalence)
 endif()
 lsdtt_set_tests_properties(rigorous_drainage_analysis_threshold_equivalence PROPERTIES
-    LABELS "cli;rigorous"
+    LABELS "cli"
     FIXTURES_REQUIRED "drainage_analysis_canonical_threshold;drainage_analysis_legacy_threshold")
 
 # C9 extraction guard: unlike drainage_analysis_smoke.param.in, this reaches
@@ -1211,7 +1250,7 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_distributed_hydrology_help
          COMMAND lsdtt-distributed-hydrology -h)
 lsdtt_set_tests_properties(smoke_distributed_hydrology_help PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     PASS_REGULAR_EXPRESSION "saturated_zone_mode")
 
 # The end-to-end run.
@@ -1328,7 +1367,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "HYPE water balance closure error:"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_outlets PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # Strahler order: every first-order junction basin, i.e. the two arms of the Y,
@@ -1354,7 +1393,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "HYPE water balance closure error:"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_order PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # Strahler order range 1..: the trunk reaches the DEM edge, so the selection
@@ -1376,7 +1415,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "HYPE water balance closure error:"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_order_range PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # Snapping. hype_outlets_offset.csv puts both gauges 3 columns east of the
@@ -1397,7 +1436,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-not-contains "hypesnapsq_hype_discharge.csv:nan"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_square PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -1413,7 +1452,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-not-contains "hypesnapds_hype_discharge.csv:nan"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_downstream PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # largest_area with a 3-pixel half-width takes the pixel with the most
@@ -1436,7 +1475,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-not-contains "hypesnapla_hype_discharge.csv:nan"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_snap_largest_area PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology;snapping"
+    LABELS "cli;distributed_hydrology;snapping"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # Nodata in a class raster. A 10 x 5 block of nodata soil straddles the soil
@@ -1457,7 +1496,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-not-contains "hypeholes_hype_discharge.csv:nan"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_class_holes PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # n_timesteps shorter than the forcing runs only those days.
@@ -1472,7 +1511,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-not-contains "hypeshort_hype_discharge.csv:31,2001-01-31,"
 )
 lsdtt_set_tests_properties(smoke_distributed_hydrology_hype_short_run PROPERTIES
-    LABELS "smoke;cli;distributed_hydrology"
+    LABELS "cli;distributed_hydrology"
     FIXTURES_REQUIRED hype_cli_fixture)
 
 # Failure paths. Each asserts the FATAL text, not just the exit code: the
@@ -1509,7 +1548,7 @@ foreach(_case IN LISTS _hype_failures)
         --stderr-contains "${_msg}"
     )
     lsdtt_set_tests_properties(failure_distributed_hydrology_hype_${_name} PROPERTIES
-        LABELS "failure;cli;distributed_hydrology"
+        LABELS "cli;distributed_hydrology"
         FIXTURES_REQUIRED hype_cli_fixture)
 endforeach()
 
@@ -1536,8 +1575,7 @@ endforeach()
 # and is INTERIOR ONLY: see basin_surface_metrics_smoke.param.in for why.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_basin_surface_metrics
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_basin_surface_metrics
             --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_smoke.param.in"
@@ -1561,18 +1599,15 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # out of main(). Re-freeze deliberately if a change is intended.
             --expect-sha256 bsm_outline_curvature_flips.csv:994b77c5706e32d20ba4a9f7f1eba1c0516d9ad9d489113d3155151ec74f791f
             --expect-sha256 bsm_slope_area_stats.csv:2abfaff6b6482336c50a141f5d3aad70e974f52b25441028b474cc498bdaf949)
-    lsdtt_mark_test_runtime(python smoke_basin_surface_metrics)
-    lsdtt_mark_test_needs(gdal_tools smoke_basin_surface_metrics)
 else()
     lsdtt_mark_test_unregistered(python smoke_basin_surface_metrics)
 endif()
 lsdtt_set_tests_properties(smoke_basin_surface_metrics PROPERTIES
-    LABELS "smoke;cli;basin_surface_metrics"
+    LABELS "cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_basin_surface_metrics_polyfit
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_basin_surface_metrics_polyfit
             --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_polyfit.param.in"
@@ -1584,35 +1619,30 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # One raster per requested metric, named for the lambda: that naming is
             # what a caller depends on to find the output of a multi-scale run.
             --expect-raster-size bsmp_slope_lambda60.tif:200x200)
-    lsdtt_mark_test_runtime(python smoke_basin_surface_metrics_polyfit)
-    lsdtt_mark_test_needs(gdal_tools smoke_basin_surface_metrics_polyfit)
 else()
     lsdtt_mark_test_unregistered(python smoke_basin_surface_metrics_polyfit)
 endif()
 lsdtt_set_tests_properties(smoke_basin_surface_metrics_polyfit PROPERTIES
-    LABELS "smoke;cli;basin_surface_metrics"
+    LABELS "cli;basin_surface_metrics"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_basin_surface_metrics_expanding_square
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_basin_surface_metrics_expanding_square
             --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_expanding_square.param.in"
             --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_basin_surface_metrics_expanding_square"
             --expect bsm_square_outline_curvature_flips.csv)
-    lsdtt_mark_test_runtime(python smoke_basin_surface_metrics_expanding_square)
 else()
     lsdtt_mark_test_unregistered(python smoke_basin_surface_metrics_expanding_square)
 endif()
 lsdtt_set_tests_properties(smoke_basin_surface_metrics_expanding_square PROPERTIES
-    LABELS "smoke;cli;basin_surface_metrics;snapping"
+    LABELS "cli;basin_surface_metrics;snapping"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME rigorous_basin_surface_metrics_legacy_threshold
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(rigorous_basin_surface_metrics_legacy_threshold
             --exe "$<TARGET_FILE:lsdtt-basin-surface-metrics>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_surface_metrics_legacy_threshold.param.in"
@@ -1624,12 +1654,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --stderr-contains "use 'threshold_contributing_pixels'"
             --stderr-contains "'basin_outlet_csv' is deprecated"
             --stderr-contains "use 'basin_outlet_fname'")
-    lsdtt_mark_test_runtime(python rigorous_basin_surface_metrics_legacy_threshold)
 else()
     lsdtt_mark_test_unregistered(python rigorous_basin_surface_metrics_legacy_threshold)
 endif()
 lsdtt_set_tests_properties(rigorous_basin_surface_metrics_legacy_threshold PROPERTIES
-    LABELS "rigorous;cli;basin_surface_metrics;compatibility"
+    LABELS "cli;basin_surface_metrics;compatibility"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -1653,8 +1682,7 @@ add_lsdtt_cli_smoke_test(
 # never taken. The two produce different slope rasters.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_ridgeline_range_open
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_ridgeline_range_open
             --exe "$<TARGET_FILE:lsdtt-ridgeline-analysis>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_oooo.param.in"
@@ -1668,18 +1696,15 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect-file-contains "../stdout.log:Boundary segment corner 3 assigned"
             # ORACLE for C2+C3 under open boundaries.
             --expect-sha256 rg_oooo_lambda_60m_raw_dem_3x3_polyfit_slope.tif:c6a0d7322aa1d1f510db0fac8a2544c052238e1782d74bd68805e04a37b8b9c4)
-    lsdtt_mark_test_runtime(python smoke_ridgeline_range_open)
-    lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_open)
 else()
     lsdtt_mark_test_unregistered(python smoke_ridgeline_range_open)
 endif()
 lsdtt_set_tests_properties(smoke_ridgeline_range_open PROPERTIES
-    LABELS "smoke;cli;ridgeline"
+    LABELS "cli;ridgeline"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_ridgeline_range_periodic
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_ridgeline_range_periodic
             --exe "$<TARGET_FILE:lsdtt-ridgeline-analysis>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/ridgeline_range_opop.param.in"
@@ -1693,20 +1718,17 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # padding in run_raw_dem_3x3_polyfit_with_bcs actually does something --
             # if a refactor made the two equal, both oracles could not hold.
             --expect-sha256 rg_opop_lambda_60m_raw_dem_3x3_polyfit_slope.tif:f7beffb5d95fb65e7ca6108624baac5f8c7ae60399622c2f235acb94a2bd9eae)
-    lsdtt_mark_test_runtime(python smoke_ridgeline_range_periodic)
-    lsdtt_mark_test_needs(gdal_tools smoke_ridgeline_range_periodic)
 else()
     lsdtt_mark_test_unregistered(python smoke_ridgeline_range_periodic)
 endif()
 lsdtt_set_tests_properties(smoke_ridgeline_range_periodic PROPERTIES
-    LABELS "smoke;cli;ridgeline"
+    LABELS "cli;ridgeline"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 # lsdtt-chi-analysis: the outlet-FILE path (C5). The other chi tests only reach
 # resolve_outlet_flats through its auto-detect branch.
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_chi_analysis_outlet_file
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_chi_analysis_outlet_file
             --exe "$<TARGET_FILE:lsdtt-chi-analysis>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/chi_analysis_outlet_file.param.in"
@@ -1725,12 +1747,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # resolve_outlet_flats exists to produce. Checked deterministic before
             # freezing.
             --expect-sha256 chi_chi_basin_outlets.csv:f2a980bf03e6870a6dc754386822b4ce6731017bacc97ff23ffa9be202f29621)
-    lsdtt_mark_test_runtime(python smoke_chi_analysis_outlet_file)
 else()
     lsdtt_mark_test_unregistered(python smoke_chi_analysis_outlet_file)
 endif()
 lsdtt_set_tests_properties(smoke_chi_analysis_outlet_file PROPERTIES
-    LABELS "smoke;cli;chi"
+    LABELS "cli;chi"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 # lsdtt-linear-stats: a floor, not coverage. See the param template for why the
@@ -1745,8 +1766,7 @@ lsdtt_set_tests_properties(fixture_linear_stats_lines PROPERTIES
     DEPENDS fixture_basin_stats_dem)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_linear_stats
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_linear_stats
             --exe "$<TARGET_FILE:lsdtt-linear-stats>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/linear_stats_smoke.param.in"
@@ -1755,13 +1775,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect ls_linear_stats.fgb
             --expect-vector-feature-min ls_linear_stats.fgb:2
             --expect-sha256 ls_linear_stats.fgb:5089ab341d0a212acc0fee3cba76c3e414aaa89bcbf7e017aabd93fa3988224a)
-    lsdtt_mark_test_runtime(python smoke_linear_stats)
-    lsdtt_mark_test_needs(gdal_tools smoke_linear_stats)
 else()
     lsdtt_mark_test_unregistered(python smoke_linear_stats)
 endif()
 lsdtt_set_tests_properties(smoke_linear_stats PROPERTIES
-    LABELS "smoke;cli;linear_stats"
+    LABELS "cli;linear_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 # =============================================================================
@@ -1779,15 +1797,13 @@ lsdtt_set_tests_properties(smoke_linear_stats PROPERTIES
 # are tied to the fixed synthetic georeference of the generated DEM.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME fixture_stream_burning_dem
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(fixture_stream_burning_dem
             --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_fixture_dem.param.in"
             --read-path "${LSDTT_TEST_DATA_DIR}"
             --work-dir "${LSDTT_STREAM_BURNING_FIXTURE_DIR}"
             --expect sb_diamond_square.tif)
-    lsdtt_mark_test_runtime(python fixture_stream_burning_dem)
 else()
     lsdtt_mark_test_unregistered(python fixture_stream_burning_dem)
 endif()
@@ -1805,8 +1821,7 @@ lsdtt_set_tests_properties(fixture_stream_burning_network PROPERTIES
     DEPENDS fixture_stream_burning_dem)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_stream_burning
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_stream_burning
             --exe "$<TARGET_FILE:lsdtt-stream-burning>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_smoke.param.in"
@@ -1828,12 +1843,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # runs before freezing.
             --expect-sha256 burn_burned.tif:f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b
             --expect-sha256 burn_dem_network_lines.fgb:b675ef0fe65bd863eff7ee81fac93d45595366fe4b76926f051bc85788ed05a2)
-    lsdtt_mark_test_runtime(python smoke_stream_burning)
 else()
     lsdtt_mark_test_unregistered(python smoke_stream_burning)
 endif()
 lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
-    LABELS "smoke;cli;stream_burning"
+    LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
 # Least-cost-path burn: regression test for the use-after-free segfault fixed on
@@ -1886,15 +1900,13 @@ lsdtt_set_tests_properties(rigorous_stream_burning_legacy_threshold PROPERTIES
 # numbers themselves are guarded by the e2e hashes, not frozen here.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME fixture_cross_sections_dem
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(fixture_cross_sections_dem
             --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/cross_sections_fixture_dem.param.in"
             --read-path "${LSDTT_TEST_DATA_DIR}"
             --work-dir "${LSDTT_CROSS_SECTIONS_FIXTURE_DIR}"
             --expect xs_terrace_staircase.tif)
-    lsdtt_mark_test_runtime(python fixture_cross_sections_dem)
 else()
     lsdtt_mark_test_unregistered(python fixture_cross_sections_dem)
 endif()
@@ -2123,15 +2135,13 @@ endforeach()
 # than read_path.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME fixture_slope_area_basin_mask
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(fixture_slope_area_basin_mask
             --exe "$<TARGET_FILE:lsdtt-basin-extraction>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/slope_area_basin_mask.param.in"
             --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/fixture_slope_area_basin_mask"
             --expect ../../basin_stats_fixture/out/sa_basins_junction_basins.tif)
-    lsdtt_mark_test_runtime(python fixture_slope_area_basin_mask)
 else()
     lsdtt_mark_test_unregistered(python fixture_slope_area_basin_mask)
 endif()
@@ -2251,15 +2261,13 @@ add_lsdtt_cli_smoke_test(
 # write_path.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME fixture_outlet_matching_target
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(fixture_outlet_matching_target
             --exe "$<TARGET_FILE:lsdtt-raster-preprocessing>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/outlet_matching_target_dem.param.in"
             --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/fixture_outlet_matching_target"
             --expect ../../basin_stats_fixture/out/om_target_utm.tif)
-    lsdtt_mark_test_runtime(python fixture_outlet_matching_target)
 else()
     lsdtt_mark_test_unregistered(python fixture_outlet_matching_target)
 endif()
@@ -2430,15 +2438,13 @@ add_lsdtt_cli_smoke_test(
 # docs/developer_notes/testing_and_benchmarking.md.
 # =============================================================================
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME fixture_basin_stats_dem
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(fixture_basin_stats_dem
             --exe "$<TARGET_FILE:lsdtt-synthetic-surfaces>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_stats_fixture_dem.param.in"
             --read-path "${LSDTT_TEST_DATA_DIR}"
             --work-dir "${LSDTT_BASIN_STATS_FIXTURE_DIR}"
             --expect basin_stats_diamond_square.tif)
-    lsdtt_mark_test_runtime(python fixture_basin_stats_dem)
 else()
     lsdtt_mark_test_unregistered(python fixture_basin_stats_dem)
 endif()
@@ -2459,8 +2465,7 @@ lsdtt_set_tests_properties(fixture_basin_stats_outlets PROPERTIES
     DEPENDS fixture_basin_stats_dem)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(NAME smoke_basin_stats
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_basin_stats
             --exe "$<TARGET_FILE:lsdtt-basin-stats>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
             --param-template "${LSDTT_TEST_PARAM_DIR}/basin_stats_smoke.param.in"
@@ -2484,13 +2489,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             # from the fixture, so this pins the shared default and its behaviour.
             --stdout-contains "threshold = 1000 px"
             --stderr-contains "'basin_outlet_csv' is deprecated and 'basin_outlet_fname' was also supplied")
-    lsdtt_mark_test_runtime(python smoke_basin_stats)
-    lsdtt_mark_test_needs(gdal_tools smoke_basin_stats)
 else()
     lsdtt_mark_test_unregistered(python smoke_basin_stats)
 endif()
 lsdtt_set_tests_properties(smoke_basin_stats PROPERTIES
-    LABELS "smoke;cli;basin_stats"
+    LABELS "cli;basin_stats"
     FIXTURES_REQUIRED basin_stats_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -2716,7 +2719,7 @@ foreach(_cbs_mode
     add_test(NAME unit_channel_bearing_statistics_${_cbs_name}
              COMMAND lsdtt-test-channel-bearing-statistics ${_cbs_flag})
     lsdtt_set_tests_properties(unit_channel_bearing_statistics_${_cbs_name} PROPERTIES
-        LABELS "unit;network")
+        LABELS "network")
 endforeach()
 
 # CLI fixture: the trellis DEM and its transpose, a north/south region code
@@ -2984,7 +2987,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "heads without    : 0"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_no_clusters PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3021,7 +3024,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "heads with divide: 69"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_clusters PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # The same clustered run, but the cluster labels arrive in a VECTOR outlet file
@@ -3045,7 +3048,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "heads with divide: 69"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_clusters_vector PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3058,7 +3061,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "cluster field not found in vector layer: Cluster_ID"
 )
 lsdtt_set_tests_properties(failure_divide_migration_vector_field_case PROPERTIES
-    LABELS "failure;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # A clustered run whose outlets all collapse into ONE unit has no unit pair to
@@ -3075,7 +3078,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "Divide extraction needs at least two units to compare."
 )
 lsdtt_set_tests_properties(failure_divide_migration_single_unit PROPERTIES
-    LABELS "failure;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # --- divide-fragment merging end to end -------------------------
@@ -3103,7 +3106,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "divide segments  : 3"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_merge_unmerged PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3121,7 +3124,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "heads without    : 0"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_merge_fragments PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # --- pair-summary statistics end to end ------------------------------------
@@ -3154,7 +3157,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "heads without    : 0"
 )
 lsdtt_set_tests_properties(smoke_divide_migration_pair_summary PROPERTIES
-    LABELS "smoke;cli;divide_migration"
+    LABELS "cli;divide_migration"
     FIXTURES_REQUIRED divide_migration_fixture)
 
 # --- lsdtt-lem: the in-LEM coupled hillslope path -----------------------------
@@ -3191,7 +3194,7 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-size lemstrip_hillslope_strip.tif:101x11
 )
 lsdtt_set_tests_properties(smoke_lem_strip_fixture PROPERTIES
-    LABELS "smoke;cli;hillslope"
+    LABELS "cli;hillslope"
     FIXTURES_SETUP lem_strip_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3301,7 +3304,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "--- Snap initial surface to fluvial steady state ---"
     --stdout-contains "Snapped relief"
 )
-lsdtt_set_tests_properties(smoke_lem_snap_default PROPERTIES LABELS "smoke;cli;lem")
+lsdtt_set_tests_properties(smoke_lem_snap_default PROPERTIES LABELS "cli;lem")
 
 # =============================================================================
 # lsdtt-lem: spatially varying erodibility and the model grid (CLI)
@@ -3323,27 +3326,44 @@ lsdtt_set_tests_properties(fixture_lem_erodibility_cli PROPERTIES
 function(lsdtt_add_lem_k_cli_test TEST_NAME TEMPLATE EXPECTED)
     add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-lem ${TEMPLATE} ${EXPECTED}
         --read-path "${LEMK_FIXTURE_DIR}" ${ARGN})
-    if(TEST_NAME MATCHES "^failure_")
-        set(_labels "failure;cli;lem")
-    else()
-        set(_labels "smoke;cli;lem")
-    endif()
     lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
-        LABELS "${_labels}"
+        LABELS "cli;lem"
         FIXTURES_REQUIRED lem_erodibility_cli
         FIXTURES_SETUP ${TEST_NAME})
 endfunction()
 
 # A native comparison of two rasters written by the tests above. Registered
 # only with the Python tests, whose outputs it reads.
+#
+# Evidence: when B is an expected raster the fixture writer computed from the
+# fixture's layout, exact_solution; when B is another CLI run's output (uniform
+# K field against the scalar), metamorphic. A system test either way: both
+# rasters were written by lsdtt-lem or lsdtt-lithology-erodibility.
 function(lsdtt_add_lem_k_compare TEST_NAME MODE A B)
     if(NOT LSDTT_ENABLE_PYTHON_TESTS)
+        lsdtt_mark_test_unregistered(python ${TEST_NAME})
         return()
     endif()
     add_test(NAME ${TEST_NAME} COMMAND lsdtt-test-lem-erodibility ${MODE} "${A}" "${B}")
     lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
-        LABELS "regression;lem"
+        LABELS "lem"
         FIXTURES_REQUIRED "${ARGN}")
+    # LITHK_FIXTURE_DIR is set further down, after the first calls; an unset
+    # directory must not turn into a "/" prefix that every path matches.
+    set(_expected_from_layout FALSE)
+    foreach(_dir IN ITEMS "${LEMK_FIXTURE_DIR}" "${LITHK_FIXTURE_DIR}")
+        if(NOT _dir STREQUAL "")
+            string(FIND "${B}" "${_dir}/" _at)
+            if(_at EQUAL 0)
+                set(_expected_from_layout TRUE)
+            endif()
+        endif()
+    endforeach()
+    if(_expected_from_layout)
+        lsdtt_record_evidence(${TEST_NAME} system exact_solution)
+    else()
+        lsdtt_record_evidence(${TEST_NAME} system metamorphic)
+    endif()
 endfunction()
 
 # C1-C4: a uniform K raster equal to erodibility is bitwise the scalar run.
@@ -3566,13 +3586,8 @@ lsdtt_set_tests_properties(fixture_lem_lithology_erodibility_cli PROPERTIES
 function(lsdtt_add_lithk_cli_test TEST_NAME TEMPLATE EXPECTED)
     add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-lithology-erodibility ${TEMPLATE} ${EXPECTED}
         --read-path "${LITHK_FIXTURE_DIR}" ${ARGN})
-    if(TEST_NAME MATCHES "^failure_")
-        set(_labels "failure;cli;lem")
-    else()
-        set(_labels "smoke;cli;lem")
-    endif()
     lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
-        LABELS "${_labels}"
+        LABELS "cli;lem"
         FIXTURES_REQUIRED lem_lithology_erodibility_cli
         FIXTURES_SETUP ${TEST_NAME})
 endfunction()
@@ -3651,7 +3666,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "converted map-area K to specific-area K at cell size 10"
     --expect-raster-size lithkchain_modelled_topography.tif:80x100)
 lsdtt_set_tests_properties(smoke_lem_lithology_erodibility_chain PROPERTIES
-    LABELS "smoke;cli;lem"
+    LABELS "cli;lem"
     FIXTURES_REQUIRED smoke_lem_lithology_erodibility_own_grid)
 
 # Synthetic georeference. With no synthetic_crs_wkt the grid is centred on
@@ -3665,7 +3680,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "default: Watopia, UTM zone 58S"
 )
 lsdtt_set_tests_properties(smoke_lem_synthetic_default_georeference PROPERTIES
-    LABELS "smoke;cli;lem"
+    LABELS "cli;lem"
     FIXTURES_SETUP lem_synthetic_default_georeference)
 
 add_lsdtt_cli_smoke_test(
@@ -3675,7 +3690,7 @@ add_lsdtt_cli_smoke_test(
     lemsyncrs_modelled_topography.tif
 )
 lsdtt_set_tests_properties(smoke_lem_synthetic_supplied_crs PROPERTIES
-    LABELS "smoke;cli;lem"
+    LABELS "cli;lem"
     FIXTURES_SETUP lem_synthetic_supplied_crs)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
@@ -3684,7 +3699,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_synthetic_default_georeference/out/lemsyngeoref_modelled_topography.tif"
                      32758 --expect-centre-near 30)
     lsdtt_set_tests_properties(regression_lem_synthetic_default_crs PROPERTIES
-        LABELS "regression;lem"
+        LABELS "lem"
         FIXTURES_REQUIRED lem_synthetic_default_georeference)
 
     add_test(NAME regression_lem_synthetic_supplied_crs
@@ -3692,8 +3707,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_synthetic_supplied_crs/out/lemsyncrs_modelled_topography.tif"
                      32630)
     lsdtt_set_tests_properties(regression_lem_synthetic_supplied_crs PROPERTIES
-        LABELS "regression;lem"
+        LABELS "lem"
         FIXTURES_REQUIRED lem_synthetic_supplied_crs)
+else()
+    lsdtt_mark_test_unregistered(python regression_lem_synthetic_default_crs)
+    lsdtt_mark_test_unregistered(python regression_lem_synthetic_supplied_crs)
 endif()
 
 add_lsdtt_cli_smoke_test(
@@ -3711,7 +3729,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Loading channel mask:"
 )
 lsdtt_set_tests_properties(smoke_lem_roering_implicit_strip PROPERTIES
-    LABELS "smoke;cli;hillslope"
+    LABELS "cli;hillslope"
     FIXTURES_REQUIRED lem_strip_fixture)
 
 # run_hillslope_on_loaded_dem: solve hillslopes WITHOUT re-snapping the fluvial
@@ -3736,7 +3754,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "converged: yes"
 )
 lsdtt_set_tests_properties(smoke_lem_hillslope_on_loaded_dem PROPERTIES
-    LABELS "smoke;cli;hillslope")
+    LABELS "cli;hillslope")
 
 # critical_slope takes a different path: imposed by upslope integration, not
 # iterated, so it reports relief and step count rather than iterations.
@@ -3751,7 +3769,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "max relief above channel"
 )
 lsdtt_set_tests_properties(smoke_lem_hillslope_on_loaded_dem_critical_slope PROPERTIES
-    LABELS "smoke;cli;hillslope")
+    LABELS "cli;hillslope")
 
 # E2's coupled landscape has no threshold-defined channels. The critical-slope
 # clamp is path integration rather than an elliptic solve, so open boundaries are
@@ -3766,7 +3784,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "critical_slope (imposed by upslope integration, not iterated)"
 )
 lsdtt_set_tests_properties(smoke_lem_hillslope_on_loaded_dem_cs_coupled PROPERTIES
-    LABELS "smoke;cli;hillslope")
+    LABELS "cli;hillslope")
 
 add_lsdtt_cli_smoke_test(
     smoke_lem_cellular_particles
@@ -3779,13 +3797,11 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Writing cellular particles:"
 )
 lsdtt_set_tests_properties(smoke_lem_cellular_particles PROPERTIES
-    LABELS "smoke;cli;hillslope;cellular"
+    LABELS "cli;hillslope;cellular"
     FIXTURES_SETUP cellular_particle_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
-    add_test(
-        NAME smoke_lem_cellular_particles_restart
-        COMMAND ${Python3_EXECUTABLE} "${LSDTT_TEST_SCRIPT}"
+    lsdtt_add_harness_test(smoke_lem_cellular_particles_restart
                 --exe "$<TARGET_FILE:lsdtt-lem>"
                 --param-template "${LSDTT_TEST_PARAM_DIR}/lem_cellular_particles_restart.param.in"
                 --read-path "${CMAKE_CURRENT_BINARY_DIR}/smoke_lem_cellular_particles/out"
@@ -3794,12 +3810,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                 --expect cellularrestart_cellular_particles.csv
                 --stdout-contains "Loading cellular particles:"
     )
-    lsdtt_mark_test_runtime(python smoke_lem_cellular_particles_restart)
 else()
     lsdtt_mark_test_unregistered(python smoke_lem_cellular_particles_restart)
 endif()
 lsdtt_set_tests_properties(smoke_lem_cellular_particles_restart PROPERTIES
-    LABELS "smoke;cli;hillslope;cellular"
+    LABELS "cli;hillslope;cellular"
     FIXTURES_REQUIRED cellular_particle_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3831,7 +3846,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "run_hillslope_on_loaded_dem requires run_hillslope_steady_state: true"
 )
 lsdtt_set_tests_properties(failure_lem_hillslope_on_loaded_dem_no_solve PROPERTIES
-    LABELS "failure;cli;hillslope")
+    LABELS "cli;hillslope")
 
 add_lsdtt_cli_smoke_test(
     smoke_lem_equilibration_cycle
@@ -4383,7 +4398,7 @@ endif()
 add_executable(lsdtt-test-topmodel-column cpp/test_topmodel_column.cpp)
 target_link_libraries(lsdtt-test-topmodel-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_column COMMAND lsdtt-test-topmodel-column)
-lsdtt_set_tests_properties(unit_topmodel_column PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_topmodel_column PROPERTIES LABELS "network")
 
 # HYPE port. The oracle under
 # tests/expected/hype is generated by tests/scripts/generate_hype_oracle.py;
@@ -4393,38 +4408,38 @@ target_link_libraries(lsdtt-test-distributed-hydrology-forcing PRIVATE lsdtt3_cp
 add_test(NAME unit_distributed_hydrology_forcing
          COMMAND lsdtt-test-distributed-hydrology-forcing
                  "${CMAKE_CURRENT_BINARY_DIR}/distributed_hydrology_forcing_output")
-lsdtt_set_tests_properties(unit_distributed_hydrology_forcing PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_distributed_hydrology_forcing PROPERTIES LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-hype-parameters cpp/test_hype_parameters.cpp)
 target_link_libraries(lsdtt-test-hype-parameters PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_parameters
          COMMAND lsdtt-test-hype-parameters "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype"
                  "${CMAKE_CURRENT_BINARY_DIR}/hype_parameters_output")
-lsdtt_set_tests_properties(unit_hype_parameters PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_parameters PROPERTIES LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-hype-column cpp/test_hype_column.cpp)
 target_link_libraries(lsdtt-test-hype-column PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_column
          COMMAND lsdtt-test-hype-column "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
-lsdtt_set_tests_properties(unit_hype_column PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_column PROPERTIES LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-hype-routing cpp/test_hype_routing.cpp)
 target_link_libraries(lsdtt-test-hype-routing PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_routing
          COMMAND lsdtt-test-hype-routing "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
-lsdtt_set_tests_properties(unit_hype_routing PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_routing PROPERTIES LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-hype-model cpp/test_hype_model.cpp)
 target_link_libraries(lsdtt-test-hype-model PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_model
          COMMAND lsdtt-test-hype-model "${CMAKE_CURRENT_SOURCE_DIR}/expected/hype")
-lsdtt_set_tests_properties(unit_hype_model PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_model PROPERTIES LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-hype-raster-setup cpp/test_hype_raster_setup.cpp)
 target_link_libraries(lsdtt-test-hype-raster-setup PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_raster_setup
          COMMAND lsdtt-test-hype-raster-setup "${CMAKE_CURRENT_BINARY_DIR}/hype_raster_setup_output")
-lsdtt_set_tests_properties(unit_hype_raster_setup PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_raster_setup PROPERTIES LABELS "distributed_hydrology")
 
 # The generated input set for the column_model: hype CLI tests (smoke and
 # failure tests under lsdtt-distributed-hydrology). Generated in C++, never
@@ -4442,7 +4457,7 @@ lsdtt_set_tests_properties(fixture_hype_cli PROPERTIES
 add_executable(lsdtt-test-hype-thread-invariance cpp/test_hype_thread_invariance.cpp)
 target_link_libraries(lsdtt-test-hype-thread-invariance PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hype_thread_invariance COMMAND lsdtt-test-hype-thread-invariance)
-lsdtt_set_tests_properties(unit_hype_thread_invariance PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_hype_thread_invariance PROPERTIES LABELS "distributed_hydrology")
 
 # HYPE timing harness. Built always so it
 # can be run by hand; registered only under LSDTT_ENABLE_PERF_TESTS below.
@@ -4452,7 +4467,7 @@ target_link_libraries(lsdtt-test-hype-performance PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-subbasin-partition cpp/test_subbasin_partition.cpp)
 target_link_libraries(lsdtt-test-subbasin-partition PRIVATE lsdtt3_cpu)
 add_test(NAME unit_subbasin_partition COMMAND lsdtt-test-subbasin-partition)
-lsdtt_set_tests_properties(unit_subbasin_partition PROPERTIES LABELS "unit;distributed_hydrology")
+lsdtt_set_tests_properties(unit_subbasin_partition PROPERTIES LABELS "distributed_hydrology")
 
 # The channel mask ladder. Takes an output
 # directory for the small GeoJSON fixture it writes at run time, so nothing is
@@ -4461,33 +4476,33 @@ add_executable(lsdtt-test-channel-extent cpp/test_channel_extent.cpp)
 target_link_libraries(lsdtt-test-channel-extent PRIVATE lsdtt3_cpu)
 add_test(NAME unit_channel_extent
          COMMAND lsdtt-test-channel-extent "${CMAKE_CURRENT_BINARY_DIR}/channel_extent_output")
-lsdtt_set_tests_properties(unit_channel_extent PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_channel_extent PROPERTIES LABELS "network")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/channel_extent_output")
 
 # The routing ladder.
 add_executable(lsdtt-test-hydro-routing cpp/test_hydro_routing.cpp)
 target_link_libraries(lsdtt-test-hydro-routing PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_routing COMMAND lsdtt-test-hydro-routing)
-lsdtt_set_tests_properties(unit_hydro_routing PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_hydro_routing PROPERTIES LABELS "network")
 
 # Canopy interception.
 add_executable(lsdtt-test-canopy-interception cpp/test_canopy_interception.cpp)
 target_link_libraries(lsdtt-test-canopy-interception PRIVATE lsdtt3_cpu)
 add_test(NAME unit_canopy_interception COMMAND lsdtt-test-canopy-interception)
-lsdtt_set_tests_properties(unit_canopy_interception PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_canopy_interception PROPERTIES LABELS "network")
 
 # The roughness partition and the channel-n
 # ladder.
 add_executable(lsdtt-test-hydro-roughness cpp/test_hydro_roughness.cpp)
 target_link_libraries(lsdtt-test-hydro-roughness PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_roughness COMMAND lsdtt-test-hydro-roughness)
-lsdtt_set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_hydro_roughness PROPERTIES LABELS "network")
 
 # Land-cover scenarios.
 add_executable(lsdtt-test-landcover-scenario cpp/test_landcover_scenario.cpp)
 target_link_libraries(lsdtt-test-landcover-scenario PRIVATE lsdtt3_cpu)
 add_test(NAME unit_landcover_scenario COMMAND lsdtt-test-landcover-scenario)
-lsdtt_set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "network")
 
 # Infiltration excess (exp-K Green-Ampt).
 # Series, closed-form capacity, water balance and dimensional-form checks; no
@@ -4495,13 +4510,13 @@ lsdtt_set_tests_properties(unit_landcover_scenario PROPERTIES LABELS "unit;netwo
 add_executable(lsdtt-test-infiltration-excess cpp/test_infiltration_excess.cpp)
 target_link_libraries(lsdtt-test-infiltration-excess PRIVATE lsdtt3_cpu)
 add_test(NAME unit_infiltration_excess COMMAND lsdtt-test-infiltration-excess)
-lsdtt_set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_infiltration_excess PROPERTIES LABELS "network")
 
 # The dynamic (prognostic) saturated zone.
 add_executable(lsdtt-test-topmodel-dynamic cpp/test_topmodel_dynamic.cpp)
 target_link_libraries(lsdtt-test-topmodel-dynamic PRIVATE lsdtt3_cpu)
 add_test(NAME unit_topmodel_dynamic COMMAND lsdtt-test-topmodel-dynamic)
-lsdtt_set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "network")
 
 # Velocity field, travel time, width
 # function. "hydro" is claimed by the wetness_index -> network domain rule
@@ -4509,7 +4524,7 @@ lsdtt_set_tests_properties(unit_topmodel_dynamic PROPERTIES LABELS "unit;network
 add_executable(lsdtt-test-hydro-velocity-field cpp/test_hydro_velocity_field.cpp)
 target_link_libraries(lsdtt-test-hydro-velocity-field PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_velocity_field COMMAND lsdtt-test-hydro-velocity-field)
-lsdtt_set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "network")
 
 # The shared TWI. Guards the core function
 # directly, including the float precision contract that the CLI checksum test
@@ -4517,12 +4532,12 @@ lsdtt_set_tests_properties(unit_hydro_velocity_field PROPERTIES LABELS "unit;net
 add_executable(lsdtt-test-wetness-index cpp/test_wetness_index.cpp)
 target_link_libraries(lsdtt-test-wetness-index PRIVATE lsdtt3_cpu)
 add_test(NAME unit_wetness_index COMMAND lsdtt-test-wetness-index)
-lsdtt_set_tests_properties(unit_wetness_index PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_wetness_index PROPERTIES LABELS "network")
 
 add_executable(lsdtt-test-image-filters cpp/test_image_filters.cpp)
 target_link_libraries(lsdtt-test-image-filters PRIVATE lsdtt3_utils)
 add_test(NAME unit_image_filters COMMAND lsdtt-test-image-filters)
-lsdtt_set_tests_properties(unit_image_filters PROPERTIES LABELS "unit;image_ops")
+lsdtt_set_tests_properties(unit_image_filters PROPERTIES LABELS "image_ops")
 
 # Native raster image operations vs outputs frozen from OpenCV 4.13 before the
 # OpenCV dependency was removed (tests/expected/image_ops/), plus invariants.
@@ -4530,7 +4545,7 @@ add_executable(lsdtt-test-image-ops cpp/test_image_ops.cpp)
 target_link_libraries(lsdtt-test-image-ops PRIVATE lsdtt3_cpu)
 add_test(NAME unit_image_ops
          COMMAND lsdtt-test-image-ops ${CMAKE_CURRENT_SOURCE_DIR}/expected/image_ops)
-lsdtt_set_tests_properties(unit_image_ops PROPERTIES LABELS "unit;image_ops")
+lsdtt_set_tests_properties(unit_image_ops PROPERTIES LABELS "image_ops")
 
 # NOTE: two MADk2 checks are KNOWN FAILURES (the anisotropy/DMC estimator treats
 # axial directions as vectors).  They are reported as KNOWN-FAIL and do not fail
@@ -4543,7 +4558,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
 add_test(NAME unit_surface_metrics
          COMMAND lsdtt-test-surface-metrics
                  ${CMAKE_CURRENT_BINARY_DIR}/surface_metrics_output)
-lsdtt_set_tests_properties(unit_surface_metrics PROPERTIES LABELS "unit;surface_metrics")
+lsdtt_set_tests_properties(unit_surface_metrics PROPERTIES LABELS "surface_metrics")
 
 # Vertical units: the feet/metres trap and the plausibility warning that makes
 # it discoverable (docs/developer_notes/testing_and_benchmarking.md).
@@ -4551,7 +4566,7 @@ add_executable(lsdtt-test-vertical-units cpp/test_vertical_units.cpp)
 target_link_libraries(lsdtt-test-vertical-units PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_vertical_units COMMAND lsdtt-test-vertical-units)
-lsdtt_set_tests_properties(unit_vertical_units PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_vertical_units PROPERTIES LABELS "raster")
 
 # -----------------------------------------------------------------------------
 # lsdtt::gdal_init() -- PROJ/GDAL runtime data pinning.
@@ -4566,7 +4581,7 @@ target_include_directories(lsdtt-test-gdal-init PRIVATE ${GDAL_INCLUDE_DIRS})
 
 add_test(NAME unit_gdal_init_idempotent
          COMMAND lsdtt-test-gdal-init idempotent)
-lsdtt_set_tests_properties(unit_gdal_init_idempotent PROPERTIES LABELS "unit;gdal")
+lsdtt_set_tests_properties(unit_gdal_init_idempotent PROPERTIES LABELS "gdal")
 
 # The case the module exists for: a poisoned PROJ_DATA must be ignored when a
 # bundled proj.db is present. Needs a real proj.db to stage; skips without one.
@@ -4574,7 +4589,7 @@ add_test(NAME unit_gdal_init_pinned
          COMMAND lsdtt-test-gdal-init pinned
                  "${CMAKE_CURRENT_BINARY_DIR}/gdal_init_staging")
 lsdtt_set_tests_properties(unit_gdal_init_pinned PROPERTIES
-    LABELS "unit;gdal"
+    LABELS "gdal"
     SKIP_RETURN_CODE 77
     ENVIRONMENT "LSDTT_TEST_PROJ_DB=${LSDTT_TEST_PROJ_DB}")
 
@@ -4582,7 +4597,7 @@ lsdtt_set_tests_properties(unit_gdal_init_pinned PROPERTIES
 # be honoured. This is the half that a naive "always override" would break.
 add_test(NAME unit_gdal_init_fallthrough
          COMMAND lsdtt-test-gdal-init fallthrough)
-lsdtt_set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "unit;gdal")
+lsdtt_set_tests_properties(unit_gdal_init_fallthrough PROPERTIES LABELS "gdal")
 
 # Phase 1 of the GDAL/PROJ friction work: GDAL, OGR and CPL headers are confined
 # to .cpp files under src/. This is a source check, not a runtime one -- a
@@ -4599,7 +4614,7 @@ target_include_directories(lsdtt-test-format-support PRIVATE ${GDAL_INCLUDE_DIRS
 add_test(NAME unit_gdal_format_support
          COMMAND lsdtt-test-format-support
                  "${CMAKE_CURRENT_BINARY_DIR}/format_support_work")
-lsdtt_set_tests_properties(unit_gdal_format_support PROPERTIES LABELS "unit;gdal")
+lsdtt_set_tests_properties(unit_gdal_format_support PROPERTIES LABELS "gdal")
 
 # The loader refuses rotated, non-square-pixel and south-up rasters, which its
 # meta (origin + one cell size) would otherwise misread for every CLI.
@@ -4609,7 +4624,7 @@ target_include_directories(lsdtt-test-data-loader-geotransform-guard PRIVATE ${G
 add_test(NAME unit_raster_loader_geotransform_guard
          COMMAND lsdtt-test-data-loader-geotransform-guard
                  "${CMAKE_CURRENT_BINARY_DIR}/geotransform_guard_work")
-lsdtt_set_tests_properties(unit_raster_loader_geotransform_guard PROPERTIES LABELS "unit;gdal")
+lsdtt_set_tests_properties(unit_raster_loader_geotransform_guard PROPERTIES LABELS "gdal")
 
 # giuh_discharge: volume conservation and timestep invariance. Added 2026-09-16
 # with the fix for the unused dt_rainfall_s defect; the GIUH code had no tests
@@ -4617,7 +4632,7 @@ lsdtt_set_tests_properties(unit_raster_loader_geotransform_guard PROPERTIES LABE
 add_executable(lsdtt-test-giuh-discharge cpp/test_giuh_discharge.cpp)
 target_link_libraries(lsdtt-test-giuh-discharge PRIVATE lsdtt3_cpu)
 add_test(NAME unit_giuh_discharge COMMAND lsdtt-test-giuh-discharge)
-lsdtt_set_tests_properties(unit_giuh_discharge PROPERTIES LABELS "unit;giuh")
+lsdtt_set_tests_properties(unit_giuh_discharge PROPERTIES LABELS "giuh")
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
     add_test(NAME unit_gdal_init_boundary
@@ -4628,7 +4643,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_gdal_init_boundary)
 endif()
 lsdtt_set_tests_properties(unit_gdal_init_boundary PROPERTIES
-    LABELS "unit;gdal;conventions")
+    LABELS "gdal;conventions")
 
 # -----------------------------------------------------------------------------
 # Phase 2 of the CLI consistency clean-up.
@@ -4643,19 +4658,16 @@ lsdtt_set_tests_properties(unit_gdal_init_boundary PROPERTIES
 add_executable(lsdtt-test-cli-helper-string-utils cpp/test_cli_helper_string_utils.cpp)
 target_link_libraries(lsdtt-test-cli-helper-string-utils PRIVATE lsdtt3_cpu)
 add_test(NAME unit_cli_helper_string_utils COMMAND lsdtt-test-cli-helper-string-utils)
-lsdtt_set_tests_properties(unit_cli_helper_string_utils PROPERTIES LABELS "unit")
 
 # B2 output_extension(raster_output_format, read_ext) and B3 csv_number.
 add_executable(lsdtt-test-cli-helper-formats cpp/test_cli_helper_formats.cpp)
 target_link_libraries(lsdtt-test-cli-helper-formats PRIVATE lsdtt3_core)
 add_test(NAME unit_cli_helper_formats COMMAND lsdtt-test-cli-helper-formats)
-lsdtt_set_tests_properties(unit_cli_helper_formats PROPERTIES LABELS "unit")
 
 # D5 quote-aware lsdtt::csv_split_row and load_csv_table.
 add_executable(lsdtt-test-csv-table-quoting cpp/test_csv_table_quoting.cpp)
 target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
 add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
-lsdtt_set_tests_properties(unit_csv_table_quoting PROPERTIES LABELS "unit")
 
 # Strict field converters shared by the hand-written CSV readers (Manning,
 # crn_column erosion history, particle restart): file, line and text on error.
@@ -4664,7 +4676,6 @@ target_link_libraries(lsdtt-test-csv-table-field-parsers PRIVATE lsdtt3_cpu)
 add_test(NAME unit_csv_table_field_parsers
          COMMAND lsdtt-test-csv-table-field-parsers
                  ${CMAKE_CURRENT_BINARY_DIR}/csv_table_field_parsers_output)
-lsdtt_set_tests_properties(unit_csv_table_field_parsers PROPERTIES LABELS "unit")
 
 # B4 the polyfit metric name/suffix table beside the polyfit_metric enum.
 add_executable(lsdtt-test-surface-metrics-polyfit-metric-table
@@ -4673,7 +4684,7 @@ target_link_libraries(lsdtt-test-surface-metrics-polyfit-metric-table PRIVATE ls
 add_test(NAME unit_surface_metrics_polyfit_metric_table
          COMMAND lsdtt-test-surface-metrics-polyfit-metric-table)
 lsdtt_set_tests_properties(unit_surface_metrics_polyfit_metric_table
-                     PROPERTIES LABELS "unit;surface_metrics")
+                     PROPERTIES LABELS "surface_metrics")
 
 add_executable(lsdtt-test-basin-outline-metrics
                cpp/test_basin_outline_metrics.cpp)
@@ -4681,19 +4692,18 @@ target_link_libraries(lsdtt-test-basin-outline-metrics PRIVATE lsdtt3_cpu)
 add_test(NAME unit_basin_outline_metrics
          COMMAND lsdtt-test-basin-outline-metrics)
 lsdtt_set_tests_properties(unit_basin_outline_metrics
-                     PROPERTIES LABELS "unit;basin_surface_metrics")
+                     PROPERTIES LABELS "basin_surface_metrics")
 
 add_executable(lsdtt-test-param-parser-help cpp/test_param_parser_help.cpp)
 target_link_libraries(lsdtt-test-param-parser-help PRIVATE lsdtt3_core)
 
 add_test(NAME unit_param_parser_help COMMAND lsdtt-test-param-parser-help)
-lsdtt_set_tests_properties(unit_param_parser_help PROPERTIES LABELS "unit")
 
 add_executable(lsdtt-test-common-parameters cpp/test_common_parameters.cpp)
 target_link_libraries(lsdtt-test-common-parameters PRIVATE lsdtt3_core)
 
 add_test(NAME unit_common_parameters COMMAND lsdtt-test-common-parameters)
-lsdtt_set_tests_properties(unit_common_parameters PROPERTIES LABELS "unit;core;parameters")
+lsdtt_set_tests_properties(unit_common_parameters PROPERTIES LABELS "core;parameters")
 
 # The shared threshold picker (fixed | qq_gaussian | cdf_divergence): the
 # Clubb et al. (2017) QQ rule against samples with a known answer, and the
@@ -4705,7 +4715,7 @@ target_link_libraries(lsdtt-test-threshold-selection PRIVATE lsdtt3_utils)
 add_test(NAME unit_fluvial_surface_threshold_selection
          COMMAND lsdtt-test-threshold-selection)
 lsdtt_set_tests_properties(unit_fluvial_surface_threshold_selection PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Cosmogenic physics driver (docs/developer_notes/testing_and_benchmarking.md).  Writes its
 # plottable CSVs into the test working directory.
@@ -4793,7 +4803,7 @@ add_test(NAME unit_synthetic_networks
 # (P1 failed in ~1 run in 4, measured 2026-10-07). RESOURCE_LOCK serialises
 # just these two and keeps every output path unchanged.
 lsdtt_set_tests_properties(unit_synthetic_networks PROPERTIES
-    LABELS "unit;synthetic_networks"
+    LABELS "synthetic_networks"
     FIXTURES_SETUP synthetic_networks_fixture
     RESOURCE_LOCK synthetic_networks_output)
 file(MAKE_DIRECTORY ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
@@ -4809,13 +4819,13 @@ add_test(NAME unit_synthetic_networks_sweep
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR} --sweep)
 lsdtt_set_tests_properties(unit_synthetic_networks_sweep PROPERTIES
-    LABELS "unit;synthetic_networks" TIMEOUT 1800
+    LABELS "synthetic_networks" TIMEOUT 1800
     RESOURCE_LOCK synthetic_networks_output)
 
 add_test(NAME unit_flow_properties
          COMMAND lsdtt-test-flow-properties
                  ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
-lsdtt_set_tests_properties(unit_flow_properties PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_flow_properties PROPERTIES LABELS "flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 
 # BYTE-IDENTITY PIN for the D8 flow object. Pins were generated from the code
@@ -4825,20 +4835,20 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/flow_properties_output)
 add_executable(lsdtt-test-flow-d8-identity cpp/test_flow_d8_identity.cpp)
 target_link_libraries(lsdtt-test-flow-d8-identity PRIVATE lsdtt3_cpu)
 add_test(NAME unit_flow_d8_identity COMMAND lsdtt-test-flow-d8-identity)
-lsdtt_set_tests_properties(unit_flow_d8_identity PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_flow_d8_identity PROPERTIES LABELS "flow")
 
 # Barnes et al. (2014b) flat resolution. Hermetic: in-process inputs only.
 add_executable(lsdtt-test-flat-resolution cpp/test_flat_resolution.cpp)
 target_link_libraries(lsdtt-test-flat-resolution PRIVATE lsdtt3_cpu)
 add_test(NAME unit_flat_resolution COMMAND lsdtt-test-flat-resolution)
-lsdtt_set_tests_properties(unit_flat_resolution PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_flat_resolution PROPERTIES LABELS "flow")
 # The same driver on the committed real-terrain crop (Step 11d): a Copernicus
 # GLO-30 lakeland window on which a single Barnes pass leaves cells the D8
 # router refuses. Reads tests/data only; no network, no skip path.
 add_test(NAME unit_flat_resolution_real_terrain
          COMMAND lsdtt-test-flat-resolution --real-terrain
                  "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
-lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "flow")
 
 # Least-cost breaching (Lindsay 2020) against frozen float32 outputs of
 # Whitebox next-gen BreachDepressionsLeastCost (whitebox_workflows 2.0.6),
@@ -4848,7 +4858,7 @@ lsdtt_set_tests_properties(unit_flat_resolution_real_terrain PROPERTIES LABELS "
 add_executable(lsdtt-test-breach-least-cost cpp/test_breach_least_cost.cpp)
 target_link_libraries(lsdtt-test-breach-least-cost PRIVATE lsdtt3_cpu)
 add_test(NAME unit_breach_least_cost COMMAND lsdtt-test-breach-least-cost)
-lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "flow")
 # The same driver on the committed lakeland crop: float32 output under matched
 # parameters equals Whitebox 2.0.6's (digests computed from Whitebox itself),
 # and lsdtt3's default output routes (every interior cell descends; D8
@@ -4856,15 +4866,15 @@ lsdtt_set_tests_properties(unit_breach_least_cost PROPERTIES LABELS "unit;flow")
 add_test(NAME unit_breach_least_cost_real_terrain
          COMMAND lsdtt-test-breach-least-cost --real-terrain
                  "${LSDTT_TEST_DATA_DIR}/flat_resolution_lakeland_crop_dem.tif")
-lsdtt_set_tests_properties(unit_breach_least_cost_real_terrain PROPERTIES LABELS "unit;flow")
+lsdtt_set_tests_properties(unit_breach_least_cost_real_terrain PROPERTIES LABELS "flow")
 
 add_test(NAME unit_flow_snapping COMMAND lsdtt-test-flow-snapping)
-lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "unit;flow;snapping")
+lsdtt_set_tests_properties(unit_flow_snapping PROPERTIES LABELS "flow;snapping")
 
 add_test(NAME unit_mountain_front_outlet_pruning
          COMMAND lsdtt-test-mountain-front-outlet-pruning)
 lsdtt_set_tests_properties(unit_mountain_front_outlet_pruning PROPERTIES
-                     LABELS "unit;flow;mountain_front")
+                     LABELS "flow;mountain_front")
 
 # Depression hierarchy, phase 0: pins the
 # dangling-reference defect in outlet_link -- copy semantics, outlet_db across a
@@ -4885,7 +4895,7 @@ target_link_libraries(lsdtt-test-depression-hierarchy PRIVATE lsdtt3_cpu)
 add_test(NAME unit_depression_hierarchy
          COMMAND lsdtt-test-depression-hierarchy)
 lsdtt_set_tests_properties(unit_depression_hierarchy PROPERTIES
-    LABELS "unit;depression_hierarchy"
+    LABELS "depression_hierarchy"
     RUN_SERIAL TRUE)
 
 # Oracle comparison against the upstream Barnes implementation. The expected
@@ -4898,7 +4908,7 @@ add_test(NAME unit_depression_hierarchy_oracle
                  "${LSDTT_TEST_DATA_DIR}/depression_hierarchy"
                  "${CMAKE_CURRENT_SOURCE_DIR}/expected/depression_hierarchy")
 lsdtt_set_tests_properties(unit_depression_hierarchy_oracle PROPERTIES
-    LABELS "unit;depression_hierarchy")
+    LABELS "depression_hierarchy")
 
 # Internal drainage, phases 0, 1 and 3: the crater-field
 # oracle, fill_pits_with_sinks, forced_outlet_flats, hole punching and sink
@@ -4910,7 +4920,7 @@ target_link_libraries(lsdtt-test-internal-drainage PRIVATE lsdtt3_cpu)
 add_test(NAME unit_internal_drainage
          COMMAND lsdtt-test-internal-drainage)
 lsdtt_set_tests_properties(unit_internal_drainage PROPERTIES
-    LABELS "unit;internal_drainage")
+    LABELS "internal_drainage")
 
 add_test(NAME fixture_internal_drainage_cli
          COMMAND lsdtt-test-internal-drainage --write-cli-fixture
@@ -4936,7 +4946,7 @@ function(add_internal_drainage_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT
                 ${ARGN})
     lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
     lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
-        LABELS "smoke;cli;internal_drainage"
+        LABELS "cli;internal_drainage"
         FIXTURES_REQUIRED internal_drainage_cli_fixture)
 endfunction()
 
@@ -5051,7 +5061,7 @@ add_internal_drainage_cli_test(
 add_test(NAME smoke_internal_drainage_help
          COMMAND lsdtt-internal-drainage -h)
 lsdtt_set_tests_properties(smoke_internal_drainage_help PROPERTIES
-    LABELS "smoke;cli;internal_drainage"
+    LABELS "cli;internal_drainage"
     PASS_REGULAR_EXPRESSION "sink_leaves_only")
 
 # Internal drainage, phase 2b: the detection module src/cpu/lsdtt_internal_drainage_cpu.  Covers both detection
@@ -5072,7 +5082,7 @@ add_test(NAME unit_internal_drainage_detect
          COMMAND lsdtt-test-internal-drainage-detect
                  ${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_detect_output)
 lsdtt_set_tests_properties(unit_internal_drainage_detect PROPERTIES
-    LABELS "unit;internal_drainage")
+    LABELS "internal_drainage")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_drainage_detect_output)
 
 # Internal drainage, phase 2a: the point-input attribute reader in src/core/lsdtt_point_input.  Guards the
@@ -5089,7 +5099,7 @@ add_test(NAME unit_point_input
          COMMAND lsdtt-test-point-input
                  ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
 lsdtt_set_tests_properties(unit_point_input PROPERTIES
-    LABELS "unit;point_input")
+    LABELS "point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
 
 # Characterisation tests for the src/utils + src/cpu consolidation (stage 1).
@@ -5099,7 +5109,7 @@ add_executable(lsdtt-test-raster-cell-predicates cpp/test_raster_cell_predicates
 target_link_libraries(lsdtt-test-raster-cell-predicates PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_cell_predicates COMMAND lsdtt-test-raster-cell-predicates)
 lsdtt_set_tests_properties(unit_raster_cell_predicates PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 add_executable(lsdtt-test-distributed-hydrology-argument-checks
     cpp/test_distributed_hydrology_argument_checks.cpp)
@@ -5107,7 +5117,7 @@ target_link_libraries(lsdtt-test-distributed-hydrology-argument-checks PRIVATE l
 add_test(NAME unit_distributed_hydrology_argument_checks
          COMMAND lsdtt-test-distributed-hydrology-argument-checks)
 lsdtt_set_tests_properties(unit_distributed_hydrology_argument_checks PROPERTIES
-    LABELS "unit;distributed_hydrology")
+    LABELS "distributed_hydrology")
 
 add_executable(lsdtt-test-drainage-injection-weights cpp/test_drainage_injection_weights.cpp)
 target_link_libraries(lsdtt-test-drainage-injection-weights PRIVATE lsdtt3_cpu)
@@ -5115,7 +5125,7 @@ add_test(NAME unit_drainage_injection_weights
          COMMAND lsdtt-test-drainage-injection-weights
                  ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
 lsdtt_set_tests_properties(unit_drainage_injection_weights PROPERTIES
-    LABELS "unit;point_input;flow")
+    LABELS "point_input;flow")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/drainage_injection_weights_output)
 
 # Stage 3: bilinear raster sampling (C07) and point_in_ring (C22).
@@ -5123,14 +5133,14 @@ add_executable(lsdtt-test-raster-sampling cpp/test_raster_sampling.cpp)
 target_link_libraries(lsdtt-test-raster-sampling PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_sampling COMMAND lsdtt-test-raster-sampling)
 lsdtt_set_tests_properties(unit_raster_sampling PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 # Stage 4: junction-graph topological order and s_vector preorder (C05).
 add_executable(lsdtt-test-junction-graph-orders cpp/test_junction_graph_orders.cpp)
 target_link_libraries(lsdtt-test-junction-graph-orders PRIVATE lsdtt3_cpu)
 add_test(NAME unit_junction_graph_orders COMMAND lsdtt-test-junction-graph-orders)
 lsdtt_set_tests_properties(unit_junction_graph_orders PROPERTIES
-    LABELS "unit;network")
+    LABELS "network")
 
 # Stage 5: neighbour tables (C01) and sqrt(2) (C19). The table checks are
 # static_asserts, so a mapping error fails the build of this test.
@@ -5138,14 +5148,14 @@ add_executable(lsdtt-test-grid-neighbours cpp/test_grid_neighbours.cpp)
 target_link_libraries(lsdtt-test-grid-neighbours PRIVATE lsdtt3_cpu)
 add_test(NAME unit_grid_neighbours COMMAND lsdtt-test-grid-neighbours)
 lsdtt_set_tests_properties(unit_grid_neighbours PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 # Stage 6: shared layer-to-raster CRS transform and spatial filter (C03).
 add_executable(lsdtt-test-vector-layer-transform cpp/test_vector_layer_transform.cpp)
 target_link_libraries(lsdtt-test-vector-layer-transform PRIVATE lsdtt3_cpu)
 add_test(NAME unit_vector_layer_transform COMMAND lsdtt-test-vector-layer-transform)
 lsdtt_set_tests_properties(unit_vector_layer_transform PROPERTIES
-    LABELS "unit;gdal")
+    LABELS "gdal")
 
 # Stage 7: connected-component labelling (C08) and grid Dijkstra (C11).
 # trace_labelled_polygons: written polygons read back and compared with their
@@ -5154,40 +5164,40 @@ add_executable(lsdtt-test-raster-vectorise cpp/test_raster_vectorise.cpp)
 target_link_libraries(lsdtt-test-raster-vectorise PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_vectorise_polygons COMMAND lsdtt-test-raster-vectorise)
 lsdtt_set_tests_properties(unit_raster_vectorise_polygons PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 add_executable(lsdtt-test-connected-components cpp/test_connected_components.cpp)
 target_link_libraries(lsdtt-test-connected-components PRIVATE lsdtt3_cpu)
 add_test(NAME unit_connected_components COMMAND lsdtt-test-connected-components)
 lsdtt_set_tests_properties(unit_connected_components PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 add_executable(lsdtt-test-grid-geodesic cpp/test_grid_geodesic.cpp)
 target_link_libraries(lsdtt-test-grid-geodesic PRIVATE lsdtt3_cpu)
 add_test(NAME unit_grid_geodesic COMMAND lsdtt-test-grid-geodesic)
 lsdtt_set_tests_properties(unit_grid_geodesic PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 # Stage 8: boundary-condition string parsing (C09).
 add_executable(lsdtt-test-boundary-conditions cpp/test_boundary_conditions.cpp)
 target_link_libraries(lsdtt-test-boundary-conditions PRIVATE lsdtt3_cpu)
 add_test(NAME unit_boundary_conditions COMMAND lsdtt-test-boundary-conditions)
 lsdtt_set_tests_properties(unit_boundary_conditions PROPERTIES
-    LABELS "unit;flow")
+    LABELS "flow")
 
 # Stage 8: open-for-write helper (C14).
 add_executable(lsdtt-test-output-file cpp/test_output_file.cpp)
 add_test(NAME unit_output_file COMMAND lsdtt-test-output-file
          ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
 lsdtt_set_tests_properties(unit_output_file PROPERTIES
-    LABELS "unit;core")
+    LABELS "core")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/output_file_test)
 
 # Stage 8: splitmix64 copies replaced by lsdtt_random.hpp (C15).
 add_executable(lsdtt-test-splitmix-copies cpp/test_splitmix_copies.cpp)
 add_test(NAME unit_splitmix_copies COMMAND lsdtt-test-splitmix-copies)
 lsdtt_set_tests_properties(unit_splitmix_copies PROPERTIES
-    LABELS "unit;core")
+    LABELS "core")
 
 # Stage 9: thread-count invariance of the kernels whose OpenMP thread setting
 # moved from omp_set_num_threads to num_threads clauses (C16, decision D4).
@@ -5195,13 +5205,13 @@ add_executable(lsdtt-test-thread-count-invariance cpp/test_thread_count_invarian
 target_link_libraries(lsdtt-test-thread-count-invariance PRIVATE lsdtt3_cpu)
 add_test(NAME unit_thread_count_invariance COMMAND lsdtt-test-thread-count-invariance)
 lsdtt_set_tests_properties(unit_thread_count_invariance PROPERTIES
-    LABELS "unit;lem")
+    LABELS "lem")
 
 # Stage 10: landslide xorshift64* copies replaced by lsdtt_random (L3).
 add_executable(lsdtt-test-landslide-rng cpp/test_landslide_rng.cpp)
 add_test(NAME unit_landslide_rng COMMAND lsdtt-test-landslide-rng)
 lsdtt_set_tests_properties(unit_landslide_rng PROPERTIES
-    LABELS "unit;landslide")
+    LABELS "landslide")
 
 # Stage 10: thread setting of the hillslope solvers moved from
 # omp_set_num_threads to num_threads clauses (C16-H, decision D4).
@@ -5209,14 +5219,14 @@ add_executable(lsdtt-test-hillslope-thread-count-invariance cpp/test_hillslope_t
 target_link_libraries(lsdtt-test-hillslope-thread-count-invariance PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_thread_count_invariance COMMAND lsdtt-test-hillslope-thread-count-invariance)
 lsdtt_set_tests_properties(unit_hillslope_thread_count_invariance PROPERTIES
-    LABELS "unit;hillslope")
+    LABELS "hillslope")
 
 # Stage 10: bilinear_regular takes its axis weights from regular_axis_weight (L1).
 add_executable(lsdtt-test-cosmo-lsdn-grid-lookup cpp/test_cosmo_lsdn_grid_lookup.cpp)
 target_link_libraries(lsdtt-test-cosmo-lsdn-grid-lookup PRIVATE lsdtt3_cpu)
 add_test(NAME unit_cosmo_lsdn_grid_lookup COMMAND lsdtt-test-cosmo-lsdn-grid-lookup)
 lsdtt_set_tests_properties(unit_cosmo_lsdn_grid_lookup PROPERTIES
-    LABELS "unit;cosmo")
+    LABELS "cosmo")
 
 # The production / pressure rasters' WGS84 conversion must not depend on the
 # axis order the DEM's CRS declares (northing-first CRSs such as NZTM).
@@ -5224,7 +5234,7 @@ add_executable(lsdtt-test-cosmo-raster-axis-order cpp/test_cosmo_raster_axis_ord
 target_link_libraries(lsdtt-test-cosmo-raster-axis-order PRIVATE lsdtt3_cpu)
 add_test(NAME unit_cosmo_raster_axis_order COMMAND lsdtt-test-cosmo-raster-axis-order)
 lsdtt_set_tests_properties(unit_cosmo_raster_axis_order PROPERTIES
-    LABELS "unit;cosmo")
+    LABELS "cosmo")
 
 # Stage 11: four-cardinal centred-difference gradient shared by the
 # vertical-units check and the LEM timestep diagnosis (C18).
@@ -5232,7 +5242,7 @@ add_executable(lsdtt-test-raster-central-difference cpp/test_raster_central_diff
 target_link_libraries(lsdtt-test-raster-central-difference PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_central_difference COMMAND lsdtt-test-raster-central-difference)
 lsdtt_set_tests_properties(unit_raster_central_difference PROPERTIES
-    LABELS "unit;raster")
+    LABELS "raster")
 
 # Stage 11: Manning's equation shared by hydro_velocity_field and
 # manning_hydraulics (C20).
@@ -5240,14 +5250,14 @@ add_executable(lsdtt-test-hydro-velocity-manning-formula cpp/test_hydro_velocity
 target_link_libraries(lsdtt-test-hydro-velocity-manning-formula PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hydro_velocity_manning_formula COMMAND lsdtt-test-hydro-velocity-manning-formula)
 lsdtt_set_tests_properties(unit_hydro_velocity_manning_formula PROPERTIES
-    LABELS "unit;network")
+    LABELS "network")
 
 # Stage 2: the in-place medians and quantiles in src/utils/lsdtt_statistics.
 add_executable(lsdtt-test-order-statistics cpp/test_order_statistics.cpp)
 target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
 add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
 lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
-    LABELS "unit;statistics")
+    LABELS "statistics")
 
 # Stage 2 part B: records the D7 change from the private ols_fit to
 # compute_linear_regression in the drainage-area exceedance scaling.
@@ -5255,21 +5265,21 @@ add_executable(lsdtt-test-drainage-area-exceedance-ols cpp/test_drainage_area_ex
 target_link_libraries(lsdtt-test-drainage-area-exceedance-ols PRIVATE lsdtt3_cpu)
 add_test(NAME unit_drainage_area_exceedance_ols COMMAND lsdtt-test-drainage-area-exceedance-ols)
 lsdtt_set_tests_properties(unit_drainage_area_exceedance_ols PROPERTIES
-    LABELS "unit;statistics")
+    LABELS "statistics")
 
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hydraulic_routing
          COMMAND lsdtt-test-hydraulic-routing)
-lsdtt_set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "unit;hydraulic")
+lsdtt_set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "hydraulic")
 
 add_executable(lsdtt-test-raster-resampling cpp/test_raster_resampling.cpp)
 target_link_libraries(lsdtt-test-raster-resampling PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_raster_resampling
          COMMAND lsdtt-test-raster-resampling)
-lsdtt_set_tests_properties(unit_raster_resampling PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_raster_resampling PROPERTIES LABELS "raster")
 
 # Oblique analysis frames: geometry, axis convention, datum, line and polygon
 # builders, checked against an independent Vincenty geodesic.
@@ -5278,7 +5288,7 @@ target_link_libraries(lsdtt-test-oblique-frame PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_oblique_frame
          COMMAND lsdtt-test-oblique-frame)
-lsdtt_set_tests_properties(unit_oblique_frame PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_oblique_frame PROPERTIES LABELS "raster")
 
 # Feature files that define an oblique frame (line, two points, polygon) and
 # every refusal; fixtures are GeoPackages written by the test itself.
@@ -5288,7 +5298,7 @@ target_link_libraries(lsdtt-test-oblique-frame-feature PRIVATE lsdtt3_cpu)
 add_test(NAME unit_oblique_frame_feature
          COMMAND lsdtt-test-oblique-frame-feature
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_feature_work")
-lsdtt_set_tests_properties(unit_oblique_frame_feature PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_oblique_frame_feature PROPERTIES LABELS "raster")
 
 # The rotation frame file: exact write/read round trip, YAML-safe writing
 # rules, consistency checks and refusals, and the frame_from_crs_wkt fallback.
@@ -5298,7 +5308,7 @@ target_link_libraries(lsdtt-test-oblique-frame-file PRIVATE lsdtt3_cpu)
 add_test(NAME unit_oblique_frame_file
          COMMAND lsdtt-test-oblique-frame-file
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_file_work")
-lsdtt_set_tests_properties(unit_oblique_frame_file PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_oblique_frame_file PROPERTIES LABELS "raster")
 
 # Warping a DEM into an oblique frame and rotating products back onto the
 # source or -tap lattice; fixtures are GeoTIFFs written by the test itself.
@@ -5308,7 +5318,7 @@ target_link_libraries(lsdtt-test-oblique-frame-warp PRIVATE lsdtt3_cpu)
 add_test(NAME unit_oblique_frame_warp
          COMMAND lsdtt-test-oblique-frame-warp
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_warp_work")
-lsdtt_set_tests_properties(unit_oblique_frame_warp PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_oblique_frame_warp PROPERTIES LABELS "raster")
 
 # Rotating an existing DEM into an oblique frame as lsdtt-raster-preprocessing
 # does (line, polygon, valid-data footprint; NAD83 source) and rotating its
@@ -5319,7 +5329,7 @@ target_link_libraries(lsdtt-test-oblique-frame-preprocess PRIVATE lsdtt3_cpu)
 add_test(NAME unit_oblique_frame_preprocess
          COMMAND lsdtt-test-oblique-frame-preprocess
                  "${CMAKE_CURRENT_BINARY_DIR}/oblique_frame_preprocess_work")
-lsdtt_set_tests_properties(unit_oblique_frame_preprocess PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_oblique_frame_preprocess PROPERTIES LABELS "raster")
 
 # Grid convergence and bearings_relative_to_true_north: convergence against
 # pyproj, wrapping, a plane dipping to a known true azimuth in UTM and in
@@ -5328,7 +5338,7 @@ add_executable(lsdtt-test-true-north cpp/test_true_north.cpp)
 target_link_libraries(lsdtt-test-true-north PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_true_north COMMAND lsdtt-test-true-north)
-lsdtt_set_tests_properties(unit_true_north PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_true_north PROPERTIES LABELS "raster")
 
 # CRS matching by meaning, not WKT text: an lsdtt3-written DEM and a gdalwarp
 # mask in one oblique Mercator frame must be accepted together.
@@ -5337,14 +5347,14 @@ target_link_libraries(lsdtt-test-crs-semantic-matching PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_crs_semantic_matching
          COMMAND lsdtt-test-crs-semantic-matching)
-lsdtt_set_tests_properties(unit_crs_semantic_matching PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_crs_semantic_matching PROPERTIES LABELS "raster")
 
 add_executable(lsdtt-test-raster-hierarchy cpp/test_raster_hierarchy.cpp)
 target_link_libraries(lsdtt-test-raster-hierarchy PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_raster_hierarchy
          COMMAND lsdtt-test-raster-hierarchy)
-lsdtt_set_tests_properties(unit_raster_hierarchy PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_raster_hierarchy PROPERTIES LABELS "raster")
 
 add_executable(lsdtt-test-raster-jenks-classification
                cpp/test_raster_jenks_classification.cpp)
@@ -5353,14 +5363,14 @@ target_link_libraries(lsdtt-test-raster-jenks-classification PRIVATE lsdtt3_cpu)
 add_test(NAME unit_raster_jenks_classification
          COMMAND lsdtt-test-raster-jenks-classification)
 lsdtt_set_tests_properties(unit_raster_jenks_classification PROPERTIES
-    LABELS "unit;raster;jenks")
+    LABELS "raster;jenks")
 
 add_executable(lsdtt-test-raster-active-masks cpp/test_raster_active_masks.cpp)
 target_link_libraries(lsdtt-test-raster-active-masks PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_raster_active_masks COMMAND lsdtt-test-raster-active-masks)
 lsdtt_set_tests_properties(unit_raster_active_masks PROPERTIES
-    LABELS "unit;raster;mask")
+    LABELS "raster;mask")
 
 # Divide-migration compute layer.  Covers the routines in src/cpu/lsdtt_divide_migration_cpu.cpp:
 # nearest-divide geometry (mid-segment projection, zero-distance guard, negative
@@ -5394,7 +5404,7 @@ target_link_libraries(lsdtt-test-hillslope-length-statistic PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_length_statistic
          COMMAND lsdtt-test-hillslope-length-statistic)
 lsdtt_set_tests_properties(unit_hillslope_length_statistic PROPERTIES
-    LABELS "unit;hillslope")
+    LABELS "hillslope")
 
 add_executable(lsdtt-test-critical-slope cpp/test_critical_slope.cpp)
 target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
@@ -5402,13 +5412,13 @@ target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
 add_test(NAME unit_divide_diagnostics
          COMMAND lsdtt-test-divide-diagnostics)
 lsdtt_set_tests_properties(unit_divide_diagnostics PROPERTIES
-    LABELS "unit;divide_diagnostics")
+    LABELS "divide_diagnostics")
 
 add_test(NAME unit_paired_flowpaths
          COMMAND lsdtt-test-paired-flowpaths
                  "${LSDTT_PAIRED_FLOWPATHS_FIXTURE_DIR}")
 lsdtt_set_tests_properties(unit_paired_flowpaths PROPERTIES
-    LABELS "unit;paired_flowpaths"
+    LABELS "paired_flowpaths"
     FIXTURES_SETUP paired_flowpaths_fixture)
 
 # =============================================================================
@@ -5439,7 +5449,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "rejected, paths never rejoin:        0"
 )
 lsdtt_set_tests_properties(smoke_ridgeline_paired_flowpaths_sl_on PROPERTIES
-    LABELS "smoke;cli;paired_flowpaths"
+    LABELS "cli;paired_flowpaths"
     FIXTURES_REQUIRED paired_flowpaths_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -5468,7 +5478,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "rejected, paths never rejoin:        0"
 )
 lsdtt_set_tests_properties(smoke_ridgeline_paired_flowpaths_sl_off PROPERTIES
-    LABELS "smoke;cli;paired_flowpaths"
+    LABELS "cli;paired_flowpaths"
     FIXTURES_REQUIRED paired_flowpaths_fixture)
 
 # The contrast that makes the two zeroes above mean something: the same fixture
@@ -5485,25 +5495,25 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "pfsall_paired_flowpaths_summary.csv:6561,0."
 )
 lsdtt_set_tests_properties(smoke_ridgeline_paired_flowpaths_all_basins PROPERTIES
-    LABELS "smoke;cli;paired_flowpaths"
+    LABELS "cli;paired_flowpaths"
     FIXTURES_REQUIRED paired_flowpaths_fixture)
 
 add_test(NAME unit_divide_migration
          COMMAND lsdtt-test-divide-migration
                  "${LSDTT_DIVIDE_MIGRATION_FIXTURE_DIR}")
 lsdtt_set_tests_properties(unit_divide_migration PROPERTIES
-    LABELS "unit;divide_migration"
+    LABELS "divide_migration"
     FIXTURES_SETUP divide_migration_fixture)
 
 add_test(NAME unit_landscape_equilibration
          COMMAND lsdtt-test-landscape-equilibration)
 lsdtt_set_tests_properties(unit_landscape_equilibration PROPERTIES
-    LABELS "unit;landscape_equilibration")
+    LABELS "landscape_equilibration")
 
 add_test(NAME unit_hillslope_critical_slope
          COMMAND lsdtt-test-critical-slope)
 lsdtt_set_tests_properties(unit_hillslope_critical_slope PROPERTIES
-    LABELS "unit;hillslope")
+    LABELS "hillslope")
 
 # Kinematic streamline tracing (Lea 1992 + Tarboton 1997 edge routing).
 # Phase 0 of the hillslope-channel coupling work: the module shipped as a draft
@@ -5517,7 +5527,7 @@ target_link_libraries(lsdtt-test-streamlines PRIVATE lsdtt3_cpu)
 add_test(NAME unit_streamlines
          COMMAND lsdtt-test-streamlines)
 lsdtt_set_tests_properties(unit_streamlines PROPERTIES
-    LABELS "unit;streamlines")
+    LABELS "streamlines")
 
 # Ridge extraction for hilltop flow routing (Phase 1). The divide-grid corner
 # convention is the one claim everything downstream rests on, so the fixtures
@@ -5529,7 +5539,7 @@ target_link_libraries(lsdtt-test-hilltop-flow-routing PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hilltop_flow_routing
          COMMAND lsdtt-test-hilltop-flow-routing)
 lsdtt_set_tests_properties(unit_hilltop_flow_routing PROPERTIES
-    LABELS "unit;hilltop_flow_routing")
+    LABELS "hilltop_flow_routing")
 
 # The integration half of Phase 1: run ridge extraction against REAL basin
 # outlines rather than hand-made ridgelines, and MEASURE what fraction of real
@@ -5542,7 +5552,7 @@ target_link_libraries(lsdtt-test-hilltop-integration PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hilltop_flow_routing_integration
          COMMAND lsdtt-test-hilltop-integration)
 lsdtt_set_tests_properties(unit_hilltop_flow_routing_integration PROPERTIES
-    LABELS "unit;hilltop_flow_routing")
+    LABELS "hilltop_flow_routing")
 
 # --------------------------------------------------------------------------
 # lsdtt-hillslope-channel-coupling
@@ -5576,14 +5586,8 @@ function(add_hilltop_coupling_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
                 --expect "${EXPECTED_OUTPUT}"
                 ${ARGN})
     lsdtt_mark_harness_test(${TEST_NAME} ${ARGN})
-    set(lbl "cli;hilltop_flow_routing")
-    if(TEST_NAME MATCHES "^failure_")
-        list(APPEND lbl "failure")
-    else()
-        list(APPEND lbl "smoke")
-    endif()
     lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
-        LABELS "${lbl}"
+        LABELS "cli;hilltop_flow_routing"
         FIXTURES_REQUIRED hilltop_coupling_cli_fixture)
 endfunction()
 
@@ -5692,7 +5696,7 @@ target_link_libraries(lsdtt-test-channel-threshold-units PRIVATE lsdtt3_cpu)
 add_test(NAME unit_channel_threshold_units
          COMMAND lsdtt-test-channel-threshold-units)
 lsdtt_set_tests_properties(unit_channel_threshold_units PROPERTIES
-    LABELS "unit;lem")
+    LABELS "lem")
 
 # Pathway A: the channel
 # threshold search, and the ways its objective can be plausibly wrong.
@@ -5702,7 +5706,7 @@ target_link_libraries(lsdtt-test-hillslope-length-search PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_length_search
          COMMAND lsdtt-test-hillslope-length-search)
 lsdtt_set_tests_properties(unit_hillslope_length_search PROPERTIES
-    LABELS "unit;hillslope")
+    LABELS "hillslope")
 
 # Phase 5 sweep: every vector-ingesting CLI against multipart input.
 # A SCRIPT rather than a C++ test because it drives the shipped binaries -- the
@@ -5723,7 +5727,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo smoke_multipart_cli_sweep)
 endif()
 lsdtt_set_tests_properties(smoke_multipart_cli_sweep PROPERTIES
-    LABELS "smoke;cli;raster" TIMEOUT 1200)
+    LABELS "cli;raster" TIMEOUT 1200)
 
 # Longitudinal profile from the points output.
 add_executable(lsdtt-test-channel-profile-attributes cpp/test_channel_profile_attributes.cpp)
@@ -5733,7 +5737,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
 add_test(NAME unit_channel_profile_attributes
          COMMAND lsdtt-test-channel-profile-attributes
                  ${CMAKE_CURRENT_BINARY_DIR}/profile_output)
-lsdtt_set_tests_properties(unit_channel_profile_attributes PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_channel_profile_attributes PROPERTIES LABELS "network")
 
 # link_length under periodic boundaries.
 add_executable(lsdtt-test-link-length-periodic cpp/test_link_length_periodic.cpp)
@@ -5743,7 +5747,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
 add_test(NAME unit_link_length_periodic
          COMMAND lsdtt-test-link-length-periodic
                  ${CMAKE_CURRENT_BINARY_DIR}/link_length_output)
-lsdtt_set_tests_properties(unit_link_length_periodic PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_link_length_periodic PROPERTIES LABELS "network")
 
 # Multipart geometry on read.
 add_executable(lsdtt-test-multipart-geometry cpp/test_multipart_geometry.cpp)
@@ -5753,7 +5757,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
 add_test(NAME unit_multipart_geometry
          COMMAND lsdtt-test-multipart-geometry
                  ${CMAKE_CURRENT_BINARY_DIR}/multipart_output)
-lsdtt_set_tests_properties(unit_multipart_geometry PROPERTIES LABELS "unit;raster")
+lsdtt_set_tests_properties(unit_multipart_geometry PROPERTIES LABELS "raster")
 
 # Pathway A from the command line, while it is not yet a lsdtt-lem parameter.
 add_executable(find-threshold-for-hillslope-length cpp/find_threshold_for_hillslope_length_driver.cpp)
@@ -5769,21 +5773,21 @@ add_executable(lsdtt-test-hillslope-peclet cpp/test_hillslope_peclet.cpp)
 target_link_libraries(lsdtt-test-hillslope-peclet PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_peclet COMMAND lsdtt-test-hillslope-peclet)
-lsdtt_set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_peclet PROPERTIES LABELS "hillslope")
 
 # Boundary conditions for the explicit Roering transport solver (periodic + 'o').
 add_executable(lsdtt-test-hillslope-transport-bc cpp/test_hillslope_transport_bc.cpp)
 target_link_libraries(lsdtt-test-hillslope-transport-bc PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_transport_bc COMMAND lsdtt-test-hillslope-transport-bc)
-lsdtt_set_tests_properties(unit_hillslope_transport_bc PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_transport_bc PROPERTIES LABELS "hillslope")
 
 # Coupled-LEM timestep control: an accuracy limit that no stability check catches.
 add_executable(lsdtt-test-lem-timestep cpp/test_lem_timestep.cpp)
 target_link_libraries(lsdtt-test-lem-timestep PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_lem_timestep COMMAND lsdtt-test-lem-timestep)
-lsdtt_set_tests_properties(unit_lem_timestep PROPERTIES LABELS "unit;lem")
+lsdtt_set_tests_properties(unit_lem_timestep PROPERTIES LABELS "lem")
 
 # Process-domain coupling: every hillslope model must hold the channel pixels at
 # their fluvial elevations and relax the hillslopes toward them, not toward the
@@ -5799,7 +5803,7 @@ add_executable(lsdtt-test-lem-forcing-history cpp/test_lem_forcing_history.cpp)
 target_link_libraries(lsdtt-test-lem-forcing-history PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lem_forcing_history
          COMMAND lsdtt-test-lem-forcing-history "${CMAKE_CURRENT_BINARY_DIR}")
-lsdtt_set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "unit;lem")
+lsdtt_set_tests_properties(unit_lem_forcing_history PROPERTIES LABELS "lem")
 
 # Lithology maps to erodibility: property table, crosswalk, the categorical
 # polygon rasteriser and the K raster (lsdtt-lithology-erodibility's library).
@@ -5808,7 +5812,7 @@ target_link_libraries(lsdtt-test-lithology-erodibility PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lem_lithology_erodibility
          COMMAND lsdtt-test-lithology-erodibility
                  "${CMAKE_CURRENT_BINARY_DIR}/lem_lithology_erodibility_work")
-lsdtt_set_tests_properties(unit_lem_lithology_erodibility PROPERTIES LABELS "unit;lem")
+lsdtt_set_tests_properties(unit_lem_lithology_erodibility PROPERTIES LABELS "lem")
 
 # k_sn by lithologic unit: contact distance, node -> segment, bookkeeping, and
 # the known-answer steady states (two units, n = 1 and n = 2).
@@ -5817,7 +5821,7 @@ target_link_libraries(lsdtt-test-lithology-channel-stats PRIVATE lsdtt3_cpu)
 add_test(NAME unit_chi_lithology_channel_stats
          COMMAND lsdtt-test-lithology-channel-stats
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
-lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "unit;chi")
+lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "chi")
 
 # Erodibility calibration from basin erosion rates: the York regression
 # (Pearson's data with York's weights), the erosion-rate sample reader and its
@@ -5828,7 +5832,7 @@ target_link_libraries(lsdtt-test-erodibility-calibration PRIVATE lsdtt3_cpu)
 add_test(NAME unit_chi_erodibility_calibration
          COMMAND lsdtt-test-erodibility-calibration
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_erodibility_calibration_work")
-lsdtt_set_tests_properties(unit_chi_erodibility_calibration PROPERTIES LABELS "unit;chi")
+lsdtt_set_tests_properties(unit_chi_erodibility_calibration PROPERTIES LABELS "chi")
 
 # lsdtt-chi-analysis with erosion-rate samples. The fixture writer produces the
 # F1 (one K, a different uplift per basin) and F2 (two units) steady states, their
@@ -5929,7 +5933,7 @@ if(TEST smoke_chi_analysis_erodibility_calibration)
                      "${_ercal_out}/ercal_erodibility_calibration_fit_mn_0p450.csv" fixed_n 1 1 0 1e-5 0.064)
     foreach(_t rigorous_chi_erodibility_calibration_n rigorous_chi_erodibility_calibration_fixed_n_K)
         lsdtt_set_tests_properties(${_t} PROPERTIES
-            LABELS "rigorous;chi"
+            LABELS "chi"
             FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration)
     endforeach()
     # The same samples in m/yr give the same basin K and fit files, byte for byte.
@@ -5940,7 +5944,7 @@ if(TEST smoke_chi_analysis_erodibility_calibration)
                  "-DSUFFIXES=_erodibility_calibration_basin_K_mn_0p450.csv;_erodibility_calibration_fit_mn_0p450.csv"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_units_invariant PROPERTIES
-        LABELS "rigorous;cli;chi"
+        LABELS "cli;chi"
         FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_m_per_yr")
     # The calibration only observes: the chi fit tables, k_sn basin summary and
     # disorder sweep are the same with and without erosion_rate_fname.
@@ -5951,7 +5955,7 @@ if(TEST smoke_chi_analysis_erodibility_calibration)
                  "-DSUFFIXES=_chi_fit_nodes_mn_0p450.csv;_chi_fit_segments_mn_0p450.csv;_chi_ksn_basin_summary_mn_0p450.csv;_chi_disorder_sweep.csv"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_observation_only PROPERTIES
-        LABELS "rigorous;cli;chi"
+        LABELS "cli;chi"
         FIXTURES_REQUIRED "smoke_chi_analysis_erodibility_calibration;smoke_chi_analysis_erodibility_calibration_off")
     # The CLI known answer per unit (F2, unit_in_basin). Measured 2026-10-19:
     # west 9.46848e-6 (rel err 5.32 %), east 3.86206e-5 (rel err 3.45 %); twice
@@ -5965,7 +5969,7 @@ if(TEST smoke_chi_analysis_erodibility_calibration)
                          "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_analysis_erodibility_calibration_lithology/out/ercallith_erodibility_calibration_by_lithology_mn_0p450.csv"
                          unit_in_basin 1 ${_name} ${_K} 0.064)
         lsdtt_set_tests_properties(rigorous_chi_erodibility_calibration_lithology_units_${_name} PROPERTIES
-            LABELS "rigorous;chi"
+            LABELS "chi"
             FIXTURES_REQUIRED smoke_chi_analysis_erodibility_calibration_lithology)
     endforeach()
 else()
@@ -6076,7 +6080,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
                      "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_ksn/out/lithks_chi_ksn_by_lithology_mn_0p450.csv"
                      sandstone shale 4 0.0242)
     lsdtt_set_tests_properties(rigorous_chi_lithology_ksn_ratio PROPERTIES
-        LABELS "rigorous;chi"
+        LABELS "chi"
         FIXTURES_REQUIRED smoke_chi_lithology_ksn)
 else()
     lsdtt_mark_test_unregistered(python rigorous_chi_lithology_ksn_ratio)
@@ -6189,7 +6193,7 @@ if(TEST smoke_chi_lithology_multi_mn)
                  "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_chi_lithology_bootstrap_per_mn PROPERTIES
-        LABELS "rigorous;cli;chi"
+        LABELS "cli;chi"
         FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_multi_mn")
 else()
     lsdtt_mark_test_unregistered(python rigorous_chi_lithology_bootstrap_per_mn)
@@ -6241,7 +6245,7 @@ if(TEST smoke_chi_lithology_relative_erodibility)
                  "-DSUFFIXES=_chi_ksn_by_lithology_mn_0p450.csv;_chi_ksn_by_lithology_and_basin_mn_0p450.csv;_chi_ksn_histogram_by_lithology_mn_0p450.csv;_chi_ksn_lithology_nodes_mn_0p450.csv;_chi_lithology_reaches_mn_0p450.csv;_chi_lithology_segments_mn_0p450.csv;_lithology_units.csv"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_observation_only PROPERTIES
-        LABELS "rigorous;cli;chi"
+        LABELS "cli;chi"
         FIXTURES_REQUIRED "smoke_chi_lithology_ksn;smoke_chi_lithology_relative_erodibility")
 
     # The CLI known answer (n = 1, E = U). The CLI re-routes the steady-state
@@ -6255,14 +6259,14 @@ if(TEST smoke_chi_lithology_relative_erodibility)
                      "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
                      shale 1 4 0.0242 4e-5 0.064)
     lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_ratio PROPERTIES
-        LABELS "rigorous;chi"
+        LABELS "chi"
         FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
     add_test(NAME rigorous_chi_lithology_relative_erodibility_reference
              COMMAND lsdtt-test-lithology-channel-stats --check-relative-erodibility
                      "${CMAKE_CURRENT_BINARY_DIR}/smoke_chi_lithology_relative_erodibility/out/lithkrk_chi_relative_erodibility_by_lithology_mn_0p450.csv"
                      sandstone 1 1 1e-12 1e-5 0.04)
     lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_reference PROPERTIES
-        LABELS "rigorous;chi"
+        LABELS "chi"
         FIXTURES_REQUIRED smoke_chi_lithology_relative_erodibility)
 else()
     lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_observation_only)
@@ -6310,7 +6314,7 @@ if(TEST smoke_chi_lithology_relative_erodibility_multi_mn)
                  "-DSUFFIXES=_chi_relative_erodibility_by_lithology_mn_0p450.csv;_chi_relative_erodibility_property_table_mn_0p450_n_1.txt;_chi_relative_erodibility_property_table_mn_0p450_n_2.txt"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_chi_lithology_relative_erodibility_per_mn PROPERTIES
-        LABELS "rigorous;cli;chi"
+        LABELS "cli;chi"
         FIXTURES_REQUIRED "smoke_chi_lithology_relative_erodibility;smoke_chi_lithology_relative_erodibility_multi_mn")
 else()
     lsdtt_mark_test_unregistered(python rigorous_chi_lithology_relative_erodibility_per_mn)
@@ -6352,7 +6356,7 @@ target_link_libraries(lsdtt-test-lithology-network-stats PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lithology_channel_network_stats
          COMMAND lsdtt-test-lithology-network-stats
                  "${CMAKE_CURRENT_BINARY_DIR}/lithology_channel_network_stats_work")
-lsdtt_set_tests_properties(unit_lithology_channel_network_stats PROPERTIES LABELS "unit;network")
+lsdtt_set_tests_properties(unit_lithology_channel_network_stats PROPERTIES LABELS "network")
 
 # lsdtt-channel-network-analysis with a lithology code raster (the trellis
 # fixture's north/south halves). These use lsdtt_add_channel_bearing_cli_test,
@@ -6406,7 +6410,7 @@ if(TEST smoke_channel_network_analysis_lithology_observation)
                  "-DSUFFIXES=_channel_bearing_group_summary.csv;_channel_bearing_comparisons.csv;_channel_bearing_rose.csv;_channel_bearing_group_membership.csv;_junction_angle_group_summary.csv;_junction_angle_comparisons.csv"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compare_output_sets.cmake")
     lsdtt_set_tests_properties(rigorous_channel_network_analysis_lithology_observation_only PROPERTIES
-        LABELS "rigorous;cli;network"
+        LABELS "cli;network"
         FIXTURES_REQUIRED "cna_lithology_observation;cna_bearing_statistics_order")
 else()
     lsdtt_mark_test_unregistered(python rigorous_channel_network_analysis_lithology_observation_only)
@@ -6442,26 +6446,26 @@ target_link_libraries(lsdtt-test-lem-erodibility PRIVATE lsdtt3_cpu)
 add_test(NAME unit_lem_erodibility
          COMMAND lsdtt-test-lem-erodibility --suite fast
                  "${CMAKE_CURRENT_BINARY_DIR}/lem_erodibility_work")
-lsdtt_set_tests_properties(unit_lem_erodibility PROPERTIES LABELS "unit;lem")
+lsdtt_set_tests_properties(unit_lem_erodibility PROPERTIES LABELS "lem")
 # The analytic steady states (strip, two catchments, red noise, snap): 2-8 s.
 add_test(NAME rigorous_lem_erodibility_analytic
          COMMAND lsdtt-test-lem-erodibility --suite analytic)
-lsdtt_set_tests_properties(rigorous_lem_erodibility_analytic PROPERTIES LABELS "rigorous;lem")
-lsdtt_set_tests_properties(unit_lem_channel_coupling PROPERTIES LABELS "unit;lem;hillslope")
+lsdtt_set_tests_properties(rigorous_lem_erodibility_analytic PROPERTIES LABELS "lem")
+lsdtt_set_tests_properties(unit_lem_channel_coupling PROPERTIES LABELS "lem;hillslope")
 
 # The Newton solver for the Roering nonlinear hillslope (steady + transient).
 add_executable(lsdtt-test-hillslope-newton cpp/test_hillslope_newton.cpp)
 target_link_libraries(lsdtt-test-hillslope-newton PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_newton COMMAND lsdtt-test-hillslope-newton)
-lsdtt_set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_newton PROPERTIES LABELS "hillslope")
 
 # Independent equation-faithful Perron (2011) Q-imp reference solver.
 add_executable(lsdtt-test-perron-qimp cpp/test_perron_qimp.cpp)
 target_link_libraries(lsdtt-test-perron-qimp PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_perron_qimp COMMAND lsdtt-test-perron-qimp)
-lsdtt_set_tests_properties(unit_hillslope_perron_qimp PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_perron_qimp PROPERTIES LABELS "hillslope")
 
 # Independent C++ port of Ren et al. (2026) modular implicit method.
 add_executable(lsdtt-test-ren-modular-implicit cpp/test_ren_modular_implicit.cpp)
@@ -6470,7 +6474,7 @@ target_link_libraries(lsdtt-test-ren-modular-implicit PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_ren_modular_implicit
          COMMAND lsdtt-test-ren-modular-implicit)
 lsdtt_set_tests_properties(unit_hillslope_ren_modular_implicit PROPERTIES
-                     LABELS "unit;hillslope")
+                     LABELS "hillslope")
 
 # Heavy P1/P2 literature comparison driver; run explicitly with an output path.
 add_executable(lsdtt-perron-ren-p1-p2 cpp/perron_ren_p1_p2_driver.cpp)
@@ -6503,7 +6507,7 @@ add_test(NAME unit_cellular_hillslope_references
          COMMAND lsdtt-test-cellular-hillslope-references
                  ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 lsdtt_set_tests_properties(unit_cellular_hillslope_references PROPERTIES
-                     LABELS "unit;hillslope;cellular")
+                     LABELS "hillslope;cellular")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 
 # Soft-critical constitutive law and whole-grid pass-cost envelope. This is P1:
@@ -6515,7 +6519,7 @@ add_test(NAME unit_cellular_hillslope_constitutive
          COMMAND lsdtt-test-cellular-hillslope-constitutive
                  ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 lsdtt_set_tests_properties(unit_cellular_hillslope_constitutive PROPERTIES
-                     LABELS "unit;hillslope;cellular")
+                     LABELS "hillslope;cellular")
 
 # P2 global deterministic cellular oracle: Newton agreement, conservation,
 # periodicity, ridgetop curvature, supercritical relaxation and small-OCN modes.
@@ -6568,17 +6572,17 @@ add_test(NAME unit_hillslope_particle_io
          COMMAND lsdtt-test-hillslope-particle-io
                  ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 lsdtt_set_tests_properties(unit_hillslope_particle_io PROPERTIES
-                     LABELS "unit;hillslope;cellular")
+                     LABELS "hillslope;cellular")
 
 add_test(NAME unit_cellular_hillslope_common_limit
          COMMAND cellular-hillslope-common-limit)
 lsdtt_set_tests_properties(unit_cellular_hillslope_common_limit PROPERTIES
-                     LABELS "unit;hillslope;cellular")
+                     LABELS "hillslope;cellular")
 
 add_test(NAME unit_cellular_hillslope_solver
          COMMAND lsdtt-test-cellular-hillslope-solver)
 lsdtt_set_tests_properties(unit_cellular_hillslope_solver PROPERTIES
-                     LABELS "unit;hillslope;cellular")
+                     LABELS "hillslope;cellular")
 
 # The SOR steady-state hillslope solver: conservation, precision floor, 'o' vs 'n',
 # periodic invariance, and recovery of U/D from known forcing.
@@ -6586,14 +6590,14 @@ add_executable(lsdtt-test-hillslope-steady-state cpp/test_hillslope_steady_state
 target_link_libraries(lsdtt-test-hillslope-steady-state PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_hillslope_steady_state COMMAND lsdtt-test-hillslope-steady-state)
-lsdtt_set_tests_properties(unit_hillslope_steady_state PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_steady_state PROPERTIES LABELS "hillslope")
 
 # chi at the channel head, as distinct from domain-wide MaxChi.
 add_executable(lsdtt-test-chi-channel-head cpp/test_chi_channel_head.cpp)
 target_link_libraries(lsdtt-test-chi-channel-head PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_chi_channel_head COMMAND lsdtt-test-chi-channel-head)
-lsdtt_set_tests_properties(unit_chi_channel_head PROPERTIES LABELS "unit;lem")
+lsdtt_set_tests_properties(unit_chi_channel_head PROPERTIES LABELS "lem")
 
 # chi_c against domain-wide MaxChi: the size of the relief
 # error relief-mode carries for a landscape that will have hillslopes.
@@ -6632,7 +6636,7 @@ target_link_libraries(lsdtt-test-hillslope-implicit PRIVATE lsdtt3_cpu)
 add_test(NAME unit_hillslope_implicit
          COMMAND lsdtt-test-hillslope-implicit
                  ${CMAKE_CURRENT_BINARY_DIR}/hillslope_implicit_output)
-lsdtt_set_tests_properties(unit_hillslope_implicit PROPERTIES LABELS "unit;hillslope")
+lsdtt_set_tests_properties(unit_hillslope_implicit PROPERTIES LABELS "hillslope")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/hillslope_implicit_output)
 
 # -----------------------------------------------------------------------------
@@ -6925,49 +6929,49 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_fetch_raster_help_dem_source
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "USGS 3DEP seamless DEM -- a DIGITAL TERRAIN MODEL")
 
 add_test(NAME smoke_fetch_raster_help_dem_source_polar
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_polar PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "ArcticDEM mosaic v4.1 -- a DIGITAL SURFACE MODEL.*REMA mosaic v2.0 -- a DIGITAL SURFACE MODEL")
 
 add_test(NAME smoke_fetch_raster_help_dem_source_wcs
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_wcs PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "no_dtm.*nl_ahn.*DIGITAL SURFACE MODEL \\(dsm\\).*es_mdt.*pl_nmt")
 
 add_test(NAME smoke_fetch_raster_help_dem_source_hrdem_swiss
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_hrdem_swiss PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "ca_hrdem.*CGVD2013.*ch_swissalti3d.*latest acquisition of each tile")
 
 add_test(NAME smoke_fetch_raster_help_dem_source_grid_keyed
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_grid_keyed PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "nz_lidar.*NZVD2016.*LERC.*gb_sct_lidar.*source_collection_choice")
 
 add_test(NAME smoke_fetch_raster_help_dem_source_gsi
          COMMAND lsdtt-fetch-raster -h dem_source)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_dem_source_gsi PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "jp_gsi.*DIGITAL TERRAIN MODEL.*second.*resampling")
 
 add_test(NAME smoke_fetch_raster_help_linear_feature
          COMMAND lsdtt-fetch-raster -h fetch_from_linear_feature)
 lsdtt_set_tests_properties(smoke_fetch_raster_help_linear_feature PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "minimum-area")
 
 add_test(NAME smoke_fetch_raster_help
          COMMAND lsdtt-fetch-raster -h)
 lsdtt_set_tests_properties(smoke_fetch_raster_help PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "Bounding box")
 
 # The CLI must never grow a credential parameter: parameter files get committed
@@ -6976,7 +6980,7 @@ lsdtt_set_tests_properties(smoke_fetch_raster_help PROPERTIES
 add_test(NAME rigorous_fetch_raster_no_credential_parameters
          COMMAND lsdtt-fetch-raster -h)
 lsdtt_set_tests_properties(rigorous_fetch_raster_no_credential_parameters PROPERTIES
-    LABELS "rigorous;cli;fetch"
+    LABELS "cli;fetch"
     FAIL_REGULAR_EXPRESSION "api_key;API_Key;password;secret;token;credential")
 
 add_lsdtt_cli_smoke_test(
@@ -7086,17 +7090,17 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(
     smoke_fill_flat_resolution_float_step
     smoke_fill_flat_resolution_gradient
-    PROPERTIES LABELS "smoke;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(
     failure_fill_flat_resolution_unknown_choice
     failure_fill_flat_resolution_gradient_zero_slope
     failure_fill_flat_resolution_fill_spill_merge
-    PROPERTIES LABELS "failure;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(
     rigorous_fill_flat_resolution_valley_float_step
     rigorous_fill_flat_resolution_valley_gradient
     rigorous_fill_flat_resolution_knob_rounds
-    PROPERTIES LABELS "rigorous;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 
 # fill_flat_resolution_choice in the routing CLIs. The parameter check, the
 # fill-and-resolve path, the raster_is_filled: true resolve-only path and the
@@ -7181,12 +7185,12 @@ lsdtt_set_tests_properties(
     smoke_chi_analysis_flat_resolution_filled_float_step
     smoke_channel_extraction_flat_resolution_gradient
     smoke_drainage_analysis_flat_resolution_float_step
-    PROPERTIES LABELS "smoke;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(
     failure_chi_analysis_flat_resolution_filled_inline
     failure_chi_analysis_flat_resolution_unfilled_input
     failure_fluvial_surfaces_flat_resolution_gradient_zero_slope
-    PROPERTIES LABELS "failure;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 
 # Real-terrain gate. The committed 128 x 128 Copernicus GLO-30 lakeland crop
 # (tests/data/flat_resolution_lakeland_crop_dem.tif; provenance in
@@ -7233,10 +7237,10 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(
     rigorous_drainage_analysis_flat_resolution_real_terrain_float_step
     rigorous_drainage_analysis_flat_resolution_real_terrain_gradient
-    PROPERTIES LABELS "rigorous;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(
     smoke_drainage_analysis_flat_resolution_real_terrain_inline_gradient
-    PROPERTIES LABELS "smoke;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 
 # The same command on whole fetched Copernicus GLO-30 fixtures: the flow
 # benchmark's alpine/lakeland small and medium (fetched with
@@ -7258,7 +7262,7 @@ else()
     lsdtt_mark_test_unregistered(python smoke_flat_resolution_real_terrain_routing)
 endif()
 lsdtt_set_tests_properties(smoke_flat_resolution_real_terrain_routing PROPERTIES
-    LABELS "smoke;flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
+    LABELS "flow" SKIP_RETURN_CODE 77 TIMEOUT 600)
 
 # One run with an option per remaining wired CLI, the two options alternating
 # across CLIs. Each asserts the "Flat resolution:" block (printed only on the
@@ -7495,12 +7499,12 @@ lsdtt_set_tests_properties(
     smoke_fluvial_surfaces_flat_resolution_float_step
     smoke_ridgeline_flat_resolution_gradient
     smoke_valley_centreline_flat_resolution_float_step
-    PROPERTIES LABELS "smoke;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(
     failure_basin_extraction_flat_resolution_filled_inline
     failure_basin_stats_flat_resolution_no_fill_note
     failure_fluvial_surfaces_flat_resolution_no_fill_note
-    PROPERTIES LABELS "failure;cli;flow")
+    PROPERTIES LABELS "cli;flow")
 lsdtt_set_tests_properties(smoke_distributed_hydrology_flat_resolution_hype_gradient
     PROPERTIES FIXTURES_REQUIRED hype_cli_fixture)
 
@@ -7572,7 +7576,7 @@ foreach(_sss2d_mode IN LISTS _sss2d_modes)
     add_test(NAME unit_spectral_analysis_significant_2d_${_sss2d_mode}
              COMMAND lsdtt-test-spectral-significant-2d --${_sss2d_mode})
     lsdtt_set_tests_properties(unit_spectral_analysis_significant_2d_${_sss2d_mode}
-        PROPERTIES LABELS "unit;surface_metrics")
+        PROPERTIES LABELS "surface_metrics")
 endforeach()
 
 add_lsdtt_cli_smoke_test(
@@ -7641,7 +7645,7 @@ foreach(default_help_spec IN ITEMS
              COMMAND ${default_help_exe} -h ${default_help_topic})
     lsdtt_set_tests_properties(
         regression_${default_help_name}_${default_help_topic}_help PROPERTIES
-        LABELS "regression;cli;parameters"
+        LABELS "cli;parameters"
         PASS_REGULAR_EXPRESSION "${default_help_regex}")
 endforeach()
 
@@ -7655,7 +7659,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_synthetic_surfaces_help_defaults_exact)
 endif()
 lsdtt_set_tests_properties(unit_synthetic_surfaces_help_defaults_exact PROPERTIES
-    LABELS "unit;cli;parameters")
+    LABELS "cli;parameters")
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
     add_test(NAME unit_synthetic_cli_banners
@@ -7669,7 +7673,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_synthetic_cli_banners)
 endif()
 lsdtt_set_tests_properties(unit_synthetic_cli_banners PROPERTIES
-    LABELS "unit;cli;synthetic_networks;lem")
+    LABELS "cli;synthetic_networks;lem")
 
 add_lsdtt_cli_smoke_test(
     smoke_surface_metrics_madk2
@@ -7789,7 +7793,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
              COMMAND lsdtt-test-flow-performance
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
     lsdtt_set_tests_properties(performance_flow_routines
-        PROPERTIES LABELS "performance;flow" TIMEOUT 1800)
+        PROPERTIES LABELS "flow" TIMEOUT 1800)
 
     # Implicit hillslope solver: per-solve linear-algebra cost and grid scaling
     # (128^2 / 256^2 / 512^2) for each Eigen backend, from the SAME driver as
@@ -7802,7 +7806,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
              COMMAND lsdtt-test-hillslope-implicit
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
     lsdtt_set_tests_properties(performance_hillslope_implicit
-        PROPERTIES LABELS "performance;hillslope" SKIP_RETURN_CODE 77 TIMEOUT 1800)
+        PROPERTIES LABELS "hillslope" SKIP_RETURN_CODE 77 TIMEOUT 1800)
 
     # Surface-metrics timing sweep: every comparison, plus the
     # marginal-cost-per-extra-metric and window-size (O(n)) studies.
@@ -7822,7 +7826,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
         )
         lsdtt_mark_test_runtime(pixi performance_surface_metrics)
         lsdtt_set_tests_properties(performance_surface_metrics
-            PROPERTIES LABELS "performance;surface_metrics" SKIP_RETURN_CODE 77
+            PROPERTIES LABELS "surface_metrics" SKIP_RETURN_CODE 77
                        TIMEOUT 3600)
     endif()
     # Per-pixel LSDn production cost. Four cases: Stone vs
@@ -7838,7 +7842,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
              COMMAND lsdtt-test-cosmo-physics
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --performance)
     lsdtt_set_tests_properties(perf_cosmo_lsdn_production
-        PROPERTIES LABELS "performance;cosmo" TIMEOUT 1800)
+        PROPERTIES LABELS "cosmo" TIMEOUT 1800)
 
     # HYPE model timing: set-up, per-step
     # and per-unit-step cost, phase split, peak RSS on synthetic in-memory
@@ -7849,7 +7853,7 @@ if(LSDTT_ENABLE_PERF_TESTS)
              COMMAND lsdtt-test-hype-performance
                      ${CMAKE_CURRENT_BINARY_DIR}/perf_output --quick)
     lsdtt_set_tests_properties(performance_hype_model
-        PROPERTIES LABELS "performance;distributed_hydrology" TIMEOUT 1800)
+        PROPERTIES LABELS "distributed_hydrology" TIMEOUT 1800)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/perf_output)
 endif()
@@ -7864,7 +7868,7 @@ target_include_directories(lsdtt-test-secret PRIVATE ${CMAKE_SOURCE_DIR}/src/cor
 
 add_test(NAME unit_secret
          COMMAND lsdtt-test-secret ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
-lsdtt_set_tests_properties(unit_secret PROPERTIES LABELS "unit;fetch")
+lsdtt_set_tests_properties(unit_secret PROPERTIES LABELS "fetch")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/secret_test_output)
 
 # The test launcher's isolation from an active Pixi/conda environment
@@ -7884,7 +7888,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
 else()
     lsdtt_mark_test_unregistered(python unit_test_env_isolation)
 endif()
-lsdtt_set_tests_properties(unit_test_env_isolation PROPERTIES LABELS "unit;core")
+lsdtt_set_tests_properties(unit_test_env_isolation PROPERTIES LABELS "core")
 
 # CONFIGURE CONTRACTS: each disabled or missing test tier must say so at
 # configure time (a warning, or an error naming what to install), never leave a
@@ -7902,7 +7906,7 @@ foreach(_case native_default geo_without_python)
                      -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_contract/${_case}
                      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/configure_contract.cmake")
     lsdtt_set_tests_properties(configure_contract_${_case} PROPERTIES
-        LABELS "unit;configure_contract")
+        LABELS "configure_contract")
 endforeach()
 foreach(_case geo_missing_modules gdal_programs_missing)
     if(LSDTT_ENABLE_PYTHON_TESTS)
@@ -7916,7 +7920,7 @@ foreach(_case geo_missing_modules gdal_programs_missing)
         lsdtt_mark_test_unregistered(python configure_contract_${_case})
     endif()
     lsdtt_set_tests_properties(configure_contract_${_case} PROPERTIES
-        LABELS "unit;configure_contract")
+        LABELS "configure_contract")
 endforeach()
 
 # -----------------------------------------------------------------------------
@@ -7971,7 +7975,7 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_fetch_lithology_help
          COMMAND lsdtt-fetch-lithology -h)
 lsdtt_set_tests_properties(smoke_fetch_lithology_help PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "macrostrat_tile_zoom")
 
 if(LSDTT_ENABLE_NETWORK_TESTS)
@@ -8098,7 +8102,7 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_fetch_erosion_rates_help
          COMMAND lsdtt-fetch-erosion-rates -h)
 lsdtt_set_tests_properties(smoke_fetch_erosion_rates_help PROPERTIES
-    LABELS "smoke;cli;fetch"
+    LABELS "cli;fetch"
     PASS_REGULAR_EXPRESSION "octopus_rate_scheme")
 
 if(LSDTT_ENABLE_NETWORK_TESTS)
@@ -8127,7 +8131,7 @@ target_include_directories(lsdtt-test-raster-fetch PRIVATE ${CMAKE_SOURCE_DIR}/s
 
 add_test(NAME unit_raster_fetch
          COMMAND lsdtt-test-raster-fetch --offline --data-dir=${CMAKE_CURRENT_SOURCE_DIR}/data/bounds)
-lsdtt_set_tests_properties(unit_raster_fetch PROPERTIES LABELS "unit;fetch")
+lsdtt_set_tests_properties(unit_raster_fetch PROPERTIES LABELS "fetch")
 
 add_executable(lsdtt-test-dem-grouping cpp/test_dem_grouping.cpp)
 target_link_libraries(lsdtt-test-dem-grouping PRIVATE lsdtt3_core)
@@ -8135,7 +8139,7 @@ target_include_directories(lsdtt-test-dem-grouping PRIVATE ${CMAKE_SOURCE_DIR}/s
 
 add_test(NAME unit_dem_grouping
          COMMAND lsdtt-test-dem-grouping "${CMAKE_CURRENT_BINARY_DIR}/dem_grouping_output")
-lsdtt_set_tests_properties(unit_dem_grouping PROPERTIES LABELS "unit;fetch")
+lsdtt_set_tests_properties(unit_dem_grouping PROPERTIES LABELS "fetch")
 
 # Macrostrat lithology fetch (lsdtt-fetch-lithology), offline: tile maths, the
 # API parsers, the lith_primary rule, and a fetch from a committed synthetic
@@ -8146,7 +8150,7 @@ target_include_directories(lsdtt-test-macrostrat-fetch PRIVATE ${CMAKE_SOURCE_DI
 add_test(NAME unit_fetch_lithology
          COMMAND lsdtt-test-macrostrat-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/macrostrat_tiles"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_lithology_work")
-lsdtt_set_tests_properties(unit_fetch_lithology PROPERTIES LABELS "unit;fetch" SKIP_RETURN_CODE 77)
+lsdtt_set_tests_properties(unit_fetch_lithology PROPERTIES LABELS "fetch" SKIP_RETURN_CODE 77)
 
 # OCTOPUS erosion-rate fetch (lsdtt-fetch-erosion-rates), offline: the WFS
 # request recipe (latitude-first bbox, hits then paging, never maxFeatures), the
@@ -8158,7 +8162,7 @@ target_include_directories(lsdtt-test-octopus-fetch PRIVATE ${CMAKE_SOURCE_DIR}/
 add_test(NAME unit_fetch_erosion_rates
          COMMAND lsdtt-test-octopus-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/octopus_erosion_rates"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_erosion_rates_work")
-lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "unit;fetch")
+lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "fetch")
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)
@@ -8166,7 +8170,7 @@ target_include_directories(lsdtt-test-coastal-mask PRIVATE ${CMAKE_SOURCE_DIR}/s
 
 add_test(NAME unit_coastal_mask
          COMMAND lsdtt-test-coastal-mask "${CMAKE_CURRENT_BINARY_DIR}/coastal_mask_output")
-lsdtt_set_tests_properties(unit_coastal_mask PROPERTIES LABELS "unit;fetch")
+lsdtt_set_tests_properties(unit_coastal_mask PROPERTIES LABELS "fetch")
 
 # The network half actually downloads. Off by default (LSDTT_ENABLE_NETWORK_TESTS,
 # declared at the top of this file); skips (77) rather than failing when the
@@ -8191,7 +8195,7 @@ endif()
 add_test(NAME unit_step_change
          COMMAND lsdtt-test-step-change
                  ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
-lsdtt_set_tests_properties(unit_step_change PROPERTIES LABELS "unit;step_change")
+lsdtt_set_tests_properties(unit_step_change PROPERTIES LABELS "step_change")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
 
 # Landslide size distribution T1-T5b. Emits landslide_truncation.csv, which
@@ -8200,7 +8204,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/step_change_test_output)
 add_test(NAME unit_landslide_size
          COMMAND lsdtt-test-landslide-size
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
-lsdtt_set_tests_properties(unit_landslide_size PROPERTIES LABELS "unit;landslide")
+lsdtt_set_tests_properties(unit_landslide_size PROPERTIES LABELS "landslide")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 
 # Niemi ensemble N1-N6. The CONTROL (N1) is the one that matters most: with no
@@ -8213,16 +8217,16 @@ add_test(NAME unit_niemi_ensemble
                  ${CMAKE_CURRENT_BINARY_DIR}/niemi_test_output)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/niemi_test_output)
 lsdtt_set_tests_properties(unit_niemi_ensemble PROPERTIES
-    LABELS "unit;cosmo;landslide" TIMEOUT 1800)
+    LABELS "cosmo;landslide" TIMEOUT 1800)
 
 # Quartz fertility Q1-Q6 and the ice mask I1-I3. Pins the case that makes
 # fertility a correctness issue rather than a refinement: a quartz-free unit
 # eroding ten times faster than its neighbour must contribute nothing.
 add_test(NAME unit_quartz_fertility COMMAND lsdtt-test-quartz-fertility)
-lsdtt_set_tests_properties(unit_quartz_fertility PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_quartz_fertility PROPERTIES LABELS "cosmo")
 
 add_test(NAME unit_raster_transform COMMAND lsdtt-test-raster-transform)
-lsdtt_set_tests_properties(unit_raster_transform PROPERTIES LABELS "unit;raster_algebra;cosmo")
+lsdtt_set_tests_properties(unit_raster_transform PROPERTIES LABELS "raster_algebra;cosmo")
 
 # Landslide scar coupling and densities. Emits landslide_scar_recovery.csv,
 # which shows how a scar's concentration recovers with age at three depths and
@@ -8231,33 +8235,33 @@ add_test(NAME unit_landslide_step_change
          COMMAND lsdtt-test-landslide-step-change
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
 lsdtt_set_tests_properties(unit_landslide_step_change PROPERTIES
-    LABELS "unit;landslide;step_change")
+    LABELS "landslide;step_change")
 
 # Landslide placement T6-T10d. Emits landslide_host_fill.csv, which records how
 # completely landslides of each size fill their host basin.
 add_test(NAME unit_landslide_placement
          COMMAND lsdtt-test-landslide-placement
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
-lsdtt_set_tests_properties(unit_landslide_placement PROPERTIES LABELS "unit;landslide")
+lsdtt_set_tests_properties(unit_landslide_placement PROPERTIES LABELS "landslide")
 
 # Landslide event T11-T13b. Emits landslide_budget_vs_amax.csv.
 add_test(NAME unit_landslide_event
          COMMAND lsdtt-test-landslide-event
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
-lsdtt_set_tests_properties(unit_landslide_event PROPERTIES LABELS "unit;landslide")
+lsdtt_set_tests_properties(unit_landslide_event PROPERTIES LABELS "landslide")
 
 # Landslide CRN response T16. Emits landslide_crn_response.csv.
 add_test(NAME unit_landslide_crn
          COMMAND lsdtt-test-landslide-crn
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
-lsdtt_set_tests_properties(unit_landslide_crn PROPERTIES LABELS "unit;landslide;cosmo")
+lsdtt_set_tests_properties(unit_landslide_crn PROPERTIES LABELS "landslide;cosmo")
 
 # Landslide series: Phase 3 multi-event + Phase 5 T14/T15. Emits
 # landslide_niemi_closure.csv and landslide_yanites_regimes.csv.
 add_test(NAME unit_landslide_series
          COMMAND lsdtt-test-landslide-series
                  ${CMAKE_CURRENT_BINARY_DIR}/landslide_test_output)
-lsdtt_set_tests_properties(unit_landslide_series PROPERTIES LABELS "unit;landslide" TIMEOUT 900)
+lsdtt_set_tests_properties(unit_landslide_series PROPERTIES LABELS "landslide" TIMEOUT 900)
 
 # The isotope-ratio output policy. One division per pixel, and every failure
 # mode is silent: an inf written into a raster a basin average then consumes, a
@@ -8273,10 +8277,10 @@ lsdtt_set_tests_properties(unit_landslide_series PROPERTIES LABELS "unit;landsli
 # `0.1 * rho * m` and `m * rho * 0.1` are not the same double, and the refactor
 # oracle compares file hashes.
 add_test(NAME unit_cosmo_units COMMAND lsdtt-test-cosmo-units)
-lsdtt_set_tests_properties(unit_cosmo_units PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_cosmo_units PROPERTIES LABELS "cosmo")
 
 add_test(NAME unit_cosmo_ratio COMMAND lsdtt-test-cosmo-ratio)
-lsdtt_set_tests_properties(unit_cosmo_ratio PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_cosmo_ratio PROPERTIES LABELS "cosmo")
 
 add_test(NAME unit_cosmo_physics
          COMMAND lsdtt-test-cosmo-physics
@@ -8284,7 +8288,7 @@ add_test(NAME unit_cosmo_physics
                  ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel.csv
                  ${CMAKE_CURRENT_SOURCE_DIR}/expected/cosmo/numerics_sentinel_lsdn.csv
                  ${CMAKE_CURRENT_SOURCE_DIR}/data)
-lsdtt_set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_cosmo_physics PROPERTIES LABELS "cosmo")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cosmo_test_output)
 
 # -----------------------------------------------------------------------------
@@ -8307,7 +8311,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "DEM must be in a projected CRS"
 )
 lsdtt_set_tests_properties(failure_cosmo_tool_geographic_crs
-    PROPERTIES LABELS "failure;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # --- LSDn scaling scheme through the CLI (L8) -----------------
 #
@@ -8331,7 +8335,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "LSDn scaling (Be10)"
 )
 lsdtt_set_tests_properties(smoke_cosmo_tool_lsdn
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # self_consistent_age: the sample age and the erosion rate are solved together,
 # t = Gamma_sp/eps.  The assertions are chosen so the test cannot pass if the
@@ -8356,7 +8360,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'points_filename' is deprecated"
 )
 lsdtt_set_tests_properties(smoke_cosmo_tool_self_consistent_age
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # A sample that runs out of iterations must be REPORTED, not quietly accepted.
 # max_iter 1 cannot converge from the modern field (the first step moves the rate
@@ -8372,7 +8376,7 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "cosmo_sca_nc_CN_ERATE.csv:,1,0"
 )
 lsdtt_set_tests_properties(smoke_cosmo_tool_self_consistent_no_converge
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # A non-positive tolerance would make the loop exit on its first comparison and
 # report a "converged" age that is nothing of the kind, so it is FATAL up front.
@@ -8385,7 +8389,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "self_consistent_age_tolerance must be > 0"
 )
 lsdtt_set_tests_properties(failure_cosmo_tool_bad_self_consistent_tol
-    PROPERTIES LABELS "failure;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # The forward -> inverse CLI BRIDGE, plus knob
 # coverage. lsdtt-cosmo-prediction forward-models a concentration for a known
@@ -8412,7 +8416,7 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_cosmo_cli_bridge)
 endif()
 lsdtt_set_tests_properties(rigorous_cosmo_cli_bridge PROPERTIES
-    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
+    LABELS "cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
 # SA2 rigorous check: in multi-isotope step-change + accumulation mode, sampled
 # ratios must be computed as ratios of accumulated basin means (not as means of
@@ -8428,7 +8432,7 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_cosmo_multi_accum_ratio)
 endif()
 lsdtt_set_tests_properties(rigorous_cosmo_multi_accum_ratio PROPERTIES
-    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
+    LABELS "cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 900)
 
 # Multi-isotope step change: Be-10, Al-26 and C-14 through ONE scenario, plus
 # the two ratio rasters. The isotope RATIOS are what carry a transient signal,
@@ -8457,7 +8461,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "C14/Be10 ratio raster"
 )
 lsdtt_set_tests_properties(smoke_cosmo_prediction_multi_isotope
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # SA2 end-to-end path: one multi-isotope step-change run produces accumulated
 # basin means, accumulated ratio rasters and sampled point ratios without
@@ -8484,7 +8488,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Accumulating multi-isotope concentration downstream"
 )
 lsdtt_set_tests_properties(smoke_cosmo_prediction_multi_isotope_accum_sampling
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # Multi-isotope step change under LSDn scaling: smoke that the prediction CLI
 # reaches the LSDn path and writes the same 3 nuclide + 2 ratio rasters.
@@ -8505,7 +8509,7 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "LSDn scaling (Be10)"
 )
 lsdtt_set_tests_properties(smoke_cosmo_prediction_multi_isotope_lsdn
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # Multi-isotope ARBITRARY erosion history: the general case of the step-change
 # mode. Bitwise equality with the step-change kernel for a two-row history is
@@ -8527,7 +8531,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "'transient_history_file' is deprecated"
 )
 lsdtt_set_tests_properties(smoke_cosmo_prediction_multi_transient
-    PROPERTIES LABELS "smoke;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # An unknown scheme is FATAL, and the message names both allowed values.
 add_lsdtt_cli_smoke_test(
@@ -8541,7 +8545,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "lsdn"
 )
 lsdtt_set_tests_properties(failure_cosmo_tool_bad_scaling_scheme
-    PROPERTIES LABELS "failure;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # scaling_scheme: lsdn against an nc with NO LSDn grids must fail hard and name
 # the nc it searched -- never silently degrade to Stone. crn_parameters_pre_lsdn.nc
@@ -8557,7 +8561,7 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "crn_parameters_pre_lsdn.nc"
 )
 lsdtt_set_tests_properties(failure_cosmo_tool_lsdn_without_grids
-    PROPERTIES LABELS "failure;cli;cosmo")
+    PROPERTIES LABELS "cli;cosmo")
 
 # Help must render every parameter without a parameter file and without
 # touching the DEM or the network. Guards that the parameter declarations for
@@ -8565,7 +8569,7 @@ lsdtt_set_tests_properties(failure_cosmo_tool_lsdn_without_grids
 # lsdtt-cosmo-landslides.
 add_test(NAME smoke_cosmo_landslides_help COMMAND lsdtt-cosmo-landslides -h)
 lsdtt_set_tests_properties(smoke_cosmo_landslides_help PROPERTIES
-    LABELS "smoke;cli;landslide"
+    LABELS "cli;landslide"
     PASS_REGULAR_EXPRESSION "long_term_erosion_rate_mm_kyr")
 
 # End-to-end on the tiny fixture: an event is placed and the inventory written.
@@ -8703,12 +8707,12 @@ add_lsdtt_cli_smoke_test(
 
 add_test(NAME smoke_cosmo_tool_help COMMAND lsdtt-cosmo-tool -h)
 lsdtt_set_tests_properties(smoke_cosmo_tool_help PROPERTIES
-    LABELS "smoke;cli;cosmo"
+    LABELS "cli;cosmo"
     PASS_REGULAR_EXPRESSION "sample_age_yr")
 
 add_test(NAME smoke_divide_migration_help COMMAND lsdtt-divide-migration -h)
 lsdtt_set_tests_properties(smoke_divide_migration_help PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "basin_outlet_fname")
 
 # Generate the step change from the analytical fluvial solution and feed the
@@ -8818,7 +8822,7 @@ else()
     lsdtt_mark_test_unregistered(python regression_cosmo_oracle)
 endif()
 lsdtt_set_tests_properties(regression_cosmo_oracle PROPERTIES
-    LABELS "cli;cosmo;regression")
+    LABELS "cli;cosmo")
 
 # The LSDn and CRONUS-emulator rows. Separated because they need the LSDn
 # scaling grids in crn_parameters.nc and carry the most setup state -- which is
@@ -8841,7 +8845,7 @@ else()
     lsdtt_mark_test_unregistered(python regression_cosmo_oracle_heavy)
 endif()
 lsdtt_set_tests_properties(regression_cosmo_oracle_heavy PROPERTIES
-    LABELS "cli;cosmo;regression;heavy")
+    LABELS "cli;cosmo;heavy")
 
 # Two prediction modes that write the SAME filenames must not both run: the
 # transient goes first and the step change overwrote all five of its outputs,
@@ -8859,13 +8863,13 @@ add_lsdtt_cli_smoke_test(
 
 add_test(NAME smoke_cosmo_prediction_help COMMAND lsdtt-cosmo-prediction -h)
 lsdtt_set_tests_properties(smoke_cosmo_prediction_help PROPERTIES
-    LABELS "smoke;cli;cosmo"
+    LABELS "cli;cosmo"
     PASS_REGULAR_EXPRESSION "sample_age_yr")
 
 add_test(NAME regression_cosmo_prediction_builtin_io_help
          COMMAND lsdtt-cosmo-prediction -h read_path)
 lsdtt_set_tests_properties(regression_cosmo_prediction_builtin_io_help PROPERTIES
-    LABELS "regression;cli;cosmo;parameters"
+    LABELS "cli;cosmo;parameters"
     PASS_REGULAR_EXPRESSION "Defaults to the directory holding the parameter file")
 
 # Functional coverage for lsdtt-cosmo-column-tool, which until 2026-07-27 had
@@ -8889,11 +8893,11 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_cosmo_column_tool)
 endif()
 lsdtt_set_tests_properties(rigorous_cosmo_column_tool PROPERTIES
-    LABELS "rigorous;cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 600)
+    LABELS "cli;cosmo" SKIP_RETURN_CODE 77 TIMEOUT 600)
 
 add_test(NAME smoke_cosmo_column_tool_help COMMAND lsdtt-cosmo-column-tool -h)
 lsdtt_set_tests_properties(smoke_cosmo_column_tool_help PROPERTIES
-    LABELS "smoke;cli;cosmo"
+    LABELS "cli;cosmo"
     PASS_REGULAR_EXPRESSION "nuclide")
 
 # -----------------------------------------------------------------------------
@@ -8923,7 +8927,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
 else()
     lsdtt_mark_test_unregistered(python unit_cosmo_validation_harness)
 endif()
-lsdtt_set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_cosmo_validation_harness PROPERTIES LABELS "cosmo")
 
 # Riversand-comparison harness self-test (Phase 5 carried-forward item §6c(B)).
 # OFFLINE scaffold check only: manifest/sample preflight + cleanup-trap contract.
@@ -8936,7 +8940,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
 else()
     lsdtt_mark_test_unregistered(python unit_cosmo_riversand_harness)
 endif()
-lsdtt_set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "unit;cosmo")
+lsdtt_set_tests_properties(unit_cosmo_riversand_harness PROPERTIES LABELS "cosmo")
 
 # Real download -> run -> delete for the pilot dataset, in --check (regression)
 # mode: it reproduces the fresh inverted rates and compares them to the FROZEN
@@ -9202,7 +9206,7 @@ add_executable(lsdtt-test-riser-finder cpp/test_riser_finder.cpp)
 target_link_libraries(lsdtt-test-riser-finder PRIVATE lsdtt3_cpu)
 add_test(NAME unit_feature_finder_risers COMMAND lsdtt-test-riser-finder)
 lsdtt_set_tests_properties(unit_feature_finder_risers PROPERTIES
-    LABELS "unit;surface_metrics")
+    LABELS "surface_metrics")
 
 # compare_surface_classes / agreement bits: the comparison behind running
 # several methods in one lsdtt-fluvial-surfaces call, on class maps
@@ -9211,7 +9215,7 @@ add_executable(lsdtt-test-surface-method-comparison cpp/test_surface_method_comp
 target_link_libraries(lsdtt-test-surface-method-comparison PRIVATE lsdtt3_cpu)
 add_test(NAME unit_fluvial_surface_method_comparison COMMAND lsdtt-test-surface-method-comparison)
 lsdtt_set_tests_properties(unit_fluvial_surface_method_comparison PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Valley widths for every channel (plan_valley_width_network): the channel
 # tree, both centreline choices, the tributary stop and the tributary-crossing
@@ -9220,7 +9224,7 @@ add_executable(lsdtt-test-valley-width-network cpp/test_valley_width_network.cpp
 target_link_libraries(lsdtt-test-valley-width-network PRIVATE lsdtt3_cpu)
 add_test(NAME unit_valley_width_network COMMAND lsdtt-test-valley-width-network)
 lsdtt_set_tests_properties(unit_valley_width_network PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Relative elevation raster (lsdtt_valley_relative_elevation_cpu): the two
 # centreline baselines on a hand-built zigzag channel, and the larger channel
@@ -9229,7 +9233,7 @@ add_executable(lsdtt-test-valley-relative-elevation cpp/test_valley_relative_ele
 target_link_libraries(lsdtt-test-valley-relative-elevation PRIVATE lsdtt3_cpu)
 add_test(NAME unit_valley_relative_elevation COMMAND lsdtt-test-valley-relative-elevation)
 lsdtt_set_tests_properties(unit_valley_relative_elevation PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Perimeter sources (lsdtt_perimeter_sources_cpu, plan phases P1-P4): the
 # trace on rectangles, frames, a rotated square, a neck, components and holes;
@@ -9240,7 +9244,7 @@ add_executable(lsdtt-test-perimeter-sources cpp/test_perimeter_sources.cpp)
 target_link_libraries(lsdtt-test-perimeter-sources PRIVATE lsdtt3_cpu)
 add_test(NAME unit_perimeter_sources COMMAND lsdtt-test-perimeter-sources)
 lsdtt_set_tests_properties(unit_perimeter_sources PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # CLI pins on the trunk-and-tributary and two-network shapes the unit
 # driver writes: 2 sources and 1 source, and boundary conditions other than
@@ -9297,15 +9301,13 @@ add_executable(lsdtt-test-surface-training cpp/test_surface_training.cpp)
 target_link_libraries(lsdtt-test-surface-training PRIVATE lsdtt3_cpu)
 add_test(NAME unit_fluvial_surface_training COMMAND lsdtt-test-surface-training)
 lsdtt_set_tests_properties(unit_fluvial_surface_training PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 add_executable(lsdtt-test-fluvial-surfaces cpp/test_fluvial_surfaces.cpp)
 target_link_libraries(lsdtt-test-fluvial-surfaces PRIVATE lsdtt3_cpu)
 
 add_test(NAME unit_fluvial_surfaces_fixture
          COMMAND lsdtt-test-fluvial-surfaces)
-lsdtt_set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
-    LABELS "unit")
 
 # Phase 0c. Tests T2, T4, T5 and T7: the resolvability floor
 # reports UNRESOLVED rather than fabricating levels, labels are a globally
@@ -9314,8 +9316,6 @@ lsdtt_set_tests_properties(unit_fluvial_surfaces_fixture PROPERTIES
 # extremum rather than a trade-off.
 add_test(NAME unit_fluvial_surface_ladder
          COMMAND lsdtt-test-fluvial-surfaces --ladder)
-lsdtt_set_tests_properties(unit_fluvial_surface_ladder PROPERTIES
-    LABELS "unit")
 
 # Phase 2. T3: the fitted-surface reference field. Both arms run the SAME ladder
 # with the SAME auto k selection over the SAME admitted set, and only the banded
@@ -9323,8 +9323,6 @@ lsdtt_set_tests_properties(unit_fluvial_surface_ladder PROPERTIES
 # HAND shreds the fan into radial arcs; the residual to a fitted cone does not.
 add_test(NAME unit_fluvial_surface_fitted_field
          COMMAND lsdtt-test-fluvial-surfaces --fitted-surface)
-lsdtt_set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
-    LABELS "unit")
 
 # Phase 7b. Perona-Malik is adopted on the claim that it removes within-facet
 # noise while leaving the riser standing, and BOTH halves need testing: a no-op
@@ -9336,7 +9334,7 @@ lsdtt_set_tests_properties(unit_fluvial_surface_fitted_field PROPERTIES
 add_test(NAME unit_fluvial_surface_perona_malik
          COMMAND lsdtt-test-fluvial-surfaces --perona-malik)
 lsdtt_set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Phase 7c. The justification for shipping a SECOND smoother is that it
 # preserves the riser for a different reason - Weickert keeps it because it is
@@ -9361,12 +9359,12 @@ lsdtt_set_tests_properties(unit_fluvial_surface_perona_malik PROPERTIES
 add_test(NAME unit_fluvial_surface_bootstrap_rbar
          COMMAND lsdtt-test-fluvial-surfaces --bootstrap-rbar)
 lsdtt_set_tests_properties(unit_fluvial_surface_bootstrap_rbar PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 add_test(NAME unit_fluvial_surface_slope_dependent_ev
          COMMAND lsdtt-test-fluvial-surfaces --slope-dependent-ev)
 lsdtt_set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Fluvial-surface methods phase 3: the Strahler channel definition (orders
 # against a brute-force recursion, the scope filter in mode 1 and a user-source
@@ -9375,7 +9373,7 @@ lsdtt_set_tests_properties(unit_fluvial_surface_slope_dependent_ev PROPERTIES
 add_test(NAME unit_fluvial_surface_channel_order_swath
          COMMAND lsdtt-test-fluvial-surfaces --channel-order-swath)
 lsdtt_set_tests_properties(unit_fluvial_surface_channel_order_swath PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Phase 4: the floodplain / terrace engine on a hand-built grid where every
 # count is known - channel contact, size, seeding, holes, the gradient bound,
@@ -9383,7 +9381,7 @@ lsdtt_set_tests_properties(unit_fluvial_surface_channel_order_swath PROPERTIES
 add_test(NAME unit_fluvial_surface_floodplain_thresholds
          COMMAND lsdtt-test-fluvial-surfaces --floodplain-thresholds)
 lsdtt_set_tests_properties(unit_fluvial_surface_floodplain_thresholds PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # Phase 5: cross-section levels - the ladder's rule on a population
 # (partition_population), clustering section breaks with the support filter,
@@ -9393,12 +9391,12 @@ add_test(NAME unit_fluvial_surface_cross_section_levels
          COMMAND lsdtt-test-fluvial-surfaces --cross-section-levels
                  "${CMAKE_CURRENT_BINARY_DIR}/unit_fluvial_surface_cross_section_levels")
 lsdtt_set_tests_properties(unit_fluvial_surface_cross_section_levels PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 add_test(NAME unit_fluvial_surface_coherence_diffusion
          COMMAND lsdtt-test-fluvial-surfaces --coherence-diffusion)
 lsdtt_set_tests_properties(unit_fluvial_surface_coherence_diffusion PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 add_test(NAME fixture_fluvial_surfaces_cli
          COMMAND lsdtt-test-fluvial-surfaces --write-cli-fixture
@@ -9427,13 +9425,13 @@ add_lsdtt_cli_smoke_test(
 add_test(NAME smoke_flat_surface_finder_help
          COMMAND lsdtt-flat-surface-finder -h)
 lsdtt_set_tests_properties(smoke_flat_surface_finder_help PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "max_relief_metres")
 
 add_test(NAME smoke_valley_centreline_help
          COMMAND lsdtt-valley-centreline -h)
 lsdtt_set_tests_properties(smoke_valley_centreline_help PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "valley_mask_fname")
 
 add_lsdtt_cli_smoke_test(
@@ -9511,7 +9509,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_label_band_identity)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_label_band_identity PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The same join checks on clubb2017 output: the fixed_thresholds path builds its
@@ -9530,7 +9528,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_clubb2017_joins)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_clubb2017_joins PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # A table with no rows and a table that was never written look identical to a
@@ -9550,7 +9548,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_empty_result)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_empty_result PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # Phase 7a. `admission_algorithm_choice` exists because local relief and a
@@ -9575,7 +9573,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_flat_surface_finder_admission_modes)
 endif()
 lsdtt_set_tests_properties(rigorous_flat_surface_finder_admission_modes PROPERTIES
-    LABELS "rigorous;cli;fluvial_surfaces")
+    LABELS "cli;fluvial_surfaces")
 
 # The trough's upstream-of-head exclusion. Terrain beyond the channel head stays
 # in the valley MASK but must not be carved into the trough, or the pocket
@@ -9588,13 +9586,9 @@ lsdtt_set_tests_properties(rigorous_flat_surface_finder_admission_modes PROPERTI
 # dead one. The guard went inert at phase 5d and nothing noticed.
 add_test(NAME unit_fluvial_surfaces_trough_upstream
          COMMAND lsdtt-test-fluvial-surfaces --trough-upstream)
-lsdtt_set_tests_properties(unit_fluvial_surfaces_trough_upstream PROPERTIES
-    LABELS "unit")
 
 add_test(NAME unit_fluvial_surfaces_band_then_label
          COMMAND lsdtt-test-fluvial-surfaces --band-then-label)
-lsdtt_set_tests_properties(unit_fluvial_surfaces_band_then_label PROPERTIES
-    LABELS "unit")
 
 # Phase 4. The two retirement groups must behave DIFFERENTLY and visibly so: a
 # key that turned an analysis on stops the run, a key that merely tuned a
@@ -9677,7 +9671,7 @@ add_test(NAME unit_param_parser_deprecation
 # param_parser rather than fluvial_surface. It is nonetheless the guard on a
 # facility built for this workstream, so it belongs in that compartment.
 lsdtt_set_tests_properties(unit_param_parser_deprecation PROPERTIES
-    LABELS "unit;fluvial_surfaces")
+    LABELS "fluvial_surfaces")
 
 # =============================================================================
 # unit_param_parser_strict
@@ -9692,7 +9686,6 @@ target_link_libraries(lsdtt-test-param-parser-strict PRIVATE lsdtt3_core)
 add_test(NAME unit_param_parser_strict
          COMMAND lsdtt-test-param-parser-strict
                  "${CMAKE_CURRENT_BINARY_DIR}/param_parser_strict")
-lsdtt_set_tests_properties(unit_param_parser_strict PROPERTIES LABELS "unit")
 
 # =============================================================================
 # unit_run_record
@@ -9707,7 +9700,6 @@ target_link_libraries(lsdtt-test-run-record PRIVATE lsdtt3_core)
 
 add_test(NAME unit_run_record
          COMMAND lsdtt-test-run-record "${CMAKE_CURRENT_BINARY_DIR}/run_record")
-lsdtt_set_tests_properties(unit_run_record PROPERTIES LABELS "unit")
 
 # =============================================================================
 # lsdtt-fluvial-surfaces
@@ -9719,7 +9711,7 @@ lsdtt_set_tests_properties(unit_run_record PROPERTIES LABELS "unit")
 add_test(NAME smoke_fluvial_surfaces_help
          COMMAND lsdtt-fluvial-surfaces -h)
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "fill_before_routing")
 
 foreach(threshold_help_target IN ITEMS
@@ -9732,14 +9724,14 @@ foreach(threshold_help_target IN ITEMS
     add_test(NAME smoke_${threshold_help_slug}_threshold_help
              COMMAND lsdtt-${threshold_help_target} -h)
     lsdtt_set_tests_properties(smoke_${threshold_help_slug}_threshold_help PROPERTIES
-        LABELS "smoke;cli"
+        LABELS "cli"
         PASS_REGULAR_EXPRESSION "threshold_contributing_pixels")
 endforeach()
 
 add_test(NAME smoke_feature_finder_fill_help
          COMMAND lsdtt-feature-finder -h)
 lsdtt_set_tests_properties(smoke_feature_finder_fill_help PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     PASS_REGULAR_EXPRESSION "raster_is_filled")
 
 # End to end, with no flat_mask_fname, so the built-in fallback admission is
@@ -9802,7 +9794,7 @@ else()
     lsdtt_mark_test_unregistered(python smoke_fluvial_surfaces_hand_input)
 endif()
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_hand_input PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The fitted-surface field through the CLI. The param file deliberately does not
@@ -10400,7 +10392,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_cross_section_levels_workflow)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_cross_section_levels_workflow PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # segmentation_algorithm_choice whole_mask against within_bands on the staircase
@@ -10421,7 +10413,7 @@ else()
     lsdtt_mark_test_unregistered(python_geo rigorous_fluvial_surfaces_whole_mask_segmentation)
 endif()
 lsdtt_set_tests_properties(rigorous_fluvial_surfaces_whole_mask_segmentation PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # A levels file written by hand (the survey route, no valley-centreline run):
@@ -10489,7 +10481,7 @@ else()
     lsdtt_mark_test_unregistered(python smoke_fluvial_surfaces_pipeline)
 endif()
 lsdtt_set_tests_properties(smoke_fluvial_surfaces_pipeline PROPERTIES
-    LABELS "smoke;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 if(LSDTT_ENABLE_PYTHON_TESTS)
@@ -10512,7 +10504,7 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_valley_centreline_legacy_threshold)
 endif()
 lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_threshold PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The point-file key renamed 2026-10-26 (source_points_path ->
@@ -10536,7 +10528,7 @@ else()
     lsdtt_mark_test_unregistered(python rigorous_valley_centreline_legacy_points_key)
 endif()
 lsdtt_set_tests_properties(rigorous_valley_centreline_legacy_points_key PROPERTIES
-    LABELS "rigorous;cli"
+    LABELS "cli"
     FIXTURES_REQUIRED fluvial_surfaces_fixture)
 
 # The valley is now a required input, and the message must name where it comes
@@ -10655,7 +10647,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_cli_parameter_conventions)
 endif()
 lsdtt_set_tests_properties(unit_cli_parameter_conventions PROPERTIES
-    LABELS "unit;cli;conventions"
+    LABELS "cli;conventions"
     TIMEOUT 900)
 
 # Phase 6: generated Markdown parameter sections must exactly match the ordered
@@ -10672,7 +10664,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_cli_reference_is_current)
 endif()
 lsdtt_set_tests_properties(unit_cli_reference_is_current PROPERTIES
-    LABELS "unit;cli;docs"
+    LABELS "cli;docs"
     TIMEOUT 900)
 
 # The pip wheel declares its CLIs in four hand-kept places, which must match the
@@ -10689,7 +10681,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_wheel_cli_inventory)
 endif()
 lsdtt_set_tests_properties(unit_wheel_cli_inventory PROPERTIES
-    LABELS "unit;cli;packaging"
+    LABELS "cli;packaging"
     TIMEOUT 60)
 
 # One version number for the whole repository: project(lsdtt3 VERSION ...) is
@@ -10707,7 +10699,7 @@ else()
     lsdtt_mark_test_unregistered(python unit_version_consistency)
 endif()
 lsdtt_set_tests_properties(unit_version_consistency PROPERTIES
-    LABELS "unit;packaging"
+    LABELS "packaging"
     TIMEOUT 60)
 
 # Builds the Python bindings once (pip, CLIs off) into a venv and runs the
@@ -11028,7 +11020,7 @@ add_test(NAME unit_build_is_current
         -DMANIFEST=${CMAKE_CURRENT_BINARY_DIR}/build_currency_manifest.tsv
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_build_is_current.cmake")
 set_tests_properties(unit_build_is_current PROPERTIES
-    LABELS "unit;core;conventions"
+    LABELS "core;conventions"
     TIMEOUT 300)
 
 # =============================================================================
@@ -11052,7 +11044,7 @@ add_test(NAME unit_test_inventory_audit
         -DCTEST_CONFIGURATION_TYPE=$<CONFIG>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_test_inventory.cmake")
 set_tests_properties(unit_test_inventory_audit PROPERTIES
-    LABELS "unit;core;conventions"
+    LABELS "core;conventions"
     TIMEOUT 120)
 
 # The test commands the documentation tells people to type: every -DLSDTT_*
@@ -11063,7 +11055,7 @@ add_test(NAME unit_docs_test_commands
     COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_doc_test_commands.cmake")
 set_tests_properties(unit_docs_test_commands PROPERTIES
-    LABELS "unit;core;docs"
+    LABELS "core;docs"
     TIMEOUT 60)
 
 add_test(NAME unit_test_inventory_audit_selftest
@@ -11071,7 +11063,7 @@ add_test(NAME unit_test_inventory_audit_selftest
         -DSELFTEST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_selftest
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/audit_test_inventory.cmake")
 set_tests_properties(unit_test_inventory_audit_selftest PROPERTIES
-    LABELS "unit;core;conventions"
+    LABELS "core;conventions"
     TIMEOUT 60)
 
 # =============================================================================
@@ -11147,7 +11139,7 @@ add_test(NAME unit_test_report_selftest
             -DSELFTEST_WORK=${CMAKE_CURRENT_BINARY_DIR}/test_report_selftest
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/make_test_report.cmake")
 set_tests_properties(unit_test_report_selftest PROPERTIES
-    LABELS "unit;core;conventions"
+    LABELS "core;conventions"
     TIMEOUT 120)
 
 # =============================================================================
@@ -11171,7 +11163,8 @@ set_tests_properties(unit_test_report_selftest PROPERTIES
 # and, for the landscape evolution model, the COMPONENT label lem_component
 # (every lsdtt-lem CLI test and the unit tests of the engines it drives).
 #
-# These are ORTHOGONAL to the kind and domain labels above. Select with
+# These are ORTHOGONAL to the domain labels above and to the evidence and
+# level labels (tests/cmake/evidence_labels.cmake). Select with
 # ANCHORED patterns: ctest -L/-LE take regexes, and `-L network` already
 # matches synthetic_networks as well as network.
 #
@@ -11531,6 +11524,11 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
     endforeach()
 endif()
 
+# Evidence (oracle) and level labels, and the guard that every test has them.
+# After the re-run list, which makes its tests metamorphic, and after every
+# add_test, so the guard sees the whole inventory.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/evidence_labels.cmake")
+
 get_property(_lsdtt_all_tests DIRECTORY PROPERTY TESTS)
 foreach(_test IN LISTS _lsdtt_all_tests)
     set_property(TEST ${_test} APPEND PROPERTY ENVIRONMENT "LSDTT_NONINTERACTIVE=1")
@@ -11617,6 +11615,8 @@ else()
 endif()
 message(STATUS "  lem_component      : ${_lsdtt_sum_lem} tests (heavy ${_lsdtt_sum_lem_heavy})")
 message(STATUS "  heavy              : ${_lsdtt_sum_heavy} tests")
+message(STATUS "  evidence           : ${_lsdtt_ev_summary}more than one ${_lsdtt_ev_n_multi}")
+message(STATUS "  level              : unit ${_lsdtt_ev_count_unit}, system ${_lsdtt_ev_count_system}")
 if(LSDTT_ENABLE_PERF_TESTS)
     message(STATUS "  performance        : ON")
 else()
