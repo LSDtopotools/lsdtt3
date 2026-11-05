@@ -1,0 +1,6 @@
+# vcpkg packages for the Windows wheel build (.github/workflows/python-wheels.yml).
+# One per line. Editing this file changes the vcpkg binary-cache key.
+gdal
+fftw3
+netcdf-c
+eigen3
