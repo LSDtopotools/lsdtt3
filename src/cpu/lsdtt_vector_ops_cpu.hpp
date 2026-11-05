@@ -30,7 +30,9 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../core/lsdtt_types.hpp"
@@ -63,8 +65,48 @@ struct lsdtt_snap_key
 };
 
 // Quantise (x, y) to a snapping grid. tolerance_metres <= 0 falls back to 1e-6.
+// NOT used for joining points any more (2026-11-05, decision D9 of the
+// river-lines plan): rounding to a grid splits two points either side of a
+// grid line however close they are, and joins points up to tolerance x sqrt(2)
+// apart in one cell. Use lsdtt_point_snapper.
 [[nodiscard]] lsdtt_snap_key make_snap_key(
     double x, double y, double tolerance_metres);
+
+// ---------------------------------------------------------------------------
+// lsdtt_point_snapper
+//
+// Joins points by DISTANCE: id_for(p) returns the id of the nearest point
+// already added within tolerance_metres of p (inclusive), or adds p as a new
+// point and returns its new id. Points are looked up through a uniform grid of
+// cell size tolerance_metres, searching the 3 x 3 cells around p, so the
+// result does not depend on where grid lines fall. Ids are 0, 1, 2, ... in
+// order of creation; the first point added at a location is its
+// representative. tolerance_metres <= 0 joins only coincident points.
+//
+// The one routine for joining line ends in lsdtt3 (vector ops, line repair,
+// the vector junction network, stream burning).
+// ---------------------------------------------------------------------------
+class lsdtt_point_snapper
+{
+public:
+    explicit lsdtt_point_snapper(double tolerance_metres);
+
+    // Existing id within tolerance (nearest), else a new id for p.
+    int id_for(const lsdtt_xy& p);
+    // Existing id within tolerance (nearest), or -1; never adds.
+    [[nodiscard]] int find(const lsdtt_xy& p) const;
+
+    [[nodiscard]] const lsdtt_xy& point(int id) const { return points_[static_cast<std::size_t>(id)]; }
+    [[nodiscard]] std::size_t size() const noexcept { return points_.size(); }
+    [[nodiscard]] double tolerance() const noexcept { return tol_; }
+
+private:
+    double tol_;
+    double cell_;
+    std::vector<lsdtt_xy> points_;
+    std::map<std::pair<long long, long long>, std::vector<int>> cells_;
+    [[nodiscard]] long long cell_of(double v) const;
+};
 
 // ---------------------------------------------------------------------------
 // lsdtt_line_endpoint

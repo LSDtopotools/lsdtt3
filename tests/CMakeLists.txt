@@ -2402,6 +2402,13 @@ lsdtt_set_tests_properties(smoke_outlet_matching_edge_only PROPERTIES
 # =============================================================================
 # lsdtt-water-line-repair
 #
+# Line-end joining by distance (lsdtt_point_snapper, river-lines plan D9):
+# exact cases, including the two the old grid-rounding key got wrong.
+add_executable(lsdtt-test-point-snapper cpp/test_point_snapper.cpp)
+target_link_libraries(lsdtt-test-point-snapper PRIVATE lsdtt3_cpu)
+add_test(NAME unit_water_line_repair_point_snapper COMMAND lsdtt-test-point-snapper)
+lsdtt_set_tests_properties(unit_water_line_repair_point_snapper PROPERTIES LABELS "water")
+
 # No test until 2026-10-14. Pure vector: tests/data/water_line_repair_fixture
 # lays out one case per bridging rule (see water_line_repair_smoke.param.in).
 # The bridge count in stdout is the assertion; each variant changes one rule

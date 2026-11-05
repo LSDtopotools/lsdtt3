@@ -226,6 +226,18 @@ int main(int argc, char* argv[])
         "A line connected to any other line is never dropped.",
         "Preparation", "param", ""};
 
+    string_default_map["direction_repair_algorithm_choice"] = "network_outlet";
+    help_map["direction_repair_algorithm_choice"] = {"string","network_outlet",
+        "How lines that point against their network are treated: network_outlet or none.",
+        "Uses the graph only, no elevation. In each connected network the outlet is the end "
+        "node that the lines' own directions vote for (fewest disagreements), and each line is "
+        "compared with the direction towards that outlet along the network, so a line is judged "
+        "against its neighbours, not on its own. network_outlet flips the lines that disagree "
+        "(direction_source = network); none only flags them. Either way direction_consistent "
+        "is 1 (agrees), 0 (disagreed) or -1 (not judged, e.g. the two arms of a symmetric braid), "
+        "and the topology CSV gives each network's outlet_node and n_against_network.",
+        "Preparation", "param", ""};
+
     lsdtt::declare_http_request_parameters(int_default_map, help_map);
     lsdtt::declare_vector_output_format_parameter(string_default_map, help_map, "");
     lsdtt::declare_spatial_index_parameter(bool_default_map, help_map, "");
@@ -298,6 +310,10 @@ int main(int argc, char* argv[])
         o.clip_buffer_metres = ff["clip_buffer_metres"];
         o.node_snap_tolerance_metres = ff["node_snap_tolerance_metres"];
         o.min_line_length_metres = ff["min_line_length_metres"];
+        if (sf["direction_repair_algorithm_choice"] == "network_outlet") o.repair_direction = true;
+        else if (sf["direction_repair_algorithm_choice"] == "none") o.repair_direction = false;
+        else
+            throw std::invalid_argument("direction_repair_algorithm_choice must be network_outlet or none");
 
         o.keep_feature_classes.clear();
         {

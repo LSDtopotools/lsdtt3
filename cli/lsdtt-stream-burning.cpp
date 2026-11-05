@@ -237,6 +237,20 @@ int main(int argc, char* argv[])
         "Vector channel input", "param", ""};
 
     // --- Burn mode ---
+    string_default_map["vector_direction_algorithm_choice"] = "dem_elevation";
+    help_map["vector_direction_algorithm_choice"] = {"string","dem_elevation",
+        "How the vector network's flow direction is decided: dem_elevation or digitised.",
+        "dem_elevation: each vector junction drains through its steepest downhill edge by DEM "
+        "elevation. Where the DEM rises along a channel (trees, an embankment, a culvert) an "
+        "inflowing reach can be oriented backwards and take its junction's only downstream slot, "
+        "cutting the reach below out of the network (counted as loop-labelled edges). "
+        "digitised: drain through the edge whose digitised order leaves the junction, as written "
+        "by lsdtt-fetch-river-lines, whose lines are oriented downstream and checked against "
+        "their neighbours. A local rise along a reach is then followed, not reversed. Guard: a "
+        "whole network whose outlets stand higher than the median of its channel heads is taken "
+        "to be digitised upstream and is oriented by dem_elevation instead (reported in the log).",
+        "Burn mode", "param", ""};
+
     string_default_map["stream_burn_mode"] = "snap_to_network";
     help_map["stream_burn_mode"] = {"string","snap_to_network",
         "How the supplied vector network is used to condition the DEM.",
@@ -1004,6 +1018,14 @@ int main(int argc, char* argv[])
 
     lsdtt::lsdtt_vector_to_junction_network_options vjn_opts;
     vjn_opts.break_cycles = true;   // label loops instead of throwing; resolved by D8 below
+    if (sf["vector_direction_algorithm_choice"] == "digitised")
+        vjn_opts.use_digitised_direction = true;
+    else if (sf["vector_direction_algorithm_choice"] != "dem_elevation")
+    {
+        std::cerr << "FATAL: vector_direction_algorithm_choice must be dem_elevation or digitised, not '"
+                  << sf["vector_direction_algorithm_choice"] << "'\n";
+        return 1;
+    }
     lsdtt::lsdtt_vector_to_junction_network vector_network;
 
     try
@@ -1031,6 +1053,17 @@ int main(int argc, char* argv[])
     std::cout << "Vector edges     : " << vector_network.n_edges() << "\n";
     std::cout << "Vector outlets   : " << vector_network.n_outlets() << "\n";
     std::cout << "Vector basins    : " << vector_network.n_basins() << "\n";
+    std::cout << "Vector direction : " << sf["vector_direction_algorithm_choice"];
+    if (vjn_opts.use_digitised_direction)
+        std::cout << " (" << vector_network.n_direction_fallback_networks()
+                  << " network(s) ran uphill as a whole and were oriented by dem_elevation)";
+    std::cout << "\n";
+    for (const auto& fb : vector_network.direction_fallbacks())
+    {
+        std::cout << "  uphill network: " << fb.n_junctions << " junctions, " << fb.n_heads
+                  << " heads, outlet " << fb.mean_outlet_elevation << " m vs median head "
+                  << fb.median_head_elevation << " m, outlet at (" << fb.x << ", " << fb.y << ")\n";
+    }
     {
         // Edges cut out of the drainage graph, by reason (river-lines plan SB2).
         std::map<std::string, int> by_reason;

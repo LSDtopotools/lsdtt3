@@ -89,6 +89,17 @@ struct lsdtt_vector_to_junction_network_options
     // its endpoints are marked is_on_loop. The geometry is retained for a
     // downstream D8-based loop resolver.
     bool break_cycles = false;
+
+    // Direction (river-lines plan SB3). false (default): each junction drains
+    // through its steepest downhill edge, by DEM elevation. true: through the
+    // edge whose DIGITISED order leaves it (lines prepared downstream, e.g. by
+    // lsdtt-fetch-river-lines), even where the DEM rises along it locally;
+    // elevation decides only between several such edges and for edges whose
+    // parts disagree. Whole-network guard: a connected network whose interior
+    // outlets (not on the DEM edge) stand higher on average than the median of
+    // its interior channel heads is taken to be digitised upstream, and is oriented by elevation instead
+    // (n_direction_fallback_networks counts them).
+    bool use_digitised_direction = false;
 };
 
 struct lsdtt_vector_network_junction
@@ -120,6 +131,16 @@ struct lsdtt_vector_network_junction
 
     std::int32_t s_vector_start = -1;
     std::int32_t s_vector_size  = 0;
+};
+
+// A network the use_digitised_direction guard sent back to elevation.
+struct lsdtt_direction_fallback_record
+{
+    int    n_junctions = 0;
+    int    n_heads = 0;
+    double mean_outlet_elevation = 0.0;
+    double median_head_elevation = 0.0;
+    double x = 0.0, y = 0.0;   // its first outlet
 };
 
 struct lsdtt_vector_network_edge
@@ -156,6 +177,12 @@ struct lsdtt_vector_network_edge
     double length_metres = 0.0;
 
     std::vector<lsdtt_xy> xy;
+
+    // Digitised direction of the compact edge: +1 every part runs junction_a
+    // -> junction_b as digitised, -1 every part runs b -> a, 0 mixed.
+    int digitised_a_to_b = 0;
+    // 1 when the receiver came from the digitised order, 0 from elevation.
+    int oriented_by_digitised = 0;
 };
 
 class lsdtt_vector_to_junction_network
@@ -192,6 +219,16 @@ public:
     [[nodiscard]] std::int32_t n_junctions() const noexcept
     {
         return static_cast<std::int32_t>(junctions_.size());
+    }
+
+    [[nodiscard]] int n_direction_fallback_networks() const noexcept
+    {
+        return n_direction_fallback_networks_;
+    }
+    [[nodiscard]] const std::vector<lsdtt_direction_fallback_record>&
+    direction_fallbacks() const noexcept
+    {
+        return direction_fallbacks_;
     }
 
     [[nodiscard]] std::int32_t n_edges() const noexcept
@@ -290,6 +327,10 @@ private:
     void require_valid_junction(std::int32_t junction) const;
 
     // Sets closes_cycle on every edge (see lsdtt_vector_network_edge).
+    // Networks oriented by elevation because their digitised direction ran
+    // uphill as a whole (use_digitised_direction only).
+    int n_direction_fallback_networks_ = 0;
+    std::vector<lsdtt_direction_fallback_record> direction_fallbacks_;
     void classify_loop_edges();
     void break_receiver_cycles();
     void build_outlet_keys();

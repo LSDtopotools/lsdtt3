@@ -71,6 +71,7 @@ struct lsdtt_river_line_fetch_options
     std::vector<std::string> keep_feature_classes = {"river", "stream", "lake_connector"};
     double node_snap_tolerance_metres = -1.0;   // < 0: 1 m
     double min_line_length_metres = 0.0;
+    bool   repair_direction = true;         // direction_repair_algorithm_choice: network_outlet
 
     // gb_os_open_rivers
     std::string cache_dir;                  // empty: default_river_cache_dir()

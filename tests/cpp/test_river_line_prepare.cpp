@@ -21,7 +21,10 @@
 //   * merging by source node id beyond the snap tolerance;
 //   * direction conflicts;
 //   * dropping isolated short fragments only;
-//   * zero tolerance: only coincident endpoints merge.
+//   * zero tolerance: only coincident endpoints merge;
+//   * the graph-only direction vote: one reversed reach in a main stem is the
+//     one line against the network, and is flipped when repair is on;
+//   * a sink whose outflow lies outside the data is the outlet, not a conflict.
 //
 // Usage: lsdtt-test-river-line-prepare
 // -----------------------------------------------------------------------------
@@ -262,17 +265,23 @@ void test_node_ids()
 
 void test_conflicts()
 {
-    // Two lines run head to head into (50,0); two lines leave (200,0) with nothing in.
+    // h1 and h2 run head to head into (50,0); h2 starts at (100,0), where a
+    // long line also leaves for (500,0). The vote puts the outlet at (500,0)
+    // (only h2's 50 m disagrees, against 400 m for an outlet at (50,0)). With
+    // repair off, (50,0) has two inflows and no outflow and is not the outlet,
+    // and (100,0) has two outflows and no inflow: both are conflicts.
     std::vector<lsdtt::river_line_feature> f;
     f.push_back(line({{0, 0}, {50, 0}}, 1, "h1"));
     f.push_back(line({{100, 0}, {50, 0}}, 1, "h2"));
-    f.push_back(line({{200, 0}, {250, 0}}, 1, "s1"));
-    f.push_back(line({{200, 0}, {200, 50}}, 1, "s2"));
-    const auto net = lsdtt::prepare_river_lines(f, lsdtt::river_line_prepare_options());
+    f.push_back(line({{100, 0}, {500, 0}}, 1, "long"));
+    lsdtt::river_line_prepare_options no_repair;
+    no_repair.repair_direction = false;
+    const auto net = lsdtt::prepare_river_lines(f, no_repair);
     check("conflict: head-to-head (50,0)", type_at(net, 50, 0) == "conflict", type_at(net, 50, 0));
-    check("conflict: two outflows, no inflow (200,0)", type_at(net, 200, 0) == "conflict",
-          type_at(net, 200, 0));
+    check("conflict: two outflows, no inflow (100,0)", type_at(net, 100, 0) == "conflict",
+          type_at(net, 100, 0));
     check_int("conflict: count", count_type(net, "conflict"), 2);
+    check("conflict: outlet voted at (500,0)", type_at(net, 500, 0) == "outlet", type_at(net, 500, 0));
 }
 
 void test_fragments()
@@ -315,6 +324,75 @@ void test_zero_tolerance()
     check_int("1 m tol: the 0.5 m gap closes", static_cast<long>(net1.components.size()), 1);
 }
 
+
+void test_direction_vote()
+{
+    // Main stem (0,0) -> (400,0) in four 100 m reaches, with tributaries
+    // joining at (100,0) and (200,0). The reach (100,0)-(200,0) is digitised
+    // the wrong way round (attribute says downstream, but it runs 200 -> 100).
+    // Votes, by length of line disagreeing:
+    //   outlet (400,0): only the reversed reach disagrees: 100 m;
+    //   outlet (100,0) (a data sink: three lines end there): the two reaches
+    //     below (200,0) disagree: 200 m;
+    //   any tip: more. So the outlet is (400,0) and the reversed reach is the
+    //   one line against the network.
+    std::vector<lsdtt::river_line_feature> f;
+    f.push_back(line({{0, 0}, {100, 0}}, 1, "m1"));
+    f.push_back(line({{200, 0}, {100, 0}}, 1, "m2_reversed"));
+    f.push_back(line({{200, 0}, {300, 0}}, 1, "m3"));
+    f.push_back(line({{300, 0}, {400, 0}}, 1, "m4"));
+    f.push_back(line({{100, 100}, {100, 0}}, 1, "t1"));
+    f.push_back(line({{200, 100}, {200, 0}}, 1, "t2"));
+
+    lsdtt::river_line_prepare_options off;
+    off.repair_direction = false;
+    const auto raw = lsdtt::prepare_river_lines(f, off);
+    check_int("vote, repair off: one line against the network", raw.n_lines_against_network, 1);
+    check_int("vote, repair off: nothing flipped", raw.n_lines_flipped, 0);
+    bool flagged_right = true;
+    for (const auto& l : raw.lines)
+        flagged_right &= (l.direction_consistent == (l.source_feature_id == "m2_reversed" ? 0 : 1));
+    check("vote, repair off: only m2_reversed has direction_consistent 0", flagged_right);
+    check("vote, repair off: the reversed reach leaves a conflict at (100,0)",
+          type_at(raw, 100, 0) == "conflict", type_at(raw, 100, 0));
+    check_int("vote: the chosen outlet is (400,0)",
+              raw.components.size() == 1 ? raw.components[0].outlet_node : -1,
+              node_at(raw, 400, 0) ? node_at(raw, 400, 0)->node_id : -2);
+
+    lsdtt::river_line_prepare_options on;   // repair is the default
+    const auto fixed = lsdtt::prepare_river_lines(f, on);
+    check_int("vote, repair on: one line flipped", fixed.n_lines_flipped, 1);
+    bool m2_ok = false;
+    for (const auto& l : fixed.lines)
+    {
+        if (l.source_feature_id != "m2_reversed") continue;
+        m2_ok = near(l.vertices.front().x, 100) && near(l.vertices.back().x, 200) &&
+                l.direction_source == "network" && l.direction_consistent == 0;
+    }
+    check("vote, repair on: m2 now runs 100 -> 200, direction_source network", m2_ok);
+    check("vote, repair on: (100,0) is a confluence", type_at(fixed, 100, 0) == "confluence",
+          type_at(fixed, 100, 0));
+    check("vote, repair on: (200,0) is a confluence", type_at(fixed, 200, 0) == "confluence",
+          type_at(fixed, 200, 0));
+    check_int("vote, repair on: no conflicts or bifurcations",
+              count_type(fixed, "conflict") + count_type(fixed, "bifurcation"), 0);
+    check("vote, repair on: outlet at (400,0)", type_at(fixed, 400, 0) == "outlet", type_at(fixed, 400, 0));
+}
+
+void test_truncated_outlet()
+{
+    // Two tributaries end at (100,0) and nothing leaves it: the outflow lies
+    // outside the data. The sink is the outlet (no disagreement), nothing is
+    // flipped, and it is typed outlet, not conflict.
+    std::vector<lsdtt::river_line_feature> f;
+    f.push_back(line({{0, 50}, {100, 0}}, 1, "a"));
+    f.push_back(line({{0, -50}, {100, 0}}, 1, "b"));
+    f.push_back(line({{-100, 50}, {0, 50}}, 1, "c"));
+    const auto net = lsdtt::prepare_river_lines(f, lsdtt::river_line_prepare_options());
+    check_int("truncated: nothing flipped", net.n_lines_flipped, 0);
+    check("truncated: the sink (100,0) is the outlet", type_at(net, 100, 0) == "outlet",
+          type_at(net, 100, 0));
+}
 } // namespace
 
 int main()
@@ -327,6 +405,8 @@ int main()
     test_conflicts();
     test_fragments();
     test_zero_tolerance();
+    test_direction_vote();
+    test_truncated_outlet();
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks << " checks passed\n";
     return g_n_failed == 0 ? 0 : 1;
 }

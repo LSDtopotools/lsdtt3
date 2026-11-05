@@ -19,7 +19,14 @@
 //      node_snap_tolerance_metres, then split a line wherever a node lies on its
 //      interior (a T-junction);
 //   5. drop isolated fragments shorter than min_line_length_metres;
-//   6. topology report, NOT repaired: connected components, loops (edges on an
+//   6. direction consistency, from the graph alone (no elevation): in each
+//      connected component the outlet is the end node or data sink (inflow,
+//      no outflow) that the lines' own directions vote for (fewest
+//      disagreements), and every line is checked
+//      against the orientation toward that outlet (by network distance, so a
+//      braid is oriented too). A line pointing against its neighbours is
+//      flagged, and flipped when repair_direction is set;
+//   7. topology report, NOT repaired: connected components, loops (edges on an
 //      undirected cycle), and a type for every node.
 //
 // Vertices move by at most the snap tolerance (an endpoint moved to its
@@ -75,6 +82,12 @@ struct river_line_prepare_options
     double clip_x_max = 0.0;
     double clip_y_max = 0.0;
     double min_line_length_metres = 0.0;
+
+    // Step 6: flip lines that point against the network's outlet.
+    bool repair_direction = true;
+    // Step 6 is skipped for a component when (candidate outlets) x (lines)
+    // exceeds this, and a note says so.
+    long long max_direction_check_work = 50000000LL;
 };
 
 // A prepared, single-part, downstream-oriented line.
@@ -94,6 +107,11 @@ struct river_line
 
     int n_splits = 0;           // T-junction splits applied to the source part
     bool on_loop = false;       // the edge lies on an undirected cycle
+    // 1: agrees with the orientation toward its component's outlet; 0: did not
+    // (flipped if repair_direction, then direction_source = "network");
+    // -1: not judged (no unique orientation, e.g. on a loop between two paths
+    // of equal length, or the component was too large to check).
+    int direction_consistent = -1;
     int component_id = -1;
     double length_m = 0.0;
 };
@@ -129,6 +147,8 @@ struct river_component_summary
     int n_loops = 0;            // independent cycles: E - V + 1
     int n_bifurcations = 0;
     int n_conflicts = 0;
+    int outlet_node = -1;               // chosen by the direction vote (-1: none)
+    int n_against_network = 0;          // lines that pointed against it
 };
 
 struct river_line_network
@@ -144,6 +164,8 @@ struct river_line_network
     int n_endpoints_merged = 0;      // endpoints moved onto another endpoint's node
     int n_t_junction_splits = 0;
     int n_fragments_dropped = 0;
+    int n_lines_against_network = 0;     // direction_consistent == 0
+    int n_lines_flipped = 0;
 
     std::vector<std::string> notes;
 };

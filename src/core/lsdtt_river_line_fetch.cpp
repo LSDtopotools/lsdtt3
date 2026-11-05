@@ -279,13 +279,13 @@ void write_river_topology_csv(const river_line_network& net, const std::string& 
     std::ofstream csv(path);
     if (!csv) throw std::runtime_error("could not write " + path);
     csv << "component_id,n_lines,length_m,n_tips,n_outlets,n_clip_edges,n_loops,"
-           "n_bifurcations,n_conflicts\n";
+           "n_bifurcations,n_conflicts,outlet_node,n_against_network\n";
     for (const auto& c : net.components)
     {
         csv << c.component_id << "," << c.n_lines << "," << std::fixed << std::setprecision(2)
             << c.length_m << std::defaultfloat << "," << c.n_tips << "," << c.n_outlets << ","
             << c.n_clip_edges << "," << c.n_loops << "," << c.n_bifurcations << ","
-            << c.n_conflicts << "\n";
+            << c.n_conflicts << "," << c.outlet_node << "," << c.n_against_network << "\n";
     }
 }
 
@@ -472,6 +472,7 @@ void write_outputs(const lsdtt_river_line_fetch_options& o, const OGRSpatialRefe
         add_field(l, "name", OFTString);
         add_field(l, "feature_class", OFTString);
         add_field(l, "direction_source", OFTString);
+        add_field(l, "direction_consistent", OFTInteger);
         add_field(l, "on_loop", OFTInteger);
         add_field(l, "component_id", OFTInteger);
         add_field(l, "from_node", OFTInteger);
@@ -490,6 +491,7 @@ void write_outputs(const lsdtt_river_line_fetch_options& o, const OGRSpatialRefe
             f->SetField("name", rl.name.c_str());
             f->SetField("feature_class", rl.feature_class.c_str());
             f->SetField("direction_source", rl.direction_source.c_str());
+            f->SetField("direction_consistent", rl.direction_consistent);
             f->SetField("on_loop", rl.on_loop ? 1 : 0);
             f->SetField("component_id", rl.component_id);
             f->SetField("from_node", rl.from_node);
@@ -739,6 +741,7 @@ lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_opt
     po.clip_x_min = r.clip_x_min; po.clip_y_min = r.clip_y_min;
     po.clip_x_max = r.clip_x_max; po.clip_y_max = r.clip_y_max;
     po.min_line_length_metres = o.min_line_length_metres;
+    po.repair_direction = o.repair_direction;
     r.network = prepare_river_lines(features, po);
     if (r.network.lines.empty()) throw std::runtime_error("no river lines left after preparation");
 

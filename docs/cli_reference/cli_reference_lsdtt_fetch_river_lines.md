@@ -22,9 +22,9 @@ lsdtt-fetch-river-lines -h                       # print help and exit
 
 | File | Contents |
 |---|---|
-| `<write_fname>_river_lines.fgb` | Prepared lines: `line_id`, `source`, `source_feature_id`, `name`, `feature_class`, `direction_source`, `on_loop`, `component_id`, `from_node`, `to_node`, `n_splits`, `culverted`, `strahler_order`, `length_m` |
+| `<write_fname>_river_lines.fgb` | Prepared lines: `line_id`, `source`, `source_feature_id`, `name`, `feature_class`, `direction_source`, `direction_consistent`, `on_loop`, `component_id`, `from_node`, `to_node`, `n_splits`, `culverted`, `strahler_order`, `length_m` |
 | `<write_fname>_river_nodes.fgb` | Every node: `node_id`, `node_type`, `degree_in`, `degree_out`, `component_id` |
-| `<write_fname>_river_topology.csv` | One row per connected component |
+| `<write_fname>_river_topology.csv` | One row per connected component, with its `outlet_node` and `n_against_network` (lines that pointed against it) |
 | `<write_fname>_ATTRIBUTION.txt` | Licence and citation of the source |
 
 ## Parameters
@@ -87,6 +87,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `river_feature_classes` | `string` | `river,stream,lake_connector` | `param` | - | Comma list of feature classes to keep: river, stream, lake_connector, canal, drain, tidal, other. | Lake connectors are kept by default because dropping them breaks the network at every lake. Canals and drains are dropped because they make loops and cross divides; tidal reaches because they put outlets in the wrong place. Counts of every class read are written to the log. |
 | `node_snap_tolerance_metres` | `float` | `-1` | `param` | - | Line ends this close are joined, and a line is split where another line's end lies this close to it [m]. Negative = 1 m. | No vertex moves further than this. The vector is used by stream burning for topology only, so its geometry is not otherwise changed. |
 | `min_line_length_metres` | `float` | `0` | `param` | - | Drop isolated single lines shorter than this [m]. 0 = keep everything. | A line connected to any other line is never dropped. |
+| `direction_repair_algorithm_choice` | `string` | `network_outlet` | `param` | - | How lines that point against their network are treated: network_outlet or none. | Uses the graph only, no elevation. In each connected network the outlet is the end node that the lines' own directions vote for (fewest disagreements), and each line is compared with the direction towards that outlet along the network, so a line is judged against its neighbours, not on its own. network_outlet flips the lines that disagree (direction_source = network); none only flags them. Either way direction_consistent is 1 (agrees), 0 (disagreed) or -1 (not judged, e.g. the two arms of a symmetric braid), and the topology CSV gives each network's outlet_node and n_against_network. |
 
 ### Network
 

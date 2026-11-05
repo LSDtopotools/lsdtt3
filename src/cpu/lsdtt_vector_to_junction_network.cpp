@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_to_junction_network.hpp"
+#include "lsdtt_vector_ops_cpu.hpp"
 #include "../utils/lsdtt_junction_graph_orders.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
@@ -83,21 +84,13 @@ struct compact_edge_builder
 {
     std::int32_t junction_a = -1;
     std::int32_t junction_b = -1;
+    int n_forward = 0;     // raw parts traversed a -> b as digitised
+    int n_backward = 0;
     double length_metres = 0.0;
     std::vector<lsdtt_xy> xy;
 };
 
-struct quantised_key
-{
-    long long qx = 0;
-    long long qy = 0;
 
-    bool operator<(const quantised_key& other) const noexcept
-    {
-        if (qx != other.qx) return qx < other.qx;
-        return qy < other.qy;
-    }
-};
 
 OGRPolygon make_bbox_polygon(
     const lsdtt_raster_meta& meta,
@@ -188,13 +181,7 @@ double resolved_clip_inset_distance(
 
 
 
-quantised_key make_key(double x, double y, double tol)
-{
-    quantised_key k;
-    k.qx = static_cast<long long>(std::llround(x / tol));
-    k.qy = static_cast<long long>(std::llround(y / tol));
-    return k;
-}
+
 
 bool point_is_on_dem_edge(
     const lsdtt_raster_meta& meta,
@@ -843,13 +830,16 @@ void lsdtt_vector_to_junction_network::create(
         // Distinct endpoints of all polylines.
         std::vector<lsdtt_xy> endpoints;
         {
-            std::set<quantised_key> seen;
+            lsdtt_point_snapper seen(vertex_tol);
             for (const auto& p : polylines)
             {
                 if (p.xy.size() < 2) continue;
                 for (const lsdtt_xy& e : {p.xy.front(), p.xy.back()})
-                    if (seen.insert(make_key(e.x, e.y, vertex_tol)).second)
-                        endpoints.push_back(e);
+                {
+                    const std::size_t before = seen.size();
+                    (void)seen.id_for(e);
+                    if (seen.size() > before) endpoints.push_back(e);
+                }
             }
         }
 
@@ -941,14 +931,17 @@ void lsdtt_vector_to_junction_network::create(
     // -------------------------------------------------------------------------
     // Build raw endpoint graph from clipped linework.
     // -------------------------------------------------------------------------
-    std::map<quantised_key, std::int32_t> vertex_lookup;
+    // Snapped location id (lsdtt_point_snapper, joins by distance) -> raw
+    // vertex id, or -1 when the location is over NoData.
+    lsdtt_point_snapper vertex_snapper(vertex_tol);
+    std::map<int, std::int32_t> vertex_lookup;
     std::vector<raw_vertex> raw_vertices;
     std::vector<raw_edge>   raw_edges;
 
     auto get_or_make_vertex =
         [&](const lsdtt_xy& p) -> std::int32_t
         {
-            const quantised_key key = make_key(p.x, p.y, vertex_tol);
+            const int key = vertex_snapper.id_for(p);
             auto it = vertex_lookup.find(key);
 
             if (it != vertex_lookup.end())
@@ -1152,6 +1145,8 @@ void lsdtt_vector_to_junction_network::create(
 
                 std::vector<lsdtt_xy> geom =
                     oriented_geometry(current_edge, current_vertex);
+                if (current_vertex == current_edge.start_vertex) ++builder.n_forward;
+                else ++builder.n_backward;
 
                 if (builder.xy.empty())
                 {
@@ -1203,6 +1198,7 @@ void lsdtt_vector_to_junction_network::create(
             edge.junction_b = builder.junction_b;
             edge.length_metres = builder.length_metres;
             edge.xy = std::move(builder.xy);
+            edge.digitised_a_to_b = builder.n_backward == 0 ? 1 : (builder.n_forward == 0 ? -1 : 0);
 
             edges_.push_back(std::move(edge));
         }
@@ -1230,9 +1226,12 @@ void lsdtt_vector_to_junction_network::create(
     }
 
     // -------------------------------------------------------------------------
-    // One receiver per junction, from DEM elevation.
+    // One receiver per junction: from DEM elevation (default), or from the
+    // digitised order (options.use_digitised_direction, plan SB3).
     // -------------------------------------------------------------------------
-    for (auto& j : junctions_)
+    // Elevation rule for one junction, over the incident edges `allowed` lets
+    // through: the steepest downhill edge, or an outlet when none falls.
+    auto assign_by_elevation = [&](lsdtt_vector_network_junction& j, auto allowed)
     {
         double best_slope = -std::numeric_limits<double>::infinity();
         std::int32_t best_receiver = k_outlet_junction;
@@ -1242,6 +1241,7 @@ void lsdtt_vector_to_junction_network::create(
         for (const std::int32_t edge_id : j.incident_edges)
         {
             const auto& e = edges_[static_cast<std::size_t>(edge_id)];
+            if (!allowed(e)) continue;
 
             const std::int32_t other =
                 (e.junction_a == j.junction_id) ? e.junction_b : e.junction_a;
@@ -1271,7 +1271,6 @@ void lsdtt_vector_to_junction_network::create(
             j.is_outlet = true;
             j.receiver_junction = k_outlet_junction;
             j.downstream_edge_id = -1;
-            outlets_.push_back(j.junction_id);
         }
         else
         {
@@ -1293,6 +1292,144 @@ void lsdtt_vector_to_junction_network::create(
             j.receiver_junction = best_receiver;
             j.downstream_edge_id = best_edge;
         }
+    };
+    const auto any_edge = [](const lsdtt_vector_network_edge&) { return true; };
+
+    // Digitised rule for one junction: drain through an edge whose digitised
+    // order leaves it (several: the steepest, uphill or not); with none, fall
+    // back to elevation over the edges of mixed direction; else an outlet.
+    auto leaves = [](const lsdtt_vector_network_edge& e, std::int32_t jid)
+    {
+        if (e.junction_a == e.junction_b) return false;   // a self-loop leads nowhere
+        return (e.digitised_a_to_b > 0 && e.junction_a == jid) ||
+               (e.digitised_a_to_b < 0 && e.junction_b == jid);
+    };
+    auto assign_by_digitised = [&](lsdtt_vector_network_junction& j)
+    {
+        std::int32_t best_edge = -1, best_receiver = k_outlet_junction;
+        double best_drop = -std::numeric_limits<double>::infinity();
+        for (const std::int32_t edge_id : j.incident_edges)
+        {
+            const auto& e = edges_[static_cast<std::size_t>(edge_id)];
+            if (!leaves(e, j.junction_id)) continue;
+            const std::int32_t other = (e.junction_a == j.junction_id) ? e.junction_b : e.junction_a;
+            const double drop = (j.elevation - junctions_[static_cast<std::size_t>(other)].elevation) /
+                                std::max(e.length_metres, 1.0e-12);
+            if (drop > best_drop) { best_drop = drop; best_edge = edge_id; best_receiver = other; }
+        }
+        if (best_edge >= 0)
+        {
+            j.is_outlet = false;
+            j.receiver_junction = best_receiver;
+            j.downstream_edge_id = best_edge;
+            return;
+        }
+        assign_by_elevation(j, [](const lsdtt_vector_network_edge& e)
+                            { return e.digitised_a_to_b == 0 && e.junction_a != e.junction_b; });
+    };
+
+    n_direction_fallback_networks_ = 0;
+    direction_fallbacks_.clear();
+    for (auto& j : junctions_)
+    {
+        if (options.use_digitised_direction) assign_by_digitised(j);
+        else assign_by_elevation(j, any_edge);
+    }
+
+    if (options.use_digitised_direction)
+    {
+        // Whole-network guard. A river network drains to its outlet, so its
+        // outlets should not stand above its channel heads: a network whose
+        // mean outlet elevation exceeds the median elevation of its heads (no
+        // junction drains into them) was digitised upstream as a whole, and is
+        // oriented by elevation instead. Only interior junctions count. A local rise along one reach is not
+        // judged here; that is the point of using the digitised order.
+        const std::size_t nj = junctions_.size();
+        std::vector<std::int32_t> comp(nj, -1);
+        std::int32_t n_comp = 0;
+        for (std::size_t s0 = 0; s0 < nj; ++s0)
+        {
+            if (comp[s0] >= 0) continue;
+            std::vector<std::int32_t> stack{static_cast<std::int32_t>(s0)};
+            comp[s0] = n_comp;
+            while (!stack.empty())
+            {
+                const std::int32_t u = stack.back();
+                stack.pop_back();
+                for (const std::int32_t eid : junctions_[static_cast<std::size_t>(u)].incident_edges)
+                {
+                    const auto& e = edges_[static_cast<std::size_t>(eid)];
+                    const std::int32_t v = (e.junction_a == u) ? e.junction_b : e.junction_a;
+                    if (comp[static_cast<std::size_t>(v)] >= 0) continue;
+                    comp[static_cast<std::size_t>(v)] = n_comp;
+                    stack.push_back(v);
+                }
+            }
+            ++n_comp;
+        }
+        std::vector<int> is_receiver(nj, 0);
+        for (const auto& j : junctions_)
+            if (j.receiver_junction >= 0) is_receiver[static_cast<std::size_t>(j.receiver_junction)] = 1;
+        std::vector<std::vector<double>> heads(static_cast<std::size_t>(n_comp));
+        std::vector<double> outlet_sum(static_cast<std::size_t>(n_comp), 0.0);
+        std::vector<int> outlet_n(static_cast<std::size_t>(n_comp), 0);
+        std::vector<int> comp_size(static_cast<std::size_t>(n_comp), 0);
+        std::vector<std::int32_t> first_outlet(static_cast<std::size_t>(n_comp), -1);
+        for (std::size_t k = 0; k < nj; ++k)
+        {
+            const auto& j = junctions_[k];
+            const std::size_t c = static_cast<std::size_t>(comp[k]);
+            ++comp_size[c];
+            // Junctions on the DEM edge are left out: where a network is cut by
+            // the DEM box its end there is not its real outlet or head, and over
+            // a NoData margin its elevation is borrowed from the nearest valid
+            // cell. A network with no interior outlet or head is not judged.
+            if (j.is_dem_edge_junction) continue;
+            if (j.receiver_junction < 0)
+            {
+                outlet_sum[c] += j.elevation;
+                ++outlet_n[c];
+                if (first_outlet[c] < 0) first_outlet[c] = static_cast<std::int32_t>(k);
+            }
+            else if (!is_receiver[k]) heads[c].push_back(j.elevation);
+        }
+        std::vector<int> fallback(static_cast<std::size_t>(n_comp), 0);
+        for (std::size_t c = 0; c < static_cast<std::size_t>(n_comp); ++c)
+        {
+            if (outlet_n[c] == 0 || heads[c].empty()) continue;
+            std::vector<double> h = heads[c];
+            std::nth_element(h.begin(), h.begin() + static_cast<std::ptrdiff_t>(h.size() / 2), h.end());
+            const double median_head = h[h.size() / 2];
+            if (outlet_sum[c] / outlet_n[c] > median_head)
+            {
+                fallback[c] = 1;
+                ++n_direction_fallback_networks_;
+                lsdtt_direction_fallback_record rec;
+                rec.n_junctions = comp_size[c];
+                rec.n_heads = static_cast<int>(heads[c].size());
+                rec.mean_outlet_elevation = outlet_sum[c] / outlet_n[c];
+                rec.median_head_elevation = median_head;
+                const auto& fo = junctions_[static_cast<std::size_t>(first_outlet[c])];
+                rec.x = fo.x;
+                rec.y = fo.y;
+                direction_fallbacks_.push_back(rec);
+            }
+        }
+        for (std::size_t k = 0; k < nj; ++k)
+        {
+            if (fallback[static_cast<std::size_t>(comp[k])]) assign_by_elevation(junctions_[k], any_edge);
+        }
+        for (auto& e : edges_)
+        {
+            e.oriented_by_digitised =
+                fallback[static_cast<std::size_t>(comp[static_cast<std::size_t>(e.junction_a)])] ? 0 : 1;
+        }
+    }
+
+    outlets_.clear();
+    for (const auto& j : junctions_)
+    {
+        if (j.is_outlet) outlets_.push_back(j.junction_id);
     }
 
     // -------------------------------------------------------------------------
@@ -1315,13 +1452,19 @@ void lsdtt_vector_to_junction_network::create(
 
     for (auto& e : edges_)
     {
-        bool a_to_b =
-            junctions_[static_cast<std::size_t>(e.junction_a)].receiver_junction ==
-            e.junction_b;
-
-        bool b_to_a =
-            junctions_[static_cast<std::size_t>(e.junction_b)].receiver_junction ==
-            e.junction_a;
+        // Which end claims the edge. By receiver junction (the original rule);
+        // with the digitised direction, by downstream EDGE, because two
+        // parallel edges digitised in opposite directions make two junctions
+        // each other's receiver through different edges (a directed 2-cycle,
+        // broken below by break_receiver_cycles).
+        const auto& ca = junctions_[static_cast<std::size_t>(e.junction_a)];
+        const auto& cb = junctions_[static_cast<std::size_t>(e.junction_b)];
+        bool a_to_b = options.use_digitised_direction
+                          ? ca.downstream_edge_id == e.edge_id
+                          : ca.receiver_junction == e.junction_b;
+        bool b_to_a = options.use_digitised_direction
+                          ? cb.downstream_edge_id == e.edge_id
+                          : cb.receiver_junction == e.junction_a;
 
         if (a_to_b && b_to_a)
         {

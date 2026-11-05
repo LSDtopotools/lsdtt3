@@ -131,11 +131,17 @@ reference build_reference(const std::string& gpkg)
     std::set<std::string> nodes;
     for (const auto& kv : parent) nodes.insert(kv.first);
     ref.n_nodes = static_cast<int>(nodes.size());
+    // The extract is one network. If its data have exactly one sink (inflow,
+    // no outflow), the network drains there: that sink is the outlet even with
+    // several inflows (the extract cut off its outflow).
+    int n_sinks = 0;
+    for (const std::string& n : nodes) if (dout[n] == 0 && din[n] >= 1) ++n_sinks;
     for (const std::string& n : nodes)
     {
         const int i = din[n], o = dout[n];
         std::string t;
-        if (i == 0 && o == 1) t = "tip";
+        if (n_sinks == 1 && o == 0 && i >= 1) t = "outlet";
+        else if (i == 0 && o == 1) t = "tip";
         else if (i == 1 && o == 0) t = "outlet";
         else if (i >= 1 && o >= 2) t = "bifurcation";
         else if (i >= 2 && o == 1) t = "confluence";
@@ -273,6 +279,7 @@ int main(int argc, char* argv[])
 
     lsdtt::lsdtt_river_line_fetch_options base;
     base.west = west; base.south = south; base.east = east; base.north = north;
+    base.repair_direction = false;   // the reference is the data's own directions
     base.output_epsg = 27700;   // the source CRS: coordinates pass through exactly
 
     lsdtt::lsdtt_river_line_fetch_options os = base;

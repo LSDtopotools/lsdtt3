@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_burn_streams_cpu.hpp"
+#include "lsdtt_vector_ops_cpu.hpp"
 #include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 
@@ -92,19 +93,14 @@ vector_network_endpoints find_vector_network_source_tips(
 
     const lsdtt_raster_meta& meta = dem.get_meta();
 
-    // Endpoints are compared with a tolerance of half a cell size.
-    // Coordinates are quantized to this resolution so that nearby endpoints
-    // from the same junction match as the same key.
+    // Endpoints within half a cell size of each other are the same junction
+    // (joined by distance: lsdtt_point_snapper).
     const double snap_tol = meta.cell_size * 0.5;
-
-    auto quantize = [snap_tol](double v) -> std::int64_t
-    {
-        return static_cast<std::int64_t>(std::round(v / snap_tol));
-    };
+    lsdtt_point_snapper endpoint_snapper(snap_tol);
 
     auto make_key = [&](double x, double y) -> std::string
     {
-        return std::to_string(quantize(x)) + "_" + std::to_string(quantize(y));
+        return std::to_string(endpoint_snapper.id_for({x, y}));
     };
 
     // endpoint_map: key -> number of features that have this as an endpoint
@@ -373,14 +369,12 @@ find_first_layer_junction_pairs(
     const lsdtt_array2d_f&   dem_data = dem.get_data_array();
     const lsdtt_array2d_u8&  dem_mask = dem.get_mask_array();
 
+    // Endpoints within half a cell size are the same node (lsdtt_point_snapper).
     const double snap_tol = meta.cell_size * 0.5;
-    auto quantize = [snap_tol](double v) -> std::int64_t
-    {
-        return static_cast<std::int64_t>(std::round(v / snap_tol));
-    };
+    lsdtt_point_snapper endpoint_snapper(snap_tol);
     auto make_key = [&](double x, double y) -> std::string
     {
-        return std::to_string(quantize(x)) + "_" + std::to_string(quantize(y));
+        return std::to_string(endpoint_snapper.id_for({x, y}));
     };
 
     // Helper: sample DEM elevation at (x, y); NaN when outside or nodata.
@@ -2305,12 +2299,10 @@ build_vector_networks(const std::string& vector_path, const lsdtt_raster_cpu& de
         return static_cast<double>(dem_data(row, col));
     };
 
-    // Quantised key: snap endpoints to half-cell grid for robust matching
-    const double snap = cs * 0.5;
-    auto make_key = [snap](double x, double y) -> std::string {
-        return std::to_string(static_cast<std::int64_t>(std::round(x / snap)))
-             + "_"
-             + std::to_string(static_cast<std::int64_t>(std::round(y / snap)));
+    // Endpoints within half a cell size are the same node (lsdtt_point_snapper).
+    lsdtt_point_snapper endpoint_snapper(cs * 0.5);
+    auto make_key = [&endpoint_snapper](double x, double y) -> std::string {
+        return std::to_string(endpoint_snapper.id_for({x, y}));
     };
 
     // ---- Clip each polyline to DEM bbox ------------------------------------

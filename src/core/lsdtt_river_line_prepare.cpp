@@ -16,7 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <limits>
 #include <numeric>
+#include <queue>
 #include <sstream>
 #include <tuple>
 #include <unordered_map>
@@ -586,7 +588,142 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         net.lines.push_back(std::move(rl));
     }
 
-    // ---- 6. topology report -------------------------------------------------
+    // ---- 6. direction consistency from the graph alone ----------------------
+    // In each component the candidate outlets are every degree-1 node and
+    // every data sink (inflow, no outflow: e.g. a confluence whose outflow was
+    // cut off by an extract). For a
+    // candidate o, a line u -> v agrees with "toward o" when v is nearer o
+    // than u (network distance, Dijkstra on line length), and disagrees when
+    // it is farther; equal distances (the two halves of a symmetric braid)
+    // are not judged. The outlet is the candidate with the least LENGTH of
+    // line disagreeing (then the fewest lines, then a node the data already
+    // make a sink, then the lowest id), so the data's own directions vote for
+    // it and a long main stem outweighs a short spur.
+    std::vector<std::pair<int, int>> chosen_outlets;   // (node, n_against)
+    {
+        const int nn = static_cast<int>(net.nodes.size());
+        std::vector<std::vector<std::pair<int, int>>> adj(static_cast<size_t>(nn));  // (other, line)
+        std::vector<int> din(static_cast<size_t>(nn), 0), dout(static_cast<size_t>(nn), 0);
+        for (size_t k = 0; k < net.lines.size(); ++k)
+        {
+            const river_line& l = net.lines[k];
+            adj[static_cast<size_t>(l.from_node)].push_back({l.to_node, static_cast<int>(k)});
+            adj[static_cast<size_t>(l.to_node)].push_back({l.from_node, static_cast<int>(k)});
+            ++dout[static_cast<size_t>(l.from_node)];
+            ++din[static_cast<size_t>(l.to_node)];
+        }
+        union_find cu(nn);
+        for (const river_line& l : net.lines) cu.unite(l.from_node, l.to_node);
+        std::map<int, std::vector<int>> comp_nodes, comp_lines;
+        for (int n = 0; n < nn; ++n) comp_nodes[cu.find(n)].push_back(n);
+        for (size_t k = 0; k < net.lines.size(); ++k)
+            comp_lines[cu.find(net.lines[k].from_node)].push_back(static_cast<int>(k));
+
+        const double inf = std::numeric_limits<double>::infinity();
+        std::vector<double> dist(static_cast<size_t>(nn), inf);
+        auto dijkstra = [&](int src, const std::vector<int>& nodes)
+        {
+            for (int n : nodes) dist[static_cast<size_t>(n)] = inf;
+            using item = std::pair<double, int>;
+            std::priority_queue<item, std::vector<item>, std::greater<item>> pq;
+            dist[static_cast<size_t>(src)] = 0.0;
+            pq.push({0.0, src});
+            while (!pq.empty())
+            {
+                const auto [d, u] = pq.top();
+                pq.pop();
+                if (d > dist[static_cast<size_t>(u)]) continue;
+                for (const auto& [v, k] : adj[static_cast<size_t>(u)])
+                {
+                    const double nd = d + std::max(net.lines[static_cast<size_t>(k)].length_m, 1e-9);
+                    if (nd < dist[static_cast<size_t>(v)])
+                    {
+                        dist[static_cast<size_t>(v)] = nd;
+                        pq.push({nd, v});
+                    }
+                }
+            }
+        };
+        // +1 agrees, -1 disagrees, 0 not judged, for line k toward the current dist.
+        auto judge = [&](int k) -> int
+        {
+            const river_line& l = net.lines[static_cast<size_t>(k)];
+            const double du = dist[static_cast<size_t>(l.from_node)];
+            const double dv = dist[static_cast<size_t>(l.to_node)];
+            if (std::fabs(du - dv) <= 1e-9 * std::max(1.0, std::max(du, dv))) return 0;
+            return dv < du ? 1 : -1;
+        };
+
+        for (const auto& [root, nodes] : comp_nodes)
+        {
+            const std::vector<int>& lines = comp_lines[root];
+            if (lines.empty()) continue;
+            std::vector<int> cands;
+            for (int n : nodes)
+            {
+                const int i = din[static_cast<size_t>(n)], o = dout[static_cast<size_t>(n)];
+                if (i + o == 1 || (o == 0 && i >= 1)) cands.push_back(n);
+            }
+            if (cands.empty()) continue;   // a ring: no outlet to vote for
+            if (static_cast<long long>(cands.size()) * static_cast<long long>(lines.size()) >
+                opts.max_direction_check_work)
+            {
+                net.notes.push_back("Direction check skipped for a component of " +
+                                    std::to_string(lines.size()) + " lines (too large)");
+                continue;
+            }
+            int best = -1, best_against = 0;
+            double best_len = 0.0;
+            bool best_is_outlet = false;
+            for (int o : cands)
+            {
+                dijkstra(o, nodes);
+                int against = 0;
+                double len = 0.0;
+                for (int k : lines)
+                {
+                    if (judge(k) < 0)
+                    {
+                        ++against;
+                        len += net.lines[static_cast<size_t>(k)].length_m;
+                    }
+                }
+                const bool is_outlet = din[static_cast<size_t>(o)] >= 1 && dout[static_cast<size_t>(o)] == 0;
+                const double eps = 1e-6;
+                bool better = best < 0 || len < best_len - eps;
+                if (!better && std::fabs(len - best_len) <= eps)
+                {
+                    better = against < best_against ||
+                             (against == best_against && is_outlet && !best_is_outlet);
+                }
+                if (better)
+                {
+                    best = o; best_against = against; best_len = len; best_is_outlet = is_outlet;
+                }
+            }
+            dijkstra(best, nodes);
+            for (int k : lines)
+            {
+                river_line& l = net.lines[static_cast<size_t>(k)];
+                const int j = judge(k);
+                l.direction_consistent = j > 0 ? 1 : (j < 0 ? 0 : -1);
+                if (j < 0)
+                {
+                    ++net.n_lines_against_network;
+                    if (opts.repair_direction)
+                    {
+                        std::reverse(l.vertices.begin(), l.vertices.end());
+                        std::swap(l.from_node, l.to_node);
+                        l.direction_source = "network";
+                        ++net.n_lines_flipped;
+                    }
+                }
+            }
+            chosen_outlets.push_back({best, best_against});
+        }
+    }
+
+    // ---- 7. topology report -------------------------------------------------
     const int n_nodes = static_cast<int>(net.nodes.size());
     std::vector<std::pair<int, int>> edges;
     edges.reserve(net.lines.size());
@@ -622,11 +759,17 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         }
     }
 
+    std::vector<bool> voted_outlet(net.nodes.size(), false);
+    for (const auto& co : chosen_outlets) voted_outlet[static_cast<size_t>(co.first)] = true;
     for (river_node& n : net.nodes)
     {
         const int din = n.degree_in;
         const int dout = n.degree_out;
         if (din + dout == 1 && n.is_clip_point) n.node_type = "clip_edge";
+        // A sink chosen as its network's outlet by the direction vote is that
+        // network's outlet, even with several inflows (a confluence whose
+        // outflow lies outside the data).
+        else if (voted_outlet[static_cast<size_t>(n.node_id)] && dout == 0) n.node_type = "outlet";
         else if (din == 0 && dout == 1)          n.node_type = "tip";
         else if (din == 1 && dout == 0)          n.node_type = "outlet";
         else if (din >= 1 && dout >= 2)          n.node_type = "bifurcation";
@@ -656,6 +799,14 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         s.n_loops = s.n_lines - comp_nodes[static_cast<size_t>(s.component_id)] + 1;
     }
 
+    for (const auto& [o, against] : chosen_outlets)
+    {
+        river_component_summary& c =
+            net.components[static_cast<size_t>(net.nodes[static_cast<size_t>(o)].component_id)];
+        c.outlet_node = o;
+        c.n_against_network = against;
+    }
+
     // ---- notes ---------------------------------------------------------------
     {
         int loops = 0, tips = 0, outlets = 0, clips = 0, bifs = 0, conflicts = 0;
@@ -673,6 +824,11 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         os << "Noding: " << net.n_endpoints_merged << " endpoints merged, "
            << net.n_t_junction_splits << " T-junction splits, "
            << net.n_fragments_dropped << " isolated fragments dropped";
+        net.notes.push_back(os.str());
+        os.str("");
+        os << "Direction (graph only): " << net.n_lines_against_network
+           << " line(s) pointed against their network's outlet"
+           << (opts.repair_direction ? ", flipped" : ", not flipped (repair off)");
         net.notes.push_back(os.str());
         os.str("");
         os << "Network: " << net.lines.size() << " lines, " << net.nodes.size() << " nodes, "

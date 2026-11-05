@@ -27,6 +27,15 @@
 //     to P and a line out of Q. One of the two P-Q edges is labelled, and it
 //     closes a real cycle: closes_cycle = 1.
 //
+// Then the same lines with use_digitised_direction (plan SB3):
+//   * the main stem is digitised downstream, so A drains to B along the data
+//     even though the edge to D is steeper: nothing is labelled, and D drains
+//     to A although D sits in the pit (the data are followed, not the DEM);
+//   * the braid network is digitised upstream as a whole: its interior
+//     outlet IN (z 96.5) stands above its only head OUT (z 52.5), so the
+//     guard orients it by elevation instead: 1 fallback network, and P drains
+//     towards Q.
+//
 // Usage: lsdtt-test-vector-loop-labels <work_dir>
 // -----------------------------------------------------------------------------
 
@@ -145,7 +154,9 @@ int main(int argc, char* argv[])
             if (err != OGRERR_NONE) throw std::runtime_error("could not write a test line");
         };
         put({W, A}); put({A, B}); put({B, C}); put({D, A}); put({E, B});
-        put({IN, P}); put({P, Q}); put({P, BEND, Q}); put({Q, OUT});
+        // The braid network is digitised UPSTREAM throughout (used by the
+        // digitised-direction guard below; elevation mode ignores the order).
+        put({P, IN}); put({Q, P}); put({Q, BEND, P}); put({OUT, Q});
         GDALClose(ds);
     }
 
@@ -185,6 +196,35 @@ int main(int argc, char* argv[])
               std::to_string(lab->closes_cycle));
         check("braid: it has a reason", !lab->loop_reason.empty());
     }
+
+    // ---- digitised direction ---------------------------------------------
+    lsdtt::lsdtt_vector_to_junction_network_options dopts = opts;
+    dopts.use_digitised_direction = true;
+    lsdtt::lsdtt_vector_to_junction_network dnet;
+    dnet.create(vec, dem, dopts);
+    const auto* dab = edge_between(dnet, A, B);
+    check("digitised: A-B not labelled", dab && !dab->is_loop_edge);
+    check("digitised: A drains to B along the data",
+          dab && std::hypot(dab->xy.front().x - A.x, dab->xy.front().y - A.y) < 5);
+    const auto* dda = edge_between(dnet, D, A);
+    check("digitised: D drains to A although D is in the pit",
+          dda && !dda->is_loop_edge && std::hypot(dda->xy.front().x - D.x, dda->xy.front().y - D.y) < 5);
+    int main_labelled = 0;
+    for (auto pq : {std::make_pair(W, A), std::make_pair(A, B), std::make_pair(B, C),
+                    std::make_pair(E, B), std::make_pair(D, A)})
+    {
+        const auto* e = edge_between(dnet, pq.first, pq.second);
+        if (!e || e->is_loop_edge) ++main_labelled;
+    }
+    check("digitised: nothing in the main network labelled", main_labelled == 0,
+          std::to_string(main_labelled));
+    check("digitised: the upstream-digitised braid network falls back to elevation",
+          dnet.n_direction_fallback_networks() == 1, std::to_string(dnet.n_direction_fallback_networks()));
+    const auto* dpq = edge_between(dnet, P, Q, false);
+    const auto* dpq_b = edge_between(dnet, P, Q, true);
+    const auto* kept = (dpq && !dpq->is_loop_edge) ? dpq : dpq_b;
+    check("digitised: after the fallback P drains towards Q",
+          kept && !kept->is_loop_edge && std::hypot(kept->xy.front().x - P.x, kept->xy.front().y - P.y) < 5);
 
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks << " checks passed\n";
     return g_n_failed == 0 ? 0 : 1;
