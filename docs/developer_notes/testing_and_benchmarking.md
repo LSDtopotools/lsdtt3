@@ -58,7 +58,7 @@ it tests. Every test has exactly one runtime tier:
 |---|---|---|
 | `tier_native` | `BUILD_TESTING=ON` (always) | the C++ build only |
 | `tier_python_stdlib` | `LSDTT_ENABLE_PYTHON_TESTS=ON` | Python ≥ 3.10, standard library; some also GDAL's command-line programs |
-| `tier_python_geo` | `LSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python + GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely |
+| `tier_python_geo` | `LSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python + GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely, pytest |
 | `tier_pixi` | `LSDTT_ENABLE_BENCHMARKS=ON` | the Pixi `benchmark` environment |
 
 and zero or more flags: `hermetic` (native, no skip path, no network, no host

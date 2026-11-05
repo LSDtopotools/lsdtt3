@@ -672,6 +672,11 @@ endforeach()
 # runs the checker on snippets whose verdicts are written by hand.
 lsdtt_evidence(unit_python_test_markers unit conformance)
 lsdtt_evidence(unit_python_test_markers_selftest unit conformance exact_solution)
+# The five binding-free pytest files: their markers are conformance (7),
+# exact_solution (3) and negative (1), all unit.
+lsdtt_evidence(unit_python_binding_free_tests unit conformance exact_solution negative)
+# The generated test inventory must match the registered tests (a docs check).
+lsdtt_evidence(unit_test_inventory_is_current unit conformance)
 
 # -----------------------------------------------------------------------------
 # Benchmarks (LSDTT_ENABLE_BENCHMARKS) and performance (LSDTT_ENABLE_PERF_TESTS)

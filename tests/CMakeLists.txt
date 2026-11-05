@@ -83,7 +83,7 @@ endif()
 # ModuleNotFoundError halfway through a run.
 if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
     set(_lsdtt_missing_modules "")
-    foreach(_mod osgeo.gdal numpy rasterio geopandas shapely)
+    foreach(_mod osgeo.gdal numpy rasterio geopandas shapely pytest)
         execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import ${_mod}"
                         RESULT_VARIABLE _lsdtt_rc OUTPUT_QUIET ERROR_QUIET)
         if(NOT _lsdtt_rc EQUAL 0)
@@ -100,7 +100,7 @@ if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
             "  pixi run -e test ctest --test-dir <build> -L '^tier_python_geo$'\n"
             "or configure with -DLSDTT_ENABLE_PYTHON_GEO_TESTS=OFF.")
     endif()
-    message(STATUS "Test Python   : geospatial imports OK (osgeo.gdal, numpy, rasterio, geopandas, shapely)")
+    message(STATUS "Test Python   : geospatial imports OK (osgeo.gdal, numpy, rasterio, geopandas, shapely, pytest)")
 endif()
 
 # Which GDAL the C++ build uses, relative to any active Pixi/conda environment.
@@ -11095,6 +11095,49 @@ lsdtt_set_tests_properties(unit_python_test_markers unit_python_test_markers_sel
     LABELS "core;conventions;python"
     TIMEOUT 60)
 
+# The python_bindings/tests files that never import lsdtt3 (API examples,
+# naming, reference and binding-source contracts, CLI packaging), run with
+# pytest WITHOUT a built binding, so they are checked in every geo-tier
+# configure rather than only when the binding is built. pytest is part of the
+# geo tier (the configure import check above, pixi feature.test).
+set(LSDTT_PYTHON_BINDING_FREE_TEST_FILES
+    test_api_examples.py test_api_naming.py test_api_reference_contract.py
+    test_binding_source_contract.py test_cli_packaging.py)
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
+    set(_lsdtt_bf_files "")
+    foreach(_f IN LISTS LSDTT_PYTHON_BINDING_FREE_TEST_FILES)
+        list(APPEND _lsdtt_bf_files "${CMAKE_SOURCE_DIR}/python_bindings/tests/${_f}")
+    endforeach()
+    add_test(NAME unit_python_binding_free_tests
+        COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider ${_lsdtt_bf_files}
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    lsdtt_mark_test_runtime(python unit_python_binding_free_tests)
+else()
+    lsdtt_mark_test_unregistered(python_geo unit_python_binding_free_tests)
+endif()
+lsdtt_set_tests_properties(unit_python_binding_free_tests PROPERTIES
+    LABELS "core;conventions;python"
+    TIMEOUT 300)
+
+# docs/developer_notes/test_inventory.md (tests by evidence category, domain,
+# CLI and Python file) must match the registered tests and the pytest markers.
+# The inventory describes one configuration (CANONICAL in the generator); with
+# any other the test skips, since a different option set registers different
+# tests. Regenerate with tools/generate_test_inventory.py --build-dir <build> --update.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_test_inventory_is_current
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_SOURCE_DIR}/tools/generate_test_inventory.py"
+            --check --build-dir "${CMAKE_BINARY_DIR}" --ctest "${CMAKE_CTEST_COMMAND}")
+    lsdtt_mark_test_runtime(python unit_test_inventory_is_current)
+else()
+    lsdtt_mark_test_unregistered(python unit_test_inventory_is_current)
+endif()
+lsdtt_set_tests_properties(unit_test_inventory_is_current PROPERTIES
+    LABELS "core;docs;python"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
 # =============================================================================
 # TEST REPORT AND LOGGED RUNS
 #
@@ -11222,6 +11265,7 @@ set(LSDTT_PYTHON_GEO_TESTS
     rigorous_fluvial_surfaces_clubb2017_joins       # osgeo
     rigorous_fluvial_surfaces_cross_section_levels_workflow  # osgeo
     rigorous_fluvial_surfaces_whole_mask_segmentation        # osgeo
+    unit_python_binding_free_tests                  # pytest
 )
 
 # Scripts other than run_cli_smoke.py that run GDAL's command-line programs.
