@@ -8,6 +8,8 @@ import re
 
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 
 _CLI_PATH = Path(__file__).parents[1] / "src" / "lsdtt3" / "_cli.py"
 _SPEC = importlib.util.spec_from_file_location("lsdtt3_cli_test", _CLI_PATH)
@@ -16,6 +18,7 @@ _cli = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_cli)
 
 
+@pytest.mark.negative
 def test_driver_path_reports_missing_driver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A wheel without the executable fails with a direct useful error."""
     monkeypatch.setattr(_cli, "__file__", str(tmp_path / "_cli.py"))
@@ -23,6 +26,7 @@ def test_driver_path_reports_missing_driver(monkeypatch: pytest.MonkeyPatch, tmp
         _cli._driver_path("lsdtt-graphflood")
 
 
+@pytest.mark.exact_solution
 def test_driver_path_uses_platform_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Drivers are discovered underneath the installed package directory."""
     monkeypatch.setattr(_cli, "__file__", str(tmp_path / "_cli.py"))
@@ -32,6 +36,7 @@ def test_driver_path_uses_platform_layout(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert _cli._driver_path("lsdtt-chi-analysis") == executable
 
 
+@pytest.mark.exact_solution
 def test_run_forwards_arguments_and_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     """The Python console script preserves native CLI arguments and status."""
     executable = Path("/tmp/lsdtt-chi-analysis")
@@ -52,6 +57,7 @@ def test_run_forwards_arguments_and_exit_code(monkeypatch: pytest.MonkeyPatch) -
     assert calls == [([str(executable), "params.txt"], False, None)]
 
 
+@pytest.mark.exact_solution
 def test_main_derives_driver_from_console_script_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """One generic console entry point dispatches every declared driver."""
     monkeypatch.setattr(_cli.sys, "argv", ["/venv/bin/lsdtt-surface-metrics", "p.txt"])
@@ -59,6 +65,7 @@ def test_main_derives_driver_from_console_script_name(monkeypatch: pytest.Monkey
     assert _cli.main() == 3
 
 
+@pytest.mark.conformance
 def test_driver_inventory_matches_the_vanilla_cmake_build() -> None:
     """Every root-CMake vanilla driver has a wheel dispatcher declaration."""
     root = Path(__file__).parents[2]
@@ -67,6 +74,7 @@ def test_driver_inventory_matches_the_vanilla_cmake_build() -> None:
     assert _cli._DRIVERS == expected
 
 
+@pytest.mark.conformance
 def test_driver_inventory_matches_wheel_declarations() -> None:
     """CMake targets and console scripts cannot drift from the dispatcher."""
     root = Path(__file__).parents[1]

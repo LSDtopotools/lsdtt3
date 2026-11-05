@@ -1,11 +1,15 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 
 class FlatSurfaceTest(unittest.TestCase):
+    @pytest.mark.exact_solution
     def test_relief_window_radius_sets_the_window_side(self):
         metadata = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
         values = np.zeros((9, 9), dtype=np.float32)
@@ -27,6 +31,7 @@ class FlatSurfaceTest(unittest.TestCase):
         self.assertEqual(relief3[4, 2], np.float32(0.0))
         self.assertEqual(relief5[4, 2], np.float32(10.0))
 
+    @pytest.mark.smoke
     def test_find_flat_surfaces_returns_diagnostics_and_labels(self):
         metadata = lsdtt3.RasterMeta.from_shape(64, 64, cell_size=1.0)
         rows, cols = np.indices((64, 64), dtype=np.float32)
@@ -52,6 +57,7 @@ class FlatSurfaceTest(unittest.TestCase):
         self.assertEqual(result.combined_flat_mask.shape, dem.shape)
         self.assertEqual(result.labelled_flat_mask.shape, dem.shape)
 
+    @pytest.mark.exact_solution
     def test_classify_flat_surfaces_uses_hand_and_channel_ids(self):
         metadata = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         valid = np.ones((7, 7), dtype=bool)

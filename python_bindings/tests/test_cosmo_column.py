@@ -2,7 +2,10 @@ import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
 
+
+@pytest.mark.metamorphic
 def test_crn_column_steady_state_round_trip():
     column = lsdtt3.CRNColumn()
     sample = column.steady_state(effective_erosion_rate_g_cm2_yr=0.01)
@@ -11,6 +14,7 @@ def test_crn_column_steady_state_round_trip():
     assert inferred["erosion_rate_g_cm2_yr"] == pytest.approx(0.01, rel=1e-6)
 
 
+@pytest.mark.property
 def test_crn_column_transient_profile():
     column = lsdtt3.CRNColumn()
     column.set_erosion_history([0.0, 1000.0, -9999.0], [0.0001, 0.0001, 0.0001], removal_metres=[0.0, 0.0, 0.0])

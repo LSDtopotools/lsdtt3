@@ -6,8 +6,11 @@ B. Gailleton
 """
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 def meta():
@@ -29,6 +32,7 @@ def meta():
     return lsdtt3.RasterMeta.from_shape(24, 32, cell_size=10.0, epsg_code=32631)
 
 
+@pytest.mark.metamorphic
 def test_noise_is_reproducible_and_has_requested_shape():
     """Check seeded stochastic surfaces are deterministic.
 
@@ -50,6 +54,7 @@ def test_noise_is_reproducible_and_has_requested_shape():
     np.testing.assert_array_equal(first.to_numpy(), second.to_numpy())
 
 
+@pytest.mark.property
 def test_synthetic_surfaces_supply_matching_truth_masks():
     """Check range and hillslope products remain co-registered.
 
@@ -72,6 +77,7 @@ def test_synthetic_surfaces_supply_matching_truth_masks():
     assert np.any(strip["channel_mask"].to_numpy() == 1.0)
 
 
+@pytest.mark.property
 def test_ocn_returns_dem_area_and_receiver_grid():
     """Check a short optimal-channel-network run has coherent outputs.
 

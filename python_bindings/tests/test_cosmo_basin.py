@@ -1,8 +1,11 @@
 import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.property, pytest.mark.unit]
 
 
 def test_basin_inversion_returns_annotated_geodataframe():

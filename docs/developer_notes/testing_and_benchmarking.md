@@ -58,7 +58,7 @@ it tests. Every test has exactly one runtime tier:
 |---|---|---|
 | `tier_native` | `BUILD_TESTING=ON` (always) | the C++ build only |
 | `tier_python_stdlib` | `LSDTT_ENABLE_PYTHON_TESTS=ON` | Python ≥ 3.10, standard library; some also GDAL's command-line programs |
-| `tier_python_geo` | `LSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python + GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely |
+| `tier_python_geo` | `LSDTT_ENABLE_PYTHON_GEO_TESTS=ON` | Python + GDAL bindings, NumPy, Rasterio, GeoPandas, Shapely, pytest |
 | `tier_pixi` | `LSDTT_ENABLE_BENCHMARKS=ON` | the Pixi `benchmark` environment |
 
 and zero or more flags: `hermetic` (native, no skip path, no network, no host
@@ -126,21 +126,69 @@ cmake -P build/run_tests.cmake -LE '^heavy$' -j4     # tees into build/test-logs
 cmake --build build --target test_report            # one plain-text file to send
 ```
 
-### Kind labels
+### Evidence and level labels
+
+Every test carries one or more **evidence** labels, saying how it knows the
+right answer (its oracle), and exactly one **level** label. They map one to one
+onto the sections of `docs/tex_technical/testing_regime.tex`.
+
+| Evidence label | The test's oracle |
+|---|---|
+| `exact_solution` | output compared with an answer worked out analytically or by hand from the fixture's construction |
+| `property` | a statement every correct output satisfies: no pits, conservation, weights sum to one, monotonicity, range, no nodata or NaN, a write/read round trip |
+| `metamorphic` | two lsdtt3 runs on related inputs or settings whose outputs must be related: rotation, thread count, two methods or interfaces that must agree, a re-run from the ingested parameters |
+| `differential` | comparison with an implementation lsdtt3 does not own (RichDEM, TopoToolbox, Whitebox, CRONUS-Earth, HYPE, DAGGER, OpenCV, Barnes' code, pyproj, scipy.odr, published tables), including frozen outputs of those programs and a brute-force reference written inside the test |
+| `characterisation` | lsdtt3's own earlier output stored and compared: checksums, sha256, frozen files, pinned measured numbers, measured bands, or, for a refactor, the replaced code kept verbatim |
+| `smoke` | the program runs to completion and writes its outputs |
+| `negative` | invalid input or configuration is refused with the expected message or exit code |
+| `performance` | timings reported, never asserted; no evidence of correctness |
+| `conformance` | help text, documentation, version strings, naming rules, build currency or the test tooling conform to a stated rule; no computed output is judged |
+
+| Level label | The test |
+|---|---|
+| `unit` | calls lsdtt3 routines in process (a C++ driver), or inspects repository files or test tooling |
+| `system` | judges outputs written by a shipped program run end to end: a CLI (directly, through the harness, or as a fixture it compares), the project's configure, or the built Python package |
+
+A test has every evidence label that applies, so a CLI test that pins a
+checksum is both `smoke` and `characterisation`. Select anchored, because `-L`
+is a regex: `ctest -L '^metamorphic$'`. The labels are assigned in one place,
+`tests/cmake/evidence_labels.cmake`: the harness's assertion flags give most
+system tests theirs, and a hand table gives the rest. Configure stops if any
+test has no evidence label or not exactly one level label. The configure
+summary prints the count for each.
+
+The Python tests in `python_bindings/tests` use the same names as pytest
+markers, with the same rule: one or more evidence markers and exactly one level
+marker per test, set on the function, the class or the module (`pytestmark`).
+Select them with `-m`, for example `python -m pytest -m metamorphic
+python_bindings/tests`. Two checks enforce them. `python_bindings/tests/conftest.py`
+registers the markers and stops collection if any test lacks them. The CTest test
+`unit_python_test_markers` reads the test files without importing them, so it
+needs no built binding, and it also checks that the marker list in
+`tests/scripts/check_python_test_markers.py` matches the CMake lists. To check
+only some files, run `python3 tests/scripts/check_python_test_markers.py --files
+<file>...`; add `--counts` for the number per marker. One meaning differs: in
+the Python suite `smoke` means the call returns a well-formed result (the right
+shape and columns, not empty), not that a program ran and wrote its files.
+
+The old kind labels `rigorous`, `regression` and `failure` were retired on
+2026-11-04; the test-name prefixes are historical and do not set the evidence.
+**Select by label, not by name.** `ctest -R regression` or `-R rigorous` still
+matches the old names but says nothing about what those tests check: the
+`regression_lem_*` tests are `metamorphic` or `exact_solution`, and
+`rigorous_valley_centreline_legacy_*` are `smoke` only. Use `-L` with an
+evidence label instead.
+
+Other labels:
 
 | Label | Covers |
 |---|---|
-| `smoke` | each CLI runs end to end on a tiny fixture (mostly Python-driven) |
-| `rigorous` | exact output checks: checksums, sizes, feature counts, hashes |
-| `failure` | bad parameters are rejected with the expected message |
-| `unit` | unit tests, mostly C++ |
 | `cosmo` | cosmogenic physics vs frozen CRONUS + numerics sentinel |
 | `cosmo_realworld` | published-basin runs against frozen summaries (`needs_network`) |
 | `surface_metrics` | surface-metrics validation (slope, curvature, SMAP, MADk2) |
 | `flow` | flow routing and depression-handling properties |
 | `fetch` | native DEM fetching; offline logic by default |
 | `benchmark` | comparison against external references on real DEMs |
-| `performance` | in-process timings, reported and never asserted |
 | `configure_contract` | configures the project in a scratch directory and checks what it reports for a disabled or missing tier |
 
 Downloading tests carry `needs_network`; `network` is the flow-routing
@@ -150,9 +198,9 @@ Downloading tests carry `needs_network`; `network` is the flow-routing
 
 Running the whole suite after every edit is wasteful. Most tests cannot be
 affected by a given change, and a few are heavy enough to dominate the clock.
-So every test carries **two orthogonal kinds of label**: a *kind*
-(`unit` / `smoke` / `rigorous` / `failure`) and a **domain** saying which part of
-the codebase it exercises. The expensive ones additionally carry `heavy`.
+So every test carries, besides its evidence and level labels, a **domain**
+saying which part of the codebase it exercises. The expensive ones additionally
+carry `heavy`.
 
 | Domain | Tests | Covers |
 |---|---|---|
@@ -5157,7 +5205,7 @@ state, the `lsdtt-lem` model-grid and input-raster placements, and the Python
 | Test | Labels | What it covers |
 |---|---|---|
 | `unit_lem_erodibility` | `unit;lem` | kernels (K1-K6), units and conversion (U1-U3), calibration (V11-V12), steady state (S1-S6), values and scaling (V1-V14, F1-F3), `run_lem_step` (L1-L4), model grids and placements (G1-G16). Driver `tests/cpp/test_lem_erodibility.cpp`, `--suite fast` |
-| `rigorous_lem_erodibility_analytic` | `rigorous;lem` | analytic steady states A1, A1b, A2, A3 (`--suite analytic`) |
+| `rigorous_lem_erodibility_analytic` | `exact_solution;unit;lem` | analytic steady states A1, A1b, A2, A3 (`--suite analytic`) |
 | `unit_raster_loader_geotransform_guard` | `unit;gdal` | the loader refuses rotated, south-up and projected non-square rasters (G1-G8) |
 | `unit_lem_forcing_history` (F5) | `unit;lem` | an explicit forcing K <= 0 is refused, naming the row |
 | `smoke_/failure_lem_erodibility_*`, `smoke_/failure_lem_grid_*`, `..._channel_mask_*`, `regression_lem_*` | `smoke`/`failure`/`regression`, `cli;lem` | 39 CLI runs on fixtures from `fixture_lem_erodibility_cli`, and native comparisons of their outputs |
@@ -5240,18 +5288,18 @@ exact on the UTM grid).
 | `unit_chi_lithology_channel_stats` | `unit;chi;lithology` | `compute_weighted_quantile` (lower weighted quantile: fixed vectors at q = 0, 0.25, 0.5, 1; zero weights; empty = NaN; zero total, negative weight, size mismatch and q outside [0, 1] throw; equal weights = `compute_quantile_floor_in_place` at q = 0, 0.5, 1 for n = 1..12); contact distance on a two-unit grid (exact, incl. nodata and unmapped); node -> segment on a hand-built fit (confluence, outlet); the lithology of a set of nodes (majority, purity with dx and dx sqrt2 weights, tie to the lower code, all unmapped, zero weights, empty); lithologic reaches on a hand-built network (3 reaches, 12 / 18 / 9 nodes, end types contact/outlet, source/contact, source/junction; with a 20 m buffer 4 nodes excluded and the ends become buffer); reach OLS on z = 3 + 7 chi (k_sn 7, R^2 1, SE 0) and `lithology_min_reach_pixels`; segment purity (180/290); summary bookkeeping (rows, sums, `low_sample` below 5 qualifying reaches with a NaN interval); the bootstrap (same seed bitwise, other seed differs, constant values, basin clusters, 0 replicates); the fit result unchanged; the known-answer steady states for n = 1 and n = 2 in two layouts; the `--check-ksn-by-lithology` mode; relative erodibility (R1-R4, below). Driver `tests/cpp/test_lithology_channel_stats.cpp` (156 checks) |
 | `fixture_chi_lithology_cli` | `fixture;chi;lithology` | writes the steady-state DEM, its unit polygons, two crosswalks, and a two-unit code raster beside a copy of `tiny_dem.asc` |
 | `smoke_chi_lithology_ksn` | `smoke;cli;chi;lithology` | the CLI on the steady state: all seven outputs, the code raster holds 1 and 2, the run-local codes 1 and 2 in `_lithology_units.csv`, the unmapped row is empty, the reach columns, and each unit has no node in the other's histogram peak bin |
-| `rigorous_chi_lithology_ksn_ratio` | `rigorous;chi;lithology` | the reach-median ratio sandstone/shale from that run against 4, within 2.42 % |
+| `rigorous_chi_lithology_ksn_ratio` | `exact_solution;system;chi;lithology` | the reach-median ratio sandstone/shale from that run against 4, within 2.42 % |
 | `smoke_chi_lithology_crosswalk` | `smoke;cli;chi;lithology` | codes 10 and 30 and names from a crosswalk's `name` column, a 60 m contact buffer (52 nodes set aside), the bootstrap by basin |
-| `rigorous_chi_lithology_observation_only` | `rigorous;cli;chi;lithology` | the `chi_analysis_smoke` run plus a lithology map keeps the fit-nodes hash that `rigorous_chi_nodes_sha256` pins |
-| `failure_chi_lithology_{without_fit,missing_file,bad_field,crosswalk_gap,bad_cluster}` | `failure;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true`; a map that does not exist; a field the map lacks (the fields are listed); a value missing from the crosswalk (with its pixel count); `lithology_bootstrap_cluster` other than reach or basin |
-| `failure_chi_lithology_no_overlap_{raster,vector}` | `failure;cli;chi;lithology` | a code raster and a polygon map 200 km east of the DEM (same CRS) label no valid DEM pixel: refused, the message giving both extents and CRSs |
+| `rigorous_chi_lithology_observation_only` | `metamorphic;characterisation;smoke;system;cli;chi;lithology` | the `chi_analysis_smoke` run plus a lithology map keeps the fit-nodes hash that `rigorous_chi_nodes_sha256` pins |
+| `failure_chi_lithology_{without_fit,missing_file,bad_field,crosswalk_gap,bad_cluster}` | `negative;system;cli;chi;lithology` | `lithology_fname` without `fit_chi_networks: true`; a map that does not exist; a field the map lacks (the fields are listed); a value missing from the crosswalk (with its pixel count); `lithology_bootstrap_cluster` other than reach or basin |
+| `failure_chi_lithology_no_overlap_{raster,vector}` | `negative;system;cli;chi;lithology` | a code raster and a polygon map 200 km east of the DEM (same CRS) label no valid DEM pixel: refused, the message giving both extents and CRSs |
 | `smoke_chi_lithology_multi_mn`, `rigorous_chi_lithology_bootstrap_per_mn` | `smoke`/`rigorous`, `cli;chi;lithology` | the bootstrap stream is per m/n (`std::seed_seq{seed, round(m/n * 10000)}`): with m/n 0.4 and 0.45 the 0.45 summary, unit x basin and reach tables equal those of the single-m/n run byte for byte |
 | `smoke_chi_lithology_relative_erodibility` | `smoke;cli;chi;lithology` | `write_relative_erodibility` on the steady state (n = 1 and 2, E = 2e-4 m/yr): the relative-erodibility CSV header and rows, K units strings, no unmapped row, both draft property tables with their header lines and provenance, the default reference and the conditions printed |
-| `rigorous_chi_lithology_relative_erodibility_observation_only` | `rigorous;cli;chi;lithology` | the seven k_sn-by-lithology outputs of that run equal those of `smoke_chi_lithology_ksn` byte for byte (the relative-erodibility stream is separate) |
-| `rigorous_chi_lithology_relative_erodibility_{ratio,reference}` | `rigorous;chi;lithology` | `--check-relative-erodibility` on that CSV: shale K/K_ref against 4 within 2.42 % and K against 4e-5 within 6.4 %; sandstone (the reference) 1 and K against 1e-5 within 4 % |
+| `rigorous_chi_lithology_relative_erodibility_observation_only` | `metamorphic;system;cli;chi;lithology` | the seven k_sn-by-lithology outputs of that run equal those of `smoke_chi_lithology_ksn` byte for byte (the relative-erodibility stream is separate) |
+| `rigorous_chi_lithology_relative_erodibility_{ratio,reference}` | `exact_solution;system;chi;lithology` | `--check-relative-erodibility` on that CSV: shale K/K_ref against 4 within 2.42 % and K against 4e-5 within 6.4 %; sandstone (the reference) 1 and K against 1e-5 within 4 % |
 | `smoke_chi_lithology_relative_erodibility_k_raster` | `smoke;cli;chi;lithology` | `lsdtt-lithology-erodibility` reads the n = 1 draft table unchanged and, with the fixture DEM and map, writes a 160 x 120 K raster holding the table's two K values |
 | `smoke_chi_lithology_relative_erodibility_multi_mn`, `rigorous_chi_lithology_relative_erodibility_per_mn` | `smoke`/`rigorous`, `cli;chi;lithology` | with m/n 0.4 and 0.45 the 0.45 relative-erodibility CSV and both property tables equal those of the single-m/n run byte for byte |
-| `failure_chi_lithology_relative_erodibility_{no_map,bad_reference}` | `failure;cli;chi;lithology` | `write_relative_erodibility` without `lithology_fname`; a reference name that is not a unit (the units are listed) |
+| `failure_chi_lithology_relative_erodibility_{no_map,bad_reference}` | `negative;system;cli;chi;lithology` | `write_relative_erodibility` without `lithology_fname`; a reference name that is not a unit (the units are listed) |
 
 **Known answer.** A 120 x 160 grid at 30 m (a tilted red-noise surface, seed 11, D8,
 open edges, draining north) with K1 = 1e-5 and K2 = 4e-5, U = 2e-4, map area, steady
@@ -5414,8 +5462,8 @@ WARNING above 10 %.
 | `unit_lithology_channel_network_stats` | `unit;network;lithology` | on the in-memory trellis (2400 junctions, 2396 links): with the contact parallel to the trunks every link takes the unit of its side with purity 1 (1198 / 1198); with it across them the 12 crossing links' unit and purity equal a length-weighted computation in the test, the 4 links below 0.8 are the group "mixed (<80% one unit)" (none excluded), and a 4-node sample at the upstream end makes the 8 crossing links longer than 4 nodes pure (the tag follows the sampled nodes); mixed has its own summary row, the group n sum to every link, and mixed is in no comparison row and not in "rest" (north vs rest compares with the south links only); unmapped links are the group unmapped; 1192 junctions in lithology and in lithology_interior (1180 in their unit, 12 arms disagree); the axial rose by unit equals counts made in the test (596 / 602); the junction median bootstrap; the writers (appended columns, comma quoting); the analysed-area mask; the block-order rule on synthetic counts (auto picks the largest k with >= min, override with a note, nothing reaching min = no blocks with the note, nan p); block permutations (an extreme separation over 40 blocks gives p = 1/(1 + 199); same seed, same p; within-block nan when no block holds both groups; on the trellis by order with order-1 blocks, order 2 has no blocked record = nan with a note; with order-2 blocks the statistic equals Kuiper V on the blocked records, 4 unblocked links left out). Driver `tests/cpp/test_lithology_network_stats.cpp` (30 checks) |
 | `smoke_channel_network_analysis_lithology` | `smoke;cli;network;lithology` | the trellis fixture with its north/south code raster as the map: appended record columns, the interval and block columns, the mixed summary row, the arms-disagree junction rows, no comparison row naming mixed, the stdout note, the unit legend (24000 / 23636 pixels in analysed basins), the block-order counts file |
 | `smoke_channel_network_analysis_lithology_observation`, `rigorous_channel_network_analysis_lithology_observation_only` | `smoke`/`rigorous`, `cli;network;lithology` | a lithology map that no key uses leaves the six statistics outputs byte-identical to `smoke_channel_network_analysis_bearing_statistics_order` (`tests/cmake/compare_output_sets.cmake`) |
-| `failure_channel_network_analysis_lithology_{bad_source,key_without_map}` | `failure;cli;network;lithology` | `lithology_source: shapefile`; `channel_bearing_group_by: lithology` without `lithology_fname` |
-| `failure_channel_network_analysis_{lithology,region}_no_overlap_{raster,vector}` | `failure;cli;network` | lithology and region maps 200 km east of the trellis (same CRS), as a code raster and as a polygon layer: refused with both extents and CRSs |
+| `failure_channel_network_analysis_lithology_{bad_source,key_without_map}` | `negative;system;cli;network;lithology` | `lithology_source: shapefile`; `channel_bearing_group_by: lithology` without `lithology_fname` |
+| `failure_channel_network_analysis_{lithology,region}_no_overlap_{raster,vector}` | `negative;system;cli;network` | lithology and region maps 200 km east of the trellis (same CRS), as a code raster and as a polygon layer: refused with both extents and CRSs |
 
 Without the statistics switches, 32 outputs of two full runs (the lake and Allegheny
 Front DEMs, every record, Tokunaga, area-ratio, area-scaling and vector output) are
@@ -5525,13 +5573,13 @@ CLI pins are measured separately.
 | Test | Labels | What it pins |
 |---|---|---|
 | `smoke_chi_analysis_erodibility_calibration` | `smoke;cli;chi` | F1, n 1,2: the three CSVs (exact headers) and 13 basin polygons; 12 used in 10 groups; one area_mismatch and one outside_dem; a fitted n |
-| `rigorous_chi_erodibility_calibration_n` | `rigorous;chi` | fitted n 1.04242 (abs err 0.0424; K at that n 8.342e-06); pin 0.05 (the cap; 2 x measured is above it) |
-| `rigorous_chi_erodibility_calibration_fixed_n_K` | `rigorous;chi` | fixed n = 1 K 9.53205e-06 (4.68 %); pin 6.4 % (the cap) |
-| `rigorous_chi_erodibility_calibration_units_invariant` | `rigorous;cli;chi` | the samples in m/yr give byte-identical basin K and fit files |
-| `rigorous_chi_erodibility_calibration_observation_only` | `rigorous;cli;chi` | fit nodes, fit segments, k_sn basin summary and disorder sweep byte-identical with and without `erosion_rate_fname` |
+| `rigorous_chi_erodibility_calibration_n` | `exact_solution;system;chi` | fitted n 1.04242 (abs err 0.0424; K at that n 8.342e-06); pin 0.05 (the cap; 2 x measured is above it) |
+| `rigorous_chi_erodibility_calibration_fixed_n_K` | `exact_solution;system;chi` | fixed n = 1 K 9.53205e-06 (4.68 %); pin 6.4 % (the cap) |
+| `rigorous_chi_erodibility_calibration_units_invariant` | `metamorphic;system;cli;chi` | the samples in m/yr give byte-identical basin K and fit files |
+| `rigorous_chi_erodibility_calibration_observation_only` | `metamorphic;system;cli;chi` | fit nodes, fit segments, k_sn basin summary and disorder sweep byte-identical with and without `erosion_rate_fname` |
 | `smoke_chi_analysis_erodibility_calibration_lithology` | `smoke;cli;chi;lithology` | F2: mono and unit_in_basin rows for both units, the property table, the basin-lithology CSV |
-| `rigorous_chi_erodibility_calibration_lithology_units_{west,east}` | `rigorous;chi;lithology` | unit_in_basin west 9.46848e-06 (5.32 %), east 3.86206e-05 (3.45 %); pin 6.4 % (the cap) |
-| `failure_chi_analysis_erodibility_calibration_{no_units,units_conflict,without_fit,missing_column,missing_file}` | `failure;cli;chi` | the FATAL messages |
+| `rigorous_chi_erodibility_calibration_lithology_units_{west,east}` | `exact_solution;system;chi;lithology` | unit_in_basin west 9.46848e-06 (5.32 %), east 3.86206e-05 (3.45 %); pin 6.4 % (the cap) |
+| `failure_chi_analysis_erodibility_calibration_{no_units,units_conflict,without_fit,missing_column,missing_file}` | `negative;system;cli;chi` | the FATAL messages |
 
 Not asserted, because it exceeds the 6.4 % cap: through the CLI, F2 `mono` west
 measured 9.2954e-06 (7.05 %); east 3.8566e-05 (3.58 %).
@@ -5562,7 +5610,7 @@ were used in 14 nesting groups. Excluded: 2 incomplete_basin (the two basins ove
 |---|---|---|
 | `unit_fetch_lithology` | `unit;fetch` | tile maths against hand-computed tiles (zoom 0, Berlin 550/335 at zoom 10, polar clamp, bounds); UTM zones; the three API parsers incl. malformed JSON, an `error` response and a missing `success/data`; the `lith_primary` rule; a fetch from the committed tile: the unit outside the box dropped, EPSG:32632, areas within 1.5 % of the source rectangles projected independently, the vocabulary, the attribution; an explicit EPSG to GeoPackage; too many tiles, no readable tile and a box with no units refused; an unreachable API (127.0.0.1:9) is a warning with the output still written. Driver `tests/cpp/test_macrostrat_fetch.cpp`; skips (77) without the MVT driver |
 | `smoke_fetch_lithology_offline` | `smoke;cli;fetch` | the CLI on the committed tile with `lookup_map_units: false`: all four outputs, vocabulary rows and sources, no unit from outside the box |
-| `failure_fetch_lithology_{no_bbox,too_many_tiles,web_mercator}` | `failure;cli;fetch` | a missing edge, a box needing more than `max_tiles`, `output_epsg: 3857` |
+| `failure_fetch_lithology_{no_bbox,too_many_tiles,web_mercator}` | `negative;system;cli;fetch` | a missing edge, a box needing more than `max_tiles`, `output_epsg: 3857` |
 | `smoke_fetch_lithology_help` | `smoke;cli;fetch` | `-h` lists the Macrostrat parameters |
 | `network_fetch_lithology_cli` | `network;cli;fetch` | a live fetch near Edinburgh (two tiles, BGS 1:625k), only with `LSDTT_ENABLE_NETWORK_TESTS` |
 
@@ -5588,7 +5636,7 @@ below also carries the label `erodibility_calibration`.
 | `smoke_fetch_erosion_rates_offline_lsdn` | `smoke;cli;fetch` | `octopus_rate_scheme: lsdn`: the S186WTS046 row with EBEL 12.8, EBEL_EXT 0.83, EBEL_INT 0.29 |
 | `smoke_fetch_erosion_rates_offline_empty` | `smoke;cli;fetch` | an empty FeatureCollection: header-only CSV, the attribution, the warning, exit 0 |
 | `smoke_fetch_erosion_rates_{raster,vector}_bounds` | `smoke;cli;fetch` | `bounds_fname` as a GeoTIFF (`raster, EPSG:32632`) and as a polygon FlatGeobuf (`polygon, EPSG:4326`) |
-| `failure_fetch_erosion_rates_{no_bbox,too_many,bad_scheme,web_mercator,exception}` | `failure;cli;fetch` | no box; `max_features: 5` against the canned hits (28); `octopus_rate_scheme: cronus`; `output_epsg: 3857`; an ExceptionReport body |
+| `failure_fetch_erosion_rates_{no_bbox,too_many,bad_scheme,web_mercator,exception}` | `negative;system;cli;fetch` | no box; `max_features: 5` against the canned hits (28); `octopus_rate_scheme: cronus`; `output_epsg: 3857`; an ExceptionReport body |
 | `smoke_fetch_erosion_rates_help` | `smoke;cli;fetch` | `-h` lists `octopus_rate_scheme` |
 | `network_fetch_erosion_rates_cli` | `network;cli;fetch` | a live fetch of the wvbig box: S186WTS046 in the CSV, at least 5 polygons, the attribution; only with `LSDTT_ENABLE_NETWORK_TESTS` |
 | `unit_chi_erodibility_calibration` | `unit;chi` | 32 checks in this round (61 with the known answers of 8c.6). York (below); the sample reader (unit factors exact, `m_per_myr` = `mm_per_kyr`, unknown and empty units listed, mass fluxes refused; a units column that agrees reads, one that disagrees throws naming row 2; missing rate / uncertainty columns throw listing the columns; no id column gives `row_<n>`; `bad_rate` and `missing_uncertainty` rows kept; km² to m²; a UTM GeoPackage point layer reads the same pixels and statuses as the CSV); `stream_power_erodibility_from_erosion_rate` (value, NaN cases, A0 = 1 vs 1e6 equal to 1e-10 relative for n = 1, 1.5, 2); the K units strings for m = 0.45 and 0.9; the shared property-table writer byte for byte and its case-insensitive name check; the two parameter groups (29 keys, defaults, groups, no n-list key); basin completeness at a grid edge (below). Driver `tests/cpp/test_erodibility_calibration.cpp` |

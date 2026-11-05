@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class LandscapeModelTest(unittest.TestCase):
@@ -14,6 +17,7 @@ class LandscapeModelTest(unittest.TestCase):
             data, np.ones(data.shape, dtype=bool), self.meta
         )
 
+    @pytest.mark.property
     def test_fluvial_model_advances_and_returns_erosion_diagnostics(self):
         model = lsdtt3.LandscapeModel(
             self.dem, timestep_years=10.0, erodibility=1.0e-4,
@@ -29,6 +33,7 @@ class LandscapeModelTest(unittest.TestCase):
             model.elevation.to_numpy()[-1], self.dem.to_numpy()[-1]
         )
 
+    @pytest.mark.property
     def test_hillslope_only_run_reuses_model_state(self):
         channels = np.zeros((15, 15), dtype=np.float32)
         channels[-1] = 1.0
@@ -48,6 +53,7 @@ class LandscapeModelTest(unittest.TestCase):
             result.elevation.to_numpy()[-1], self.dem.to_numpy()[-1]
         )
 
+    @pytest.mark.exact_solution
     def test_cellular_model_reports_resolved_coupling(self):
         model = lsdtt3.LandscapeModel(
             self.dem, timestep_years=1.0, fluvial_method="none", uplift_rate=0.0,
@@ -57,6 +63,8 @@ class LandscapeModelTest(unittest.TestCase):
         self.assertEqual(model.coupling_regime, "coupled")
         model.set_forcing(1.0e-4, baselevel_fall_rate=2.0e-4)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.characterisation
     def test_threshold_controls_automatic_coupling_and_channel_mask(self):
         common = dict(
             timestep_years=1.0, fluvial_method="none", hillslope_model="none",
@@ -78,6 +86,7 @@ class LandscapeModelTest(unittest.TestCase):
         # produce different exact masks.
         self.assertEqual(np.count_nonzero(positive_mask), 197)
 
+    @pytest.mark.metamorphic
     def test_default_critical_slope_is_point_eight(self):
         meta = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         rows, cols = np.indices((7, 7), dtype=np.float32)
@@ -124,6 +133,7 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
         model = lsdtt3.LandscapeModel(self.dem, **{**self.common, **kwargs})
         return model.run(steps).elevation.to_numpy()
 
+    @pytest.mark.metamorphic
     def test_erodibility_uniform_field_equals_scalar_bitwise(self):
         for method in ("d8", "dinf"):
             scalar = self._run(fluvial_method=method)
@@ -141,6 +151,7 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
             )
             self.assertEqual(scalar.tobytes(), as_raster.tobytes(), method)
 
+    @pytest.mark.metamorphic
     def test_set_erodibility_field_applies_to_next_step_and_none_restores(self):
         field = np.full((15, 15), 2.0e-4, dtype=np.float32)
         field[:7] = 8.0e-4
@@ -162,12 +173,14 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
             scalar_again.step().elevation.to_numpy().tobytes(),
         )
 
+    @pytest.mark.property
     def test_erodibility_field_property_round_trips(self):
         field = np.linspace(1.0e-4, 5.0e-4, 225, dtype=np.float32).reshape(15, 15)
         model = lsdtt3.LandscapeModel(self.dem, erodibility_field=field, **self.common)
         self.assertIsInstance(model.erodibility_field, lsdtt3.Raster)
         self.assertEqual(model.erodibility_field.to_numpy().tobytes(), field.tobytes())
 
+    @pytest.mark.negative
     def test_bad_erodibility_fields_raise_value_error(self):
         bad = {}
         bad["shape"] = np.full((14, 15), 2.0e-4, dtype=np.float32)
@@ -188,6 +201,7 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
                 erodibility_m_exponent=0.5, **self.common,
             )
 
+    @pytest.mark.negative
     def test_scalar_erodibility_must_be_positive(self):
         for value in (0.0, -1.0e-3):
             for key in ("incision_threshold_specific_area", "incision_threshold_area"):
@@ -196,6 +210,7 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
                         self.assertRaisesRegex(ValueError, "erodibility must be > 0"):
                     lsdtt3.LandscapeModel(self.dem, **kwargs)
 
+    @pytest.mark.exact_solution
     def test_erodibility_strip_steady_slopes_follow_k(self):
         # A1 at 40x3: m = 0, so at steady state S_i = U / K_i either side of the
         # contact (n = 1); K1 upstream, K2 = K1/4 downstream.

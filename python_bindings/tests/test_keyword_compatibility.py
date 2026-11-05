@@ -6,6 +6,8 @@ import pytest
 from lsdtt3._compat import MISSING, resolve_deprecated_keyword
 import lsdtt3._core as native
 
+pytestmark = [pytest.mark.unit]
+
 
 def native_function(prefix, *, value=5):
     return prefix, value
@@ -26,6 +28,8 @@ compatibility_function.__signature__ = inspect.signature(
 )
 
 
+@pytest.mark.exact_solution
+@pytest.mark.conformance
 def test_function_keyword_compatibility_prototype_preserves_signature_and_value():
     parameters = inspect.signature(compatibility_function).parameters
     assert list(parameters) == ["prefix", "canonical", "legacy"]
@@ -48,6 +52,7 @@ def test_function_keyword_compatibility_prototype_preserves_signature_and_value(
     assert "use 'canonical'" in str(caught[0].message)
 
 
+@pytest.mark.negative
 def test_function_keyword_compatibility_prototype_rejects_conflict():
     with pytest.raises(TypeError, match="cannot both be supplied"):
         compatibility_function("p", canonical=7, legacy=9)
@@ -58,6 +63,9 @@ def test_function_keyword_compatibility_prototype_rejects_conflict():
     and not bool(__import__("os").environ.get("LSDTT_REQUIRE_COMPATIBILITY_PROBE")),
     reason="private nanobind compatibility probe is disabled",
 )
+@pytest.mark.exact_solution
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_native_constructor_keyword_compatibility_prototype():
     probe_type = native._KeywordCompatibilityProbe
     signatures = probe_type.__init__.__nb_signature__

@@ -123,7 +123,7 @@ macro(_violate _check _msg)
 endmacro()
 
 set(_tiers tier_native tier_python_stdlib tier_python_geo tier_pixi)
-set(_third_party osgeo numpy rasterio geopandas shapely pyproj scipy pandas
+set(_third_party osgeo numpy rasterio geopandas shapely pytest pyproj scipy pandas
                  matplotlib fiona richdem whitebox xarray netCDF4 h5py riversand)
 set(_harness_gdal_args
     --expect-valid-percent-100 --expect-valid-percent --expect-raster-size

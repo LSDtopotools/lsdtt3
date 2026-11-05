@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def test_road_flow_binding_uses_only_canonical_keywords():
     source = (

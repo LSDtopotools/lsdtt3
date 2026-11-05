@@ -353,9 +353,26 @@ the donor-count array compact.
 
 ---
 
+## Adding tests
+
+Every test must say how it knows its answer. Give each new CTest test a row in
+`tests/cmake/evidence_labels.cmake`, unless the CLI harness or the name rules
+there already label it. Give each new Python test pytest markers. Either way, a
+test needs one or more evidence labels (`exact_solution`, `property`,
+`metamorphic`, `differential`, `characterisation`, `smoke`, `negative`,
+`conformance`, `performance`) and exactly one level (`unit` or `system`).
+Configure and pytest collection both stop on a test without them. The
+categories are defined in the "Testing categories" section of
+[`lsdtt3_architecture.md`](lsdtt3_architecture.md). Prefer the strongest
+evidence the test can give: an exact solution, a property or a metamorphic
+relation, rather than a stored snapshot.
+
+---
+
 ## Summary checklist for new analysis code
 
 - Work in `src/cpu/` 
+- Add tests labelled by evidence and level (see "Adding tests" above)
 - Write free functions unless you need private data members
 - Add new `.cpp` files to `LSDTT3_CPU_SOURCES` in `CMakeLists.txt`
 - Use `std::int64_t` for all cell indices, and the sentinel constants for

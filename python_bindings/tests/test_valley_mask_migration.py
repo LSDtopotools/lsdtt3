@@ -8,6 +8,8 @@ from pyproj import CRS
 import lsdtt3
 import lsdtt3._core as native
 
+pytestmark = [pytest.mark.exact_solution, pytest.mark.characterisation, pytest.mark.unit]
+
 
 PROBE_AVAILABLE = hasattr(native, "_extract_valley_centrelines_with_mask_probe")
 

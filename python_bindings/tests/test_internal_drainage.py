@@ -3,9 +3,12 @@ import unittest
 import warnings
 
 import numpy as np
+import pytest
 from pyproj import CRS
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class InternalDrainageTest(unittest.TestCase):
@@ -18,6 +21,8 @@ class InternalDrainageTest(unittest.TestCase):
         surface[4, 4] = 0.0
         self.dem = lsdtt3.Raster.from_numpy(surface, np.ones_like(surface, dtype=bool), metadata)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_hierarchy_candidates_and_polygons(self):
         result = lsdtt3.find_internal_drainage(self.dem)
 
@@ -30,6 +35,7 @@ class InternalDrainageTest(unittest.TestCase):
         self.assertGreater(candidate.volume_m3, 0.0)
         self.assertEqual(result.candidates.crs.to_epsg(), 32630)
 
+    @pytest.mark.exact_solution
     def test_detected_pit_can_be_retained_for_routing(self):
         result = lsdtt3.find_internal_drainage(self.dem, include_polygons=False)
         pits = result.candidates[["pit_row", "pit_col"]].to_numpy(dtype=np.int64)
@@ -38,6 +44,7 @@ class InternalDrainageTest(unittest.TestCase):
         self.assertEqual(retained.to_numpy()[4, 4], self.dem.to_numpy()[4, 4])
         self.assertTrue(retained.mask_numpy()[4, 4])
 
+    @pytest.mark.exact_solution
     def test_empty_result_keeps_candidate_schema(self):
         result = lsdtt3.find_internal_drainage(self.dem, min_depth_metres=100.0)
 
@@ -46,6 +53,9 @@ class InternalDrainageTest(unittest.TestCase):
         self.assertIn("sink_id", result.candidates.columns)
         self.assertIn("volume_m3", result.candidates.columns)
 
+    @pytest.mark.metamorphic
+    @pytest.mark.conformance
+    @pytest.mark.negative
     def test_area_and_volume_keyword_compatibility_preserves_candidates(self):
         parameters = inspect.signature(lsdtt3.find_internal_drainage).parameters
         self.assertIn("min_area_m2", parameters)
@@ -73,6 +83,8 @@ class InternalDrainageTest(unittest.TestCase):
                 self.dem, min_area_m2=100.0, min_area_metres2=100.0
             )
 
+    @pytest.mark.property
+    @pytest.mark.smoke
     def test_complete_hierarchy_exposes_labels_and_parent_tree(self):
         hierarchy = lsdtt3.depression_hierarchy(self.dem)
 

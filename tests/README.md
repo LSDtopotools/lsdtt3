@@ -432,7 +432,7 @@ What it checks:
   lsdviztools3.
 
 The three cosmo CLIs have offline integration tests (labels `smoke;cli;cosmo`
-and `failure;cli;cosmo`): `smoke_cosmo_{tool,prediction,column_tool}_help` check
+and `negative;cli;cosmo`): `smoke_cosmo_{tool,prediction,column_tool}_help` check
 that every parameter declaration renders, and `failure_cosmo_tool_geographic_crs`
 checks that a non-projected (EPSG:4326) DEM is rejected with a clean FATAL rather
 than a crash or a silent wrong-units run.
@@ -851,19 +851,35 @@ ctest --test-dir build --output-on-failure
 ```
 
 Without the two Python options only the native tests are registered; most
-`smoke`, `rigorous` and `failure` tests are Python-driven. Run by label:
+`system` tests, and every `negative` CLI test, are Python-driven. Run by label:
 
 ```bash
 ctest --test-dir build -L '^smoke$' --output-on-failure
-ctest --test-dir build -L '^rigorous$' --output-on-failure
-ctest --test-dir build -L '^failure$' --output-on-failure
+ctest --test-dir build -L '^negative$' --output-on-failure
+ctest --test-dir build -L '^metamorphic$' --output-on-failure
+ctest --test-dir build -L '^unit$' --output-on-failure
 ```
 
-Label conventions:
+Label conventions. Besides its domain and its tier labels, every test carries
+one or more EVIDENCE labels, saying how it knows the right answer, and exactly
+one LEVEL label. They map one to one onto the sections of
+`docs/tex_technical/testing_regime.tex`; the definitions are in
+`docs/developer_notes/testing_and_benchmarking.md` ("Evidence and level
+labels") and in `tests/cmake/evidence_labels.cmake`, which assigns them:
 
-- `smoke_*` tests are labeled `smoke;cli`
-- `rigorous_*` tests are labeled `rigorous;cli`
-- `failure_*` tests are labeled `failure;cli`
+- a `run_cli_smoke.py` test is `system` and `smoke`, or `negative` when it
+  expects the CLI to fail (every `failure_*` test); a GDAL checksum or sha256
+  adds `characterisation`, an all-valid raster or a no-NaN file adds
+  `property`, and the re-run from the ingested parameters adds `metamorphic`;
+- every other evidence label comes from one `lsdtt_evidence(<test> <level>
+  <evidence>...)` row in `tests/cmake/evidence_labels.cmake`;
+- the name prefix (`smoke_`, `rigorous_`, `regression_`, `failure_`, `unit_`)
+  is historical and does not set the evidence. The old kind labels `rigorous`,
+  `regression` and `failure` no longer exist.
+
+Configure stops if a test has no evidence label, or not exactly one level
+label, so a new test needs its row (or a harness registration) before it
+configures.
 
 ## Add a new smoke test
 
@@ -878,8 +894,15 @@ Label conventions:
 4. A test registered with `add_test` and Python directly must call
    `lsdtt_mark_test_runtime(python <name>)` right after it, inside
    `if(LSDTT_ENABLE_PYTHON_TESTS)`; one whose script imports third-party
-   packages also goes in `LSDTT_PYTHON_GEO_TESTS`.
-5. Scripts start programs through `tests/scripts/lsdtt_test_env.py`
+   packages also goes in `LSDTT_PYTHON_GEO_TESTS`. A `run_cli_smoke.py` test
+   that cannot use the helper is registered with
+   `lsdtt_add_harness_test(<name> <harness arguments>)`, so its assertion
+   flags set its evidence labels as the helper's do.
+5. If the test checks more than its harness flags show (a hand-derived count,
+   two runs that must agree, a pinned measured number), or is not a harness
+   test at all, add an `lsdtt_evidence(<name> <unit|system> <evidence>...)` row
+   to `tests/cmake/evidence_labels.cmake`.
+6. Scripts start programs through `tests/scripts/lsdtt_test_env.py`
    (`lsdtt_test_env.run(...)`), never `subprocess` directly.
 
 The runner script is `tests/scripts/run_cli_smoke.py`.

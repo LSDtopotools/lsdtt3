@@ -4,10 +4,13 @@ from tempfile import TemporaryDirectory
 
 import geopandas as gpd
 import numpy as np
+import pytest
 from pyproj import CRS
 from shapely.geometry import box
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class FlowInfoTest(unittest.TestCase):
@@ -22,6 +25,8 @@ class FlowInfoTest(unittest.TestCase):
         )
         self.flow = lsdtt3.FlowInfo(self.dem, boundary_conditions="nnbo", n_threads=1)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.smoke
     def test_topology_and_core_products(self):
         self.assertEqual(self.flow.shape, self.dem.shape)
         self.assertEqual(self.flow.n_outlets, 6)
@@ -37,6 +42,7 @@ class FlowInfoTest(unittest.TestCase):
         self.assertEqual(self.flow.flow_distance_to_outlet().shape, self.dem.shape)
         self.assertEqual(self.flow.accumulate().shape, self.dem.shape)
 
+    @pytest.mark.smoke
     def test_channel_hand_and_reductions(self):
         channels = self.flow.channel_mask(3)
         self.assertEqual(self.flow.sources(3).shape, (6, 2))
@@ -49,12 +55,14 @@ class FlowInfoTest(unittest.TestCase):
         self.assertEqual(self.flow.upslope_mean(self.dem).shape, self.dem.shape)
         self.assertEqual(self.flow.downstream_sum(self.dem, channels).shape, self.dem.shape)
 
+    @pytest.mark.exact_solution
     def test_forced_outlet_coordinates(self):
         flow = lsdtt3.FlowInfo(
             self.dem, boundary_conditions="nnbo", forced_outlets=[[3, 2]], n_threads=1
         )
         self.assertTrue(flow.is_outlet(3, 2))
 
+    @pytest.mark.smoke
     def test_channel_scope_and_junction_network(self):
         scope = self.flow.channel_scope(3)
         self.assertEqual(scope.mode, "all_channels_threshold")
@@ -83,6 +91,8 @@ class FlowInfoTest(unittest.TestCase):
         self.assertIn("disorder", fit.disorder().columns)
         self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
 
+    @pytest.mark.property
+    @pytest.mark.smoke
     def test_fractional_flow_graphs(self):
         for method in ("mfd", "dinf"):
             graph = lsdtt3.FlowGraph(self.dem, method=method, boundary_conditions="nnbo")
@@ -95,6 +105,9 @@ class FlowInfoTest(unittest.TestCase):
                 self.assertEqual(graph.slope().shape, self.dem.shape)
                 self.assertEqual(graph.direction().shape, self.dem.shape)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
+    @pytest.mark.smoke
     def test_wetness_connectivity_and_sti_tables(self):
         area = self.flow.drainage_area()
         gradient = lsdtt3.slope(self.dem)
@@ -142,6 +155,8 @@ class FlowInfoTest(unittest.TestCase):
             self.assertEqual(sti.sti.shape, self.dem.shape)
             self.assertGreater(sti.stats["valid_output_pixels"], 0)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.smoke
     def test_scope_workflows_and_basin_collection(self):
         scope = self.flow.channel_scope(3)
         valley_mask = lsdtt3.Raster.from_numpy(

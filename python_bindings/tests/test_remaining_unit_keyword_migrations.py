@@ -6,7 +6,10 @@ import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.metamorphic, pytest.mark.conformance, pytest.mark.unit]
 
+
+@pytest.mark.negative
 def test_crn_depth_keyword_compatibility_preserves_column_results():
     column_parameters = inspect.signature(lsdtt3.CRNColumn.set_erosion_history).parameters
     transient_parameters = inspect.signature(lsdtt3.CRNColumn.transient).parameters
@@ -60,6 +63,7 @@ def test_crn_raster_history_depth_keyword_compatibility():
     np.testing.assert_allclose(canonical["be10"].to_numpy(), legacy["be10"].to_numpy())
 
 
+@pytest.mark.negative
 def test_fetch_size_and_synthetic_relief_keyword_compatibility():
     fetch_parameters = inspect.signature(lsdtt3.fetch_dem).parameters
     assert "size_pixels" in fetch_parameters

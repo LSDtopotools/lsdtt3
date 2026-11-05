@@ -17,6 +17,8 @@ import pytest
 import lsdtt3
 from lsdtt3._llm import _TOPICS, WORKFLOW_CODE
 
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def test_index_is_small_and_exposes_retrieval_protocol():
     """The starter card stays small enough for routine prompt injection."""
@@ -131,6 +133,7 @@ def test_module_docstring_is_a_task_oriented_entry_point():
         assert name in lsdtt3.__all__ or name == "GraphFlood", name
 
 
+@pytest.mark.negative
 def test_unknown_topic_or_symbol_is_actionable():
     """Typos tell an agent how to recover rather than returning empty context."""
     with pytest.raises(ValueError, match="Unknown lsdtt3 LLM topic"):

@@ -3,8 +3,11 @@ import unittest
 import warnings
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class LandslideTest(unittest.TestCase):
@@ -19,6 +22,7 @@ class LandslideTest(unittest.TestCase):
             self.dem, boundary_conditions="nnon", allow_pits_as_outlets=True
         )
 
+    @pytest.mark.property
     def test_event_and_cosmogenic_response(self):
         event = lsdtt3.trigger_landslides(
             self.dem, self.flow, 1_000.0, channel_threshold_pixels=100, seed=4
@@ -36,6 +40,8 @@ class LandslideTest(unittest.TestCase):
             )), {"Be10", "Al26", "C14"}
         )
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_annealing_aware_series(self):
         series = lsdtt3.run_landslide_series(
             self.dem, self.flow,
@@ -58,6 +64,9 @@ class LandslideTest(unittest.TestCase):
         )
         self.assertEqual(be10.shape, self.dem.shape)
 
+    @pytest.mark.metamorphic
+    @pytest.mark.negative
+    @pytest.mark.conformance
     def test_event_budget_tolerance_keyword_compatibility(self):
         parameters = inspect.signature(lsdtt3.run_landslide_series).parameters
         self.assertIn("event_budget_relative_tolerance", parameters)

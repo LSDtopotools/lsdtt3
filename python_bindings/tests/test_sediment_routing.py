@@ -3,8 +3,11 @@ import unittest
 import warnings
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class SedimentRoutingTest(unittest.TestCase):
@@ -20,6 +23,7 @@ class SedimentRoutingTest(unittest.TestCase):
         )
         self.network = flow.channel_network(flow.channel_scope(5))
 
+    @pytest.mark.property
     def test_routes_and_returns_reach_and_raster_diagnostics(self):
         result = lsdtt3.route_sediment(
             self.network, self.dem, n_timesteps=2, timestep_seconds=3600.0
@@ -31,6 +35,9 @@ class SedimentRoutingTest(unittest.TestCase):
         self.assertEqual(result.deposition.shape, self.dem.shape)
         self.assertEqual(result.active_layer_d50.shape, self.dem.shape)
 
+    @pytest.mark.metamorphic
+    @pytest.mark.negative
+    @pytest.mark.conformance
     def test_dimension_keyword_compatibility_preserves_routing_results(self):
         parameters = inspect.signature(lsdtt3.route_sediment).parameters
         for canonical, legacy in (
@@ -70,6 +77,7 @@ class SedimentRoutingTest(unittest.TestCase):
                 active_layer_depth_m=0.08, **common,
             )
 
+    @pytest.mark.negative
     def test_rejects_invalid_discharge_shape(self):
         with self.assertRaisesRegex(ValueError, "n_timesteps, n_junctions"):
             lsdtt3.route_sediment(

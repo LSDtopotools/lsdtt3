@@ -68,7 +68,9 @@ pytest = "*"
 #   python >= 3.10   the scripts use `X | None` annotations and `match`
 #   gdal             the osgeo bindings AND gdalinfo / ogrinfo / gdal_translate,
 #                    which about a quarter of the harness tests run
-#   numpy rasterio geopandas shapely   the four tier_python_geo tests
+#   numpy rasterio geopandas shapely   the tier_python_geo tests
+#   pytest           unit_python_binding_free_tests (python_bindings/tests
+#                    files that import no lsdtt3)
 #
 # Configure the C++ build OUTSIDE Pixi (so it uses the system GDAL) and hand
 # CMake this interpreter; run ctest inside the environment:
@@ -87,6 +89,7 @@ numpy = "*"
 rasterio = "*"
 geopandas = "*"
 shapely = "*"
+pytest = "*"
 
 # OSM feature download (python_helpers/osm_*.py).  osmnx pulls a large solve.
 [feature.osm.dependencies]

@@ -252,7 +252,7 @@ if(LSDTT_REPORT_PYTHON AND EXISTS "${LSDTT_REPORT_PYTHON}")
     string(STRIP "${_pyv}" _pyv)
     _line("Python            : ${LSDTT_REPORT_PYTHON} (${_pyv})")
     if(LSDTT_REPORT_GEO_TESTS)
-        foreach(_mod osgeo.gdal numpy rasterio geopandas shapely)
+        foreach(_mod osgeo.gdal numpy rasterio geopandas shapely pytest)
             execute_process(COMMAND "${LSDTT_REPORT_PYTHON}" -c "import ${_mod}"
                             RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
             if(_rc EQUAL 0)

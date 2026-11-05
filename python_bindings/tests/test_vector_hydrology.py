@@ -9,16 +9,20 @@ import unittest
 
 import geopandas as gpd
 import numpy as np
+import pytest
 from pyproj import CRS
 from shapely.geometry import LineString, Polygon
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 CRS_UTM = "EPSG:32633"
 
 
 class TestVectorHydrology(unittest.TestCase):
+    @pytest.mark.exact_solution
     def test_repair_water_lines(self):
         water = gpd.GeoDataFrame(
             geometry=[LineString([(0, 0), (10, 0)]), LineString([(15, 0), (25, 0)])], crs=CRS_UTM
@@ -29,6 +33,8 @@ class TestVectorHydrology(unittest.TestCase):
         self.assertEqual(len(result.lines), 3)
         self.assertEqual(len(result.bridges), 1)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.smoke
     def test_water_centrelines(self):
         areas = gpd.GeoDataFrame(
             geometry=[Polygon([(0, 0), (100, 0), (100, 20), (0, 20)])], crs=CRS_UTM
@@ -43,6 +49,8 @@ class TestVectorHydrology(unittest.TestCase):
         self.assertFalse(result.lines.empty)
         self.assertIn("role", result.lines.columns)
 
+    @pytest.mark.property
+    @pytest.mark.smoke
     def test_burn_streams_returns_conditioned_copy(self):
         crs_wkt = CRS.from_epsg(32633).to_wkt()
         meta = lsdtt3.RasterMeta.from_shape(5, 5, cell_size=10.0, crs_wkt=crs_wkt, epsg_code=32633)

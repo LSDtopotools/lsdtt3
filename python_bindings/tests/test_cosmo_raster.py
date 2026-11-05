@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 def _raster(values):
@@ -9,6 +12,7 @@ def _raster(values):
     return lsdtt3.Raster.from_numpy(values, np.ones(values.shape, dtype=bool), meta)
 
 
+@pytest.mark.property
 def test_steady_state_ratio_and_accumulation():
     dem = _raster([[1000, 990, 980], [1010, 1000, 970], [1020, 1010, 960]])
     erosion = lsdtt3.crn_uniform_raster(dem, 0.01)
@@ -23,6 +27,7 @@ def test_steady_state_ratio_and_accumulation():
     assert accumulated.shape == dem.shape
 
 
+@pytest.mark.smoke
 def test_arbitrary_history_returns_all_three_nuclides():
     dem = _raster([[1000, 990], [1010, 980]])
     column = lsdtt3.CRNColumn()

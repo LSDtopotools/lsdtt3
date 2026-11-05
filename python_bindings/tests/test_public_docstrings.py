@@ -18,6 +18,8 @@ import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 # Core-workflow classes, documented in their bindings: none may carry the
 # placeholder.
@@ -311,6 +313,7 @@ def test_core_workflow_properties_are_described():
     assert "mask_to_nodata(dem, 0.0)" in inspect.getdoc(lsdtt3.fetch_dem)
 
 
+@pytest.mark.metamorphic
 def test_generated_text_does_not_depend_on_docstring_indentation():
     """Python 3.12 keeps docstring indentation and 3.13 strips it; same result.
 
