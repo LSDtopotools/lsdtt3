@@ -31,6 +31,7 @@
 #include <variant>
 #include <vector>
 
+#include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
@@ -134,63 +135,7 @@ int main(int argc, char* argv[])
         "confluences are not mistaken for dangling tips.",
         "Gap bridging", "param", ""};
 
-    float_default_map["max_gap_length_metres"] = 25.0f;
-    help_map["max_gap_length_metres"] = {"float","25.0",
-        "Maximum ROAD-crossing bridge length (m); longer road gaps are rejected.",
-        "Roads are narrow, but raise for wide / dual-carriageway crossings or "
-        "wide verges where a true crossing gap exceeds the default.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["max_nonroad_gap_metres"] = 30.0f;
-    help_map["max_nonroad_gap_metres"] = {"float","30.0",
-        "Maximum bridge length (m) for gaps NOT associated with a road.",
-        "Fills digitising breaks regardless of roads. The STRICT facing/heading "
-        "gates still apply, so genuine headwaters and parallel streams are not "
-        "joined. Set 0 to disable non-road bridging.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["max_facing_angle_degrees"] = 45.0f;
-    help_map["max_facing_angle_degrees"] = {"float","45.0",
-        "Strict tier: max angle (deg) EACH tip's tangent may deviate from the "
-        "line to its partner. Used for non-road gaps.",
-        "Both tips must point toward each other across the gap.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["max_heading_misalignment_degrees"] = 50.0f;
-    help_map["max_heading_misalignment_degrees"] = {"float","50.0",
-        "Strict tier: max deviation from anti-parallel (deg) between the two "
-        "tips' tangents. Used for non-road gaps.",
-        "A true continuation has the two outward tangents ~opposite (180 deg). "
-        "Suppresses bridges between parallel unrelated streams.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["road_max_facing_angle_degrees"] = 60.0f;
-    help_map["road_max_facing_angle_degrees"] = {"float","60.0",
-        "Road tier: a road-associated bridge only needs AT LEAST ONE tip to "
-        "face within this angle (no heading constraint).",
-        "The channel kinks at a road crossing so the dangling tip's own tangent "
-        "is often unreliable; the partner across the road faces well.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["tangent_fit_length_metres"] = 15.0f;
-    help_map["tangent_fit_length_metres"] = {"float","15.0",
-        "Inward arc length (m) used to estimate each tip's outward tangent.",
-        "Longer values smooth over digitising wiggle near the tip.",
-        "Gap bridging", "param", ""};
-
-    float_default_map["road_intersection_tolerance_metres"] = 10.0f;
-    help_map["road_intersection_tolerance_metres"] = {"float","10.0",
-        "Road-association distance (m): a bridge is 'road-associated' if its "
-        "connector comes within this distance of a road centreline.",
-        "Covers staggered severances where the stub ends sit a few metres off "
-        "the road. Uses segment-to-segment distance, not just a midpoint test.",
-        "Gap bridging", "param", ""};
-
-    bool_default_map["require_mutual_best"] = true;
-    help_map["require_mutual_best"] = {"bool","true",
-        "Require each tip to be the other's best partner before bridging.",
-        "Strongly suppresses spurious bridges; disable only to be more inclusive.",
-        "Gap bridging", "param", ""};
+    lsdtt::declare_water_line_gap_bridging_parameters(float_default_map, bool_default_map, help_map);
 
     bool_default_map["merge_chains"] = false;
     help_map["merge_chains"] = {"bool","false",

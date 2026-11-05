@@ -24,7 +24,9 @@
 //   * zero tolerance: only coincident endpoints merge;
 //   * the graph-only direction vote: one reversed reach in a main stem is the
 //     one line against the network, and is flipped when repair is on;
-//   * a sink whose outflow lies outside the data is the outlet, not a conflict.
+//   * a sink whose outflow lies outside the data is the outlet, not a conflict;
+//   * gap bridging (water-line-repair's rule): a facing gap is bridged, side-by-
+//     side ends and a gap over the limit are not, a road makes a bridge_road.
 //
 // Usage: lsdtt-test-river-line-prepare
 // -----------------------------------------------------------------------------
@@ -394,6 +396,87 @@ void test_truncated_outlet()
     check("truncated: the sink (100,0) is the outlet", type_at(net, 100, 0) == "outlet",
           type_at(net, 100, 0));
 }
+
+void test_gap_bridging()
+{
+    // Gates are lsdtt-water-line-repair's defaults: non-road gaps up to 30 m,
+    // both ends facing within 45 deg, tangents within 50 deg of anti-parallel.
+    //   A (0,0)->(100,0) and B (110,0)->(200,0): a 10 m facing gap: bridged.
+    //   C (0,50)->(100,50) and D (0,60)->(100,60): ends side by side, both
+    //     pointing +x, not facing each other: not bridged.
+    //   E (0,200)->(100,200) and F (140,200)->(240,200): 40 m, over 30 m.
+    //   G (0,300)->(100,300) and H (120,300)->(200,300): 20 m, crossed by a
+    //     road at x = 110: bridge_road with the road layer, bridge_gap without.
+    auto make = []()
+    {
+        std::vector<lsdtt::river_line_feature> f;
+        f.push_back(line({{0, 0}, {100, 0}}, 1, "A"));
+        f.push_back(line({{110, 0}, {200, 0}}, 1, "B"));
+        f.push_back(line({{0, 50}, {100, 50}}, 1, "C"));
+        f.push_back(line({{0, 60}, {100, 60}}, 1, "D"));
+        f.push_back(line({{0, 200}, {100, 200}}, 1, "E"));
+        f.push_back(line({{140, 200}, {240, 200}}, 1, "F"));
+        f.push_back(line({{0, 300}, {100, 300}}, 1, "G"));
+        f.push_back(line({{120, 300}, {200, 300}}, 1, "H"));
+        return f;
+    };
+    lsdtt::lsdtt_vector_layer roads;
+    roads.schema.field_names = {"roadName"};
+    roads.schema.field_types = {lsdtt::lsdtt_vector_field_type::string_type};
+    {
+        lsdtt::lsdtt_vector_record r;
+        r.geometry = lsdtt::lsdtt_line_geom{{{110, 280}, {110, 320}}};
+        r.field_values = {std::string("B842")};
+        roads.records.push_back(r);
+    }
+    lsdtt::lsdtt_river_line_gap_bridge_options g;
+    g.enabled = true;
+
+    auto bridges_between = [](const std::vector<lsdtt::river_line_feature>& f, double y)
+    {
+        std::vector<const lsdtt::river_line_feature*> out;
+        for (const auto& x : f)
+            if (x.repair_type != "original" && near(x.parts[0][0].y, y)) out.push_back(&x);
+        return out;
+    };
+
+    auto f1 = make();
+    const auto r1 = lsdtt::bridge_river_line_gaps(f1, roads, g, 1.0, "roadName");
+    check_int("bridging, with roads: 1 road bridge", r1.n_bridges_road, 1);
+    check_int("bridging, with roads: 1 gap bridge", r1.n_bridges_gap, 1);
+    const auto ab = bridges_between(f1, 0.0);
+    check("bridging: A-B joined by a 10 m bridge_gap", ab.size() == 1 && ab[0]->repair_type == "bridge_gap" &&
+          near(lsdtt::polyline_length(ab[0]->parts[0]), 10.0));
+    check("bridging: parallel C / D not joined", bridges_between(f1, 50.0).empty() &&
+                                                 bridges_between(f1, 60.0).empty());
+    check("bridging: 40 m E-F gap not joined", bridges_between(f1, 200.0).empty());
+    const auto gh = bridges_between(f1, 300.0);
+    check("bridging: G-H across the road is bridge_road, named B842",
+          gh.size() == 1 && gh[0]->repair_type == "bridge_road" && gh[0]->name == "B842");
+    check("bridging: a bridge's direction is left unknown",
+          !ab.empty() && ab[0]->direction == 0 && ab[0]->direction_source == "unknown");
+
+    auto f2 = make();
+    const auto r2 = lsdtt::bridge_river_line_gaps(f2, lsdtt::lsdtt_vector_layer(), g, 1.0, "roadName");
+    check("bridging, no roads: G-H is a gap bridge instead", r2.n_bridges_road == 0 && r2.n_bridges_gap == 2);
+
+    // After preparation, A, the bridge and B are one network of three lines.
+    const auto net = lsdtt::prepare_river_lines(f1, lsdtt::river_line_prepare_options());
+    int comp_ab = -1;
+    bool same = true;
+    for (const auto& l : net.lines)
+    {
+        if (l.source_feature_id == "A" || l.source_feature_id == "B" ||
+            (l.repair_type == "bridge_gap" && near(l.vertices[0].y, 0.0)))
+        {
+            if (comp_ab < 0) comp_ab = l.component_id;
+            same &= (l.component_id == comp_ab);
+        }
+    }
+    check("bridging then preparation: A, bridge, B in one component", comp_ab >= 0 && same);
+    check_int("bridging then preparation: 6 components (A-B, C, D, E, F, G-H)",
+              static_cast<long>(net.components.size()), 6);
+}
 } // namespace
 
 int main()
@@ -408,6 +491,7 @@ int main()
     test_zero_tolerance();
     test_direction_vote();
     test_truncated_outlet();
+    test_gap_bridging();
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks << " checks passed\n";
     return g_n_failed == 0 ? 0 : 1;
 }

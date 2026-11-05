@@ -85,6 +85,7 @@ struct river_line
     std::string direction_source;
     int culverted = -1;
     int strahler_order = -1;
+    std::string repair_type = "original";   // original, bridge_gap, bridge_road
 
     int n_splits = 0;           // T-junction splits applied to the source part
     bool on_loop = false;       // the edge lies on an undirected cycle
@@ -170,9 +171,32 @@ double polyline_length(const std::vector<lsdtt_xy>& line);
 // ---------------------------------------------------------------------------
 // The whole tool: read (core) -> prepare -> write
 // ---------------------------------------------------------------------------
+// Gap bridging before preparation: dangling line ends that face each other
+// across a gap are joined by a straight bridge line, using the tip finding,
+// candidate gates and mutual-best selection of lsdtt_vector_line_repair_cpu
+// (extract_water_line_tips, find_water_bridge_candidates,
+// select_water_bridges), so the rule is the one lsdtt-water-line-repair uses.
+// Each accepted bridge is appended to `features` with repair_type bridge_gap or
+// bridge_road, the feature class of the line at its first tip, and an unknown
+// direction (the graph-only direction vote orients it). Ends are joined for
+// degree counting with snap_tolerance_metres.
+struct river_line_gap_bridge_result
+{
+    int n_dangling_tips = 0;
+    int n_candidates = 0;
+    int n_bridges_road = 0;
+    int n_bridges_gap = 0;
+};
+river_line_gap_bridge_result bridge_river_line_gaps(std::vector<river_line_feature>& features,
+                                                    const lsdtt_vector_layer& roads,
+                                                    const lsdtt_river_line_gap_bridge_options& g,
+                                                    double snap_tolerance_metres,
+                                                    const std::string& road_name_field);
+
 struct lsdtt_river_line_fetch_result : lsdtt_river_line_read_result
 {
     river_line_network network;
+    river_line_gap_bridge_result gap_bridges;
 };
 
 // read_river_lines(opts), prepare_river_lines with the options' tolerances and

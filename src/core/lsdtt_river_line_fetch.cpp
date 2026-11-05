@@ -628,6 +628,60 @@ lsdtt_river_line_read_result read_river_lines(const lsdtt_river_line_fetch_optio
                                  std::to_string(r.n_features_read) + " features from " + r.read_path + ")");
 
     r.features = std::move(features);
+
+    // ---- optional roads ---------------------------------------------------------
+    if (!o.road_vector_path.empty())
+    {
+        CPLPushErrorHandler(CPLQuietErrorHandler);
+        dataset_ptr rds(static_cast<GDALDataset*>(GDALOpenEx(
+            o.road_vector_path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY, nullptr, nullptr, nullptr)));
+        CPLPopErrorHandler();
+        if (!rds) throw std::runtime_error("could not open road vector " + o.road_vector_path);
+        OGRLayer* rl = o.road_layer.empty() ? rds->GetLayer(0) : rds->GetLayerByName(o.road_layer.c_str());
+        if (!rl) throw std::runtime_error("no road layer " + o.road_layer + " in " + o.road_vector_path);
+        ct_ptr road_to_out;
+        if (const OGRSpatialReference* rsrs = rl->GetSpatialRef())
+        {
+            OGRSpatialReference road_srs(*rsrs);
+            road_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            double fx0, fy0, fx1, fy1;
+            transform_box(out_srs, road_srs, r.clip_x_min, r.clip_y_min, r.clip_x_max, r.clip_y_max,
+                          fx0, fy0, fx1, fy1);
+            rl->SetSpatialFilterRect(fx0, fy0, fx1, fy1);
+            if (!road_srs.IsSame(&out_srs)) road_to_out = make_ct(road_srs, out_srs);
+        }
+        else
+        {
+            r.warnings.push_back("the road layer has no CRS; it is assumed to be in the output CRS");
+            rl->SetSpatialFilterRect(r.clip_x_min, r.clip_y_min, r.clip_x_max, r.clip_y_max);
+        }
+        const int i_road_name = rl->GetLayerDefn()->GetFieldIndex(o.road_name_field.c_str());
+        r.roads.schema.field_names = {o.road_name_field};
+        r.roads.schema.field_types = {lsdtt_vector_field_type::string_type};
+        int n_roads = 0;
+        rl->ResetReading();
+        for (auto& feat : *rl)
+        {
+            const OGRGeometry* g = feat->GetGeometryRef();
+            if (!g) continue;
+            std::unique_ptr<OGRGeometry> gc(g->clone());
+            if (road_to_out && gc->transform(road_to_out.get()) != OGRERR_NONE) continue;
+            std::vector<std::vector<lsdtt_xy>> parts;
+            append_parts(gc.get(), parts);
+            const std::string name = field_text(feat.get(), i_road_name);
+            for (auto& p : parts)
+            {
+                if (p.size() < 2) continue;
+                lsdtt_vector_record rec;
+                rec.geometry = lsdtt_line_geom{std::move(p)};
+                rec.field_values = {name};
+                r.roads.records.push_back(std::move(rec));
+                ++n_roads;
+            }
+        }
+        r.notes.push_back("Roads: " + std::to_string(n_roads) + " line(s) in the clip box from " +
+                          o.road_vector_path);
+    }
     return r;
 }
 

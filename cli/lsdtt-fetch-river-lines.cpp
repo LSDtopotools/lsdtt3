@@ -227,6 +227,40 @@ int main(int argc, char* argv[])
         "A line connected to any other line is never dropped.",
         "Preparation", "param", ""};
 
+    // --- Gap bridging ---
+    string_default_map["gap_bridge_algorithm_choice"] = "none";
+    help_map["gap_bridge_algorithm_choice"] = {"string","none",
+        "Close gaps between line ends before preparation: none or facing_tips.",
+        "facing_tips: two dangling line ends that face each other across a gap are joined by a "
+        "straight bridge line, with the rule lsdtt-water-line-repair uses (outward tangents, "
+        "facing and heading gates, mutual-best one-to-one selection) and the same parameters. "
+        "A gap that crosses a road in road_vector_fname may be longer (max_gap_length_metres) and "
+        "needs only one end to face; without roads only max_nonroad_gap_metres applies. Bridges "
+        "are written with repair_type bridge_gap or bridge_road. none (default) suits noded data "
+        "such as OS Open Rivers; facing_tips is for unnoded local files and OSM.",
+        "Gap bridging", "switch", ""};
+
+    lsdtt::declare_water_line_gap_bridging_parameters(float_default_map, bool_default_map, help_map,
+                                                      "Gap bridging", "gap_bridge_algorithm_choice");
+
+    string_default_map["road_vector_fname"] = "";
+    help_map["road_vector_fname"] = {"string","",
+        "Road centreline file for road-associated gap bridging. Empty = no roads.",
+        "Any OGR-readable line file, read within the clip box and reprojected to the output CRS. "
+        "Relative to read_path. Only used with gap_bridge_algorithm_choice: facing_tips.",
+        "Gap bridging", "io", "gap_bridge_algorithm_choice"};
+
+    string_default_map["road_layer"] = "";
+    help_map["road_layer"] = {"string","",
+        "Layer of road_vector_fname. Empty = the first layer.",
+        "", "Gap bridging", "io", "gap_bridge_algorithm_choice"};
+
+    string_default_map["road_name_field"] = "roadName";
+    help_map["road_name_field"] = {"string","roadName",
+        "Road attribute recorded as a road bridge's name.",
+        "Falls back to 'roadNumber' when this field is empty or absent.",
+        "Gap bridging", "param", "gap_bridge_algorithm_choice"};
+
     string_default_map["direction_repair_algorithm_choice"] = "network_outlet";
     help_map["direction_repair_algorithm_choice"] = {"string","network_outlet",
         "How lines that point against their network are treated: network_outlet or none.",
@@ -311,6 +345,30 @@ int main(int argc, char* argv[])
         o.clip_buffer_metres = ff["clip_buffer_metres"];
         o.node_snap_tolerance_metres = ff["node_snap_tolerance_metres"];
         o.min_line_length_metres = ff["min_line_length_metres"];
+        if (sf["gap_bridge_algorithm_choice"] == "facing_tips") o.gap_bridge.enabled = true;
+        else if (sf["gap_bridge_algorithm_choice"] != "none")
+            throw std::invalid_argument("gap_bridge_algorithm_choice must be none or facing_tips");
+        o.gap_bridge.max_gap_length_metres = ff["max_gap_length_metres"];
+        o.gap_bridge.max_nonroad_gap_metres = ff["max_nonroad_gap_metres"];
+        o.gap_bridge.max_facing_angle_degrees = ff["max_facing_angle_degrees"];
+        o.gap_bridge.max_heading_misalignment_degrees = ff["max_heading_misalignment_degrees"];
+        o.gap_bridge.road_max_facing_angle_degrees = ff["road_max_facing_angle_degrees"];
+        o.gap_bridge.tangent_fit_length_metres = ff["tangent_fit_length_metres"];
+        o.gap_bridge.road_intersection_tolerance_metres = ff["road_intersection_tolerance_metres"];
+        o.gap_bridge.require_mutual_best = bf["require_mutual_best"];
+        if (!sf["road_vector_fname"].empty())
+        {
+            if (!o.gap_bridge.enabled)
+                std::cerr << "WARNING: road_vector_fname is only used with gap_bridge_algorithm_choice: "
+                          << "facing_tips; ignored\n";
+            else
+            {
+                const std::string& rf = sf["road_vector_fname"];
+                o.road_vector_path = (rf.rfind("/vsi", 0) == 0) ? rf : pp.add_read_path_if_needed(rf);
+                o.road_layer = sf["road_layer"];
+            }
+        }
+        o.road_name_field = sf["road_name_field"];
         if (sf["direction_repair_algorithm_choice"] == "network_outlet") o.repair_direction = true;
         else if (sf["direction_repair_algorithm_choice"] == "none") o.repair_direction = false;
         else

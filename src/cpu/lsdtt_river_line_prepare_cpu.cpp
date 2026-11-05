@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 
 #include "lsdtt_river_line_prepare_cpu.hpp"
+#include "lsdtt_vector_line_repair_cpu.hpp"
 #include "lsdtt_vector_ops_cpu.hpp"
 
 #include <algorithm>
@@ -579,6 +580,7 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         rl.direction_source = f.direction_source;
         rl.culverted = f.culverted;
         rl.strahler_order = f.strahler_order;
+        rl.repair_type = f.repair_type;
         rl.n_splits = p.n_splits;
         rl.length_m = polyline_length(p.v);
         net.lines.push_back(std::move(rl));
@@ -860,13 +862,13 @@ void write_river_line_outputs(const river_line_network& net, const std::string& 
     {
         lsdtt_vector_schema schema;
         schema.field_names = {"line_id", "source", "source_feature_id", "name", "feature_class",
-                              "direction_source", "direction_consistent", "on_loop",
+                              "direction_source", "direction_consistent", "repair_type", "on_loop",
                               "component_id", "from_node", "to_node", "n_splits", "culverted",
                               "strahler_order", "length_m"};
         schema.field_types = {ft::int64_type, ft::string_type, ft::string_type, ft::string_type,
-                              ft::string_type, ft::string_type, ft::int64_type, ft::int64_type,
+                              ft::string_type, ft::string_type, ft::int64_type, ft::string_type,
                               ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type,
-                              ft::int64_type, ft::int64_type, ft::double_type};
+                              ft::int64_type, ft::int64_type, ft::int64_type, ft::double_type};
         lsdtt_data_loader w;
         std::filesystem::remove(lines_path);
         w.begin_vector_write(lines_path, "river_lines", schema, crs_wkt, format, spatial_index);
@@ -875,7 +877,7 @@ void write_river_line_outputs(const river_line_network& net, const std::string& 
             w.write_line(l.vertices, {
                 static_cast<std::int64_t>(l.line_id), source, l.source_feature_id, l.name,
                 l.feature_class, l.direction_source,
-                static_cast<std::int64_t>(l.direction_consistent),
+                static_cast<std::int64_t>(l.direction_consistent), l.repair_type,
                 static_cast<std::int64_t>(l.on_loop ? 1 : 0),
                 static_cast<std::int64_t>(l.component_id),
                 static_cast<std::int64_t>(l.from_node), static_cast<std::int64_t>(l.to_node),
@@ -903,10 +905,80 @@ void write_river_line_outputs(const river_line_network& net, const std::string& 
     }
 }
 
+river_line_gap_bridge_result bridge_river_line_gaps(std::vector<river_line_feature>& features,
+                                                    const lsdtt_vector_layer& roads,
+                                                    const lsdtt_river_line_gap_bridge_options& g,
+                                                    double snap_tolerance_metres,
+                                                    const std::string& road_name_field)
+{
+    river_line_gap_bridge_result out;
+
+    // One line record per part, remembering which feature it came from.
+    lsdtt_vector_layer water;
+    std::vector<size_t> feature_of_record;
+    for (size_t fi = 0; fi < features.size(); ++fi)
+    {
+        for (const auto& part : features[fi].parts)
+        {
+            if (part.size() < 2) continue;
+            lsdtt_vector_record rec;
+            rec.geometry = lsdtt_line_geom{part};
+            water.records.push_back(std::move(rec));
+            feature_of_record.push_back(fi);
+        }
+    }
+
+    water_line_repair_options opt;
+    opt.snap_tolerance_metres = snap_tolerance_metres;
+    opt.max_gap_length_metres = g.max_gap_length_metres;
+    opt.max_nonroad_gap_metres = g.max_nonroad_gap_metres;
+    opt.max_facing_angle_degrees = g.max_facing_angle_degrees;
+    opt.max_heading_misalignment_degrees = g.max_heading_misalignment_degrees;
+    opt.road_max_facing_angle_degrees = g.road_max_facing_angle_degrees;
+    opt.tangent_fit_length_metres = g.tangent_fit_length_metres;
+    opt.road_intersection_tolerance_metres = g.road_intersection_tolerance_metres;
+    opt.require_mutual_best = g.require_mutual_best;
+    opt.road_name_field = road_name_field;
+
+    const std::vector<water_line_tip> tips = extract_water_line_tips(water, opt);
+    const std::vector<water_bridge_candidate> cands = find_water_bridge_candidates(tips, roads, opt);
+    const std::vector<water_bridge_candidate> accepted = select_water_bridges(cands, tips.size(), opt);
+    out.n_dangling_tips = static_cast<int>(tips.size());
+    out.n_candidates = static_cast<int>(cands.size());
+
+    for (const water_bridge_candidate& b : accepted)
+    {
+        const water_line_tip& ta = tips[b.tip_index_a];
+        const water_line_tip& tb = tips[b.tip_index_b];
+        const river_line_feature& fa = features[feature_of_record[ta.line_index]];
+        river_line_feature br;
+        br.parts.push_back({ta.xy, tb.xy});
+        br.feature_class = fa.feature_class;
+        br.direction = 0;
+        br.direction_source = "unknown";
+        br.repair_type = b.crosses_road ? "bridge_road" : "bridge_gap";
+        br.name = b.crosses_road ? b.crossed_road_name : std::string();
+        features.push_back(std::move(br));
+        if (b.crosses_road) ++out.n_bridges_road; else ++out.n_bridges_gap;
+    }
+    return out;
+}
+
 lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_options& opts)
 {
     lsdtt_river_line_fetch_result r;
     static_cast<lsdtt_river_line_read_result&>(r) = read_river_lines(opts);
+
+    if (opts.gap_bridge.enabled)
+    {
+        r.gap_bridges = bridge_river_line_gaps(r.features, r.roads, opts.gap_bridge,
+                                               r.node_snap_tolerance_metres, opts.road_name_field);
+        r.notes.push_back("Gap bridging (facing_tips): " + std::to_string(r.gap_bridges.n_dangling_tips) +
+                          " dangling ends, " + std::to_string(r.gap_bridges.n_candidates) +
+                          " candidate pairs, bridges added: " +
+                          std::to_string(r.gap_bridges.n_bridges_road) + " road, " +
+                          std::to_string(r.gap_bridges.n_bridges_gap) + " gap");
+    }
 
     river_line_prepare_options po;
     po.node_snap_tolerance_metres = r.node_snap_tolerance_metres;

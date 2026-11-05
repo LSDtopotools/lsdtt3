@@ -22,7 +22,7 @@ lsdtt-fetch-river-lines -h                       # print help and exit
 
 | File | Contents |
 |---|---|
-| `<write_fname>_river_lines.fgb` | Prepared lines: `line_id`, `source`, `source_feature_id`, `name`, `feature_class`, `direction_source`, `direction_consistent`, `on_loop`, `component_id`, `from_node`, `to_node`, `n_splits`, `culverted`, `strahler_order`, `length_m` |
+| `<write_fname>_river_lines.fgb` | Prepared lines: `line_id`, `source`, `source_feature_id`, `name`, `feature_class`, `direction_source`, `direction_consistent`, `repair_type` (original, bridge_gap, bridge_road), `on_loop`, `component_id`, `from_node`, `to_node`, `n_splits`, `culverted`, `strahler_order`, `length_m` |
 | `<write_fname>_river_nodes.fgb` | Every node: `node_id`, `node_type`, `degree_in`, `degree_out`, `component_id` |
 | `<write_fname>_river_topology.csv` | One row per connected component, with its `outlet_node` and `n_against_network` (lines that pointed against it) |
 | `<write_fname>_ATTRIBUTION.txt` | Licence and citation of the source |
@@ -88,6 +88,23 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `node_snap_tolerance_metres` | `float` | `-1` | `param` | - | Line ends this close are joined, and a line is split where another line's end lies this close to it [m]. Negative = 1 m. | No vertex moves further than this. The vector is used by stream burning for topology only, so its geometry is not otherwise changed. |
 | `min_line_length_metres` | `float` | `0` | `param` | - | Drop isolated single lines shorter than this [m]. 0 = keep everything. | A line connected to any other line is never dropped. |
 | `direction_repair_algorithm_choice` | `string` | `network_outlet` | `param` | - | How lines that point against their network are treated: network_outlet or none. | Uses the graph only, no elevation. In each connected network the outlet is the end node that the lines' own directions vote for (fewest disagreements), and each line is compared with the direction towards that outlet along the network, so a line is judged against its neighbours, not on its own. network_outlet flips the lines that disagree (direction_source = network); none only flags them. Either way direction_consistent is 1 (agrees), 0 (disagreed) or -1 (not judged, e.g. the two arms of a symmetric braid), and the topology CSV gives each network's outlet_node and n_against_network. |
+
+### Gap bridging
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `gap_bridge_algorithm_choice` | `string` | `none` | `switch` | - | Close gaps between line ends before preparation: none or facing_tips. | facing_tips: two dangling line ends that face each other across a gap are joined by a straight bridge line, with the rule lsdtt-water-line-repair uses (outward tangents, facing and heading gates, mutual-best one-to-one selection) and the same parameters. A gap that crosses a road in road_vector_fname may be longer (max_gap_length_metres) and needs only one end to face; without roads only max_nonroad_gap_metres applies. Bridges are written with repair_type bridge_gap or bridge_road. none (default) suits noded data such as OS Open Rivers; facing_tips is for unnoded local files and OSM. |
+| `max_gap_length_metres` | `float` | `25.0` | `param` | `gap_bridge_algorithm_choice` | Maximum ROAD-crossing bridge length (m); longer road gaps are rejected. | Roads are narrow, but raise for wide / dual-carriageway crossings or wide verges where a true crossing gap exceeds the default. |
+| `max_nonroad_gap_metres` | `float` | `30.0` | `param` | `gap_bridge_algorithm_choice` | Maximum bridge length (m) for gaps NOT associated with a road. | Fills digitising breaks regardless of roads. The STRICT facing/heading gates still apply, so genuine headwaters and parallel streams are not joined. Set 0 to disable non-road bridging. |
+| `max_facing_angle_degrees` | `float` | `45.0` | `param` | `gap_bridge_algorithm_choice` | Strict tier: max angle (deg) EACH tip's tangent may deviate from the line to its partner. Used for non-road gaps. | Both tips must point toward each other across the gap. |
+| `max_heading_misalignment_degrees` | `float` | `50.0` | `param` | `gap_bridge_algorithm_choice` | Strict tier: max deviation from anti-parallel (deg) between the two tips' tangents. Used for non-road gaps. | A true continuation has the two outward tangents ~opposite (180 deg). Suppresses bridges between parallel unrelated streams. |
+| `road_max_facing_angle_degrees` | `float` | `60.0` | `param` | `gap_bridge_algorithm_choice` | Road tier: a road-associated bridge only needs AT LEAST ONE tip to face within this angle (no heading constraint). | The channel kinks at a road crossing so the dangling tip's own tangent is often unreliable; the partner across the road faces well. |
+| `tangent_fit_length_metres` | `float` | `15.0` | `param` | `gap_bridge_algorithm_choice` | Inward arc length (m) used to estimate each tip's outward tangent. | Longer values smooth over digitising wiggle near the tip. |
+| `road_intersection_tolerance_metres` | `float` | `10.0` | `param` | `gap_bridge_algorithm_choice` | Road-association distance (m): a bridge is 'road-associated' if its connector comes within this distance of a road centreline. | Covers staggered severances where the stub ends sit a few metres off the road. Uses segment-to-segment distance, not just a midpoint test. |
+| `require_mutual_best` | `bool` | `true` | `param` | `gap_bridge_algorithm_choice` | Require each tip to be the other's best partner before bridging. | Strongly suppresses spurious bridges; disable only to be more inclusive. |
+| `road_vector_fname` | `string` | - | `io` | `gap_bridge_algorithm_choice` | Road centreline file for road-associated gap bridging. Empty = no roads. | Any OGR-readable line file, read within the clip box and reprojected to the output CRS. Relative to read_path. Only used with gap_bridge_algorithm_choice: facing_tips. |
+| `road_layer` | `string` | - | `io` | `gap_bridge_algorithm_choice` | Layer of road_vector_fname. Empty = the first layer. | - |
+| `road_name_field` | `string` | `roadName` | `param` | `gap_bridge_algorithm_choice` | Road attribute recorded as a road bridge's name. | Falls back to 'roadNumber' when this field is empty or absent. |
 
 ### Network
 

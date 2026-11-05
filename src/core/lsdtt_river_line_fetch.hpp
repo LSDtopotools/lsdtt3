@@ -67,6 +67,10 @@ struct river_line_feature
 
     int culverted = -1;             // 1 yes, 0 no, -1 unknown
     int strahler_order = -1;        // -1 when the source gives none
+
+    // original, or (gap_bridge_algorithm_choice: facing_tips) bridge_gap /
+    // bridge_road for a line inserted to close a gap between two line ends.
+    std::string repair_type = "original";
 };
 
 // How to read one source's attributes. An empty field name means "not present".
@@ -81,6 +85,22 @@ struct lsdtt_river_line_field_map
     std::string start_node_field;
     std::string end_node_field;
     std::string culvert_field;              // OSM "tunnel": culvert / yes -> 1
+};
+
+// Bridging gaps between facing line ends before preparation
+// (gap_bridge_algorithm_choice: facing_tips), with the gates of
+// lsdtt_vector_line_repair_cpu (same parameter names as lsdtt-water-line-repair).
+struct lsdtt_river_line_gap_bridge_options
+{
+    bool   enabled = false;
+    double max_gap_length_metres = 25.0;              // road-associated bridges
+    double max_nonroad_gap_metres = 30.0;
+    double max_facing_angle_degrees = 45.0;
+    double max_heading_misalignment_degrees = 50.0;
+    double road_max_facing_angle_degrees = 60.0;
+    double tangent_fit_length_metres = 15.0;
+    double road_intersection_tolerance_metres = 10.0;
+    bool   require_mutual_best = true;
 };
 
 struct lsdtt_river_line_fetch_options
@@ -103,6 +123,14 @@ struct lsdtt_river_line_fetch_options
     double node_snap_tolerance_metres = -1.0;   // < 0: 1 m
     double min_line_length_metres = 0.0;
     bool   repair_direction = true;         // direction_repair_algorithm_choice: network_outlet
+
+    lsdtt_river_line_gap_bridge_options gap_bridge;
+
+    // Optional road centrelines (for road-associated gap bridging): any
+    // OGR-readable line file; empty = no roads.
+    std::string road_vector_path;
+    std::string road_layer;                 // empty = the first layer
+    std::string road_name_field = "roadName";
 
     // gb_os_open_rivers
     std::string cache_dir;                  // empty: default_river_cache_dir()
@@ -127,6 +155,9 @@ struct lsdtt_river_line_read_result
 {
     std::vector<river_line_feature> features;   // kept classes, output CRS
     std::string crs_wkt;                      // of the output CRS
+    // Road centrelines in the clip box, output CRS (empty without
+    // road_vector_path). One string field: the road name field.
+    lsdtt_vector_layer roads;
     int epsg = 0;                            // 0 if the output CRS has no EPSG code
     std::string crs_description;
     double area_x_min = 0, area_y_min = 0, area_x_max = 0, area_y_max = 0;   // output CRS
