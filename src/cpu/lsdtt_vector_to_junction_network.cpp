@@ -2098,4 +2098,71 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
     loader.finish_vector_write();
 }
 
+
+vector_source_seed seed_vector_source_on_valid_dem(
+    const lsdtt_raster_cpu&                  dem,
+    const lsdtt_vector_to_junction_network&  network,
+    std::int32_t                             junction_id)
+{
+    vector_source_seed seed;
+    if (junction_id < 0 || junction_id >= network.n_junctions()) return seed;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const lsdtt_array2d_u8&  mask = dem.get_mask_array();
+    const auto valid_flat = [&](double x, double y) -> std::int64_t
+    {
+        const double fc = std::floor((x - meta.x_min) / meta.cell_size);
+        const double fr = std::floor((meta.y_max() - y) / meta.cell_size);
+        if (!(fc >= 0.0 && fc < meta.n_cols && fr >= 0.0 && fr < meta.n_rows)) return -1;
+        const int col = static_cast<int>(fc);
+        const int row = static_cast<int>(fr);
+        if (mask(row, col) == 0) return -1;
+        return static_cast<std::int64_t>(row) * meta.n_cols + col;
+    };
+
+    const lsdtt_vector_network_junction& J =
+        network.junctions()[static_cast<std::size_t>(junction_id)];
+    seed.xy = {J.x, J.y};
+    seed.flat = valid_flat(J.x, J.y);
+    if (seed.flat >= 0 || J.downstream_edge_id < 0) return seed;
+
+    const lsdtt_vector_network_edge& E =
+        network.edges()[static_cast<std::size_t>(J.downstream_edge_id)];
+    if (E.xy.size() < 2) return seed;
+    // Orient the stored geometry so it runs from the junction downstream.
+    const bool forward = (E.upstream_junction == junction_id);
+    const auto vtx = [&](std::size_t k) -> const lsdtt_xy&
+    {
+        return forward ? E.xy[k] : E.xy[E.xy.size() - 1 - k];
+    };
+
+    const double step = 0.5 * meta.cell_size;
+    double walked = 0.0;
+    for (std::size_t k = 1; k < E.xy.size(); ++k)
+    {
+        const lsdtt_xy a = vtx(k - 1);
+        const lsdtt_xy b = vtx(k);
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        const int n = std::max(1, static_cast<int>(std::ceil(len / step)));
+        for (int s = 1; s <= n; ++s)
+        {
+            const double t = static_cast<double>(s) / n;
+            const double x = a.x + t * (b.x - a.x);
+            const double y = a.y + t * (b.y - a.y);
+            const std::int64_t f = valid_flat(x, y);
+            if (f >= 0)
+            {
+                seed.flat = f;
+                seed.xy = {x, y};
+                seed.walked_metres = walked + t * len;
+                return seed;
+            }
+        }
+        walked += len;
+    }
+    seed.flat = -1;
+    seed.walked_metres = walked;
+    return seed;
+}
+
 } // namespace lsdtt

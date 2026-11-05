@@ -50,6 +50,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -1199,14 +1200,14 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Step 5b - Map vector source junctions to DEM flat indices
     //
-    // Each source junction is mapped to the DEM cell that contains its
-    // coordinate. Junctions outside the raster extent or on nodata pixels
-    // are skipped.
+    // Each source junction is mapped to the DEM cell that contains it. A
+    // junction over NoData or outside the raster (typically where a line
+    // enters across the NoData margin of a warped DEM) is not skipped: it is
+    // moved downstream along its own edge to the first valid cell, so the
+    // inflowing channel is still seeded, and is treated as a DEM-edge source.
+    // It is dropped only when no point of that edge lies over valid data.
     // -------------------------------------------------------------------------
     std::cout << "\n--- Mapping vector source junctions to DEM pixels ---\n";
-
-    const lsdtt::lsdtt_raster_meta& meta_ref = dem.get_meta();
-    const lsdtt::lsdtt_array2d_u8&  dem_mask = dem.get_mask_array();
 
     std::vector<std::int64_t> source_flats;
     std::vector<lsdtt::lsdtt_xy> valid_source_points;
@@ -1219,78 +1220,46 @@ int main(int argc, char* argv[])
     valid_source_is_dem_edge.reserve(vector_source_points.size());
 
     int n_skipped = 0;
+    int n_relocated = 0;
+    double max_relocation_metres = 0.0;
+    std::set<std::int64_t> seeded_flats;
 
     for (std::size_t i = 0; i < vector_source_points.size(); ++i)
     {
-        const lsdtt::lsdtt_xy& pt = vector_source_points[i];
-
-        try
+        const lsdtt::vector_source_seed seed = lsdtt::seed_vector_source_on_valid_dem(
+            dem, vector_network, vector_source_junction_ids[i]);
+        if (seed.flat < 0)
         {
-            const int col = static_cast<int>(
-                std::floor((pt.x - meta_ref.x_min) / meta_ref.cell_size)
-            );
-
-            const int row = static_cast<int>(
-                std::floor((meta_ref.y_max() - pt.y) / meta_ref.cell_size)
-            );
-
-            if (row < 0 || row >= meta_ref.n_rows ||
-                col < 0 || col >= meta_ref.n_cols)
-            {
-                std::cerr << "Warning: vector source junction ("
-                          << pt.x << ", " << pt.y
-                          << ") lies outside the DEM extent; skipping.\n";
-                ++n_skipped;
-                continue;
-            }
-
-            if (dem_mask(row, col) == 0)
-            {
-                std::cerr << "Warning: vector source junction ("
-                          << pt.x << ", " << pt.y
-                          << ") falls on a nodata DEM pixel; skipping.\n";
-                ++n_skipped;
-                continue;
-            }
-
-            const std::int64_t flat =
-                static_cast<std::int64_t>(row) * meta_ref.n_cols + col;
-
-            bool already_present = false;
-            for (const auto f : source_flats)
-            {
-                if (f == flat)
-                {
-                    already_present = true;
-                    break;
-                }
-            }
-
-            if (!already_present)
-            {
-                source_flats.push_back(flat);
-                valid_source_points.push_back(pt);
-                valid_source_junction_ids.push_back(
-                    vector_source_junction_ids[i]
-                );
-                valid_source_is_dem_edge.push_back(
-                    vector_source_is_dem_edge[i]
-                );
-            }
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Warning: mapping vector source junction failed: "
-                      << e.what() << "\n";
+            const lsdtt::lsdtt_xy& pt = vector_source_points[i];
+            std::cerr << "Warning: vector source junction (" << pt.x << ", " << pt.y
+                      << ") and its downstream edge have no valid DEM cell; skipping.\n";
             ++n_skipped;
+            continue;
         }
+        const bool moved = seed.walked_metres > 0.0;
+        if (moved)
+        {
+            ++n_relocated;
+            max_relocation_metres = std::max(max_relocation_metres, seed.walked_metres);
+        }
+        if (!seeded_flats.insert(seed.flat).second) continue;
+        source_flats.push_back(seed.flat);
+        valid_source_points.push_back(seed.xy);
+        valid_source_junction_ids.push_back(vector_source_junction_ids[i]);
+        valid_source_is_dem_edge.push_back(moved ? std::int64_t{1} : vector_source_is_dem_edge[i]);
     }
 
     std::cout << "Source junctions mapped : " << valid_source_points.size() << "\n";
+    if (n_relocated > 0)
+    {
+        std::cout << "Sources moved onto data : " << n_relocated
+                  << " (over NoData or outside the DEM; moved downstream along their edge, "
+                  << "furthest " << max_relocation_metres << " m)\n";
+    }
     if (n_skipped > 0)
     {
         std::cout << "Junctions skipped      : " << n_skipped
-                  << " (outside DEM or on nodata)\n";
+                  << " (no valid DEM cell on their downstream edge)\n";
     }
 
     if (source_flats.empty())

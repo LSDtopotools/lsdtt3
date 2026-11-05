@@ -308,6 +308,32 @@ private:
     const lsdtt_vector_to_junction_network_options& options =
         lsdtt_vector_to_junction_network_options{});
 
+// Where to seed a vector source junction on the DEM.
+//
+// A source junction made where a line enters the DEM is often over NoData: a
+// DEM warped to UTM has a NoData margin, and the clip is to the DEM's box, not
+// to its valid data. Skipping such a source loses the inflowing channel
+// altogether. This walks DOWNSTREAM along the junction's own downstream edge
+// (never across the next junction), in half-cell steps, to the first point over
+// a valid DEM cell, and returns that cell.
+//
+//   flat            row * n_cols + col of the cell to seed, or -1 when no point
+//                   of the edge lies over valid data (the source is dropped);
+//   xy              the point used;
+//   walked_metres   distance along the edge from the junction (0 when the
+//                   junction itself is over valid data: nothing moved).
+struct vector_source_seed
+{
+    std::int64_t flat = -1;
+    lsdtt_xy     xy;
+    double       walked_metres = 0.0;
+};
+
+[[nodiscard]] vector_source_seed seed_vector_source_on_valid_dem(
+    const lsdtt_raster_cpu&                  dem,
+    const lsdtt_vector_to_junction_network&  network,
+    std::int32_t                             junction_id);
+
 // Merge fragmented polylines into continuous lines by contracting degree-2
 // junctions. Endpoints within `snap_tol` metres are treated as the same node (so
 // a small gap left by the vector "repair" -- e.g. across a road -- is bridged).

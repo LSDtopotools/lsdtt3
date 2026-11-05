@@ -1850,6 +1850,15 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# Stream-burning source seeding (river-lines plan SB1): a source over the NoData
+# margin of a warped DEM is moved downstream along its edge to the first valid
+# cell instead of being skipped. Exact answers from a hand-built DEM.
+add_executable(lsdtt-test-vector-source-seed cpp/test_vector_source_seed.cpp)
+target_link_libraries(lsdtt-test-vector-source-seed PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_source_seed
+         COMMAND lsdtt-test-vector-source-seed "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_source_seed")
+lsdtt_set_tests_properties(unit_stream_burning_source_seed PROPERTIES LABELS "stream_burning")
+
 # lsdtt-fetch-river-lines -> lsdtt-stream-burning (river-lines plan, phase 1b):
 # the fixture network, and a reversed / near-miss / multipart copy of it, each
 # prepared by lsdtt-fetch-river-lines, must give stream burning's reference
