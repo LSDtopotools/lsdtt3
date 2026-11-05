@@ -44,6 +44,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_fetch.hpp"
 #include "../src/core/lsdtt_river_line_fetch.hpp"
+#include "../src/cpu/lsdtt_river_line_prepare_cpu.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
 
 static const std::string k_status    = "experimental";
@@ -375,7 +376,7 @@ int main(int argc, char* argv[])
 
         const lsdtt::vector_output_format vfmt =
             lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
-        o.out_driver = vfmt == lsdtt::vector_output_format::gpkg ? "GPKG" : "FlatGeobuf";
+        o.out_format = vfmt;
         o.out_lines_path = pp.make_output_path("_river_lines", lsdtt::output_extension(vfmt));
         o.out_nodes_path = pp.make_output_path("_river_nodes", lsdtt::output_extension(vfmt));
         o.spatial_index = bf["calculate_spatial_index"];

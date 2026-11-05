@@ -7,19 +7,24 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// See lsdtt_river_line_prepare.hpp for the pipeline. GDAL-free.
+// See lsdtt_river_line_prepare_cpu.hpp for the pipeline. GDAL-free.
 // -----------------------------------------------------------------------------
 
-#include "lsdtt_river_line_prepare.hpp"
+#include "lsdtt_river_line_prepare_cpu.hpp"
+#include "lsdtt_vector_ops_cpu.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <map>
 #include <limits>
 #include <numeric>
 #include <queue>
 #include <sstream>
+#include <stdexcept>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -355,23 +360,24 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
             if (it == by_id.end()) by_id[id] = e;
             else uf.unite(it->second, e);
         }
-        point_grid g(std::max(tol_eff, 1e-3));
-        for (int e = 0; e < n_end; ++e) g.insert(endpoint(e), e);
+        // By distance: lsdtt_point_snapper joins an endpoint to the nearest
+        // endpoint already seen within the tolerance; endpoints that map to
+        // the same snapped location are joined.
+        lsdtt_point_snapper snapper(tol);
+        std::map<int, int> first_endpoint_at;
         for (int e = 0; e < n_end; ++e)
         {
-            const lsdtt_xy p = endpoint(e);
-            g.visit(p.x - tol_eff, p.y - tol_eff, p.x + tol_eff, p.y + tol_eff,
-                    [&](int o)
-                    {
-                        if (o != e && dist(endpoint(o), p) <= tol_eff) uf.unite(e, o);
-                    });
+            const int loc = snapper.id_for(endpoint(e));
+            auto it = first_endpoint_at.find(loc);
+            if (it == first_endpoint_at.end()) first_endpoint_at[loc] = e;
+            else uf.unite(it->second, e);
         }
     }
 
-    // Nodes: one per endpoint cluster, at the members' mean.
+    // Nodes: one per endpoint cluster, at its first endpoint in input order
+    // (the union-find root is the smallest endpoint index).
     std::vector<int> node_of_root(static_cast<size_t>(n_end), -1);
     std::vector<lsdtt_xy> node_xy;
-    std::vector<int> node_count;
     std::vector<bool> node_clip;
     for (int e = 0; e < n_end; ++e)
     {
@@ -380,21 +386,11 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         if (nid < 0)
         {
             nid = static_cast<int>(node_xy.size());
-            node_xy.push_back({0.0, 0.0});
-            node_count.push_back(0);
+            node_xy.push_back(endpoint(r));
             node_clip.push_back(false);
         }
-        const lsdtt_xy p = endpoint(e);
-        node_xy[static_cast<size_t>(nid)].x += p.x;
-        node_xy[static_cast<size_t>(nid)].y += p.y;
-        ++node_count[static_cast<size_t>(nid)];
         const work_part& wp = parts[static_cast<size_t>(e / 2)];
         if ((e % 2 == 0) ? wp.cut_start : wp.cut_end) node_clip[static_cast<size_t>(nid)] = true;
-    }
-    for (size_t n = 0; n < node_xy.size(); ++n)
-    {
-        node_xy[n].x /= node_count[n];
-        node_xy[n].y /= node_count[n];
     }
     net.n_endpoints_merged = n_end - static_cast<int>(node_xy.size());
     for (int e = 0; e < n_end; ++e)
@@ -838,6 +834,96 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         net.notes.push_back(os.str());
     }
     return net;
+}
+
+void write_river_topology_csv(const river_line_network& net, const std::string& path)
+{
+    std::ofstream csv(path);
+    if (!csv) throw std::runtime_error("could not write " + path);
+    csv << "component_id,n_lines,length_m,n_tips,n_outlets,n_clip_edges,n_loops,"
+           "n_bifurcations,n_conflicts,outlet_node,n_against_network\n";
+    for (const auto& c : net.components)
+    {
+        csv << c.component_id << "," << c.n_lines << "," << std::fixed << std::setprecision(2)
+            << c.length_m << std::defaultfloat << "," << c.n_tips << "," << c.n_outlets << ","
+            << c.n_clip_edges << "," << c.n_loops << "," << c.n_bifurcations << ","
+            << c.n_conflicts << "," << c.outlet_node << "," << c.n_against_network << "\n";
+    }
+}
+
+void write_river_line_outputs(const river_line_network& net, const std::string& source,
+                              const std::string& crs_wkt, const std::string& lines_path,
+                              const std::string& nodes_path, vector_output_format format,
+                              bool spatial_index)
+{
+    using ft = lsdtt_vector_field_type;
+    {
+        lsdtt_vector_schema schema;
+        schema.field_names = {"line_id", "source", "source_feature_id", "name", "feature_class",
+                              "direction_source", "direction_consistent", "on_loop",
+                              "component_id", "from_node", "to_node", "n_splits", "culverted",
+                              "strahler_order", "length_m"};
+        schema.field_types = {ft::int64_type, ft::string_type, ft::string_type, ft::string_type,
+                              ft::string_type, ft::string_type, ft::int64_type, ft::int64_type,
+                              ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type,
+                              ft::int64_type, ft::int64_type, ft::double_type};
+        lsdtt_data_loader w;
+        std::filesystem::remove(lines_path);
+        w.begin_vector_write(lines_path, "river_lines", schema, crs_wkt, format, spatial_index);
+        for (const river_line& l : net.lines)
+        {
+            w.write_line(l.vertices, {
+                static_cast<std::int64_t>(l.line_id), source, l.source_feature_id, l.name,
+                l.feature_class, l.direction_source,
+                static_cast<std::int64_t>(l.direction_consistent),
+                static_cast<std::int64_t>(l.on_loop ? 1 : 0),
+                static_cast<std::int64_t>(l.component_id),
+                static_cast<std::int64_t>(l.from_node), static_cast<std::int64_t>(l.to_node),
+                static_cast<std::int64_t>(l.n_splits), static_cast<std::int64_t>(l.culverted),
+                static_cast<std::int64_t>(l.strahler_order), l.length_m});
+        }
+        w.finish_vector_write();
+    }
+    {
+        lsdtt_vector_schema schema;
+        schema.field_names = {"node_id", "node_type", "degree_in", "degree_out", "component_id"};
+        schema.field_types = {ft::int64_type, ft::string_type, ft::int64_type, ft::int64_type,
+                              ft::int64_type};
+        lsdtt_data_loader w;
+        std::filesystem::remove(nodes_path);
+        w.begin_vector_write(nodes_path, "river_nodes", schema, crs_wkt, format, spatial_index);
+        for (const river_node& n : net.nodes)
+        {
+            w.write_point(n.xy.x, n.xy.y, {
+                static_cast<std::int64_t>(n.node_id), n.node_type,
+                static_cast<std::int64_t>(n.degree_in), static_cast<std::int64_t>(n.degree_out),
+                static_cast<std::int64_t>(n.component_id)});
+        }
+        w.finish_vector_write();
+    }
+}
+
+lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_options& opts)
+{
+    lsdtt_river_line_fetch_result r;
+    static_cast<lsdtt_river_line_read_result&>(r) = read_river_lines(opts);
+
+    river_line_prepare_options po;
+    po.node_snap_tolerance_metres = r.node_snap_tolerance_metres;
+    po.clip_to_box = true;
+    po.clip_x_min = r.clip_x_min; po.clip_y_min = r.clip_y_min;
+    po.clip_x_max = r.clip_x_max; po.clip_y_max = r.clip_y_max;
+    po.min_line_length_metres = opts.min_line_length_metres;
+    po.repair_direction = opts.repair_direction;
+    r.network = prepare_river_lines(r.features, po);
+    if (r.network.lines.empty()) throw std::runtime_error("no river lines left after preparation");
+
+    if (!opts.out_lines_path.empty())
+    {
+        write_river_line_outputs(r.network, opts.source, r.crs_wkt, opts.out_lines_path,
+                                 opts.out_nodes_path, opts.out_format, opts.spatial_index);
+    }
+    return r;
 }
 
 } // namespace lsdtt

@@ -8242,8 +8242,8 @@ lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "fetch")
 # hand-built polylines covering T-junctions, near misses, reversal, braids,
 # multipart features, clipping, node-id merging, conflicts and fragments.
 add_executable(lsdtt-test-river-line-prepare cpp/test_river_line_prepare.cpp)
-target_link_libraries(lsdtt-test-river-line-prepare PRIVATE lsdtt3_core)
-target_include_directories(lsdtt-test-river-line-prepare PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+target_link_libraries(lsdtt-test-river-line-prepare PRIVATE lsdtt3_cpu)
+target_include_directories(lsdtt-test-river-line-prepare PRIVATE ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/src/cpu)
 add_test(NAME unit_fetch_river_lines_prepare COMMAND lsdtt-test-river-line-prepare)
 lsdtt_set_tests_properties(unit_fetch_river_lines_prepare PROPERTIES LABELS "fetch")
 
@@ -8251,8 +8251,8 @@ lsdtt_set_tests_properties(unit_fetch_river_lines_prepare PROPERTIES LABELS "fet
 # (tests/data/river_lines) zipped into a cache at run time, checked against a
 # reference built from its node ids; local_file and reversed-copy relations.
 add_executable(lsdtt-test-river-line-fetch cpp/test_river_line_fetch.cpp)
-target_link_libraries(lsdtt-test-river-line-fetch PRIVATE lsdtt3_core)
-target_include_directories(lsdtt-test-river-line-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+target_link_libraries(lsdtt-test-river-line-fetch PRIVATE lsdtt3_cpu)
+target_include_directories(lsdtt-test-river-line-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/src/cpu)
 add_test(NAME unit_fetch_river_lines_adapters
          COMMAND lsdtt-test-river-line-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/river_lines"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_river_lines_work")

@@ -274,27 +274,12 @@ lsdtt_river_line_field_map os_open_rivers_field_map()
     return f;
 }
 
-void write_river_topology_csv(const river_line_network& net, const std::string& path)
-{
-    std::ofstream csv(path);
-    if (!csv) throw std::runtime_error("could not write " + path);
-    csv << "component_id,n_lines,length_m,n_tips,n_outlets,n_clip_edges,n_loops,"
-           "n_bifurcations,n_conflicts,outlet_node,n_against_network\n";
-    for (const auto& c : net.components)
-    {
-        csv << c.component_id << "," << c.n_lines << "," << std::fixed << std::setprecision(2)
-            << c.length_m << std::defaultfloat << "," << c.n_tips << "," << c.n_outlets << ","
-            << c.n_clip_edges << "," << c.n_loops << "," << c.n_bifurcations << ","
-            << c.n_conflicts << "," << c.outlet_node << "," << c.n_against_network << "\n";
-    }
-}
-
 namespace
 {
 
 // Download (once) and return the local path of the Open Rivers zip.
 std::string ensure_os_open_rivers_cached(const lsdtt_river_line_fetch_options& o,
-                                         lsdtt_river_line_fetch_result& r)
+                                         lsdtt_river_line_read_result& r)
 {
     namespace fs = std::filesystem;
     const fs::path dir = fs::path(o.cache_dir.empty() ? default_river_cache_dir() : o.cache_dir) /
@@ -433,111 +418,12 @@ void append_parts(const OGRGeometry* g, std::vector<std::vector<lsdtt_xy>>& part
     }
 }
 
-OGRLayer* create_layer(GDALDataset* ds, const std::string& name, const OGRSpatialReference& srs,
-                       OGRwkbGeometryType type, const lsdtt_river_line_fetch_options& o)
-{
-    char** lopts = nullptr;
-    lopts = CSLSetNameValue(lopts, "SPATIAL_INDEX", o.spatial_index ? "YES" : "NO");
-    OGRLayer* l = ds->CreateLayer(name.c_str(), const_cast<OGRSpatialReference*>(&srs), type, lopts);
-    CSLDestroy(lopts);
-    if (!l) throw std::runtime_error("could not create layer " + name);
-    return l;
-}
-
-dataset_ptr create_vector(const std::string& path, const std::string& driver)
-{
-    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName(driver.c_str());
-    if (!drv) throw std::runtime_error("no OGR driver " + driver);
-    std::filesystem::remove(path);
-    dataset_ptr ds(drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr));
-    if (!ds) throw std::runtime_error("could not create " + path);
-    return ds;
-}
-
-void add_field(OGRLayer* l, const char* name, OGRFieldType t)
-{
-    OGRFieldDefn fd(name, t);
-    if (l->CreateField(&fd) != OGRERR_NONE) throw std::runtime_error(std::string("could not create field ") + name);
-}
-
-void write_outputs(const lsdtt_river_line_fetch_options& o, const OGRSpatialReference& srs,
-                   const river_line_network& net)
-{
-    {
-        dataset_ptr ds = create_vector(o.out_lines_path, o.out_driver);
-        OGRLayer* l = create_layer(ds.get(), "river_lines", srs, wkbLineString, o);
-        add_field(l, "line_id", OFTInteger);
-        add_field(l, "source", OFTString);
-        add_field(l, "source_feature_id", OFTString);
-        add_field(l, "name", OFTString);
-        add_field(l, "feature_class", OFTString);
-        add_field(l, "direction_source", OFTString);
-        add_field(l, "direction_consistent", OFTInteger);
-        add_field(l, "on_loop", OFTInteger);
-        add_field(l, "component_id", OFTInteger);
-        add_field(l, "from_node", OFTInteger);
-        add_field(l, "to_node", OFTInteger);
-        add_field(l, "n_splits", OFTInteger);
-        add_field(l, "culverted", OFTInteger);
-        add_field(l, "strahler_order", OFTInteger);
-        add_field(l, "length_m", OFTReal);
-        for (const river_line& rl : net.lines)
-        {
-            std::unique_ptr<OGRFeature, void (*)(OGRFeature*)> f(
-                OGRFeature::CreateFeature(l->GetLayerDefn()), OGRFeature::DestroyFeature);
-            f->SetField("line_id", rl.line_id);
-            f->SetField("source", o.source.c_str());
-            f->SetField("source_feature_id", rl.source_feature_id.c_str());
-            f->SetField("name", rl.name.c_str());
-            f->SetField("feature_class", rl.feature_class.c_str());
-            f->SetField("direction_source", rl.direction_source.c_str());
-            f->SetField("direction_consistent", rl.direction_consistent);
-            f->SetField("on_loop", rl.on_loop ? 1 : 0);
-            f->SetField("component_id", rl.component_id);
-            f->SetField("from_node", rl.from_node);
-            f->SetField("to_node", rl.to_node);
-            f->SetField("n_splits", rl.n_splits);
-            f->SetField("culverted", rl.culverted);
-            f->SetField("strahler_order", rl.strahler_order);
-            f->SetField("length_m", rl.length_m);
-            OGRLineString ls;
-            for (const lsdtt_xy& p : rl.vertices) ls.addPoint(p.x, p.y);
-            f->SetGeometry(&ls);
-            if (l->CreateFeature(f.get()) != OGRERR_NONE)
-                throw std::runtime_error("could not write a line to " + o.out_lines_path);
-        }
-    }
-    {
-        dataset_ptr ds = create_vector(o.out_nodes_path, o.out_driver);
-        OGRLayer* l = create_layer(ds.get(), "river_nodes", srs, wkbPoint, o);
-        add_field(l, "node_id", OFTInteger);
-        add_field(l, "node_type", OFTString);
-        add_field(l, "degree_in", OFTInteger);
-        add_field(l, "degree_out", OFTInteger);
-        add_field(l, "component_id", OFTInteger);
-        for (const river_node& n : net.nodes)
-        {
-            std::unique_ptr<OGRFeature, void (*)(OGRFeature*)> f(
-                OGRFeature::CreateFeature(l->GetLayerDefn()), OGRFeature::DestroyFeature);
-            f->SetField("node_id", n.node_id);
-            f->SetField("node_type", n.node_type.c_str());
-            f->SetField("degree_in", n.degree_in);
-            f->SetField("degree_out", n.degree_out);
-            f->SetField("component_id", n.component_id);
-            OGRPoint p(n.xy.x, n.xy.y);
-            f->SetGeometry(&p);
-            if (l->CreateFeature(f.get()) != OGRERR_NONE)
-                throw std::runtime_error("could not write a node to " + o.out_nodes_path);
-        }
-    }
-}
-
 } // namespace
 
-lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_options& o)
+lsdtt_river_line_read_result read_river_lines(const lsdtt_river_line_fetch_options& o)
 {
     gdal_init();
-    lsdtt_river_line_fetch_result r;
+    lsdtt_river_line_read_result r;
 
     if (o.source != "local_file" && o.source != "gb_os_open_rivers")
         throw std::invalid_argument("river_line_source '" + o.source +
@@ -599,6 +485,12 @@ lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_opt
     if (std::fabs(out_srs.GetLinearUnits() - 1.0) > 1e-6)
         throw std::invalid_argument("the output CRS is not in metres");
     r.crs_description = srs_description(out_srs, r.epsg);
+    {
+        char* wkt = nullptr;
+        out_srs.exportToWkt(&wkt);
+        r.crs_wkt = wkt ? wkt : "";
+        CPLFree(wkt);
+    }
 
     const double shorter = std::min(r.area_x_max - r.area_x_min, r.area_y_max - r.area_y_min);
     r.clip_buffer_metres = o.clip_buffer_metres >= 0.0 ? o.clip_buffer_metres
@@ -735,17 +627,7 @@ lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_opt
         throw std::runtime_error("no river lines of the kept classes in the area (read " +
                                  std::to_string(r.n_features_read) + " features from " + r.read_path + ")");
 
-    river_line_prepare_options po;
-    po.node_snap_tolerance_metres = r.node_snap_tolerance_metres;
-    po.clip_to_box = true;
-    po.clip_x_min = r.clip_x_min; po.clip_y_min = r.clip_y_min;
-    po.clip_x_max = r.clip_x_max; po.clip_y_max = r.clip_y_max;
-    po.min_line_length_metres = o.min_line_length_metres;
-    po.repair_direction = o.repair_direction;
-    r.network = prepare_river_lines(features, po);
-    if (r.network.lines.empty()) throw std::runtime_error("no river lines left after preparation");
-
-    if (!o.out_lines_path.empty()) write_outputs(o, out_srs, r.network);
+    r.features = std::move(features);
     return r;
 }
 

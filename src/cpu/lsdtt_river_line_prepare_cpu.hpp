@@ -1,4 +1,4 @@
-// lsdtt_river_line_prepare.hpp
+// lsdtt_river_line_prepare_cpu.hpp
 //
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
@@ -8,16 +8,21 @@
 //
 // -----------------------------------------------------------------------------
 // Preparation of river centrelines for lsdtt-stream-burning
-// (lsdtt-fetch-river-lines). GDAL-free: it works on plain polylines that a fetch
-// adapter has already read and reprojected to a metric CRS.
+// (lsdtt-fetch-river-lines). GDAL-free computation on plain polylines that
+// read_river_lines (src/core/lsdtt_river_line_fetch) has already read and
+// reprojected to a metric CRS; outputs are written through lsdtt_data_loader.
+// Line ends are joined with lsdtt_point_snapper (lsdtt_vector_ops_cpu), the one
+// joining routine used by every vector tool.
 //
 // The pipeline, in order:
 //   1. explode multipart features; drop repeated vertices and zero-length parts;
 //   2. orient each part downstream from the source's direction convention;
 //   3. clip to an axis-aligned box (optional); a cut end is a "clip point";
-//   4. node: merge endpoints that share a source node id or lie within
-//      node_snap_tolerance_metres, then split a line wherever a node lies on its
-//      interior (a T-junction);
+//   4. node: join endpoints that share a source node id, or that
+//      lsdtt_point_snapper joins (the nearest endpoint already seen within
+//      node_snap_tolerance_metres); a node sits at its first endpoint (input
+//      order); then split a line wherever a node lies on its interior (a
+//      T-junction);
 //   5. drop isolated fragments shorter than min_line_length_metres;
 //   6. direction consistency, from the graph alone (no elevation): in each
 //      connected component the outlet is the end node or data sink (inflow,
@@ -29,49 +34,25 @@
 //   7. topology report, NOT repaired: connected components, loops (edges on an
 //      undirected cycle), and a type for every node.
 //
-// Vertices move by at most the snap tolerance (an endpoint moved to its
-// cluster's mean, or a vertex inserted at a node). The geometry is not
+// Vertices move by at most the snap tolerance when joined by distance (an
+// endpoint moved onto the endpoint it joined, or a vertex inserted at a node);
+// endpoints joined by a source node id move onto the first of them. The geometry is not
 // otherwise changed: stream burning uses the vector for topology only.
 //
 // Never prints. Notes for the log are returned in river_line_network::notes.
 // -----------------------------------------------------------------------------
 
-#ifndef LSDTT_RIVER_LINE_PREPARE_HPP
-#define LSDTT_RIVER_LINE_PREPARE_HPP
+#ifndef LSDTT_RIVER_LINE_PREPARE_CPU_HPP
+#define LSDTT_RIVER_LINE_PREPARE_CPU_HPP
 
 #include <string>
 #include <vector>
 
-#include "lsdtt_types.hpp"
+#include "../core/lsdtt_river_line_fetch.hpp"
+#include "../core/lsdtt_types.hpp"
 
 namespace lsdtt
 {
-
-// One feature as read from a source, already in the output CRS (metres).
-struct river_line_feature
-{
-    // One entry per part; a single-part feature has one.
-    std::vector<std::vector<lsdtt_xy>> parts;
-
-    std::string source_feature_id;
-    std::string name;
-    std::string feature_class;      // river, stream, lake_connector, canal, drain, tidal, other
-
-    // Source node ids at the digitised start and end (Open Rivers start_node /
-    // end_node). Empty when the source has none. Only used for multipart-free
-    // features: for a multipart feature they are ignored.
-    std::string start_node_id;
-    std::string end_node_id;
-
-    // +1: digitised downstream; -1: digitised upstream (reverse it);
-    // 0: unknown (kept as digitised).
-    int direction = 0;
-    // attribute, digitised, osm_convention or unknown.
-    std::string direction_source = "unknown";
-
-    int culverted = -1;             // 1 yes, 0 no, -1 unknown
-    int strahler_order = -1;        // -1 when the source gives none
-};
 
 struct river_line_prepare_options
 {
@@ -186,6 +167,28 @@ std::vector<std::vector<lsdtt_xy>> clip_polyline_to_box(const std::vector<lsdtt_
 // Length of a polyline in its own units.
 double polyline_length(const std::vector<lsdtt_xy>& line);
 
+// ---------------------------------------------------------------------------
+// The whole tool: read (core) -> prepare -> write
+// ---------------------------------------------------------------------------
+struct lsdtt_river_line_fetch_result : lsdtt_river_line_read_result
+{
+    river_line_network network;
+};
+
+// read_river_lines(opts), prepare_river_lines with the options' tolerances and
+// clip box, then (when opts.out_lines_path is set) the lines and nodes files.
+lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_options& opts);
+
+// Lines file (layer river_lines) and nodes file (layer river_nodes), typed
+// fields, through lsdtt_data_loader.
+void write_river_line_outputs(const river_line_network& net, const std::string& source,
+                              const std::string& crs_wkt, const std::string& lines_path,
+                              const std::string& nodes_path, vector_output_format format,
+                              bool spatial_index);
+
+// Topology CSV, one row per component.
+void write_river_topology_csv(const river_line_network& net, const std::string& path);
+
 } // namespace lsdtt
 
-#endif // LSDTT_RIVER_LINE_PREPARE_HPP
+#endif // LSDTT_RIVER_LINE_PREPARE_CPU_HPP

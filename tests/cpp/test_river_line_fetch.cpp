@@ -41,6 +41,7 @@
 #include <ogrsf_frmts.h>
 
 #include "lsdtt_river_line_fetch.hpp"
+#include "lsdtt_river_line_prepare_cpu.hpp"
 
 namespace fs = std::filesystem;
 

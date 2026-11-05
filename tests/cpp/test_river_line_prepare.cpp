@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Tests for lsdtt_river_line_prepare (lsdtt-fetch-river-lines), in process.
+// Tests for lsdtt_river_line_prepare_cpu (lsdtt-fetch-river-lines), in process.
 // Every expected count, degree, type and coordinate below is worked out by hand
 // from the synthetic polylines built in each case:
 //
@@ -34,7 +34,7 @@
 #include <string>
 #include <vector>
 
-#include "lsdtt_river_line_prepare.hpp"
+#include "lsdtt_river_line_prepare_cpu.hpp"
 
 namespace
 {
@@ -117,8 +117,10 @@ void test_y_network()
     check_int("Y: parts reversed", net.n_parts_reversed, 1);
     check_int("Y: components", static_cast<long>(net.components.size()), 1);
     check_int("Y: loops", net.components.empty() ? -1 : net.components[0].n_loops, 0);
-    check("Y: merged endpoint at the mean (0.25,0.25) is a link",
-          type_at(net, 0.25, 0.25) == "link", type_at(net, 0.25, 0.25));
+    // Joined by lsdtt_point_snapper: the node sits at the first endpoint in
+    // input order, M's start (0,0); T3's end (0.5,0.5) moves onto it.
+    check("Y: joined endpoint at M's start (0,0) is a link",
+          type_at(net, 0, 0) == "link", type_at(net, 0, 0));
     check("Y: near-miss T-junction node keeps T1's end (100,0.4), confluence",
           type_at(net, 100, 0.4) == "confluence", type_at(net, 100, 0.4));
     check("Y: T2's junction (150,0) is a confluence", type_at(net, 150, 0) == "confluence",
@@ -147,8 +149,8 @@ void test_y_network()
     }
     check_int("Y: M pieces", m_pieces, 3);
     check("Y: each M piece records 2 splits", m_splits_ok);
-    // M: (0.25,0.25)->(100,0.4)->(150,0)->(200,0); the detour to y=0.4 adds a little.
-    const double want = std::hypot(99.75, 0.15) + std::hypot(50.0, 0.4) + 50.0;
+    // M: (0,0)->(100,0.4)->(150,0)->(200,0); the detour to y=0.4 adds a little.
+    const double want = std::hypot(100.0, 0.4) + std::hypot(50.0, 0.4) + 50.0;
     check("Y: M length after snapping", near(m_len, want, 1e-9),
           std::to_string(m_len) + " vs " + std::to_string(want));
     check("Y: no loops flagged; every line ends at its to-node", all_downstream);
@@ -257,10 +259,9 @@ void test_node_ids()
     o.node_snap_tolerance_metres = 1.0;
     const auto net = lsdtt::prepare_river_lines({a, b, c}, o);
     check_int("ids: nodes (J merged beyond tolerance)", static_cast<long>(net.nodes.size()), 4);
-    const double mx = (0.0 + 5.0 + 0.0) / 3.0;
-    const double my = (5.0 + 0.0 + 0.0) / 3.0;
-    check("ids: J at the mean of its three endpoints is a confluence",
-          type_at(net, mx, my) == "confluence", type_at(net, mx, my));
+    // The node sits at the first endpoint with id J in input order: a's end (0,5).
+    check("ids: J at a's end (0,5), the first endpoint with that id, is a confluence",
+          type_at(net, 0, 5) == "confluence", type_at(net, 0, 5));
 }
 
 void test_conflicts()

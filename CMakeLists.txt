@@ -276,7 +276,6 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_http_fetch.cpp
     src/core/lsdtt_macrostrat_fetch.cpp
     src/core/lsdtt_octopus_fetch.cpp
-    src/core/lsdtt_river_line_prepare.cpp
     src/core/lsdtt_river_line_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
@@ -479,6 +478,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_niemi_ensemble_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp
+    src/cpu/lsdtt_river_line_prepare_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp
     src/cpu/lsdtt_vector_network_d8_clean_cpu.cpp
     src/cpu/lsdtt_burn_vectormap_cpu.cpp

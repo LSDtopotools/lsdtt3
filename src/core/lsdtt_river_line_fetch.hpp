@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// River centrelines for an area, read from a source and prepared for
-// lsdtt-stream-burning (lsdtt-fetch-river-lines).
+// River centrelines for an area, READ from a source (lsdtt-fetch-river-lines).
 //
 // Sources (river_line_source):
 //   local_file         any OGR-readable line file the user has
@@ -17,11 +16,16 @@
 //                      the cache, its md5 checked against the API's, and read in
 //                      place through /vsizip/ with a spatial filter.
 //
-// Both go through one OGR reader configured by a field map (name, id, feature
-// class, direction, start / end node ids), then lsdtt_river_line_prepare, then
-// the writers. The area is either a WGS84 box or a raster (bounds_raster_path):
-// with a raster, the output CRS defaults to the raster's and the clip box is
-// the raster's extent plus the buffer.
+// This core module resolves the area and output CRS, fetches / caches the
+// source, and reads each line feature through a field map (name, id, feature
+// class, direction, start / end node ids, culverts) into plain
+// river_line_feature records in the output CRS. The area is a WGS84 box or a
+// raster (bounds_raster_path): with a raster, the output CRS defaults to the
+// raster's and the clip box is the raster's extent plus the buffer.
+//
+// Preparation (noding, direction vote, topology) and writing are computation
+// and live in src/cpu/lsdtt_river_line_prepare_cpu, which also provides
+// fetch_river_lines(): read -> prepare -> write.
 //
 // GDAL-free header. Never prints: notes and warnings are returned.
 // -----------------------------------------------------------------------------
@@ -32,11 +36,38 @@
 #include <string>
 #include <vector>
 
+#include "lsdtt_data_loader.hpp"
 #include "lsdtt_http_fetch.hpp"
-#include "lsdtt_river_line_prepare.hpp"
+#include "lsdtt_types.hpp"
 
 namespace lsdtt
 {
+
+// One feature as read from a source, already in the output CRS (metres).
+struct river_line_feature
+{
+    // One entry per part; a single-part feature has one.
+    std::vector<std::vector<lsdtt_xy>> parts;
+
+    std::string source_feature_id;
+    std::string name;
+    std::string feature_class;      // river, stream, lake_connector, canal, drain, tidal, other
+
+    // Source node ids at the digitised start and end (Open Rivers start_node /
+    // end_node). Empty when the source has none. Only used for multipart-free
+    // features: for a multipart feature they are ignored.
+    std::string start_node_id;
+    std::string end_node_id;
+
+    // +1: digitised downstream; -1: digitised upstream (reverse it);
+    // 0: unknown (kept as digitised).
+    int direction = 0;
+    // attribute, digitised, osm_convention or unknown.
+    std::string direction_source = "unknown";
+
+    int culverted = -1;             // 1 yes, 0 no, -1 unknown
+    int strahler_order = -1;        // -1 when the source gives none
+};
 
 // How to read one source's attributes. An empty field name means "not present".
 struct lsdtt_river_line_field_map
@@ -79,10 +110,10 @@ struct lsdtt_river_line_fetch_options
         "https://api.os.uk/downloads/v1/products/OpenRivers/downloads";
     lsdtt_http_request_options http;
 
-    // outputs
+    // outputs (used by fetch_river_lines in lsdtt_river_line_prepare_cpu)
     std::string out_lines_path;
     std::string out_nodes_path;
-    std::string out_driver = "FlatGeobuf";
+    vector_output_format out_format = vector_output_format::flatgeobuf;
     bool spatial_index = true;
 };
 
@@ -92,9 +123,10 @@ struct lsdtt_river_line_class_count
     int n_kept = 0;
 };
 
-struct lsdtt_river_line_fetch_result
+struct lsdtt_river_line_read_result
 {
-    river_line_network network;
+    std::vector<river_line_feature> features;   // kept classes, output CRS
+    std::string crs_wkt;                      // of the output CRS
     int epsg = 0;                            // 0 if the output CRS has no EPSG code
     std::string crs_description;
     double area_x_min = 0, area_y_min = 0, area_x_max = 0, area_y_max = 0;   // output CRS
@@ -111,12 +143,10 @@ struct lsdtt_river_line_fetch_result
     std::vector<std::string> warnings;
 };
 
-// Read, prepare and write. Throws std::runtime_error / std::invalid_argument on
-// any failure that leaves no usable output.
-lsdtt_river_line_fetch_result fetch_river_lines(const lsdtt_river_line_fetch_options& opts);
-
-// Write the topology CSV (one row per component).
-void write_river_topology_csv(const river_line_network& net, const std::string& path);
+// Resolve the area and output CRS, fetch / cache the source, and read the line
+// features of the kept classes. Throws std::runtime_error /
+// std::invalid_argument on any failure that leaves nothing to prepare.
+lsdtt_river_line_read_result read_river_lines(const lsdtt_river_line_fetch_options& opts);
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exposed for tests)
