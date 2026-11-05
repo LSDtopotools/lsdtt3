@@ -1859,6 +1859,15 @@ add_test(NAME unit_stream_burning_source_seed
          COMMAND lsdtt-test-vector-source-seed "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_source_seed")
 lsdtt_set_tests_properties(unit_stream_burning_source_seed PROPERTIES LABELS "stream_burning")
 
+# Loop labels on the vector junction network (river-lines plan SB2):
+# loop_reason and closes_cycle, exact on a hand-built DEM (a stolen receiver
+# slot that cuts the network, and a real braid).
+add_executable(lsdtt-test-vector-loop-labels cpp/test_vector_loop_labels.cpp)
+target_link_libraries(lsdtt-test-vector-loop-labels PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_loop_labels
+         COMMAND lsdtt-test-vector-loop-labels "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_loop_labels")
+lsdtt_set_tests_properties(unit_stream_burning_loop_labels PROPERTIES LABELS "stream_burning")
+
 # lsdtt-fetch-river-lines -> lsdtt-stream-burning (river-lines plan, phase 1b):
 # the fixture network, and a reversed / near-miss / multipart copy of it, each
 # prepared by lsdtt-fetch-river-lines, must give stream burning's reference

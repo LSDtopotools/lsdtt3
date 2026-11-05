@@ -139,6 +139,20 @@ struct lsdtt_vector_network_edge
 
     bool is_loop_edge = false;   // loop-closing edge; excluded from the DAG
 
+    // Why the edge was labelled is_loop_edge (empty when it was not):
+    //   "unclaimed"       neither end junction drains through it: each has a
+    //                     steeper downhill edge, so by DEM elevation the edge
+    //                     runs uphill from both ends (a rise in the DEM along
+    //                     a channel, e.g. a DSM "dam", gives this);
+    //   "parallel"        a second edge oriented out of a junction that already
+    //                     drains through another;
+    //   "receiver_cycle"  broken out of a directed receiver cycle.
+    std::string loop_reason;
+    // For a labelled edge: 1 when its two junctions are also joined by a path
+    // of unlabelled edges (it closes a real undirected cycle), 0 when it does
+    // not (labelling it cut the network in two). -1 for unlabelled edges.
+    int closes_cycle = -1;
+
     double length_metres = 0.0;
 
     std::vector<lsdtt_xy> xy;
@@ -275,6 +289,8 @@ private:
     void require_built() const;
     void require_valid_junction(std::int32_t junction) const;
 
+    // Sets closes_cycle on every edge (see lsdtt_vector_network_edge).
+    void classify_loop_edges();
     void break_receiver_cycles();
     void build_outlet_keys();
     void build_topological_order();

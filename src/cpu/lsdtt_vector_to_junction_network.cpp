@@ -1405,6 +1405,7 @@ void lsdtt_vector_to_junction_network::create(
                     // Loop-closing edge: label it and exclude it from the
                     // directed graph so the network builds despite the cycle.
                     e.is_loop_edge = true;
+                    e.loop_reason  = "unclaimed";
                     ja.is_on_loop  = true;
                     jb.is_on_loop  = true;
                     continue;
@@ -1458,6 +1459,7 @@ void lsdtt_vector_to_junction_network::create(
                     != e.edge_id)
             {
                 e.is_loop_edge = true;
+                e.loop_reason = "parallel";
                 junctions_[static_cast<std::size_t>(e.junction_a)].is_on_loop = true;
                 junctions_[static_cast<std::size_t>(e.junction_b)].is_on_loop = true;
             }
@@ -1471,6 +1473,7 @@ void lsdtt_vector_to_junction_network::create(
     if (options.break_cycles)
     {
         break_receiver_cycles();
+        classify_loop_edges();
     }
 
     // -------------------------------------------------------------------------
@@ -1771,6 +1774,8 @@ void lsdtt_vector_to_junction_network::break_receiver_cycles()
         if (de >= 0)
         {
             edges_[static_cast<std::size_t>(de)].is_loop_edge = true;
+            if (edges_[static_cast<std::size_t>(de)].loop_reason.empty())
+                edges_[static_cast<std::size_t>(de)].loop_reason = "receiver_cycle";
             jh.is_on_loop = true;
             const std::int32_t orec = jh.receiver_junction;
             if (orec >= 0)
@@ -2032,6 +2037,58 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
 }
 
 // -----------------------------------------------------------------------------
+// classify_loop_edges
+//
+// For each labelled edge: does a path of UNLABELLED edges join its two
+// junctions? Yes = it closes a real undirected cycle; no = labelling it cut the
+// network. Same test as the D8 cleaner's loop resolver, which leaves the second
+// kind alone ("actually a bridge").
+// -----------------------------------------------------------------------------
+void lsdtt_vector_to_junction_network::classify_loop_edges()
+{
+    const std::size_t n_j = junctions_.size();
+    std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>> adj(n_j);
+    for (const auto& e : edges_)
+    {
+        if (e.is_loop_edge || e.junction_a < 0 || e.junction_b < 0) continue;
+        adj[static_cast<std::size_t>(e.junction_a)].push_back({e.junction_b, e.edge_id});
+        adj[static_cast<std::size_t>(e.junction_b)].push_back({e.junction_a, e.edge_id});
+    }
+    // Components of the unlabelled graph: a labelled edge closes a cycle
+    // exactly when both its ends are in the same component.
+    std::vector<std::int32_t> comp(n_j, -1);
+    std::int32_t n_comp = 0;
+    std::vector<std::int32_t> stack;
+    for (std::size_t s = 0; s < n_j; ++s)
+    {
+        if (comp[s] >= 0) continue;
+        comp[s] = n_comp;
+        stack.assign(1, static_cast<std::int32_t>(s));
+        while (!stack.empty())
+        {
+            const std::int32_t u = stack.back();
+            stack.pop_back();
+            for (const auto& [v, ei] : adj[static_cast<std::size_t>(u)])
+            {
+                (void)ei;
+                if (comp[static_cast<std::size_t>(v)] >= 0) continue;
+                comp[static_cast<std::size_t>(v)] = n_comp;
+                stack.push_back(v);
+            }
+        }
+        ++n_comp;
+    }
+    for (auto& e : edges_)
+    {
+        if (!e.is_loop_edge) { e.closes_cycle = -1; continue; }
+        if (e.junction_a < 0 || e.junction_b < 0) { e.closes_cycle = 0; continue; }
+        e.closes_cycle = (e.junction_a == e.junction_b ||
+                          comp[static_cast<std::size_t>(e.junction_a)] ==
+                              comp[static_cast<std::size_t>(e.junction_b)]) ? 1 : 0;
+    }
+}
+
+// -----------------------------------------------------------------------------
 // write_edges_fgb
 // -----------------------------------------------------------------------------
 void lsdtt_vector_to_junction_network::write_edges_fgb(
@@ -2053,7 +2110,11 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         "junction_a",
         "junction_b",
         "length_m",
-        "is_loop_edge"
+        "is_loop_edge",
+        "loop_reason",
+        "closes_cycle",
+        "elevation_a",
+        "elevation_b"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
@@ -2064,7 +2125,11 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::int64_type
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::string_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type
     };
 
 
@@ -2090,7 +2155,13 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
                 static_cast<std::int64_t>(e.junction_a),
                 static_cast<std::int64_t>(e.junction_b),
                 e.length_metres,
-                static_cast<std::int64_t>(e.is_loop_edge ? 1 : 0)
+                static_cast<std::int64_t>(e.is_loop_edge ? 1 : 0),
+                e.loop_reason,
+                static_cast<std::int64_t>(e.closes_cycle),
+                e.junction_a >= 0 ? junctions_[static_cast<std::size_t>(e.junction_a)].elevation
+                                  : std::numeric_limits<double>::quiet_NaN(),
+                e.junction_b >= 0 ? junctions_[static_cast<std::size_t>(e.junction_b)].elevation
+                                  : std::numeric_limits<double>::quiet_NaN()
             }
         );
     }

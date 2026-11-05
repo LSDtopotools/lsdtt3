@@ -1031,6 +1031,30 @@ int main(int argc, char* argv[])
     std::cout << "Vector edges     : " << vector_network.n_edges() << "\n";
     std::cout << "Vector outlets   : " << vector_network.n_outlets() << "\n";
     std::cout << "Vector basins    : " << vector_network.n_basins() << "\n";
+    {
+        // Edges cut out of the drainage graph, by reason (river-lines plan SB2).
+        std::map<std::string, int> by_reason;
+        int n_labelled = 0, n_cycle = 0;
+        for (const auto& e : vector_network.edges())
+        {
+            if (!e.is_loop_edge) continue;
+            ++n_labelled;
+            ++by_reason[e.loop_reason];
+            if (e.closes_cycle == 1) ++n_cycle;
+        }
+        if (n_labelled > 0)
+        {
+            std::cout << "Loop-labelled edges : " << n_labelled << " (";
+            bool first = true;
+            for (const auto& [r, n] : by_reason)
+            {
+                std::cout << (first ? "" : ", ") << r << " " << n;
+                first = false;
+            }
+            std::cout << "); " << n_cycle << " close a real cycle, " << n_labelled - n_cycle
+                      << " cut the network (fields loop_reason, closes_cycle in _vector_edges)\n";
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Step 4 - Write the clipped vector junction network
