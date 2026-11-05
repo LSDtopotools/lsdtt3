@@ -62,6 +62,7 @@ core lsdtt-drainage-analysis
 core lsdtt-feature-finder
 core lsdtt-fetch-erosion-rates
 core lsdtt-fetch-lithology
+core lsdtt-fetch-river-lines
 core lsdtt-fetch-raster
 core lsdtt-flat-surface-finder
 core lsdtt-fluvial-surfaces

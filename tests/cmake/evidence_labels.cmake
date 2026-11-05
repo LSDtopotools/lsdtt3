@@ -329,6 +329,7 @@ lsdtt_evidence(smoke_spectral_analysis_valley_spacing system smoke characterisat
 lsdtt_evidence(smoke_spectral_analysis_significant_2d system smoke characterisation)
 lsdtt_evidence(network_fetch_raster_linear_feature_cli system smoke property characterisation)
 lsdtt_evidence(smoke_fetch_lithology_offline system smoke characterisation metamorphic)
+lsdtt_evidence(smoke_fetch_river_lines_local system smoke exact_solution)
 lsdtt_evidence(smoke_fetch_erosion_rates_offline system smoke exact_solution property metamorphic)  # = committed response
 lsdtt_evidence(smoke_fetch_erosion_rates_offline_lsdn system smoke exact_solution)
 lsdtt_evidence(smoke_cosmo_landslides_sample_ensemble system smoke characterisation)
@@ -646,6 +647,8 @@ lsdtt_evidence(unit_raster_fetch unit exact_solution negative)
 lsdtt_evidence(unit_dem_grouping unit exact_solution)
 lsdtt_evidence(unit_fetch_lithology unit exact_solution)
 lsdtt_evidence(unit_fetch_erosion_rates unit exact_solution)
+lsdtt_evidence(unit_fetch_river_lines_prepare unit exact_solution)
+lsdtt_evidence(unit_fetch_river_lines_adapters unit exact_solution differential metamorphic negative)
 lsdtt_evidence(unit_coastal_mask unit exact_solution)
 # Security properties of credential handling; resolution order by hand.
 lsdtt_evidence(unit_secret unit exact_solution property)

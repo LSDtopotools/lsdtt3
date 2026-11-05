@@ -7945,6 +7945,33 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "lithology_field_name: lith_primary"
 )
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-river-lines CLI, offline: the committed Open Rivers extract read
+# as a local file with the Open Rivers field names (24 links, nothing clipped).
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_river_lines_local
+    lsdtt-fetch-river-lines
+    fetch_river_lines_local.param.in
+    rivloc_river_lines.fgb
+    --expect rivloc_river_nodes.fgb
+    --expect rivloc_river_topology.csv
+    --expect rivloc_ATTRIBUTION.txt
+    --expect-vector-feature-min rivloc_river_lines.fgb:24
+    --stdout-contains "(EPSG:32630)"
+    --stdout-contains "Network: 24 lines"
+    --stdout-contains "stream_vector_path: rivloc_river_lines.fgb"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_river_lines_no_source
+    lsdtt-fetch-river-lines
+    fetch_river_lines_no_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: set river_line_source"
+)
+
 add_lsdtt_cli_smoke_test(
     failure_fetch_lithology_no_bbox
     lsdtt-fetch-lithology
@@ -8163,6 +8190,26 @@ add_test(NAME unit_fetch_erosion_rates
          COMMAND lsdtt-test-octopus-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/octopus_erosion_rates"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_erosion_rates_work")
 lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "fetch")
+
+# River-line preparation (lsdtt-fetch-river-lines), in process and GDAL-free:
+# hand-built polylines covering T-junctions, near misses, reversal, braids,
+# multipart features, clipping, node-id merging, conflicts and fragments.
+add_executable(lsdtt-test-river-line-prepare cpp/test_river_line_prepare.cpp)
+target_link_libraries(lsdtt-test-river-line-prepare PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-river-line-prepare PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_river_lines_prepare COMMAND lsdtt-test-river-line-prepare)
+lsdtt_set_tests_properties(unit_fetch_river_lines_prepare PROPERTIES LABELS "fetch")
+
+# River-line fetch adapters, offline: the committed Open Rivers extract
+# (tests/data/river_lines) zipped into a cache at run time, checked against a
+# reference built from its node ids; local_file and reversed-copy relations.
+add_executable(lsdtt-test-river-line-fetch cpp/test_river_line_fetch.cpp)
+target_link_libraries(lsdtt-test-river-line-fetch PRIVATE lsdtt3_core)
+target_include_directories(lsdtt-test-river-line-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core)
+add_test(NAME unit_fetch_river_lines_adapters
+         COMMAND lsdtt-test-river-line-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/river_lines"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_river_lines_work")
+lsdtt_set_tests_properties(unit_fetch_river_lines_adapters PROPERTIES LABELS "fetch")
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)

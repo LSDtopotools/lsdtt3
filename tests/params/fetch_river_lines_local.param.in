@@ -1,0 +1,18 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: rivloc
+
+# Reads the committed Open Rivers extract (tests/data/river_lines) as a local
+# file with the Open Rivers field names. No network.
+west: -2.52
+south: 53.01
+east: -2.32
+north: 53.12
+river_line_source: local_file
+river_lines_fname: river_lines/os_open_rivers_extract/Data/oprvrs_gb.gpkg
+river_lines_layer: watercourse_link
+feature_class_field_name: form
+direction_field_name: flow_direction
+direction_field_mapping: in_direction=1,in_opposite_direction=-1
+start_node_field_name: start_node
+end_node_field_name: end_node
