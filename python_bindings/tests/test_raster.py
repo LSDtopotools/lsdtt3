@@ -2,9 +2,12 @@ import unittest
 
 import geopandas as gpd
 import numpy as np
+import pytest
 from shapely.geometry import Point, Polygon
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class RasterTest(unittest.TestCase):
@@ -15,6 +18,7 @@ class RasterTest(unittest.TestCase):
         data = np.arange(25, dtype=np.float32).reshape(5, 5)
         return lsdtt3.Raster.from_numpy(data, np.ones((5, 5), dtype=bool), metadata)
 
+    @pytest.mark.property
     def test_from_numpy_copies_data_mask_and_metadata(self):
         raster = self.raster()
 
@@ -25,6 +29,7 @@ class RasterTest(unittest.TestCase):
         self.assertEqual(raster.metadata.y_min, 200.0)
         self.assertEqual(raster.metadata.cell_size, 10.0)
 
+    @pytest.mark.exact_solution
     def test_raster_hierarchy_restricts_and_prolongs(self):
         metadata = lsdtt3.RasterMeta.from_shape(8, 8, cell_size=10.0)
         raster = lsdtt3.Raster.from_numpy(
@@ -44,6 +49,8 @@ class RasterTest(unittest.TestCase):
         factor = hierarchy.add_level_for_factor(8)
         self.assertEqual(hierarchy.level_factor(factor), 8)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_fill_interior_nodata_preserves_input_and_edge_nodata(self):
         raster = self.raster()
         with_holes = lsdtt3.set_nodata_rectangle(raster, 2, 3, 2, 3)
@@ -56,6 +63,7 @@ class RasterTest(unittest.TestCase):
         self.assertTrue(filled.mask_numpy()[2, 2])
         self.assertFalse(filled.mask_numpy()[0, 0])
 
+    @pytest.mark.exact_solution
     def test_clip_to_maximum_rectangle_updates_shape_and_extent(self):
         clipped = lsdtt3.clip_to_maximum_rectangle(
             lsdtt3.set_nodata_rectangle(self.raster(), 0, 5, 0, 1)
@@ -66,6 +74,8 @@ class RasterTest(unittest.TestCase):
         self.assertEqual(clipped.metadata.y_min, 200.0)
         self.assertEqual(clipped.valid_pixel_count, 20)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_masking_and_algebra_return_new_rasters(self):
         raster = self.raster()
         mask = lsdtt3.threshold_above(raster, 12.0)
@@ -88,6 +98,9 @@ class RasterTest(unittest.TestCase):
         self.assertEqual(normalised.max(), 1.0)
         np.testing.assert_array_equal(raster.to_numpy(), np.arange(25, dtype=np.float32).reshape(5, 5))
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
+    @pytest.mark.smoke
     def test_preprocessing_and_surface_metric_outputs(self):
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         depression_values = np.full((5, 5), 10.0, dtype=np.float32)
@@ -118,6 +131,9 @@ class RasterTest(unittest.TestCase):
         self.assertTrue(lsdtt3.plan_curvature(plane).mask_numpy()[2, 2])
         self.assertTrue(lsdtt3.total_curvature(plane, radius_metres=1.0).mask_numpy()[2, 2])
 
+    @pytest.mark.property
+    @pytest.mark.metamorphic
+    @pytest.mark.negative
     def test_polyfit_metrics_returns_requested_rasters_from_one_fit(self):
         metadata = lsdtt3.RasterMeta.from_shape(7, 7)
         rows, cols = np.indices((7, 7), dtype=np.float32)
@@ -150,6 +166,9 @@ class RasterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown metric"):
             lsdtt3.polyfit_metrics(paraboloid, ["not_a_metric"])
 
+    @pytest.mark.exact_solution
+    @pytest.mark.metamorphic
+    @pytest.mark.property
     def test_surface_shape_and_fundamental_form_principal_curvatures(self):
         metadata = lsdtt3.RasterMeta.from_shape(7, 7)
         rows, cols = np.indices((7, 7), dtype=np.float32)
@@ -180,6 +199,9 @@ class RasterTest(unittest.TestCase):
         self.assertTrue(fundamental["maximum_curvature"].mask_numpy()[3, 3])
         self.assertGreater(fundamental["minimum_curvature"].to_numpy()[3, 3], 0.0)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.metamorphic
+    @pytest.mark.property
     def test_boundary_sinks_and_least_cost_breaching(self):
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         values = np.full((5, 5), 10.0, dtype=np.float32)
@@ -256,6 +278,8 @@ class RasterTest(unittest.TestCase):
             lsdtt3.least_cost_carve_depth(depression, n_threads=1).to_numpy() >= 0.0
         ))
 
+    @pytest.mark.exact_solution
+    @pytest.mark.negative
     def test_breach_least_cost_edge_policy_and_errors(self):
         # The 7x7 bowl of tests/data/tiny_breach_lc_dem.asc: pit 1.0 at (3, 3),
         # a 4 saddle at (3, 5) and a 3 on the east border at (3, 6).
@@ -299,6 +323,7 @@ class RasterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fill_min_slope"):
             lsdtt3.breach_least_cost(dem, fill_min_slope=-1.0)
 
+    @pytest.mark.metamorphic
     def test_breach_least_cost_max_distance_default_follows_edge_policy(self):
         # A pit at (2, 2) in a 2 m corridor walled by 9 m; the only cell low
         # enough to drain to is a nodata hole 120 steps along the corridor.
@@ -323,6 +348,8 @@ class RasterTest(unittest.TestCase):
             wb_default, run(edge_policy="whitebox", max_distance=1000)))
         np.testing.assert_array_equal(run(), run(max_distance=1000))
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_geopandas_reprojection_mosaic_clipping_and_sampling(self):
         crs = gpd.GeoSeries([], crs=32612).crs
         metadata = lsdtt3.RasterMeta.from_shape(
@@ -358,6 +385,7 @@ class RasterTest(unittest.TestCase):
         regridded = lsdtt3.reproject_to_grid(raster, metadata)
         np.testing.assert_array_equal(regridded.to_numpy(), raster.to_numpy())
 
+    @pytest.mark.exact_solution
     def test_in_memory_resampling(self):
         metadata = lsdtt3.RasterMeta.from_shape(4, 4, cell_size=1.0)
         values = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
@@ -386,6 +414,7 @@ class RasterTest(unittest.TestCase):
         arbitrary = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=4.0 / 3.0)
         self.assertEqual(lsdtt3.resample_raster(raster, arbitrary, "linear").shape, (3, 3))
 
+    @pytest.mark.exact_solution
     def test_power_of_two_helpers(self):
         metadata = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=2.0)
         values = np.arange(9, dtype=np.float32).reshape(3, 3)

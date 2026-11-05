@@ -2,9 +2,12 @@ import unittest
 
 import geopandas as gpd
 import numpy as np
+import pytest
 from shapely.geometry import LineString
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class SwathTest(unittest.TestCase):
@@ -23,6 +26,7 @@ class SwathTest(unittest.TestCase):
             crs=self.crs,
         )
 
+    @pytest.mark.exact_solution
     def test_swath_distances(self):
         distances = lsdtt3.swath_distances(self.raster, self.baseline, n_threads=1)
 
@@ -38,6 +42,7 @@ class SwathTest(unittest.TestCase):
         self.assertTrue(np.all(distances["signed_perpendicular"].to_numpy()[1] > 0.0))
         self.assertTrue(np.all(distances["signed_perpendicular"].to_numpy()[3] < 0.0))
 
+    @pytest.mark.exact_solution
     def test_swath_profile_table_and_width(self):
         profile = lsdtt3.swath_profile(
             self.raster, self.baseline, half_width_metres=5.0,
@@ -54,6 +59,7 @@ class SwathTest(unittest.TestCase):
         np.testing.assert_allclose(profile.table["mean"], [10.0, 11.0, 12.0, 13.5])
         np.testing.assert_allclose(profile.table["p50"], profile.table["mean"])
 
+    @pytest.mark.negative
     def test_swath_rejects_mismatched_value_grid(self):
         other = lsdtt3.Raster.from_numpy(
             np.ones((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool),

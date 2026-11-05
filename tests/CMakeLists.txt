@@ -11066,6 +11066,35 @@ set_tests_properties(unit_test_inventory_audit_selftest PROPERTIES
     LABELS "core;conventions"
     TIMEOUT 60)
 
+# The evidence and level pytest markers of python_bindings/tests, the Python
+# counterpart of evidence_labels.cmake. The checker reads each test file with
+# `ast`, so it needs neither pytest nor a built binding: a test added without
+# markers is caught here, in every Python-tier configure, rather than first in
+# a release wheel build, where python_bindings/tests/conftest.py would stop
+# collection. It also checks that its marker list equals LSDTT_EVIDENCE_LABELS
+# and LSDTT_LEVEL_LABELS. The self-test runs it on built-in snippets with known
+# verdicts, so a checker that accepts everything cannot pass.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_python_test_markers
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_python_test_markers.py"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+            --cmake-labels "${CMAKE_CURRENT_SOURCE_DIR}/cmake/evidence_labels.cmake")
+    lsdtt_mark_test_runtime(python unit_python_test_markers)
+    add_test(NAME unit_python_test_markers_selftest
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_python_test_markers.py"
+            --self-test)
+    lsdtt_mark_test_runtime(python unit_python_test_markers_selftest)
+else()
+    lsdtt_mark_test_unregistered(python unit_python_test_markers)
+    lsdtt_mark_test_unregistered(python unit_python_test_markers_selftest)
+endif()
+lsdtt_set_tests_properties(unit_python_test_markers unit_python_test_markers_selftest
+    PROPERTIES
+    LABELS "core;conventions;python"
+    TIMEOUT 60)
+
 # =============================================================================
 # TEST REPORT AND LOGGED RUNS
 #

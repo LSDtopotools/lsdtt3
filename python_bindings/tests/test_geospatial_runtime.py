@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.unit]
+
 
 def _run(code: str, env_overrides: dict | None = None) -> str:
     """Run `code` in a fresh interpreter and return its stdout.
@@ -71,6 +73,7 @@ def _run(code: str, env_overrides: dict | None = None) -> str:
     return result.stdout.strip()
 
 
+@pytest.mark.smoke
 def test_runtime_helpers_are_exposed():
     """The data-reporting helpers exist and return strings."""
     out = _run(
@@ -89,6 +92,7 @@ def test_runtime_helpers_are_exposed():
     assert lines[2], "gdal_version() returned an empty string"
 
 
+@pytest.mark.negative
 def test_set_bundled_data_root_refuses_after_init():
     """Once GDAL is initialised the override is a no-op and says so.
 
@@ -121,6 +125,7 @@ def _has_scikit_build_editable_finder() -> bool:
     )
 
 
+@pytest.mark.exact_solution
 def test_import_pins_the_package_directory_when_data_is_bundled(tmp_path):
     """A wheel layout (``lsdtt3/share/proj``) wins over a poisoned PROJ_DATA.
 

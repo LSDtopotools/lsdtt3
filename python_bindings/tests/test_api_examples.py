@@ -1,6 +1,10 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def test_examples_compile_and_use_public_exports():
     path = Path(__file__).parents[1] / "tools" / "check_api_examples.py"

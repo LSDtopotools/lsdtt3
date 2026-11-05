@@ -6,6 +6,8 @@ import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.metamorphic, pytest.mark.conformance, pytest.mark.negative, pytest.mark.unit]
+
 
 def flow_fixture():
     meta = lsdtt3.RasterMeta.from_shape(6, 6, cell_size=10.0)

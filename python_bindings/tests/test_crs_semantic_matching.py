@@ -11,6 +11,8 @@ from pyproj import CRS
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 
 def _omerc(alpha):
     return CRS.from_proj4(
@@ -46,6 +48,7 @@ def frame():
     return elevation, dem, flow
 
 
+@pytest.mark.property
 def test_wkt_dialects_differ_as_text():
     assert WKT1 != WKT2
 
@@ -87,11 +90,13 @@ def _hydraulic(elevation, dem, wkt):
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
+@pytest.mark.smoke
 def test_same_frame_in_another_wkt_dialect_is_accepted(frame, name):
     CASES[name](*frame, WKT2)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
+@pytest.mark.negative
 def test_frame_with_another_azimuth_is_refused(frame, name):
     with pytest.raises(ValueError):
         CASES[name](*frame, ROTATED)

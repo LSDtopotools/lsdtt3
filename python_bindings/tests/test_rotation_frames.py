@@ -55,6 +55,9 @@ def _same_crs(a, b):
 
 # --- frames ------------------------------------------------------------------
 
+@pytest.mark.exact_solution
+@pytest.mark.characterisation
+@pytest.mark.unit
 def test_line_frame_built_for_a_source_dem(line_frame):
     f = line_frame
     assert f.frame_source == "line"
@@ -73,6 +76,8 @@ def test_line_frame_built_for_a_source_dem(line_frame):
     assert "RotationFrame(line" in repr(f)
 
 
+@pytest.mark.metamorphic
+@pytest.mark.system
 def test_frame_file_from_the_cli_matches_the_python_frame(line_frame):
     f = lsdtt3.RotationFrame.read(str(ROTATION / "lakeland_line_oblique_rotation_frame.txt"))
     # The frame file was written by a CLI built against one PROJ; a wheel
@@ -87,6 +92,8 @@ def test_frame_file_from_the_cli_matches_the_python_frame(line_frame):
     assert f.source_dem_fname == "flat_resolution_lakeland_crop_dem.tif"
 
 
+@pytest.mark.property
+@pytest.mark.unit
 def test_frame_file_round_trip(line_frame, tmp_path):
     path = tmp_path / "x_rotation_frame.txt"
     line_frame.write(str(path))
@@ -98,6 +105,8 @@ def test_frame_file_round_trip(line_frame, tmp_path):
     assert "created_by: 'lsdtt3 (Python)'" in path.read_text()
 
 
+@pytest.mark.exact_solution
+@pytest.mark.unit
 def test_fetch_frame_defaults_without_a_source():
     f = lsdtt3.RotationFrame.from_feature(str(ROTATION / "lakeland_line.geojson"), width=1200.0)
     assert f.cell_size == 30.0                   # the fetch_dem default
@@ -109,6 +118,9 @@ def test_fetch_frame_defaults_without_a_source():
     assert (g.cell_size, g.target_epsg) == (10.0, 32616)
 
 
+@pytest.mark.characterisation
+@pytest.mark.exact_solution
+@pytest.mark.unit
 def test_polygon_frame(dem):
     f = lsdtt3.RotationFrame.from_feature(str(ROTATION / "lakeland_polygon.geojson"), source=dem)
     assert f.frame_source == "polygon"
@@ -116,6 +128,9 @@ def test_polygon_frame(dem):
     assert (f.n_cols, f.n_rows) == (122, 52)
 
 
+@pytest.mark.conformance
+@pytest.mark.characterisation
+@pytest.mark.unit
 def test_footprint_frame_of_a_square_dem_warns(dem):
     with pytest.warns(UserWarning, match="ill-defined"):
         f = lsdtt3.RotationFrame.from_valid_data(dem)
@@ -123,6 +138,9 @@ def test_footprint_frame_of_a_square_dem_warns(dem):
     assert (f.n_cols, f.n_rows) == (150, 150)
 
 
+@pytest.mark.metamorphic
+@pytest.mark.conformance
+@pytest.mark.system
 def test_frame_rebuilt_from_a_frame_raster_warns(cli_rotated, line_frame):
     with pytest.warns(UserWarning):
         f = lsdtt3.RotationFrame.from_raster(cli_rotated)
@@ -131,6 +149,8 @@ def test_frame_rebuilt_from_a_frame_raster_warns(cli_rotated, line_frame):
     assert f.extent == line_frame.extent
 
 
+@pytest.mark.negative
+@pytest.mark.unit
 def test_frame_refusals(dem):
     with pytest.raises(ValueError):
         lsdtt3.RotationFrame.from_feature(str(ROTATION / "missing.geojson"), width=100.0)
@@ -143,6 +163,8 @@ def test_frame_refusals(dem):
 
 # --- rotation ----------------------------------------------------------------
 
+@pytest.mark.metamorphic
+@pytest.mark.system
 def test_python_rotation_equals_the_cli_raster(dem, line_frame, cli_rotated):
     rotated = lsdtt3.rotate_to_frame(dem, line_frame)
     a, b = rotated.metadata, cli_rotated.metadata
@@ -154,6 +176,9 @@ def test_python_rotation_equals_the_cli_raster(dem, line_frame, cli_rotated):
     assert np.array_equal(rotated.to_numpy()[m], cli_rotated.to_numpy()[m])
 
 
+@pytest.mark.property
+@pytest.mark.characterisation
+@pytest.mark.unit
 def test_rotate_back_lands_on_the_source_lattice(cli_rotated, line_frame):
     back = lsdtt3.rotate_back(cli_rotated, line_frame, resampling="near")
     meta = back.metadata
@@ -163,6 +188,8 @@ def test_rotate_back_lands_on_the_source_lattice(cli_rotated, line_frame):
         assert offset == pytest.approx(round(offset), abs=1e-6)
 
 
+@pytest.mark.property
+@pytest.mark.unit
 def test_ids_survive_the_round_trip(dem, line_frame):
     rows, cols = np.indices(dem.shape)
     ids = (rows // 8) * 100 + cols // 8
@@ -174,6 +201,8 @@ def test_ids_survive_the_round_trip(dem, line_frame):
     assert len(values) > 50
 
 
+@pytest.mark.negative
+@pytest.mark.unit
 def test_rotate_back_refuses_a_raster_not_in_the_frame(dem, line_frame):
     with pytest.raises(ValueError, match="frame CRS"):
         lsdtt3.rotate_back(dem, line_frame)
@@ -181,6 +210,8 @@ def test_rotate_back_refuses_a_raster_not_in_the_frame(dem, line_frame):
 
 # --- fetch_dem argument checks (no network: all refused first) ----------------
 
+@pytest.mark.negative
+@pytest.mark.unit
 def test_fetch_dem_frame_argument_checks(line_frame):
     fetch_frame = lsdtt3.RotationFrame.from_feature(
         str(ROTATION / "lakeland_line.geojson"), width=1200.0)
@@ -215,6 +246,9 @@ def _centre(raster):
     ("plane_frame_true200.tif", 239.8727),
     ("plane_utm15n_true200.tif", 199.2717),
 ])
+@pytest.mark.exact_solution
+@pytest.mark.metamorphic
+@pytest.mark.unit
 def test_aspect_of_a_plane_dipping_to_true_200(name, grid_aspect):
     dem = _plane(name)
     grid = lsdtt3.aspect(dem, lambda_metres=90.0)
@@ -230,6 +264,8 @@ def test_aspect_of_a_plane_dipping_to_true_200(name, grid_aspect):
     assert np.array_equal(metrics["slope"].to_numpy(), plain["slope"].to_numpy())
 
 
+@pytest.mark.negative
+@pytest.mark.unit
 def test_true_north_needs_a_crs():
     meta = lsdtt3.RasterMeta.from_shape(10, 10, cell_size=10.0)
     raster = lsdtt3.Raster.from_numpy(
@@ -246,6 +282,8 @@ def frame_network(cli_rotated):
     return filled, flow, network
 
 
+@pytest.mark.metamorphic
+@pytest.mark.unit
 def test_link_and_com_bearings_convert_at_their_own_location(frame_network, line_frame):
     _filled, _flow, network = frame_network
     grid = network.link_bearings()
@@ -266,6 +304,8 @@ def test_link_and_com_bearings_convert_at_their_own_location(frame_network, line
     assert np.nanmax(np.abs(diff)) < 1e-6
 
 
+@pytest.mark.metamorphic
+@pytest.mark.unit
 def test_basin_orientation_converts_at_the_centroid(frame_network, line_frame):
     filled, flow, network = frame_network
     heads = network.junctions()
@@ -281,6 +321,8 @@ def test_basin_orientation_converts_at_the_centroid(frame_network, line_frame):
     assert np.array_equal(true.solidity, grid.solidity)
 
 
+@pytest.mark.metamorphic
+@pytest.mark.unit
 def test_basin_surface_aspect_and_raster_orientations_shift(frame_network):
     filled, flow, network = frame_network
     heads = network.junctions()

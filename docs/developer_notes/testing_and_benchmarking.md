@@ -157,6 +157,20 @@ system tests theirs, and a hand table gives the rest. Configure stops if any
 test has no evidence label or not exactly one level label. The configure
 summary prints the count for each.
 
+The Python tests in `python_bindings/tests` use the same names as pytest
+markers, with the same rule: one or more evidence markers and exactly one level
+marker per test, set on the function, the class or the module (`pytestmark`).
+Select them with `-m`, for example `python -m pytest -m metamorphic
+python_bindings/tests`. Two checks enforce them. `python_bindings/tests/conftest.py`
+registers the markers and stops collection if any test lacks them. The CTest test
+`unit_python_test_markers` reads the test files without importing them, so it
+needs no built binding, and it also checks that the marker list in
+`tests/scripts/check_python_test_markers.py` matches the CMake lists. To check
+only some files, run `python3 tests/scripts/check_python_test_markers.py --files
+<file>...`; add `--counts` for the number per marker. One meaning differs: in
+the Python suite `smoke` means the call returns a well-formed result (the right
+shape and columns, not empty), not that a program ran and wrote its files.
+
 The old kind labels `rigorous`, `regression` and `failure` were retired on
 2026-11-04; the test-name prefixes are historical and do not set the evidence.
 **Select by label, not by name.** `ctest -R regression` or `-R rigorous` still

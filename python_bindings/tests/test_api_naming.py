@@ -2,6 +2,10 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def load_checker():
     path = Path(__file__).parents[1] / "tools" / "check_api_naming.py"

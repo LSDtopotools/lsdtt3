@@ -23,6 +23,8 @@ from shapely.geometry import LineString, Point
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 N_ROWS, N_COLS, CELL = 21, 21, 10.0
 X_MIN, Y_MIN = 500000.0, 4000000.0
 CENTRE = N_COLS // 2
@@ -58,6 +60,8 @@ def _centre_xy(row, col):
     return X_MIN + (col + 0.5) * CELL, Y_MIN + N_ROWS * CELL - (row + 0.5) * CELL
 
 
+@pytest.mark.exact_solution
+@pytest.mark.property
 def test_valley_drains_onto_the_centre_column(contributing):
     """The fixture is what the snapping tests assume."""
     assert contributing[0, 0] == 1
@@ -76,6 +80,9 @@ def _walk_downstream(flow, contributing, row, col, threshold):
     return row, col
 
 
+@pytest.mark.metamorphic
+@pytest.mark.exact_solution
+@pytest.mark.negative
 def test_downstream_matches_the_d8_receiver_walk(flow, contributing):
     """'downstream' is the CLI basin_outlet_snapping_method: downstream rule."""
     starts = [(r, c) for r in range(0, N_ROWS, 3) for c in range(0, N_COLS, 2)]
@@ -101,6 +108,9 @@ def test_downstream_matches_the_d8_receiver_walk(flow, contributing):
         == [[row, col]]
 
 
+@pytest.mark.metamorphic
+@pytest.mark.property
+@pytest.mark.negative
 def test_threshold_area_converts_exactly_to_contributing_pixels(flow, contributing):
     """N pixels qualify for an area A when N * pixel_area >= A."""
     x, y = _centre_xy(0, CENTRE)
@@ -125,6 +135,7 @@ def test_threshold_area_converts_exactly_to_contributing_pixels(flow, contributi
 CLI_DEFAULT_THRESHOLD = 1000
 
 
+@pytest.mark.conformance
 def test_cli_default_threshold_is_the_one_the_cli_declares():
     """The constant this file checks against is the CLI's own default."""
     header = (pathlib.Path(__file__).resolve().parents[2] / "src" / "core"
@@ -137,6 +148,8 @@ def test_cli_default_threshold_is_the_one_the_cli_declares():
 
 
 @pytest.mark.parametrize("method", ["downstream", "expanding_square", "largest_area"])
+@pytest.mark.metamorphic
+@pytest.mark.property
 def test_without_a_threshold_every_method_uses_the_cli_default(method):
     """No threshold means basin_outlet_contributing_pixels_threshold's default."""
     size = 41   # the lower centre column drains more than 1000 pixels
@@ -159,6 +172,7 @@ def test_without_a_threshold_every_method_uses_the_cli_default(method):
     assert counts[tuple(default[0])] >= CLI_DEFAULT_THRESHOLD
 
 
+@pytest.mark.negative
 def test_downstream_reports_the_status(flow, contributing):
     x, y = _centre_xy(0, 0)
     # The fixture has 441 pixels, so the default 1000 cannot be reached.
@@ -169,6 +183,8 @@ def test_downstream_reports_the_status(flow, contributing):
         flow.snap_points(x, y, threshold_contributing_pixels=too_big)
 
 
+@pytest.mark.metamorphic
+@pytest.mark.property
 def test_expanding_square_lands_on_the_nearest_channel_pixel(flow, contributing):
     threshold_pixels = 20
     x, y = _centre_xy(5, CENTRE + 4)
@@ -191,6 +207,7 @@ def test_expanding_square_lands_on_the_nearest_channel_pixel(flow, contributing)
     assert max(abs(outer[0, 0] - 5), abs(outer[0, 1] - CENTRE - 4)) == ring + 1
 
 
+@pytest.mark.negative
 def test_expanding_square_requires_a_reachable_channel(flow):
     x, y = _centre_xy(0, 0)
     with pytest.raises(ValueError, match="threshold_not_found_in_search_window"):
@@ -201,6 +218,9 @@ def test_expanding_square_requires_a_reachable_channel(flow):
                          max_search_radius_pixels=2, threshold_contributing_pixels=5)
 
 
+@pytest.mark.exact_solution
+@pytest.mark.metamorphic
+@pytest.mark.negative
 def test_largest_area_takes_the_largest_area_in_the_window(flow, contributing):
     x, y = _centre_xy(10, CENTRE + 2)
     snapped = flow.snap_points(x, y, method="largest_area", max_search_radius_pixels=3,
@@ -221,6 +241,7 @@ def test_largest_area_takes_the_largest_area_in_the_window(flow, contributing):
                          threshold_contributing_pixels=largest + 1)
 
 
+@pytest.mark.exact_solution
 def test_largest_area_ties_go_to_the_nearer_pixel(flow, contributing):
     """Hillside pixels of one row have equal areas; the nearer one wins."""
     x, y = _centre_xy(0, 2)
@@ -231,6 +252,7 @@ def test_largest_area_ties_go_to_the_nearer_pixel(flow, contributing):
     assert snapped.tolist() == [[1, 2]]
 
 
+@pytest.mark.metamorphic
 def test_max_search_radius_metres_rounds_up_to_whole_pixels(flow):
     x, y = _centre_xy(10, CENTRE + 2)
     in_metres = flow.snap_points(x, y, method="largest_area", max_search_radius_metres=25.0,
@@ -240,6 +262,8 @@ def test_max_search_radius_metres_rounds_up_to_whole_pixels(flow):
     np.testing.assert_array_equal(in_metres, in_pixels)
 
 
+@pytest.mark.negative
+@pytest.mark.property
 def test_off_grid_and_nodata_points_raise_naming_each_point(flow):
     inside = _centre_xy(10, CENTRE)
     with pytest.raises(ValueError, match=r"1 of 2 points .*point 1 .*input_out_of_bounds"):
@@ -260,6 +284,9 @@ def test_off_grid_and_nodata_points_raise_naming_each_point(flow):
     assert moved.tolist() != [[0, 0]]
 
 
+@pytest.mark.exact_solution
+@pytest.mark.metamorphic
+@pytest.mark.negative
 def test_input_forms_and_argument_errors(flow):
     x, y = _centre_xy(12, CENTRE)
     to_lonlat = Transformer.from_crs(EPSG, 4326, always_xy=True)
@@ -294,6 +321,7 @@ def test_input_forms_and_argument_errors(flow):
     assert flow.snap_points([], [], threshold_contributing_pixels=1).shape == (0, 2)
 
 
+@pytest.mark.metamorphic
 def test_snapped_outlets_feed_basins(flow, contributing):
     xs, ys = zip(*(_centre_xy(r, c) for r, c in ((4, CENTRE + 1), (15, CENTRE - 2))))
     outlets = flow.snap_points(list(xs), list(ys), method="largest_area", max_search_radius_pixels=2,
@@ -305,6 +333,8 @@ def test_snapped_outlets_feed_basins(flow, contributing):
     assert table["n_pixels"].tolist() == [contributing[r, c] for r, c in outlets]
 
 
+@pytest.mark.property
+@pytest.mark.exact_solution
 def test_xy_row_col_round_trip_and_north_edge_orientation():
     meta = _meta()
     rows, cols = np.indices((N_ROWS, N_COLS))
@@ -323,6 +353,7 @@ def test_xy_row_col_round_trip_and_north_edge_orientation():
     assert type(row) is int and type(col) is int
 
 
+@pytest.mark.exact_solution
 def test_xy_to_row_col_marks_off_grid_points():
     meta = _meta()
     rows, cols = meta.xy_to_row_col(
@@ -335,6 +366,8 @@ def test_xy_to_row_col_marks_off_grid_points():
     assert rows.tolist() == [0, 1] and cols.tolist() == [0, 0]
 
 
+@pytest.mark.exact_solution
+@pytest.mark.negative
 def test_lonlat_to_row_col_uses_the_raster_crs():
     meta = _meta()
     x, y = meta.row_col_to_xy([3, 17], [5, 9])
@@ -354,6 +387,7 @@ def test_lonlat_to_row_col_uses_the_raster_crs():
     ("RasterMeta", "row_col_to_xy"),
     ("RasterMeta", "lonlat_to_row_col"),
 ])
+@pytest.mark.conformance
 def test_new_helpers_are_fully_documented(owner, member):
     value = getattr(getattr(lsdtt3, owner), member)
     doc = inspect.cleandoc(inspect.unwrap(value).__doc__ or "")
@@ -369,6 +403,7 @@ def test_new_helpers_are_fully_documented(owner, member):
     assert re.search(rf"^{member}\(", inspect.getdoc(getattr(lsdtt3, owner)), re.MULTILINE)
 
 
+@pytest.mark.conformance
 def test_no_export_has_an_undescribed_entry():
     """Overloads merge their per-form Parameters, so no placeholder is left."""
     found = [

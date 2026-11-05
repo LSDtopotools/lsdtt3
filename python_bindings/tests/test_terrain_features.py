@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit, pytest.mark.smoke]
 
 
 class TerrainFeatureTest(unittest.TestCase):
@@ -29,6 +32,8 @@ class TerrainFeatureTest(unittest.TestCase):
         self.assertEqual(roads.mask.shape, dem.shape)
         self.assertEqual(smooth_roads.road_mask.shape, dem.shape)
 
+    @pytest.mark.property
+    @pytest.mark.exact_solution
     def test_ridgeline_and_valley_centreline(self):
         metadata = lsdtt3.RasterMeta.from_shape(48, 48, cell_size=1.0)
         rows, cols = np.indices((48, 48), dtype=np.float32)

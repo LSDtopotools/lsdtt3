@@ -2,8 +2,11 @@ import inspect
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class HydraulicRoutingTest(unittest.TestCase):
@@ -26,6 +29,7 @@ class HydraulicRoutingTest(unittest.TestCase):
             np.full((5, 5), 1.0 / 0.033, dtype=np.float32), valid, self.meta
         )
 
+    @pytest.mark.property
     def test_fill_and_stationary_route(self):
         filled = lsdtt3.fill_hydraulic_surface(
             self.bed, self.states, boundary_conditions="nnno"
@@ -50,6 +54,7 @@ class HydraulicRoutingTest(unittest.TestCase):
         self.assertEqual(result.total_discharge.shape, self.bed.shape)
         self.assertGreaterEqual(result.total_water_volume, 0.0)
 
+    @pytest.mark.negative
     def test_each_active_island_requires_a_state_three_sink(self):
         no_outlet = lsdtt3.Raster.from_numpy(
             np.ones((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool), self.meta
@@ -60,6 +65,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 self.friction_coefficient, boundary_conditions="nnnn", max_steps=1
             )
 
+    @pytest.mark.property
     def test_internal_outlet_is_an_explicit_sink(self):
         states = np.ones((5, 5), dtype=np.float32)
         states[2, 2] = 3.0
@@ -73,6 +79,10 @@ class HydraulicRoutingTest(unittest.TestCase):
         )
         self.assertGreater(result.qin.to_numpy()[2, 2], 0.0)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
+    @pytest.mark.metamorphic
+    @pytest.mark.negative
     def test_graphflood_v2_ghost_state(self):
         """Flux-only ghosts replace incoming flow but evolve their depth."""
         meta = lsdtt3.RasterMeta.from_shape(3, 5, cell_size=1.0)
@@ -152,6 +162,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 max_steps=1,
             )
 
+    @pytest.mark.property
     def test_hydraulic_fill_keeps_a_representable_slope(self):
         """Tiny epsilon must not round flats back to zero hydraulic slope."""
         meta = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=1.0)
@@ -186,6 +197,8 @@ class HydraulicRoutingTest(unittest.TestCase):
         # non-outlet cells become sinks. The outlet must receive upstream flow.
         self.assertGreater(result.qin.to_numpy()[1, 0], 1.0)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_separate_optimised_graphflood(self):
         result = lsdtt3.run_graphflood_optimised(
             self.bed,
@@ -205,6 +218,7 @@ class HydraulicRoutingTest(unittest.TestCase):
         self.assertGreater(result.performance.persistent_working_bytes, 0)
         self.assertGreaterEqual(result.performance.topology_rebuilds, 1)
 
+    @pytest.mark.metamorphic
     def test_direct_graphflood_current_defaults(self):
         controls = dict(max_steps=2, run_until_converged=False)
         cases = (
@@ -255,6 +269,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                         getattr(explicit, field).to_numpy(),
                     )
 
+    @pytest.mark.conformance
     def test_direct_graphflood_defaults_match_cli(self):
         for solver in (
             lsdtt3.run_graphflood,
@@ -271,6 +286,9 @@ class HydraulicRoutingTest(unittest.TestCase):
                 parameters["median_dhw_relative_convergence_tolerance"].default, 1.0e-4
             )
 
+    @pytest.mark.exact_solution
+    @pytest.mark.metamorphic
+    @pytest.mark.characterisation
     def test_graphflood_convergence_defaults_are_sensitive(self):
         zero_rain = lsdtt3.Raster.from_numpy(
             np.zeros((5, 5), dtype=np.float32),
@@ -334,6 +352,7 @@ class HydraulicRoutingTest(unittest.TestCase):
                 self.assertEqual(loose.step_count, default_tolerance.step_count)
                 self.assertEqual(strict.step_count, 1000)
 
+    @pytest.mark.exact_solution
     def test_accelerators_forward_backend_options(self):
         calls = []
 
@@ -380,6 +399,8 @@ class HydraulicRoutingTest(unittest.TestCase):
                     continue
                 self.assertEqual(call[key], value)
 
+    @pytest.mark.exact_solution
+    @pytest.mark.property
     def test_v2_multigrid_and_induced_drivers(self):
         options = dict(
             boundary_conditions="nnno",
@@ -416,6 +437,7 @@ class HydraulicRoutingTest(unittest.TestCase):
             induced.qin.to_numpy()[2, 0], expected, places=6
         )
 
+    @pytest.mark.negative
     def test_multigrid_rejects_unregistered_fields_and_invalid_points(self):
         shifted = lsdtt3.RasterMeta.from_shape(5, 5, x_min=1.0, cell_size=10.0)
         shifted_rain = lsdtt3.Raster.from_numpy(

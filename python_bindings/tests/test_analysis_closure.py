@@ -4,10 +4,14 @@ import geopandas as gpd
 import numpy as np
 from pyproj import CRS
 from shapely.geometry import LineString
+import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
 
+
+@pytest.mark.exact_solution
 class LinearStatsTests(unittest.TestCase):
     def test_line_sampling_preserves_geometry_and_adds_statistics(self):
         meta = lsdtt3.RasterMeta.from_shape(
@@ -31,6 +35,8 @@ class LinearStatsTests(unittest.TestCase):
         self.assertAlmostEqual(result.loc[0, "mean"], 12.0)
 
 
+@pytest.mark.exact_solution
+@pytest.mark.property
 class BearingComparisonTests(unittest.TestCase):
     def test_rotation_invariant_and_axial_comparisons(self):
         first = np.array([5.0, 25.0, 60.0, 150.0])
@@ -44,6 +50,7 @@ class BearingComparisonTests(unittest.TestCase):
 
 
 class BasinOutlineRidgelineTests(unittest.TestCase):
+    @pytest.mark.characterisation
     def test_selected_basin_outlines_are_split_into_georeferenced_ridges(self):
         meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=10.0)
         rows, cols = np.indices((9, 9))
@@ -62,6 +69,7 @@ class BasinOutlineRidgelineTests(unittest.TestCase):
             <= set(ridges.columns)
         )
 
+    @pytest.mark.smoke
     def test_ridgeline_extrema_include_network_topology_diagnostics(self):
         meta = lsdtt3.RasterMeta.from_shape(21, 21, cell_size=10.0)
         rows, cols = np.indices((21, 21))

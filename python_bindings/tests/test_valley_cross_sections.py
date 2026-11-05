@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit, pytest.mark.smoke]
 
 
 class ValleyCrossSectionDiagnosticsTests(unittest.TestCase):

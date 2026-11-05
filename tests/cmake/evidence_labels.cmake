@@ -656,7 +656,11 @@ foreach(_t IN ITEMS cli_helper_string_utils cli_helper_formats csv_table_quoting
 endforeach()
 lsdtt_evidence(unit_csv_table_field_parsers unit exact_solution negative)
 lsdtt_evidence(unit_point_input unit exact_solution metamorphic negative)
-lsdtt_evidence(unit_param_parser_deprecation unit exact_solution negative)
+# Removed and misspelt keys are refused (negative); a deprecated alias or an
+# unrelated key is accepted with a warning (conformance, rule R1 of the
+# pytest-marker plan); the exact messages and carried values are pinned by
+# hand (exact_solution).
+lsdtt_evidence(unit_param_parser_deprecation unit exact_solution negative conformance)
 lsdtt_evidence(unit_output_file unit characterisation)  # removed pattern vs helper
 lsdtt_evidence(unit_hydraulic_routing unit property metamorphic)
 foreach(_t IN ITEMS wheel_cli_inventory version_consistency build_is_current
@@ -664,6 +668,10 @@ foreach(_t IN ITEMS wheel_cli_inventory version_consistency build_is_current
                     test_inventory_audit_selftest test_report_selftest)
     lsdtt_evidence(unit_${_t} unit conformance)
 endforeach()
+# The pytest markers of python_bindings/tests, read with ast; the self-test
+# runs the checker on snippets whose verdicts are written by hand.
+lsdtt_evidence(unit_python_test_markers unit conformance)
+lsdtt_evidence(unit_python_test_markers_selftest unit conformance exact_solution)
 
 # -----------------------------------------------------------------------------
 # Benchmarks (LSDTT_ENABLE_BENCHMARKS) and performance (LSDTT_ENABLE_PERF_TESTS)

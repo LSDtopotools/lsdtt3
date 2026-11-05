@@ -6,8 +6,11 @@ B. Gailleton
 """
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 def trough_dem():
@@ -32,6 +35,7 @@ def trough_dem():
     return lsdtt3.Raster.from_numpy(values, np.ones_like(values, dtype=bool), meta)
 
 
+@pytest.mark.exact_solution
 def test_flood_mask_extracts_channel_skeleton_and_upl():
     """Check the simple channel mode creates all expected raster products.
 
@@ -57,6 +61,7 @@ def test_flood_mask_extracts_channel_skeleton_and_upl():
     assert np.count_nonzero(result.channel_mask.to_numpy() == 1.0) == 3 * 41
 
 
+@pytest.mark.property
 def test_skeleton_metrics_return_station_table_and_orders():
     """Check channel skeletons can be converted into ordered stations.
 

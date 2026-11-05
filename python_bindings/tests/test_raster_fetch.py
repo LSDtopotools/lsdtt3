@@ -3,12 +3,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import geopandas as gpd
+import pytest
 from shapely.geometry import Point
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 
 class RasterFetchTest(unittest.TestCase):
+    @pytest.mark.exact_solution
     def test_vector_bounds_and_local_helpers(self):
         self.assertEqual(lsdtt3.utm_epsg_for_point(-3.0, 50.0), 32630)
         self.assertEqual(
@@ -37,10 +41,12 @@ class RasterFetchTest(unittest.TestCase):
         self.assertEqual(bounds.n_features, 1)
         self.assertEqual(bounds.bbox, (2.0, 48.0, 2.2, 48.1))
 
+    @pytest.mark.negative
     def test_invalid_fetch_raises(self):
         with self.assertRaisesRegex(RuntimeError, "west must be less"):
             lsdtt3.fetch_dem(2.0, 48.0, 1.0, 48.1)
 
+    @pytest.mark.negative
     def test_outlet_fetch_validates_inputs_before_network_access(self):
         outlets = gpd.GeoDataFrame(geometry=[Point(25.5, 47.1)], crs="EPSG:4326")
         with self.assertRaisesRegex(RuntimeError, "initial outlet radius must be positive"):
@@ -48,6 +54,7 @@ class RasterFetchTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source must be"):
             lsdtt3.fetch_dem_for_outlets(outlets, source="not-a-source")
 
+    @pytest.mark.exact_solution
     def test_dem_source_catalogue(self):
         sources = {row["dem_source"]: row for row in lsdtt3.dem_sources()}
         for name in ("cop30_aws", "us_3dep", "arctic_arcticdem", "nl_ahn",
@@ -59,10 +66,12 @@ class RasterFetchTest(unittest.TestCase):
         self.assertTrue(sources["nz_lidar"]["requires_lerc"])
         self.assertTrue(sources["jp_gsi"]["attribution"])
 
+    @pytest.mark.negative
     def test_unknown_source_lists_the_catalogue(self):
         with self.assertRaisesRegex(ValueError, "gb_sct_lidar"):
             lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, source="not-a-source")
 
+    @pytest.mark.negative
     def test_source_options_are_checked_before_any_download(self):
         with self.assertRaisesRegex(RuntimeError, "source_collection_choice"):
             lsdtt3.fetch_dem(8.0, 61.0, 8.01, 61.01, source="no_dtm",
@@ -73,6 +82,7 @@ class RasterFetchTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "DSM"):
             lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, surface_model_choice="dtm")
 
+    @pytest.mark.negative
     def test_lerc_source_warns_before_fetching(self):
         # Outside New Zealand, so it fails in pre-flight whether or not this
         # GDAL can read LERC; the warning comes first either way.
@@ -80,6 +90,7 @@ class RasterFetchTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 lsdtt3.fetch_dem(2.0, 48.0, 2.1, 48.1, source="nz_lidar")
 
+    @pytest.mark.negative
     def test_outlet_fetch_refuses_high_resolution_sources(self):
         outlets = gpd.GeoDataFrame(geometry=[Point(-105.5, 40.0)], crs="EPSG:4326")
         with self.assertRaisesRegex(ValueError, "us_3dep"):

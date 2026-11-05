@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit]
 
 
 class HillslopeTransportTest(unittest.TestCase):
@@ -19,6 +22,7 @@ class HillslopeTransportTest(unittest.TestCase):
             channel_data, np.ones((21, 21), dtype=bool), self.meta
         )
 
+    @pytest.mark.property
     def test_steady_state_keeps_channel_elevations_and_reports_convergence(self):
         result = lsdtt3.hillslope_steady_state(
             self.dem, self.channels, diffusivity=0.05, uplift_rate=4.0e-4,
@@ -31,6 +35,7 @@ class HillslopeTransportTest(unittest.TestCase):
         self.assertLessEqual(result.final_residual, 1.0e-4)
         np.testing.assert_allclose(solved[[0, -1]], initial[[0, -1]])
 
+    @pytest.mark.property
     def test_explicit_and_implicit_transport_keep_channels_fixed(self):
         explicit = lsdtt3.hillslope_transport_explicit(
             self.dem, self.channels, 0.05, 10.0, boundary_conditions="nnnn", n_threads=1
@@ -44,6 +49,7 @@ class HillslopeTransportTest(unittest.TestCase):
         np.testing.assert_allclose(implicit.elevation.to_numpy()[[0, -1]], initial[[0, -1]])
         self.assertGreaterEqual(implicit.n_substeps, 1)
 
+    @pytest.mark.negative
     def test_rejects_nonbinary_channels(self):
         bad = lsdtt3.Raster.from_numpy(
             np.full((21, 21), 2.0, dtype=np.float32),
@@ -52,6 +58,7 @@ class HillslopeTransportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly 0 or 1"):
             lsdtt3.hillslope_transport_explicit(self.dem, bad, 0.05, 1.0)
 
+    @pytest.mark.smoke
     def test_cellular_transport_returns_conservative_diagnostics(self):
         result = lsdtt3.hillslope_transport_cellular(
             self.dem, self.channels, 10.0, diffusivity=0.05,

@@ -7,6 +7,8 @@ from pyproj import CRS
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 
 def raster_and_flow():
     meta = lsdtt3.RasterMeta.from_shape(
@@ -19,6 +21,7 @@ def raster_and_flow():
     return dem, lsdtt3.FlowInfo(dem, boundary_conditions="nnbo", n_threads=1)
 
 
+@pytest.mark.conformance
 def test_surface_keyword_migrations_preserve_native_signatures():
     channel_head_parameters = inspect.signature(lsdtt3.extract_channel_heads).parameters
     assert "surface_fitting_radius_metres" in channel_head_parameters
@@ -31,6 +34,9 @@ def test_surface_keyword_migrations_preserve_native_signatures():
     assert "signal_wavelength_short_m" not in wiener_parameters
 
 
+@pytest.mark.metamorphic
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_channel_head_legacy_radius_warns_and_matches_canonical():
     dem, flow = raster_and_flow()
     canonical = lsdtt3.extract_channel_heads(
@@ -53,6 +59,8 @@ def test_channel_head_legacy_radius_warns_and_matches_canonical():
 
 
 @pytest.mark.skipif(not lsdtt3.spectral_available(), reason="requires an FFTW-enabled build")
+@pytest.mark.metamorphic
+@pytest.mark.conformance
 def test_channel_head_wiener_radius_legacy_keyword_preserves_results():
     dem, flow = raster_and_flow()
     common = dict(
@@ -82,6 +90,8 @@ def test_channel_head_wiener_radius_legacy_keyword_preserves_results():
 
 
 @pytest.mark.skipif(not lsdtt3.spectral_available(), reason="requires an FFTW-enabled build")
+@pytest.mark.metamorphic
+@pytest.mark.conformance
 def test_wiener_legacy_wavelengths_warn_and_match_canonical():
     dem, _ = raster_and_flow()
     canonical = lsdtt3.wiener_filter(
@@ -99,6 +109,7 @@ def test_wiener_legacy_wavelengths_warn_and_match_canonical():
     np.testing.assert_allclose(canonical.to_numpy(), legacy.to_numpy())
 
 
+@pytest.mark.negative
 def test_wiener_canonical_and_legacy_wavelengths_conflict():
     with pytest.raises(TypeError, match="cannot both be supplied"):
         lsdtt3.wiener_filter(

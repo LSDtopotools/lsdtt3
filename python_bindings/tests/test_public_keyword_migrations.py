@@ -5,6 +5,8 @@ import pytest
 
 import lsdtt3
 
+pytestmark = [pytest.mark.unit]
+
 
 def hydraulic_inputs():
     meta = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=1.0)
@@ -27,6 +29,9 @@ def hydraulic_inputs():
         lsdtt3.run_graphflood_optimised_v2,
     ],
 )
+@pytest.mark.metamorphic
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_graphflood_legacy_tolerances_warn_and_match(solver):
     inputs = hydraulic_inputs()
     common = dict(max_steps=2, run_until_converged=False)
@@ -56,6 +61,8 @@ def test_graphflood_legacy_tolerances_warn_and_match(solver):
     lsdtt3.run_graphflood_multigrid,
     lsdtt3.run_graphflood_induced,
 ])
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_accelerator_legacy_tolerances_normalize_before_dispatch(accelerator):
     calls = []
 
@@ -88,6 +95,9 @@ def test_accelerator_legacy_tolerances_normalize_before_dispatch(accelerator):
             median_dhw_convergence_tolerance_metres=2.0e-7,
             tol_median_abs_dhw=2.0e-7, **kwargs,
         )
+@pytest.mark.metamorphic
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_landscape_threshold_legacy_keyword_warns_and_conflicts():
     meta = lsdtt3.RasterMeta.from_shape(5, 5, cell_size=10.0)
     rows, _ = np.indices((5, 5), dtype=np.float32)
@@ -126,6 +136,9 @@ def test_landscape_threshold_legacy_keyword_warns_and_conflicts():
         )
 
 
+@pytest.mark.metamorphic
+@pytest.mark.conformance
+@pytest.mark.negative
 def test_flat_relief_window_legacy_keyword_warns_and_conflicts():
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     values = np.zeros((9, 9), dtype=np.float32)
@@ -164,6 +177,8 @@ def test_flat_relief_window_legacy_keyword_warns_and_conflicts():
         )
 
 
+@pytest.mark.exact_solution
+@pytest.mark.negative
 def test_valley_mask_is_required_validated_and_thresholded():
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     rows, cols = np.indices((9, 9), dtype=np.float32)
@@ -196,6 +211,7 @@ def test_valley_mask_is_required_validated_and_thresholded():
     assert np.count_nonzero(empty_result.valley_mask.to_numpy()) == 0
 
 
+@pytest.mark.smoke
 def test_classification_floodplain_mask_composes_with_centreline():
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     rows, cols = np.indices((9, 9), dtype=np.float32)

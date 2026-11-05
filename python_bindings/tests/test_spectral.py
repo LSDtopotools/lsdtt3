@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit, pytest.mark.property]
 
 
 @unittest.skipUnless(lsdtt3.spectral_available(), "requires an FFTW-enabled build")
@@ -29,6 +32,7 @@ class SpectralTest(unittest.TestCase):
         self.assertTrue(all(output.shape == raster.shape for output in outputs))
         self.assertTrue(all(output.valid_pixel_count == raster.valid_pixel_count for output in outputs))
 
+    @pytest.mark.smoke
     def test_full_analysis_and_directional_periodicity(self):
         raster = self.raster()
         result = lsdtt3.spectral_analysis(

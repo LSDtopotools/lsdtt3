@@ -3,6 +3,10 @@ import importlib.util
 from pathlib import Path
 import re
 
+import pytest
+
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def test_generated_reference_assigns_every_export_exactly_once():
     repository = Path(__file__).parents[2]

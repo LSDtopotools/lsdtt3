@@ -1,8 +1,11 @@
 import unittest
 
 import numpy as np
+import pytest
 
 import lsdtt3
+
+pytestmark = [pytest.mark.unit, pytest.mark.smoke]
 
 
 class FeatureFinderTest(unittest.TestCase):
@@ -66,6 +69,7 @@ class FeatureFinderTest(unittest.TestCase):
         )
         self.assertEqual(outlets.shape, raster.shape)
 
+    @pytest.mark.negative
     def test_road_flow_canonical_keywords(self):
         raster = self.raster()
         result = lsdtt3.find_road_flow_discrimination(

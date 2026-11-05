@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 import re
 
+import pytest
+
+pytestmark = [pytest.mark.conformance, pytest.mark.unit]
+
 
 def load_generator():
     path = Path(__file__).parents[1] / "tools" / "generate_public_api_manifest.py"
