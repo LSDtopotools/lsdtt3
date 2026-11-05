@@ -1850,6 +1850,28 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# lsdtt-fetch-river-lines -> lsdtt-stream-burning (river-lines plan, phase 1b):
+# the fixture network, and a reversed / near-miss / multipart copy of it, each
+# prepared by lsdtt-fetch-river-lines, must give stream burning's reference
+# vector summary and the burned DEM frozen for smoke_stream_burning above.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME smoke_fetch_river_lines_to_stream_burning
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fetch_river_lines_to_stream_burning.py"
+            --fetch-exe "$<TARGET_FILE:lsdtt-fetch-river-lines>"
+            --burn-exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --burn-param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_smoke.param.in"
+            --fixture-dir "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fetch_river_lines_to_stream_burning"
+            --expect-burned-sha256 f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b)
+    lsdtt_mark_test_runtime(python smoke_fetch_river_lines_to_stream_burning)
+else()
+    lsdtt_mark_test_unregistered(python smoke_fetch_river_lines_to_stream_burning)
+endif()
+lsdtt_set_tests_properties(smoke_fetch_river_lines_to_stream_burning PROPERTIES
+    LABELS "cli;fetch;stream_burning"
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # Least-cost-path burn: regression test for the use-after-free segfault fixed on
 # 2026-10-07, and the only test that runs raster_least_cost_path. See the
 # parameter file.

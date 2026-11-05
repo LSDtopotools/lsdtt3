@@ -330,6 +330,7 @@ lsdtt_evidence(smoke_spectral_analysis_significant_2d system smoke characterisat
 lsdtt_evidence(network_fetch_raster_linear_feature_cli system smoke property characterisation)
 lsdtt_evidence(smoke_fetch_lithology_offline system smoke characterisation metamorphic)
 lsdtt_evidence(smoke_fetch_river_lines_local system smoke exact_solution)
+lsdtt_evidence(smoke_fetch_river_lines_to_stream_burning system metamorphic characterisation)
 lsdtt_evidence(smoke_fetch_erosion_rates_offline system smoke exact_solution property metamorphic)  # = committed response
 lsdtt_evidence(smoke_fetch_erosion_rates_offline_lsdn system smoke exact_solution)
 lsdtt_evidence(smoke_cosmo_landslides_sample_ensemble system smoke characterisation)
