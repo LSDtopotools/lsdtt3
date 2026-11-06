@@ -272,30 +272,95 @@ int main(int argc, char* argv[])
         "(run_lcp_burn) to recover one continuous network. Preserves the LiDAR "
         "thalweg and writes the burned DEM plus the network extracted from it. "
         "burn_to_corridor: for a vector network that is the truth (e.g. OS Open Rivers prepared by "
-        "lsdtt-fetch-river-lines, oriented downstream): the DEM's own flow path is kept wherever "
-        "it stays within vector_corridor_half_width_metres of the line, and elsewhere the lowest "
-        "path inside that corridor is burned, network order, upstream first. 0 = burn in place.",
+        "lsdtt-fetch-river-lines, oriented downstream). The channel is the lowest path inside a "
+        "corridor of vector_corridor_half_width_metres around each line (0 = the line's own "
+        "cells), on the input DEM with its small pits filled (burn_profile_max_pit_pixels). Its "
+        "elevations connect the minima of that DEM along the path (burn_profile_fit_algorithm_choice, "
+        "burn_profile_max_cut_metres), so the burned channel follows the real valley floor, not a "
+        "filled lake. The rest of the DEM is then carved (always least-cost breach, using the "
+        "breach_* parameters) and filled to drain to the channel, and finally the whole DEM is "
+        "conditioned as in the other modes (carve_before_fill, breach_algorithm_choice, "
+        "fill_min_slope), so flow routing on the output follows the burned channel.",
         "Burn mode", "param", ""};
 
     // --- burn_to_corridor (the vector network is the truth) ---
     float_default_map["vector_corridor_half_width_metres"] = 0.0f;
     help_map["vector_corridor_half_width_metres"] = {"float","0",
-        "burn_to_corridor: how far the DEM's flow routing may pull the channel away from the vector line [m].",
-        "The DEM's own steepest-descent path is accepted wherever it stays within this distance of "
-        "the vector reach until it reaches the next junction; otherwise the lowest path inside the "
-        "corridor is burned (a capturing burn: the burned path is where steepest descent goes). "
-        "0 (or under half a cell) = the line's own cells, i.e. burn in place, as a network. A few "
-        "cells = follow the DEM valley but stay near the mapped river. Large = repair only strong "
-        "divergences. Each junction also gets a disc of max(this, 1.5 cells) so reaches can meet.",
+        "burn_to_corridor: how far the channel may be pulled away from the vector line into the DEM's valley [m].",
+        "The channel is the least-cost path inside this distance of the line, on the input DEM "
+        "with its small pits filled, where low ground is cheap (cost per step: 1 + height above "
+        "the lowest corridor cell within this distance plus one cell). 0 (or under half a cell) = "
+        "the line's own cells, i.e. burn in place, as a network. A few cells = follow the DEM "
+        "valley floor but stay near the mapped river. Where a lower cell beside the channel would "
+        "still take its flow (the valley lies farther away than this), that cell is raised into a "
+        "bank. Each junction also gets a disc of max(this, 1.5 cells) so reaches can meet.",
+        "burn_to_corridor", "param", ""};
+
+    int_default_map["burn_profile_max_pit_pixels"] = 16;
+    help_map["burn_profile_max_pit_pixels"] = {"int","16",
+        "burn_to_corridor: depressions of the input DEM with fewer cells than this are filled before the burned profile is sampled.",
+        "DEM noise makes small pits that are not real; a pure minima profile would follow them. "
+        "Each depression (including nested ones, from the depression hierarchy) with fewer than "
+        "this many cells is filled to its spill level, so noise pits inside a large real "
+        "depression (e.g. the valley behind an embankment) are filled while that depression is "
+        "not. 0 = no filling (pure minima). The count is in cells, so the same value covers a "
+        "smaller area on a finer DEM. Used only to choose and sample the channel; the rest of "
+        "the DEM is conditioned from the input DEM.",
+        "burn_to_corridor", "param", ""};
+
+    float_default_map["burn_profile_max_cut_metres"] = 2000.0f;
+    help_map["burn_profile_max_cut_metres"] = {"float","2000",
+        "burn_to_corridor: a minimum along the channel whose use would cut more than this below the DEM downstream is not used [m].",
+        "Walking downstream, a cell lower than the last minimum used is a candidate minimum. The "
+        "cut it causes is the cut below the DEM downstream of it with it, minus the cut there "
+        "without it (and without the lower cells it leads into): the profile beyond a deep hole "
+        "(a quarry, a cutting, a void) is held down until the DEM falls to the hole's level, so "
+        "the hole causes that cut. Above this value the candidate is rejected and the profile "
+        "passes over it (those cells are raised). The minimum just upstream of an obstruction "
+        "is not blamed for cutting through it (the obstruction is cut either way); a path that "
+        "still cuts more than this somewhere is reported. The default does nothing in practice.",
+        "burn_to_corridor", "param", ""};
+
+    string_default_map["burn_profile_fit_algorithm_choice"] = "linear";
+    help_map["burn_profile_fit_algorithm_choice"] = {"string","linear",
+        "burn_to_corridor: how the burned profile joins successive minima: linear or chi.",
+        "linear: a straight line in distance between minima. chi: a straight line in chi, "
+        "chi = integral((chi_A0/A)^m_over_n ds), i.e. slope S = k_s A^-m_over_n with k_s set "
+        "for each segment so the profile passes through both minima (concave up where the "
+        "drainage area A grows). A is read along the channel from D8 on the DEM after a first "
+        "linear pass, so it follows the burned network. Either way the profile passes through "
+        "the minima, falls downstream and is never above the DEM except where a rejected "
+        "minimum or a junction raises it.",
+        "burn_to_corridor", "param", ""};
+
+    float_default_map["m_over_n"] = 0.45f;
+    help_map["m_over_n"] = {"float","0.45",
+        "Reference m/n (theta) for chi integration.",
+        "burn_to_corridor with burn_profile_fit_algorithm_choice chi. Must be >= 0.",
+        "burn_to_corridor", "param", ""};
+
+    float_default_map["chi_A0"] = 1.0f;
+    help_map["chi_A0"] = {"float","1.0",
+        "Reference area A0 for chi integration (m^2).",
+        "Used in chi = integral((A0/A)^(m/n) ds). burn_to_corridor with "
+        "burn_profile_fit_algorithm_choice chi.",
+        "burn_to_corridor", "param", ""};
+
+    string_default_map["vector_name_field"] = "";
+    help_map["vector_name_field"] = {"string","",
+        "burn_to_corridor: attribute of the vector lines holding the river name, copied to the outputs.",
+        "Empty = no names. The lines prepared by lsdtt-fetch-river-lines carry the name in "
+        "'name'. Written to the name column of _burned_profiles.csv and _corridor_channels.",
         "burn_to_corridor", "param", ""};
 
     bool_default_map["write_burn_depth_raster"] = false;
     help_map["write_burn_depth_raster"] = {"bool","false",
         "Write the change made to the DEM: original minus burned [m].",
         "Output file: <write_fname>_burn_depth.tif. Positive where the DEM was lowered, negative "
-        "where filling raised it, nodata where it is unchanged. Measured against the input DEM, "
-        "not the filled one, so a cut through a filled hollow is not understated. Currently "
-        "written by stream_burn_mode burn_to_corridor.",
+        "where it was raised (filled pits and hollows, banks, a channel raised to meet the one it "
+        "joins), nodata where it is unchanged. Measured against the input DEM, not the filled "
+        "one, so a cut through a filled hollow is not understated. Currently written by "
+        "stream_burn_mode burn_to_corridor.",
         "burn_to_corridor", "switch", ""};
 
     // --- snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) ---
@@ -409,10 +474,17 @@ int main(int argc, char* argv[])
     help_map["write_burned_profiles_csv"] = {"bool","true",
         "Write the burned stream elevation profiles as a CSV file.",
         "burn_in_place: feature_id, flow_distance, x, y, dem_elevation, burned_elevation. "
-        "burn_to_corridor: one row per channel cell, downstream order within each reach: "
-        "reach_id, from_node, to_node, status, point_index, distance_m (along the reach), x, y, "
-        "z_original (the input DEM, unfilled), z_filled, z_burned (the final DEM); the log "
-        "reports any channel that rises downstream.",
+        "burn_to_corridor: one row per channel cell, downstream order within each path (a chain "
+        "of reaches from its head to where it joins another path or leaves the network): "
+        "path_id, path_rank (fitting order, 0 = first and longest), reach_id, name, point_index, "
+        "distance_m (along the path), flow_distance_m (to the network outlet along the burned "
+        "network), x, y, z_original (the input DEM), z_cleaned (small pits filled), z_profile "
+        "(the fitted profile), z_final (the output DEM), pit_filled, pit_id (the filled "
+        "depression, -1 if none), is_record_low (a minimum the profile passes through), "
+        "is_rejected_low (a minimum rejected by burn_profile_max_cut_metres), drainage_area_m2 "
+        "and chi (chi fit only), joins_path_id and join_distance_m (where the path ends on "
+        "another path, distance along that path), starts_on_path_id. The log reports any "
+        "channel that rises downstream.",
         "burn_in_place outputs", "switch", ""};
 
     bool_default_map["write_burned_profiles_points"] = false;
@@ -1014,9 +1086,9 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // burn_to_corridor: the vector network is the truth (river-lines plan VT).
-    // Runs on the filled DEM and returns here: none of the snap_to_network
-    // machinery below is used.
+    // burn_to_corridor: the vector network is the truth (river-lines plan VT2,
+    // 12.10-12.14). Works from the input DEM (not the filled one) and returns
+    // here: none of the snap_to_network machinery below is used.
     // -------------------------------------------------------------------------
     if (burn_mode == lsdtt::stream_burn_mode::burn_to_corridor)
     {
@@ -1028,10 +1100,10 @@ int main(int argc, char* argv[])
         {
             std::cout << "\n--- Burning the vector network to a corridor ---\n"
                       << "Vector file: " << stream_vector_path << "\n";
-            std::vector<std::vector<lsdtt::lsdtt_xy>> lines;
+            lsdtt::clipped_vector_lines cl;
             try
             {
-                lines = lsdtt::clip_vector_lines_to_dem(stream_vector_path, routed_dem);
+                cl = lsdtt::clip_vector_lines_to_dem_with_names(stream_vector_path, dem, sf["vector_name_field"]);
             }
             catch (const std::exception& e)
             {
@@ -1039,38 +1111,142 @@ int main(int argc, char* argv[])
                 return 1;
             }
             lsdtt::burn_corridor_options co;
-            co.corridor_half_width_metres = ff["vector_corridor_half_width_metres"];
-            co.min_gradient = std::max(1.0e-6, static_cast<double>(ff["fill_min_slope"]));
-            const double cs = routed_dem.get_meta().cell_size;
+            try
+            {
+                co.corridor_half_width_metres = ff["vector_corridor_half_width_metres"];
+                co.min_gradient = std::max(1.0e-6, static_cast<double>(ff["fill_min_slope"]));
+                co.max_pit_pixels = ifs["burn_profile_max_pit_pixels"];
+                co.max_cut_metres = ff["burn_profile_max_cut_metres"];
+                co.fit = lsdtt::parse_burn_profile_fit(sf["burn_profile_fit_algorithm_choice"],
+                                                       "burn_profile_fit_algorithm_choice");
+                co.m_over_n = ff["m_over_n"];
+                co.chi_A0 = ff["chi_A0"];
+                co.boundary_conditions = sf["boundary_conditions"];
+                if (co.max_pit_pixels < 0) throw std::invalid_argument("burn_profile_max_pit_pixels must be >= 0");
+                if (!(co.max_cut_metres > 0.0)) throw std::invalid_argument("burn_profile_max_cut_metres must be > 0");
+                if (co.m_over_n < 0.0) throw std::invalid_argument("m_over_n must be >= 0");
+                if (!(co.chi_A0 > 0.0)) throw std::invalid_argument("chi_A0 must be > 0");
+                // Step 6 always carves with least-cost breach (plan 12.14 R5).
+                const float bmc = ff["breach_max_cost"];
+                co.breach.max_dist       = ifs["breach_max_dist_pixels"];
+                co.breach.max_cost       = bmc > 0.0f ? static_cast<double>(bmc) : std::numeric_limits<double>::infinity();
+                co.breach.minimize_dist  = bf["breach_minimize_dist"];
+                co.breach.flat_increment = static_cast<double>(ff["breach_flat_increment"]);
+                co.breach.fill_min_slope = ff["fill_min_slope"];
+                co.breach.edge_policy    = lsdtt::parse_breach_lc_edge_policy(sf["breach_edge_policy"], "breach_edge_policy");
+                lsdtt::validate_breach_least_cost_options(co.breach);
+            }
+            catch (const std::invalid_argument& e)
+            {
+                std::cerr << "FATAL: " << e.what() << "\n";
+                return 1;
+            }
+            const double cs = dem.get_meta().cell_size;
             std::cout << "Corridor half width: " << co.corridor_half_width_metres << " m ("
-                      << co.corridor_half_width_metres / cs << " cells)\n";
-            lsdtt::lsdtt_raster_cpu burned = routed_dem;
-            const lsdtt::burn_corridor_result cr =
-                lsdtt::burn_vector_network_to_corridor(burned, lines, co);
+                      << co.corridor_half_width_metres / cs << " cells); pits under "
+                      << co.max_pit_pixels << " cells filled for the profile; profile fit "
+                      << lsdtt::burn_profile_fit_name(co.fit) << "; cut cap " << co.max_cut_metres << " m\n";
+            lsdtt::lsdtt_raster_cpu burned;
+            lsdtt::burn_corridor_result cr;
+            try
+            {
+                cr = lsdtt::burn_vector_network_to_corridor(dem, burned, cl.lines, cl.names, co);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: burn_to_corridor failed: " << e.what() << "\n";
+                return 1;
+            }
             for (const auto& n : cr.notes) std::cout << "  " << n << "\n";
             {
                 std::map<std::string, int> why;
                 for (const auto& rc : cr.reaches) if (rc.status == "skipped") ++why[rc.skip_reason];
                 for (const auto& [w, k] : why) std::cout << "  skipped (" << w << "): " << k << "\n";
             }
-            std::cout << "Lines: " << lines.size() << ", nodes " << cr.n_nodes << ", reaches "
-                      << cr.reaches.size() << ": followed " << cr.n_followed << ", burned "
-                      << cr.n_burned << ", skipped " << cr.n_skipped << "; cells lowered "
-                      << cr.n_cells_lowered << ", re-graded in the final pass " << cr.n_cells_regraded << "; channel ends inside the DEM drained "
-                      << cr.n_ends_drained << " (" << cr.n_cells_daylighted << " cells)\n";
+            std::cout << "Lines: " << cl.lines.size() << ", nodes " << cr.n_nodes << ", reaches "
+                      << cr.reaches.size() << ": fitted " << cr.n_fitted << ", skipped " << cr.n_skipped
+                      << "; paths " << cr.paths.size() << "\n"
+                      << "Pits filled for the profile: " << cr.n_pits_cleaned << " (" << cr.n_pit_cells << " cells)\n"
+                      << "Profile: " << cr.n_record_lows << " minima used, " << cr.n_rejected_lows
+                      << " rejected by the cut cap; " << cr.n_pin_conflicts << " pin conflict(s), "
+                      << cr.n_cut_cap_exceeded << " path(s) still cutting more than the cap\n"
+                      << "Line cells: " << cr.n_line_cells << " (" << cr.n_line_cells_cut << " cut, "
+                      << cr.n_line_cells_raised << " raised, against the input DEM)\n"
+                      << "Channel ends inside the DEM drained: " << cr.n_ends_drained << " ("
+                      << cr.n_cells_daylighted << " cells)\n"
+                      << "Off the line: " << cr.n_offline_cells_carved << " cells carved, "
+                      << cr.n_offline_cells_raised << " raised (" << cr.n_bank_cells << " bank cells, "
+                      << cr.n_bank_cells_at_raised_line << " of them beside raised line cells); breach "
+                      << cr.breach.pits_solved << " pits solved, "
+                      << (cr.breach.pits_unsolved_exhausted + cr.breach.pits_unsolved_max_cost) << " left to the fill\n";
+            if (co.fit == lsdtt::burn_profile_fit::chi)
+                std::cout << "Chi fit: largest relative change of drainage area on the line between passes: "
+                          << cr.max_area_change << "\n";
 
-            // Re-fill: a burned path ending below its surroundings at an
-            // interior outlet would otherwise be a pit.
-            lsdtt::lsdtt_raster_cpu final_dem = lsdtt::fill_pits(burned, ff["fill_min_slope"], ifs["n_threads"]);
+            // Final whole-DEM conditioning, as the other modes do (plan V4), so
+            // routing on the output is integrated with the burned channel.
+            lsdtt::lsdtt_raster_cpu final_dem;
+            try
             {
-                long n_raised = 0;
-                const auto& a = burned.get_data_array();
-                const auto& b = final_dem.get_data_array();
-                const auto& m = burned.get_mask_array();
-                for (int r = 0; r < burned.get_meta().n_rows; ++r)
-                    for (int c = 0; c < burned.get_meta().n_cols; ++c)
-                        if (m(r, c) && b(r, c) > a(r, c) + 1e-6f) ++n_raised;
-                std::cout << "Re-fill after burning raised " << n_raised << " cell(s)\n";
+                lsdtt::lsdtt_raster_cpu src = burned;
+                if (bf["carve_before_fill"])
+                {
+                    if (sf["breach_algorithm_choice"] == "least_cost")
+                        src = lsdtt::breach_depressions_least_cost(burned, co.breach);
+                    else
+                        src = lsdtt::breach_depressions(burned, ifs["n_threads"]);
+                }
+                final_dem = lsdtt::fill_pits(src, ff["fill_min_slope"], ifs["n_threads"]);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: final conditioning failed: " << e.what() << "\n";
+                return 1;
+            }
+            {
+                std::vector<uint8_t> on_line(burned.get_data().size(), 0);
+                for (const auto& p : cr.paths)
+                    for (const auto c : p.cells) on_line[static_cast<size_t>(c)] = 1;
+                long n_line = 0, n_off = 0;
+                double max_line = 0.0;
+                const auto& a = burned.get_data();
+                const auto& b = final_dem.get_data();
+                const auto& m = burned.get_mask();
+                for (size_t i = 0; i < a.size(); ++i)
+                {
+                    if (!m[i] || a[i] == b[i]) continue;
+                    if (on_line[i]) { ++n_line; max_line = std::max(max_line, std::fabs(static_cast<double>(b[i]) - a[i])); }
+                    else ++n_off;
+                }
+                std::cout << "Final conditioning (carve_before_fill " << (bf["carve_before_fill"] ? "true" : "false")
+                          << ") changed " << n_line << " line cell(s) (largest change " << max_line << " m) and "
+                          << n_off << " other cell(s)\n";
+            }
+
+            auto at = [&](const lsdtt::lsdtt_raster_cpu& r, std::int64_t f) -> double
+            {
+                return r.get_data()[static_cast<size_t>(f)];
+            };
+            // Downhill check, after the burn and on the final DEM.
+            for (const auto* which : {&burned, &final_dem})
+            {
+                int n_rising = 0;
+                double max_rise = 0.0;
+                std::string ids;
+                for (const auto& p : cr.paths)
+                {
+                    bool rises = false;
+                    for (size_t i = 1; i < p.cells.size(); ++i)
+                    {
+                        const double rise = at(*which, p.cells[i]) - at(*which, p.cells[i - 1]);
+                        if (rise > 0.0) { rises = true; max_rise = std::max(max_rise, rise); }
+                    }
+                    if (rises) { ++n_rising; if (ids.size() < 60) ids += " " + std::to_string(p.path_id); }
+                }
+                std::cout << "Downhill check, " << (which == &burned ? "after the burn" : "final DEM")
+                          << ": " << n_rising << " of " << cr.paths.size() << " path(s) rise anywhere";
+                if (n_rising > 0) std::cout << " (largest rise " << max_rise << " m; paths" << ids << ")";
+                std::cout << "\n";
             }
 
             if (bf["write_burned_outputs"])
@@ -1085,12 +1261,12 @@ int main(int argc, char* argv[])
                 std::cout << "Writing: " << cf << "\n";
                 lsdtt::lsdtt_vector_schema schema;
                 using ft = lsdtt::lsdtt_vector_field_type;
-                schema.field_names = {"reach_id", "from_node", "to_node", "status", "skip_reason", "length_m",
-                                      "upstream_length_m", "max_separation_m", "max_burn_depth_m",
-                                      "burn_length_m"};
-                schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type,
-                                      ft::string_type, ft::double_type, ft::double_type, ft::double_type, ft::double_type,
-                                      ft::double_type};
+                schema.field_names = {"reach_id", "from_node", "to_node", "path_id", "name", "status", "skip_reason",
+                                      "length_m", "upstream_length_m", "max_separation_m", "max_cut_m",
+                                      "max_raise_m", "n_record_lows", "n_rejected_lows"};
+                schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type,
+                                      ft::string_type, ft::string_type, ft::double_type, ft::double_type,
+                                      ft::double_type, ft::double_type, ft::double_type, ft::int64_type, ft::int64_type};
                 lsdtt::lsdtt_data_loader vw;
                 vw.begin_vector_write(cf, "corridor_channels", schema, final_dem.get_meta().crs_wkt, vf,
                                       bf["calculate_spatial_index"]);
@@ -1099,64 +1275,52 @@ int main(int argc, char* argv[])
                     if (rc.channel.size() < 2) continue;   // skipped reaches have no channel
                     vw.write_line(rc.channel, {static_cast<std::int64_t>(rc.reach_id),
                                                static_cast<std::int64_t>(rc.from_node),
-                                               static_cast<std::int64_t>(rc.to_node), rc.status, rc.skip_reason, rc.length_m,
-                                               rc.upstream_length_m, rc.max_separation_m, rc.max_burn_depth_m,
-                                               rc.burn_length_m});
+                                               static_cast<std::int64_t>(rc.to_node),
+                                               static_cast<std::int64_t>(rc.path_id), rc.name, rc.status,
+                                               rc.skip_reason, rc.length_m, rc.upstream_length_m,
+                                               rc.max_separation_m, rc.max_cut_m, rc.max_raise_m,
+                                               static_cast<std::int64_t>(rc.n_record_lows),
+                                               static_cast<std::int64_t>(rc.n_rejected_lows)});
                 }
                 vw.finish_vector_write();
             }
-            // Downhill check on the final DEM, and the profiles.
-            {
-                const auto& meta = final_dem.get_meta();
-                auto at = [&](const lsdtt::lsdtt_raster_cpu& r, const lsdtt::lsdtt_xy& p) -> double
-                {
-                    const int c = static_cast<int>(std::floor((p.x - meta.x_min) / meta.cell_size));
-                    const int rr = static_cast<int>(std::floor((meta.y_max() - p.y) / meta.cell_size));
-                    return r.get_data_array()(rr, c);
-                };
-                for (const auto* which : {&burned, &final_dem})
-                {
-                    int n_rising = 0;
-                    double max_rise = 0.0;
-                    std::string ids;
-                    for (const auto& rc : cr.reaches)
-                    {
-                        bool rises = false;
-                        for (size_t i = 1; i < rc.channel.size(); ++i)
-                        {
-                            const double rise = at(*which, rc.channel[i]) - at(*which, rc.channel[i - 1]);
-                            if (rise > 0.0) { rises = true; max_rise = std::max(max_rise, rise); }
-                        }
-                        if (rises) { ++n_rising; if (ids.size() < 60) ids += " " + std::to_string(rc.reach_id); }
-                    }
-                    std::cout << "Downhill check, " << (which == &burned ? "after burning" : "final DEM (after re-fill)")
-                              << ": " << n_rising << " of " << cr.reaches.size() << " channel(s) rise anywhere";
-                    if (n_rising > 0) std::cout << " (largest rise " << max_rise << " m; reaches" << ids << ")";
-                    std::cout << "\n";
-                }
 
-                if (bf["write_burned_profiles_csv"])
+            if (bf["write_burned_profiles_csv"])
+            {
+                const std::string f = pp.make_output_path("_burned_profiles", ".csv");
+                std::cout << "Writing: " << f << "\n";
+                auto quoted = [](const std::string& v)
                 {
-                    const std::string f = pp.make_output_path("_burned_profiles", ".csv");
-                    std::cout << "Writing: " << f << "\n";
-                    std::ofstream csv(f);
-                    csv << "reach_id,from_node,to_node,status,point_index,distance_m,x,y,z_original,z_filled,z_burned\n";
-                    csv << std::setprecision(10);
-                    for (const auto& rc : cr.reaches)
+                    if (v.find_first_of(",\"\n") == std::string::npos) return v;
+                    std::string q = "\"";
+                    for (const char ch : v) { if (ch == '"') q += '"'; q += ch; }
+                    return q + "\"";
+                };
+                auto num = [](double v) -> std::string
+                {
+                    if (!std::isfinite(v)) return "";
+                    std::ostringstream o;
+                    o << std::setprecision(10) << v;
+                    return o.str();
+                };
+                std::ofstream csv(f);
+                csv << "path_id,path_rank,reach_id,name,point_index,distance_m,flow_distance_m,x,y,"
+                       "z_original,z_cleaned,z_profile,z_final,pit_filled,pit_id,is_record_low,is_rejected_low,"
+                       "drainage_area_m2,chi,joins_path_id,join_distance_m,starts_on_path_id\n";
+                for (const auto& p : cr.paths)
+                    for (size_t i = 0; i < p.cells.size(); ++i)
                     {
-                        double dist = 0.0;
-                        for (size_t i = 0; i < rc.channel.size(); ++i)
-                        {
-                            if (i > 0)
-                                dist += std::hypot(rc.channel[i].x - rc.channel[i - 1].x,
-                                                   rc.channel[i].y - rc.channel[i - 1].y);
-                            csv << rc.reach_id << "," << rc.from_node << "," << rc.to_node << "," << rc.status
-                                << "," << i << "," << dist << "," << rc.channel[i].x << "," << rc.channel[i].y
-                                << "," << at(dem, rc.channel[i]) << "," << at(routed_dem, rc.channel[i]) << ","
-                                << at(final_dem, rc.channel[i]) << "\n";
-                        }
+                        const auto& rc = cr.reaches[static_cast<size_t>(p.cell_reach[i])];
+                        csv << p.path_id << "," << p.path_rank << "," << rc.reach_id << "," << quoted(rc.name) << ","
+                            << i << "," << num(p.distance_m[i]) << "," << num(p.flow_distance_m[i]) << ","
+                            << num(p.xy[i].x) << "," << num(p.xy[i].y) << "," << num(p.z_original[i]) << ","
+                            << num(p.z_cleaned[i]) << "," << num(p.z_profile[i]) << ","
+                            << num(at(final_dem, p.cells[i])) << "," << (p.z_cleaned[i] > p.z_original[i] ? 1 : 0)
+                            << "," << p.pit_id[i] << "," << static_cast<int>(p.is_record_low[i]) << ","
+                            << static_cast<int>(p.is_rejected_low[i]) << "," << num(p.drainage_area_m2[i]) << ","
+                            << num(p.chi[i]) << "," << p.joins_path_id << "," << num(p.join_distance_m) << ","
+                            << p.starts_on_path_id << "\n";
                     }
-                }
             }
             if (bf["write_burn_depth_raster"])
             {

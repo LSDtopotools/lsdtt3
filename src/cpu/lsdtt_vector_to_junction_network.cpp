@@ -58,6 +58,7 @@ struct oct_closer
 struct raw_polyline
 {
     std::vector<lsdtt_xy> xy;
+    std::string name;   // value of the optional name field (empty if none)
 };
 
 struct raw_vertex
@@ -403,7 +404,8 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
     const std::string&      vector_path,
     const lsdtt_raster_cpu& dem,
     double                  point_tol,
-    double                  clip_inset_metres)
+    double                  clip_inset_metres,
+    const std::string&      name_field = std::string())
 {
     lsdtt::gdal_init();
 
@@ -498,11 +500,26 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
 
             if (clipped)
             {
+                const std::size_t before = polylines.size();
                 collect_clipped_linestrings(
                     clipped.get(),
                     point_tol,
                     polylines
                 );
+                if (!name_field.empty())
+                {
+                    const int fi = feature->GetFieldIndex(name_field.c_str());
+                    if (fi < 0)
+                    {
+                        OGRFeature::DestroyFeature(feature);
+                        throw std::runtime_error(
+                            "lsdtt_vector_to_junction_network: name field '" + name_field +
+                            "' not found in " + vector_path);
+                    }
+                    const std::string v = feature->IsFieldSetAndNotNull(fi)
+                        ? std::string(feature->GetFieldAsString(fi)) : std::string();
+                    for (std::size_t q = before; q < polylines.size(); ++q) polylines[q].name = v;
+                }
             }
 
             OGRFeature::DestroyFeature(feature);
@@ -629,6 +646,29 @@ std::vector<std::vector<lsdtt_xy>> clip_vector_lines_to_dem(
     std::vector<std::vector<lsdtt_xy>> out;
     out.reserve(polylines.size());
     for (auto& p : polylines) out.push_back(std::move(p.xy));
+    return out;
+}
+
+clipped_vector_lines clip_vector_lines_to_dem_with_names(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const std::string&                              name_field,
+    const lsdtt_vector_to_junction_network_options& options)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    std::vector<raw_polyline> polylines = filter_boundary_polylines(
+        load_clipped_stream_polylines(vector_path, dem, resolved_vertex_tolerance(options, meta),
+                                      resolved_clip_inset_distance(meta), name_field),
+        meta, resolved_edge_tolerance(options, meta), resolved_minimum_clipped_edge_length(options, meta),
+        resolved_both_edge_min_penetration(options, meta));
+    clipped_vector_lines out;
+    out.lines.reserve(polylines.size());
+    out.names.reserve(polylines.size());
+    for (auto& p : polylines)
+    {
+        out.lines.push_back(std::move(p.xy));
+        out.names.push_back(std::move(p.name));
+    }
     return out;
 }
 

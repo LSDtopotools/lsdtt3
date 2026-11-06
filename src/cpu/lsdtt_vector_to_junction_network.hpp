@@ -365,6 +365,21 @@ private:
     const lsdtt_vector_to_junction_network_options& options =
         lsdtt_vector_to_junction_network_options{});
 
+// clip_vector_lines_to_dem, also returning each line's value of `name_field`
+// (a string attribute; empty values where it is unset). An empty name_field
+// gives empty names. Throws if the field does not exist.
+struct clipped_vector_lines
+{
+    std::vector<std::vector<lsdtt_xy>> lines;
+    std::vector<std::string>           names;   // one per line
+};
+[[nodiscard]] clipped_vector_lines clip_vector_lines_to_dem_with_names(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const std::string&                              name_field,
+    const lsdtt_vector_to_junction_network_options& options =
+        lsdtt_vector_to_junction_network_options{});
+
 // Where to seed a vector source junction on the DEM.
 //
 // A source junction made where a line enters the DEM is often over NoData: a
