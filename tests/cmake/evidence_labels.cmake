@@ -290,6 +290,8 @@ lsdtt_evidence(rigorous_hillslope_channel_coupling_legacy_threshold system smoke
 
 # lsdtt-chi-analysis and lithology
 lsdtt_evidence(smoke_chi_analysis_erodibility_calibration system smoke characterisation)
+lsdtt_evidence(unit_chi_knickpoints unit exact_solution)  # hand-built fit, known k_sn / areas
+lsdtt_evidence(smoke_chi_tributaries_knickpoints system smoke characterisation)
 lsdtt_evidence(smoke_chi_lithology_ksn system smoke exact_solution)  # 9600 px per unit, k_sn 20 / 5 bins
 lsdtt_evidence(rigorous_chi_lithology_observation_only system smoke characterisation metamorphic)
 lsdtt_evidence(smoke_chi_lithology_crosswalk system smoke characterisation)

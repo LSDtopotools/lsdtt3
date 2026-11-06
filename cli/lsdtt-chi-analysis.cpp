@@ -56,6 +56,7 @@
 #include "../src/core/lsdtt_vector_utils.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_data_maps_cpu.hpp"
+#include "../src/cpu/lsdtt_chi_knickpoints_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_disorder_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #if defined(LSDTT_HAS_EIGEN)
@@ -472,6 +473,36 @@ int main(int argc, char* argv[])
     help_map["write_fit_tables"] = {"bool","true",
         "Write chi network fit node and segment tables to CSV.", "",
         "Outputs", "switch", ""};
+
+    bool_default_map["write_chi_tributary_table"] = true;
+    help_map["write_chi_tributary_table"] = {"bool","true",
+        "Write one row per tributary (branch) of the chi fit, with its drainage area where it joins.",
+        "A tributary is a branch of the fit: from its head down to the node where it joins its parent "
+        "branch (branch 0 is the main stem). Columns: basin_index, basin_key and source_key (the chi "
+        "data maps' keys; source_key is the key of its head and is also written on every fit segment "
+        "and node), branch_id, parent_branch_id, branch_order (0 main stem, 1 its tributaries, ...), "
+        "head and junction flats and x / y (DEM CRS), junction_drainage_area_m2 (at the tributary's "
+        "last node before the junction), basin_drainage_area_m2, area_fraction, area_rank_in_basin "
+        "(1 = largest tributary), length_m and chi_span (head to junction), n_segments, k_sn "
+        "min / median / max with the steepest segment's id and mid-chi, and n_descendants (tributaries "
+        "draining into it at any depth). Written once per m/n. Output: "
+        "<write_fname>_chi_tributaries_mn_*.csv.",
+        "Outputs", "switch", "fit_chi_networks"};
+
+    bool_default_map["write_chi_knickpoint_table"] = true;
+    help_map["write_chi_knickpoint_table"] = {"bool","true",
+        "Write the nodes where fitted k_sn segments meet (knickpoint candidates) and threshold suggestions.",
+        "One row per boundary: within a branch, where a segment meets the next segment downstream; and, "
+        "flagged at_junction = 1, where a tributary's first segment meets the parent-branch segment at "
+        "the junction. Columns include x / y, chi, elevation, flow distance, drainage area, k_sn upstream "
+        "and downstream, delta_ksn (upstream minus downstream: positive where the channel steepens "
+        "upstream) and log_ratio_ksn (log10 of their ratio; empty if either k_sn <= 0). A second file "
+        "suggests thresholds for a major knickpoint over the within-branch rows: for |delta_ksn| and "
+        "|log_ratio_ksn|, the 90th and 95th percentiles, the median plus 3 MAD (MAD scaled by 1.4826) "
+        "and Otsu's two-class split; and an outlier k_sn for segments (Q3 + 3 IQR). Written once per "
+        "m/n. Outputs: <write_fname>_chi_knickpoints_mn_*.csv, "
+        "<write_fname>_chi_knickpoint_thresholds_mn_*.csv.",
+        "Outputs", "switch", "fit_chi_networks"};
 
     bool_default_map["write_ksn_basin_summary"] = true;
     help_map["write_ksn_basin_summary"] = {"bool","true",
@@ -1716,6 +1747,8 @@ int main(int argc, char* argv[])
 
             lsdtt::lsdtt_chi_collection_result chi_networks;
             lsdtt::lsdtt_chi_network_fit_collection_result fit_results;
+            std::vector<lsdtt::lsdtt_chi_basin_source_keys> chi_basin_keys;
+            lsdtt::lsdtt_chi_fit_source_key_map fit_source_keys;
 
             try
             {
@@ -1782,6 +1815,12 @@ int main(int argc, char* argv[])
                 std::cout << "  Fit complete: "
                           << fit_results.basins.size() << " basin(s)\n";
                 std::cout.flush();
+
+                // The chi data maps' channel keys, for the fit outputs.
+                chi_basin_keys = lsdtt::assign_chi_source_keys(
+                    chi_networks, *flow, routed_dem.get_meta().n_cols,
+                    routed_dem.get_meta().cell_size);
+                fit_source_keys = lsdtt::build_chi_fit_source_key_map(chi_networks, chi_basin_keys);
             }
             catch (const std::exception& e)
             {
@@ -1796,10 +1835,12 @@ int main(int argc, char* argv[])
                 std::cout.flush();
                 try
                 {
-                    const auto node_table =
+                    auto node_table =
                         lsdtt::export_chi_network_fit_nodes(fit_results);
-                    const auto seg_table  =
+                    auto seg_table  =
                         lsdtt::export_chi_network_fit_segments(fit_results);
+                    lsdtt::attach_chi_source_keys(node_table, fit_source_keys);
+                    lsdtt::attach_chi_source_keys(seg_table, fit_source_keys);
 
                     const std::string node_file =
                         pp.make_output_path( "_chi_fit_nodes_mn_" + mn_suffix(mn), ".csv");
@@ -1816,6 +1857,42 @@ int main(int argc, char* argv[])
                 {
                     std::cerr << "Warning: writing fit tables failed for m/n = "
                               << mn << ": " << e.what() << "\n";
+                }
+            }
+
+            if (bf["write_chi_tributary_table"] || bf["write_chi_knickpoint_table"])
+            {
+                try
+                {
+                    const lsdtt::lsdtt_chi_tributary_knickpoint_tables tk =
+                        lsdtt::build_chi_tributaries_and_knickpoints(
+                            fit_results, chi_networks, chi_basin_keys, routed_dem.get_meta());
+                    if (bf["write_chi_tributary_table"])
+                    {
+                        const std::string f = pp.make_output_path("_chi_tributaries_mn_" + mn_suffix(mn), ".csv");
+                        lsdtt::write_chi_tributaries_csv(f, tk.tributaries);
+                        std::cout << "  Tributaries: " << tk.tributaries.size() << " -> " << f << "\n";
+                    }
+                    if (bf["write_chi_knickpoint_table"])
+                    {
+                        const std::string f = pp.make_output_path("_chi_knickpoints_mn_" + mn_suffix(mn), ".csv");
+                        lsdtt::write_chi_knickpoints_csv(f, tk.knickpoints);
+                        const std::string g = pp.make_output_path("_chi_knickpoint_thresholds_mn_" + mn_suffix(mn), ".csv");
+                        lsdtt::write_chi_knickpoint_thresholds_csv(g, tk.thresholds);
+                        long n_j = 0;
+                        for (const auto& k : tk.knickpoints) n_j += k.at_junction;
+                        std::cout << "  Knickpoint candidates: " << tk.knickpoints.size() << " (" << n_j
+                                  << " at tributary junctions) -> " << f << "\n";
+                        for (const auto& t : tk.thresholds)
+                            if (t.measure == "abs_delta_ksn" || t.measure == "ksn")
+                                std::cout << "    suggested " << t.measure << " threshold (" << t.method << "): "
+                                          << t.threshold << ", " << t.n_above << " of " << t.n_total << " above\n";
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: tributary / knickpoint tables failed for m/n = " << mn << ": "
+                              << e.what() << "\n";
                 }
             }
 
@@ -2188,7 +2265,8 @@ int main(int argc, char* argv[])
                         routed_dem.get_meta(),
                         seg_lines_file,
                         chi_fit_lines_fmt,
-                        bf["calculate_spatial_index"]
+                        bf["calculate_spatial_index"],
+                        &fit_source_keys
                     );
                 }
                 catch (const std::exception& e)

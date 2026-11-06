@@ -1288,7 +1288,9 @@ void write_chi_network_fit_nodes_csv(
         filename, "write_chi_network_fit_nodes_csv: cannot open ");
     out << "basin_index,outlet_flat,flat,receiver_flat,chi,observed_elevation,"
            "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
-           "is_main_stem,is_source,is_junction,is_split_point\n";
+           "is_main_stem,is_source,is_junction,is_split_point";
+    const bool with_keys = table.source_key.size() == table.flat.size() && !table.flat.empty();
+    out << (with_keys ? ",source_key\n" : "\n");
 
     const std::size_t n = table.flat.size();
     for (std::size_t i = 0; i < n; ++i)
@@ -1306,7 +1308,35 @@ void write_chi_network_fit_nodes_csv(
             << static_cast<int>(table.is_main_stem[i]) << ','
             << static_cast<int>(table.is_source[i]) << ','
             << static_cast<int>(table.is_junction[i]) << ','
-            << static_cast<int>(table.is_split_point[i]) << '\n';
+            << static_cast<int>(table.is_split_point[i]);
+        if (with_keys) out << ',' << table.source_key[i];
+        out << '\n';
+    }
+}
+
+void attach_chi_source_keys(lsdtt_chi_network_fit_node_table& table,
+                            const lsdtt_chi_fit_source_key_map& keys)
+{
+    table.source_key.assign(table.flat.size(), -1);
+    for (std::size_t i = 0; i < table.flat.size(); ++i)
+    {
+        const auto b = static_cast<std::size_t>(table.basin_index[i]);
+        if (b >= keys.size()) continue;
+        const auto it = keys[b].find(table.flat[i]);
+        if (it != keys[b].end()) table.source_key[i] = it->second;
+    }
+}
+
+void attach_chi_source_keys(lsdtt_chi_network_fit_segment_table& table,
+                            const lsdtt_chi_fit_source_key_map& keys)
+{
+    table.source_key.assign(table.segment_id.size(), -1);
+    for (std::size_t i = 0; i < table.segment_id.size(); ++i)
+    {
+        const auto b = static_cast<std::size_t>(table.basin_index[i]);
+        if (b >= keys.size()) continue;
+        const auto it = keys[b].find(table.upstream_flat[i]);
+        if (it != keys[b].end()) table.source_key[i] = it->second;
     }
 }
 
@@ -1318,7 +1348,9 @@ void write_chi_network_fit_segments_csv(
         filename, "write_chi_network_fit_segments_csv: cannot open ");
     out << "basin_index,outlet_flat,segment_id,parent_segment_id,branch_id,"
            "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
-           "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes\n";
+           "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes";
+    const bool with_keys = table.source_key.size() == table.segment_id.size() && !table.segment_id.empty();
+    out << (with_keys ? ",source_key\n" : "\n");
 
     const std::size_t n = table.segment_id.size();
     for (std::size_t i = 0; i < n; ++i)
@@ -1336,7 +1368,9 @@ void write_chi_network_fit_segments_csv(
             << table.upstream_elevation[i] << ','
             << table.k_sn[i] << ','
             << table.max_abs_residual[i] << ','
-            << table.n_nodes[i] << '\n';
+            << table.n_nodes[i];
+        if (with_keys) out << ',' << table.source_key[i];
+        out << '\n';
     }
 }
 
@@ -1454,7 +1488,8 @@ void write_chi_network_fit_segments_vector(
     const lsdtt_raster_meta&   meta,
     const std::string&         filename,
     vector_output_format       fmt,
-    bool                       spatial_index)
+    bool                       spatial_index,
+    const lsdtt_chi_fit_source_key_map* keys)
 {
     lsdtt_vector_schema schema;
     schema.field_names = {
@@ -1474,6 +1509,11 @@ void write_chi_network_fit_segments_vector(
         lsdtt_vector_field_type::double_type,
         lsdtt_vector_field_type::int64_type
     };
+    if (keys)
+    {
+        schema.field_names.push_back("source_key");
+        schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
+    }
 
     const int    n_cols    = meta.n_cols;
     const int    n_rows    = meta.n_rows;
@@ -1522,7 +1562,7 @@ void write_chi_network_fit_segments_vector(
 
             if (pts.size() < 2) continue;
 
-            writer.write_line(pts, {
+            std::vector<lsdtt_vector_field_value> attrs = {
                 static_cast<std::int64_t>(bi),
                 basin.outlet_flat,
                 static_cast<std::int64_t>(seg.segment_id),
@@ -1533,7 +1573,18 @@ void write_chi_network_fit_segments_vector(
                 static_cast<double>(seg.downstream_elevation),
                 static_cast<double>(seg.upstream_elevation),
                 static_cast<std::int64_t>(seg.n_nodes)
-            });
+            };
+            if (keys)
+            {
+                std::int64_t k = -1;
+                if (bi < keys->size())
+                {
+                    const auto kit = (*keys)[bi].find(seg.upstream_flat);
+                    if (kit != (*keys)[bi].end()) k = kit->second;
+                }
+                attrs.push_back(k);
+            }
+            writer.write_line(pts, attrs);
         }
     }
 

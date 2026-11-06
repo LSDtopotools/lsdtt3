@@ -137,7 +137,7 @@ enum class stream_burn_mode
     burn_in_place,
     snap_to_network,
     snap_to_accumulation,
-    burn_to_corridor     // lsdtt_burn_corridor_cpu (river-lines plan VT)
+    burn_to_corridor     // lsdtt_burn_corridor_cpu
 };
 
 // Resolve from string ("burn_in_place" / "snap_to_network" /

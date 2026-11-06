@@ -169,7 +169,7 @@ small_pit_fill_result fill_small_depressions(const lsdtt_raster_cpu& dem, int ma
 
     depression_hierarchy_options o;
     o.boundary_conditions = boundary_conditions;
-    o.nodata_is_ocean = true;   // NoData is an outlet, as in the fill (plan 12.13 R3)
+    o.nodata_is_ocean = true;   // NoData is an outlet, as in the fill
     std::vector<dep_label_t> label;
     std::vector<uint8_t> flowdir;
     const lsdtt_depression_hierarchy deps = build_depression_hierarchy(dem, label, flowdir, o);

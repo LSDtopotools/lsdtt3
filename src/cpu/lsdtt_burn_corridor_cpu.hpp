@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // lsdtt_burn_corridor_cpu: stream_burn_mode burn_to_corridor, for a vector
-// network that is the truth (river-lines plan, phase VT2, sections 12.10-12.14).
+// network that is the truth (e.g. OS Open Rivers prepared by lsdtt-fetch-river-lines).
 //
 // The elevation under the burn line comes from the ORIGINAL DEM, and the rest
 // of the DEM is then made to drain to the line.
@@ -57,7 +57,7 @@
 //      in chi with the same rules, and 5-7 are repeated from the original DEM.
 //
 // The result DEM drains every cell to the edge. The CLI then applies its own
-// whole-DEM carve-then-fill (plan V4), so routing, s-vector and accumulation
+// whole-DEM carve-then-fill, so routing, s-vector and accumulation
 // are integrated with the burned channel.
 //
 // GDAL-free. Never prints (the depression hierarchy and breach report on their

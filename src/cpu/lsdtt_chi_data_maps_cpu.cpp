@@ -48,6 +48,128 @@ std::string high_prec(double v)
 
 } // anonymous namespace
 
+std::vector<lsdtt_chi_basin_source_keys> assign_chi_source_keys(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_flow_base&             flow,
+    int                                n_cols,
+    double                             cell_size,
+    bool                               verbose)
+{
+    std::vector<lsdtt_chi_basin_source_keys> out(chi_networks.basins.size());
+    std::int32_t next_basin_key  = 0;
+    std::int32_t next_source_key = 0;
+    std::size_t  n_complete      = 0;
+
+    for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
+    {
+        const auto& basin = chi_networks.basins[bi];
+        auto&       keys  = out[bi];
+        const std::size_t n = basin.flats.size();
+
+        if (n == 0)
+        {
+            if (verbose) std::cout << "  basin[" << bi << "] has no nodes; skipping.\n";
+            continue;
+        }
+
+        lsdtt_basin_cpu basin_obj(basin.outlet_flat, flow);
+        const bool complete = basin_obj.check_basin_completeness();
+        if (verbose)
+        {
+            if (!complete)
+                std::cout << "  basin[" << bi << "] outlet_flat=" << basin.outlet_flat
+                          << " is incomplete (upslope area touches nodata); skipping.\n";
+            else
+                std::cout << "  basin[" << bi << "]  outlet_flat=" << basin.outlet_flat
+                          << "  n_nodes=" << n << "  [complete]\n";
+        }
+
+        // Local index map and donor lists. Receiver-before-donor ordering:
+        // flats[0] is the outlet and every other node's receiver has a lower index.
+        std::unordered_map<std::int64_t, std::size_t> local_idx;
+        local_idx.reserve(n);
+        for (std::size_t i = 0; i < n; ++i)
+            local_idx[basin.flats[i]] = i;
+
+        std::vector<std::vector<std::size_t>> donors(n);
+        for (std::size_t i = 1; i < n; ++i)
+            donors[local_idx.at(basin.receiver_flats[i])].push_back(i);
+
+        keys.flow_distance_m.assign(n, 0.0);
+        for (std::size_t i = 1; i < n; ++i)
+        {
+            const std::int64_t rec = basin.receiver_flats[i];
+            keys.flow_distance_m[i] = keys.flow_distance_m[local_idx.at(rec)] +
+                                      d8_step_length(basin.flats[i], rec, n_cols, cell_size);
+        }
+        keys.drainage_area_m2.resize(n);
+        for (std::size_t i = 0; i < n; ++i)
+            keys.drainage_area_m2[i] =
+                static_cast<double>(flow.s_vector_size_unchecked(basin.flats[i])) *
+                cell_size * cell_size;
+
+        keys.is_source.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+            if (donors[i].empty()) keys.is_source[i] = 1;
+
+        keys.source_key.assign(n, -1);
+        if (!complete) continue;
+        ++n_complete;
+        keys.basin_key = next_basin_key++;
+
+        // Primary donor: longest upstream path. Upstream-first (reverse index)
+        // so every donor is done before its receiver.
+        constexpr std::size_t k_no_donor = std::numeric_limits<std::size_t>::max();
+        std::vector<double>      max_path_up(n, 0.0);
+        std::vector<std::size_t> primary_donor(n, k_no_donor);
+        for (std::size_t ii = n; ii-- > 0; )
+        {
+            if (donors[ii].empty()) continue;
+            double      best   = -1.0;
+            std::size_t best_d = k_no_donor;
+            for (std::size_t d : donors[ii])
+            {
+                const double candidate =
+                    d8_step_length(basin.flats[d], basin.flats[ii], n_cols, cell_size) +
+                    max_path_up[d];
+                if (best_d == k_no_donor || candidate > best)
+                {
+                    best   = candidate;
+                    best_d = d;
+                }
+            }
+            max_path_up[ii]   = best;
+            primary_donor[ii] = best_d;
+        }
+        for (std::size_t ii = n; ii-- > 0; )
+            keys.source_key[ii] = donors[ii].empty() ? next_source_key++
+                                                     : keys.source_key[primary_donor[ii]];
+    }
+
+    if (verbose)
+    {
+        std::cout << "  Complete basins: " << n_complete
+                  << " / " << chi_networks.basins.size() << "\n";
+        std::cout.flush();
+    }
+    return out;
+}
+
+lsdtt_chi_fit_source_key_map build_chi_fit_source_key_map(
+    const lsdtt_chi_collection_result&               chi_networks,
+    const std::vector<lsdtt_chi_basin_source_keys>& keys)
+{
+    lsdtt_chi_fit_source_key_map out(chi_networks.basins.size());
+    for (std::size_t bi = 0; bi < chi_networks.basins.size() && bi < keys.size(); ++bi)
+    {
+        const auto& flats = chi_networks.basins[bi].flats;
+        out[bi].reserve(flats.size());
+        for (std::size_t i = 0; i < flats.size() && i < keys[bi].source_key.size(); ++i)
+            out[bi][flats[i]] = keys[bi].source_key[i];
+    }
+    return out;
+}
+
 void write_chi_data_maps(
     const lsdtt_chi_collection_result& chi_networks,
     const lsdtt_flow_base&             flow,
@@ -132,126 +254,23 @@ void write_chi_data_maps(
     std::vector<SourceRow> all_sources;
     std::vector<OutletRow> all_outlets;
 
-    std::int32_t next_basin_key  = 0;
-    std::int32_t next_source_key = 0;
-
-    // Pre-filter: keep only non-empty complete basins.
-    std::vector<std::size_t> valid_basin_indices;
-    valid_basin_indices.reserve(chi_networks.basins.size());
-
-    for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
-    {
-        const auto& basin = chi_networks.basins[bi];
-
-        if (basin.flats.empty())
-        {
-            std::cout << "  basin[" << bi << "] has no nodes; skipping.\n";
-            continue;
-        }
-
-        lsdtt_basin_cpu basin_obj(basin.outlet_flat, flow);
-        if (!basin_obj.check_basin_completeness())
-        {
-            std::cout << "  basin[" << bi << "] outlet_flat=" << basin.outlet_flat
-                      << " is incomplete (upslope area touches nodata); skipping.\n";
-            continue;
-        }
-
-        std::cout << "  basin[" << bi << "]  outlet_flat=" << basin.outlet_flat
-                  << "  n_nodes=" << basin.flats.size() << "  [complete]\n";
-        valid_basin_indices.push_back(bi);
-    }
-
-    std::cout << "  Complete basins: " << valid_basin_indices.size()
-              << " / " << chi_networks.basins.size() << "\n";
-    std::cout.flush();
+    const std::vector<lsdtt_chi_basin_source_keys> basin_keys =
+        assign_chi_source_keys(chi_networks, flow, n_cols, cell_size, true);
+    std::int32_t next_basin_key = 0;
 
     const std::vector<float>& dem_data = dem.get_data();
 
-    for (const std::size_t bi : valid_basin_indices)
+    for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
     {
+        const lsdtt_chi_basin_source_keys& keys = basin_keys[bi];
+        if (keys.basin_key < 0) continue;
         const auto&        basin     = chi_networks.basins[bi];
-        const std::int32_t basin_key = next_basin_key++;
+        const std::int32_t basin_key = keys.basin_key;
+        next_basin_key = basin_key + 1;
         const std::size_t  n         = basin.flats.size();
-
-        // Local index map (flat -> position in basin vectors).
-        std::unordered_map<std::int64_t, std::size_t> local_idx;
-        local_idx.reserve(n);
-        for (std::size_t i = 0; i < n; ++i)
-            local_idx[basin.flats[i]] = i;
-
-        // Donor lists: needed for flow distance, max-path-up, and source keys.
-        // The receiver-before-donor ordering means flats[0] is the outlet and
-        // each node with index > 0 has its receiver at a lower index.
-        std::vector<std::vector<std::size_t>> donors(n);
-        for (std::size_t i = 1; i < n; ++i)
-        {
-            const std::size_t rec_idx = local_idx.at(basin.receiver_flats[i]);
-            donors[rec_idx].push_back(i);
-        }
-
-        // Flow distance from outlet (receiver-before-donor: receiver's distance
-        // is set before we encounter any of its donors).
-        std::vector<double> flow_dist(n, 0.0);
-        for (std::size_t i = 1; i < n; ++i)
-        {
-            const std::int64_t flat    = basin.flats[i];
-            const std::int64_t rec     = basin.receiver_flats[i];
-            const std::size_t  rec_idx = local_idx.at(rec);
-            flow_dist[i] = flow_dist[rec_idx] +
-                           d8_step_length(flat, rec, n_cols, cell_size);
-        }
-
-        // Primary-donor (longest upstream path) for source-key inheritance.
-        // Processing in reverse index order (upstream-first) ensures all donors
-        // of node ii are already processed before ii itself.
-        constexpr std::size_t k_no_donor = std::numeric_limits<std::size_t>::max();
-        std::vector<double>      max_path_up(n, 0.0);
-        std::vector<std::size_t> primary_donor(n, k_no_donor);
-
-        for (std::size_t ii = n; ii-- > 0; )
-        {
-            if (donors[ii].empty())
-                continue;
-
-            double      best   = -1.0;
-            std::size_t best_d = k_no_donor;
-
-            for (std::size_t d : donors[ii])
-            {
-                const double step =
-                    d8_step_length(basin.flats[d], basin.flats[ii], n_cols, cell_size);
-                const double candidate = step + max_path_up[d];
-                if (best_d == k_no_donor || candidate > best)
-                {
-                    best   = candidate;
-                    best_d = d;
-                }
-            }
-
-            max_path_up[ii]   = best;
-            primary_donor[ii] = best_d;
-        }
-
-        // Source-key assignment.
-        // Headwaters (no donors) receive a new global key.
-        // Non-headwaters inherit from their primary donor so the longest
-        // tributary carries the same key continuously to the outlet.
-        std::vector<std::int32_t> src_key_of(n, -1);
-        std::vector<bool>         is_source(n, false);
-
-        for (std::size_t ii = n; ii-- > 0; )
-        {
-            if (donors[ii].empty())
-            {
-                is_source[ii]  = true;
-                src_key_of[ii] = next_source_key++;
-            }
-            else
-            {
-                src_key_of[ii] = src_key_of[primary_donor[ii]];
-            }
-        }
+        const std::vector<double>&       flow_dist  = keys.flow_distance_m;
+        const std::vector<std::int32_t>& src_key_of = keys.source_key;
+        const std::vector<std::uint8_t>& is_source  = keys.is_source;
 
         // Outlet row.
         {
@@ -278,9 +297,7 @@ void write_chi_data_maps(
                 lat = la; lon = lo;
             }
 
-            const double da =
-                static_cast<double>(flow.s_vector_size_unchecked(flat)) *
-                cell_size * cell_size;
+            const double da = keys.drainage_area_m2[i];
 
             const float elev = dem_data[static_cast<std::size_t>(flat)];
 
@@ -491,8 +508,9 @@ void write_chi_data_maps(
             fname, "chi_basin_polygons", sch, meta.crs_wkt, poly_fmt, false);
 
         std::int32_t bk = 0;
-        for (const std::size_t bi : valid_basin_indices)
+        for (std::size_t bi = 0; bi < basin_keys.size(); ++bi)
         {
+            if (basin_keys[bi].basin_key < 0) continue;
             try
             {
                 lsdtt_basin_cpu basin_obj(chi_networks.basins[bi].outlet_flat, flow);
@@ -572,70 +590,17 @@ void write_chi_data_map_lines(
     writer.begin_vector_write(
         fname, "chi_data_map_lines", schema, meta.crs_wkt, fmt, spatial_index);
 
-    std::int32_t next_basin_key  = 0;
-    std::int32_t next_source_key = 0;
+    const std::vector<lsdtt_chi_basin_source_keys> basin_keys =
+        assign_chi_source_keys(chi_networks, flow, n_cols, cell_size, false);
 
     for (std::size_t bi = 0; bi < chi_networks.basins.size(); ++bi)
     {
-        const auto& basin = chi_networks.basins[bi];
-
-        if (basin.flats.empty()) continue;
-
-        lsdtt_basin_cpu basin_obj(basin.outlet_flat, flow);
-        if (!basin_obj.check_basin_completeness()) continue;
-
-        const std::int32_t basin_key = next_basin_key++;
+        const lsdtt_chi_basin_source_keys& keys = basin_keys[bi];
+        if (keys.basin_key < 0) continue;
+        const auto&        basin     = chi_networks.basins[bi];
+        const std::int32_t basin_key = keys.basin_key;
         const std::size_t  n         = basin.flats.size();
-
-        // Build local index map and donor lists (same as write_chi_data_maps).
-        std::unordered_map<std::int64_t, std::size_t> local_idx;
-        local_idx.reserve(n);
-        for (std::size_t i = 0; i < n; ++i)
-            local_idx[basin.flats[i]] = i;
-
-        std::vector<std::vector<std::size_t>> donors(n);
-        for (std::size_t i = 1; i < n; ++i)
-        {
-            const std::size_t rec_idx = local_idx.at(basin.receiver_flats[i]);
-            donors[rec_idx].push_back(i);
-        }
-
-        // Primary donor (longest upstream path).
-        constexpr std::size_t k_no_donor = std::numeric_limits<std::size_t>::max();
-        std::vector<double>      max_path_up(n, 0.0);
-        std::vector<std::size_t> primary_donor(n, k_no_donor);
-
-        for (std::size_t ii = n; ii-- > 0; )
-        {
-            if (donors[ii].empty()) continue;
-
-            double best = -1.0;
-            std::size_t best_d = k_no_donor;
-
-            for (std::size_t d : donors[ii])
-            {
-                const double step =
-                    d8_step_length(basin.flats[d], basin.flats[ii], n_cols, cell_size);
-                const double candidate = step + max_path_up[d];
-                if (best_d == k_no_donor || candidate > best)
-                {
-                    best   = candidate;
-                    best_d = d;
-                }
-            }
-            max_path_up[ii]   = best;
-            primary_donor[ii] = best_d;
-        }
-
-        // Source-key assignment (same convention as write_chi_data_maps).
-        std::vector<std::int32_t> src_key_of(n, -1);
-        for (std::size_t ii = n; ii-- > 0; )
-        {
-            if (donors[ii].empty())
-                src_key_of[ii] = next_source_key++;
-            else
-                src_key_of[ii] = src_key_of[primary_donor[ii]];
-        }
+        const std::vector<std::int32_t>& src_key_of = keys.source_key;
 
         // Collect node indices per source_key in natural (outlet-to-source) order.
         std::unordered_map<std::int32_t, std::vector<std::size_t>> nodes_by_key;

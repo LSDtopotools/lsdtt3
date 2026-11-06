@@ -65,8 +65,7 @@ struct lsdtt_snap_key
 };
 
 // Quantise (x, y) to a snapping grid. tolerance_metres <= 0 falls back to 1e-6.
-// NOT used for joining points any more (2026-11-05, decision D9 of the
-// river-lines plan): rounding to a grid splits two points either side of a
+// NOT used for joining points any more (since 2026-11-05): rounding to a grid splits two points either side of a
 // grid line however close they are, and joins points up to tolerance x sqrt(2)
 // apart in one cell. Use lsdtt_point_snapper.
 [[nodiscard]] lsdtt_snap_key make_snap_key(

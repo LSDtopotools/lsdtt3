@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// seed_vector_source_on_valid_dem (lsdtt-stream-burning, river-lines plan SB1).
+// seed_vector_source_on_valid_dem (lsdtt-stream-burning).
 //
 // A 50 x 30 DEM, 10 m cells, sloping down to the east, whose first 10 columns
 // (100 m) are NoData, like the margin of a DEM warped to UTM. Expected answers

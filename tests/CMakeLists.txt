@@ -1850,7 +1850,7 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
-# Stream-burning source seeding (river-lines plan SB1): a source over the NoData
+# Stream-burning source seeding: a source over the NoData
 # margin of a warped DEM is moved downstream along its edge to the first valid
 # cell instead of being skipped. Exact answers from a hand-built DEM.
 add_executable(lsdtt-test-vector-source-seed cpp/test_vector_source_seed.cpp)
@@ -1859,14 +1859,15 @@ add_test(NAME unit_stream_burning_source_seed
          COMMAND lsdtt-test-vector-source-seed "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_source_seed")
 lsdtt_set_tests_properties(unit_stream_burning_source_seed PROPERTIES LABELS "stream_burning")
 
-# Corridor burning (stream_burn_mode burn_to_corridor, river-lines plan VT):
-# offset valley at three corridor widths, and a ridge across the valley.
+# Corridor burning (stream_burn_mode burn_to_corridor):
+# the minima profile, pit cleaning, cut cap, chi fit, banks, junctions and the
+# conditioned-DEM checks (see tests/cpp/test_burn_corridor.cpp).
 add_executable(lsdtt-test-burn-corridor cpp/test_burn_corridor.cpp)
 target_link_libraries(lsdtt-test-burn-corridor PRIVATE lsdtt3_cpu)
 add_test(NAME unit_stream_burning_corridor COMMAND lsdtt-test-burn-corridor)
 lsdtt_set_tests_properties(unit_stream_burning_corridor PROPERTIES LABELS "stream_burning")
 
-# Loop labels on the vector junction network (river-lines plan SB2):
+# Loop labels on the vector junction network:
 # loop_reason and closes_cycle, exact on a hand-built DEM (a stolen receiver
 # slot that cuts the network, and a real braid).
 add_executable(lsdtt-test-vector-loop-labels cpp/test_vector_loop_labels.cpp)
@@ -1875,7 +1876,7 @@ add_test(NAME unit_stream_burning_loop_labels
          COMMAND lsdtt-test-vector-loop-labels "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_loop_labels")
 lsdtt_set_tests_properties(unit_stream_burning_loop_labels PROPERTIES LABELS "stream_burning")
 
-# lsdtt-fetch-river-lines -> lsdtt-stream-burning (river-lines plan, phase 1b):
+# lsdtt-fetch-river-lines -> lsdtt-stream-burning:
 # the fixture network, and a reversed / near-miss / multipart copy of it, each
 # prepared by lsdtt-fetch-river-lines, must give stream burning's reference
 # vector summary and the burned DEM frozen for smoke_stream_burning above.
@@ -2409,7 +2410,7 @@ lsdtt_set_tests_properties(smoke_outlet_matching_edge_only PROPERTIES
 # =============================================================================
 # lsdtt-water-line-repair
 #
-# Line-end joining by distance (lsdtt_point_snapper, river-lines plan D9):
+# Line-end joining by distance (lsdtt_point_snapper):
 # exact cases, including the two the old grid-rounding key got wrong.
 add_executable(lsdtt-test-point-snapper cpp/test_point_snapper.cpp)
 target_link_libraries(lsdtt-test-point-snapper PRIVATE lsdtt3_cpu)
@@ -4188,6 +4189,24 @@ add_lsdtt_cli_smoke_test(
     --expect-raster-checksum tiny_d8_drainage_area.tif:112
 )
 
+# Tributary and knickpoint tables (write_chi_tributary_table,
+# write_chi_knickpoint_table, both on by default): the three files and their
+# headers. The values are tested in unit_chi_knickpoints.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_tributaries_knickpoints
+    lsdtt-chi-analysis
+    chi_analysis_smoke.param.in
+    tiny_chi_tributaries_mn_0p500.csv
+    --expect tiny_chi_knickpoints_mn_0p500.csv
+    --expect tiny_chi_knickpoint_thresholds_mn_0p500.csv
+    --expect-file-contains "tiny_chi_tributaries_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,parent_branch_id,branch_order,head_flat,junction_flat,head_x,head_y,junction_x,junction_y,junction_drainage_area_m2,basin_drainage_area_m2,area_fraction,area_rank_in_basin,length_m,chi_span,n_segments,ksn_min,ksn_median,ksn_max,ksn_max_segment_id,ksn_max_chi,n_descendants"
+    --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,upstream_segment_id,downstream_segment_id,flat,x,y,chi,elevation,flow_distance_m,drainage_area_m2,ksn_upstream,ksn_downstream,delta_ksn,log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised"
+    --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_delta_ksn,otsu,"
+    --expect-file-contains "tiny_chi_fit_segments_mn_0p500.csv:n_nodes,source_key"
+    --stdout-contains "Knickpoint candidates:"
+)
+lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
+
 add_lsdtt_cli_smoke_test(
     rigorous_chi_nodes_sha256
     lsdtt-chi-analysis
@@ -4200,7 +4219,12 @@ add_lsdtt_cli_smoke_test(
     # Verified against TopoToolbox before re-pinning: the per-basin regression
     # slope went from 1.00377 to 1.00000. See chi_increment() and
     # docs/developer_notes/testing_and_benchmarking.md.
-    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
+    # Re-pinned 2026-11-06: a source_key column (the chi data maps' channel key)
+    # was appended. With that last column removed the file hashes to the
+    # previous pin, b64aa126...26ad3, so no other value changed. The keys here
+    # are -1: the fixture's basin is incomplete and the data maps key only
+    # complete basins.
+    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:33afd142d184d44aedeac3676df0943015b81a8e8a0e898107d21c4ea6abb8a4
 )
 
 # -----------------------------------------------------------------------------
@@ -5877,6 +5901,15 @@ add_test(NAME unit_chi_lithology_channel_stats
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
 lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "chi")
 
+# Tributaries and knickpoints of a chi fit: a hand-built main stem and
+# tributary with known k_sn segments, areas and flow distances (boundary rows,
+# the junction row, tributary area / fraction / rank / descendants), and the
+# threshold methods (percentiles, median + 3 MAD, Otsu).
+add_executable(lsdtt-test-chi-knickpoints cpp/test_chi_knickpoints.cpp)
+target_link_libraries(lsdtt-test-chi-knickpoints PRIVATE lsdtt3_cpu)
+add_test(NAME unit_chi_knickpoints COMMAND lsdtt-test-chi-knickpoints)
+lsdtt_set_tests_properties(unit_chi_knickpoints PROPERTIES LABELS "chi")
+
 # Erodibility calibration from basin erosion rates: the York regression
 # (Pearson's data with York's weights), the erosion-rate sample reader and its
 # units, the K formula and property-table seams shared with relative K, the
@@ -6105,7 +6138,7 @@ add_lsdtt_cli_smoke_test(
     tiny_chi_fit_nodes_mn_0p500.csv
     --read-path "${LSDTT_CHI_LITHOLOGY_FIXTURE_DIR}"
     --expect tiny_chi_ksn_by_lithology_mn_0p500.csv
-    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:b64aa1266abc09369b423534d44ec5ed8a3ceac52d7d31e9f8637c8893c26ad3
+    --expect-sha256 tiny_chi_fit_nodes_mn_0p500.csv:33afd142d184d44aedeac3676df0943015b81a8e8a0e898107d21c4ea6abb8a4
 )
 lsdtt_set_tests_properties(rigorous_chi_lithology_observation_only PROPERTIES
     FIXTURES_REQUIRED chi_lithology_cli)

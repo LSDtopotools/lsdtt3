@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // lsdtt_point_snapper and build_line_endpoint_graph (lsdtt_vector_ops_cpu):
-// line ends are joined by DISTANCE, not by rounding to a grid (river-lines plan,
-// decision D9). Every expected id below follows from the rule "the nearest
+// line ends are joined by DISTANCE, not by rounding to a grid. Every expected id below follows from the rule "the nearest
 // point already added within the tolerance, else a new id":
 //
 //   * two points 0.02 m apart either side of a 1 m grid line (x = 0.49 and
