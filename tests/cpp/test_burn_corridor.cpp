@@ -18,9 +18,10 @@
 // (plan tests 3 and 8): each path falls strictly downstream; every valid
 // cell not on the DEM edge has a strictly lower neighbour; the steepest
 // descent from every line cell (but a path's last) is a line cell; filling
-// the output, or carving then filling it, changes no cell; and the D8
+// the output, or carving then filling it, changes no cell; the D8
 // channel network at a threshold contains the line downstream of where the
-// line first reaches it.
+// line first reaches it; and drainage area never falls downstream along a
+// path (no line cell is bypassed).
 //
 // Cases:
 //   1-D fit: a falling floor is all minima; a 10 m hole is used at the
@@ -251,6 +252,15 @@ void check_conditioned(const std::string& tag, const lsdtt::lsdtt_raster_cpu& de
             }
         }
         check(tag + ": the D8 network (20 cells) contains the line downstream of where it joins it", ok);
+        // Every line cell carries the flow: drainage area never falls downstream
+        // along a path (a corner cell bypassed by the diagonal would).
+        long n_fall = 0;
+        for (const auto& p : ro.r.paths)
+            // (from the second cell of a distributary: its first cell is the
+            // main stem's, and single-direction D8 sends the flow one way)
+            for (size_t i = (p.starts_on_path_id >= 0 ? 2 : 1); i < p.cells.size(); ++i)
+                if (a[static_cast<size_t>(p.cells[i])] < a[static_cast<size_t>(p.cells[i - 1])]) ++n_fall;
+        check(tag + ": drainage area never falls downstream along a path", n_fall == 0, num(n_fall));
     }
     (void)dem;
 }

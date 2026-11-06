@@ -275,6 +275,7 @@ struct reach_data
 {
     std::vector<lsdtt_xy> line;
     std::string name;
+    int line_index = -1;
     int from = -1, to = -1;
     double length = 0.0;
 };
@@ -340,6 +341,7 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         reach_data rd;
         rd.line = l;
         if (li < names.size()) rd.name = names[li];
+        rd.line_index = static_cast<int>(li);
         rd.from = snapper.id_for(l.front());
         rd.to = snapper.id_for(l.back());
         rd.length = line_length(l);
@@ -402,11 +404,16 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
     std::unordered_map<std::int64_t, int> channel_owner;   // cell -> reach, channels laid down so far
     std::vector<bool> processed(static_cast<size_t>(nreach), false);
 
+    auto adjacent = [&](std::int64_t a, std::int64_t b)
+    {
+        return a != b && std::abs(g.row(a) - g.row(b)) <= 1 && std::abs(g.col(a) - g.col(b)) <= 1;
+    };
     auto process = [&](int k)
     {
         const reach_data& rd = rs[static_cast<size_t>(k)];
         burn_corridor_reach& out = res.reaches[static_cast<size_t>(k)];
         out.reach_id = k;
+        out.line_index = rd.line_index;
         out.from_node = rd.from;
         out.to_node = rd.to;
         out.name = rd.name;
@@ -612,6 +619,19 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
             if (v == start) break;
         }
         std::reverse(path.begin(), path.end());
+        // Remove corners: a cell whose neighbours on the path are themselves
+        // neighbours carries no flow (steepest descent takes the diagonal), so
+        // it would be a line cell with almost no drainage area.
+        {
+            std::vector<std::int64_t> pulled;
+            pulled.reserve(path.size());
+            for (const std::int64_t f : path)
+            {
+                while (pulled.size() >= 2 && adjacent(pulled[pulled.size() - 2], f)) pulled.pop_back();
+                pulled.push_back(f);
+            }
+            path.swap(pulled);
+        }
 
         out.status = "fitted";
         if (arrival[static_cast<size_t>(rd.to)] < 0) arrival[static_cast<size_t>(rd.to)] = path.back();
@@ -666,10 +686,6 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         ++n_endpoints[ch.front()];
         ++n_endpoints[ch.back()];
     }
-    auto adjacent = [&](std::int64_t a, std::int64_t b)
-    {
-        return a != b && std::abs(g.row(a) - g.row(b)) <= 1 && std::abs(g.col(a) - g.col(b)) <= 1;
-    };
     std::vector<path_build> pb;
     std::vector<int> path_of(static_cast<size_t>(nreach), -1);
     std::vector<size_t> reach_begin(static_cast<size_t>(nreach), 0), reach_end(static_cast<size_t>(nreach), 0);
@@ -986,8 +1002,18 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
             ++res.n_ends_drained;
         }
     };
+    // where each line cell occurs: (path, index), for the cross-path raise
+    std::unordered_map<std::int64_t, std::vector<std::pair<int, int>>> occurrences;
+    for (const auto& rp : res.paths)
+        for (size_t i = 0; i < rp.cells.size(); ++i)
+            occurrences[rp.cells[i]].emplace_back(rp.path_id, static_cast<int>(i));
     auto banks = [&]()
     {
+        // Each line cell must drain to its own next cell. A lower off-line
+        // receiver is raised into a bank; a line cell of ANOTHER path that
+        // would take the flow (a distributary at a bifurcation, a parallel
+        // channel) is raised until it is less steep than the own-next step,
+        // where its own path stays monotone (otherwise it is counted).
         long n = 0, n_raised_line = 0;
         for (const auto& rp : res.paths)
         {
@@ -995,7 +1021,8 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
             {
                 const std::int64_t f = rp.cells[i];
                 if (owner_path[static_cast<size_t>(f)] != rp.path_id) continue;
-                for (int guard = 0; guard < 8; ++guard)
+                const std::int64_t own_next = rp.cells[i + 1];
+                for (int guard = 0; guard < 16; ++guard)
                 {
                     const int r = g.row(f), c = g.col(f);
                     double best_s = 0.0;
@@ -1008,20 +1035,48 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                         const std::int64_t v = g.flat(rr, cc);
                         const double dist = (k_dr[d] != 0 && k_dc[d] != 0) ? std::sqrt(2.0) * cs : cs;
                         const double sl = (static_cast<double>(work[static_cast<size_t>(f)]) - work[static_cast<size_t>(v)]) / dist;
-                        // ties go to the off-line cell, so a fixed receiver must be strictly steeper
-                        if (sl > best_s || (sl == best_s && sl > 0.0 && !fixed[static_cast<size_t>(v)]))
+                        // ties go against the own next cell, so it must be strictly steeper
+                        if (sl > best_s || (sl == best_s && sl > 0.0 && v != own_next))
                         {
                             best_s = sl;
                             recv = v;
                             recv_dist = dist;
                         }
                     }
-                    if (recv < 0 || fixed[static_cast<size_t>(recv)]) break;
+                    if (recv < 0 || recv == own_next) break;
                     const float zf = work[static_cast<size_t>(f)];
-                    work[static_cast<size_t>(recv)] = std::max(zf + static_cast<float>(gmin * recv_dist),
-                                                               std::nextafter(zf, std::numeric_limits<float>::infinity()));
-                    ++n;
-                    if (rp.z_profile[i] > zc(f) + 1e-9) ++n_raised_line;
+                    if (!fixed[static_cast<size_t>(recv)])
+                    {
+                        work[static_cast<size_t>(recv)] = std::max(zf + static_cast<float>(gmin * recv_dist),
+                                                                   std::nextafter(zf, std::numeric_limits<float>::infinity()));
+                        ++n;
+                        if (rp.z_profile[i] > zc(f) + 1e-9) ++n_raised_line;
+                        continue;
+                    }
+                    // a fixed cell of another path (or an exit route)
+                    const int Q = owner_path[static_cast<size_t>(recv)];
+                    int qi = Q >= 0 ? owner_idx[static_cast<size_t>(recv)] : -1;
+                    const double s_own = (static_cast<double>(zf) - work[static_cast<size_t>(own_next)]) / g.step(f, own_next);
+                    const double want = static_cast<double>(zf) - 0.5 * s_own * recv_dist;
+                    // every path through the cell must stay monotone
+                    double cap = std::numeric_limits<double>::infinity();
+                    bool head_of_a_path = false;
+                    auto oc = occurrences.find(recv);
+                    if (oc != occurrences.end())
+                        for (const auto& [P2, j2] : oc->second)
+                        {
+                            if (j2 == 0) { head_of_a_path = true; continue; }
+                            const std::int64_t pred = res.paths[static_cast<size_t>(P2)].cells[static_cast<size_t>(j2 - 1)];
+                            cap = std::min(cap, static_cast<double>(work[static_cast<size_t>(pred)]) - gmin * g.step(pred, recv));
+                        }
+                    if (head_of_a_path) qi = 0;
+                    if (Q < 0 || qi <= 0 || want > cap)
+                    {
+                        ++res.n_cross_path_unresolved;
+                        break;
+                    }
+                    work[static_cast<size_t>(recv)] = static_cast<float>(want);
+                    ++res.n_cross_path_raised;
                 }
             }
         }
@@ -1037,6 +1092,8 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         res.n_cells_daylighted = 0;
         res.n_bank_cells = 0;
         res.n_bank_cells_at_raised_line = 0;
+        res.n_cross_path_raised = 0;
+        res.n_cross_path_unresolved = 0;
         for (const auto& rp : res.paths)
             for (size_t i = 0; i < rp.cells.size(); ++i)
             {
@@ -1096,12 +1153,21 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         fit_all(&a1);
         condition();
         const std::vector<double> a2 = d8_area();
+        std::vector<double> ch;
         for (const auto& rp : res.paths)
             for (const std::int64_t f : rp.cells)
             {
                 const double A1 = a1[static_cast<size_t>(f)], A2 = a2[static_cast<size_t>(f)];
-                if (A1 > 0.0) res.max_area_change = std::max(res.max_area_change, std::fabs(A2 - A1) / A1);
+                if (A1 > 0.0) ch.push_back(std::fabs(A2 - A1) / A1);
             }
+        if (!ch.empty())
+        {
+            std::sort(ch.begin(), ch.end());
+            res.max_area_change = ch.back();
+            res.median_area_change = ch[ch.size() / 2];
+            res.frac_area_change_over_10pct =
+                static_cast<double>(ch.end() - std::upper_bound(ch.begin(), ch.end(), 0.1)) / static_cast<double>(ch.size());
+        }
     }
 
     // ---- outputs ---------------------------------------------------------------------

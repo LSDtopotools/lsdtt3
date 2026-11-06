@@ -47,9 +47,11 @@
 //      outlets; a breach path never runs along a line) and filled (priority
 //      flood seeded at the edge, NoData and the fixed cells, which are never
 //      raised).
-//   7. Banks: where a line cell's steepest descent would leave the network,
-//      the off-line receiver is raised to the line cell's value plus the
-//      minimum gradient, and the fill is repeated.
+//   7. Banks: each line cell must drain to its own next cell. A lower
+//      off-line receiver is raised to the line cell's value plus the minimum
+//      gradient; a line cell of another path that would take the flow (a
+//      distributary at a bifurcation) is raised until it is less steep, where
+//      its own path stays monotone. Then the fill is repeated.
 //   8. Chi fit only: drainage area is read along the paths from D8 on that
 //      surface (so it follows the burned network), the profiles are refitted
 //      in chi with the same rules, and 5-7 are repeated from the original DEM.
@@ -146,6 +148,7 @@ small_pit_fill_result fill_small_depressions(const lsdtt_raster_cpu& dem, int ma
 struct burn_corridor_reach
 {
     int reach_id = -1;
+    int line_index = -1;              // index of the input line
     int from_node = -1;
     int to_node = -1;
     int path_id = -1;
@@ -159,7 +162,7 @@ struct burn_corridor_reach
     double max_raise_m = 0.0;         // final line value minus cleaned
     int n_record_lows = 0;
     int n_rejected_lows = 0;
-    std::vector<lsdtt_xy> channel;    // cell centres of the channel used
+    std::vector<lsdtt_xy> channel;    // cell centres of the channel used (empty if skipped)
 };
 
 struct burn_corridor_path
@@ -211,8 +214,12 @@ struct burn_corridor_result
     long n_offline_cells_raised = 0;  // off the line, above the original DEM (fill and banks)
     long n_bank_cells = 0;
     long n_bank_cells_at_raised_line = 0;   // banks beside line cells above the cleaned DEM
+    long n_cross_path_raised = 0;     // line cells of another path raised so a line keeps its flow (e.g. at a bifurcation)
+    long n_cross_path_unresolved = 0; // ... where that would break the other path's monotone profile
     breach_least_cost_diagnostics breach;   // of the last step-6 carve
     double max_area_change = 0.0;     // chi fit: largest relative change of A on the line between passes
+    double median_area_change = 0.0;  // chi fit: median of that change
+    double frac_area_change_over_10pct = 0.0;   // chi fit: fraction of line cells changing by more than 10%
     std::vector<std::string> notes;
 };
 

@@ -1176,12 +1176,15 @@ int main(int argc, char* argv[])
                       << cr.n_cells_daylighted << " cells)\n"
                       << "Off the line: " << cr.n_offline_cells_carved << " cells carved, "
                       << cr.n_offline_cells_raised << " raised (" << cr.n_bank_cells << " bank cells, "
-                      << cr.n_bank_cells_at_raised_line << " of them beside raised line cells); breach "
+                      << cr.n_bank_cells_at_raised_line << " of them beside raised line cells); "
+                      << cr.n_cross_path_raised << " line cell(s) of other paths raised so a line keeps its flow ("
+                      << cr.n_cross_path_unresolved << " unresolved); breach "
                       << cr.breach.pits_solved << " pits solved, "
                       << (cr.breach.pits_unsolved_exhausted + cr.breach.pits_unsolved_max_cost) << " left to the fill\n";
             if (co.fit == lsdtt::burn_profile_fit::chi)
-                std::cout << "Chi fit: largest relative change of drainage area on the line between passes: "
-                          << cr.max_area_change << "\n";
+                std::cout << "Chi fit: relative change of drainage area on the line between passes: median "
+                          << cr.median_area_change << ", largest " << cr.max_area_change << ", "
+                          << 100.0 * cr.frac_area_change_over_10pct << "% of line cells change by more than 10%\n";
 
             // Final whole-DEM conditioning, as the other modes do (plan V4), so
             // routing on the output is integrated with the burned channel.
@@ -1272,8 +1275,11 @@ int main(int argc, char* argv[])
                                       bf["calculate_spatial_index"]);
                 for (const auto& rc : cr.reaches)
                 {
-                    if (rc.channel.size() < 2) continue;   // skipped reaches have no channel
-                    vw.write_line(rc.channel, {static_cast<std::int64_t>(rc.reach_id),
+                    // A skipped reach has no channel: it is written with its vector line.
+                    const std::vector<lsdtt::lsdtt_xy>& geom =
+                        rc.channel.size() >= 2 ? rc.channel : cl.lines[static_cast<size_t>(rc.line_index)];
+                    if (geom.size() < 2) continue;
+                    vw.write_line(geom, {static_cast<std::int64_t>(rc.reach_id),
                                                static_cast<std::int64_t>(rc.from_node),
                                                static_cast<std::int64_t>(rc.to_node),
                                                static_cast<std::int64_t>(rc.path_id), rc.name, rc.status,
