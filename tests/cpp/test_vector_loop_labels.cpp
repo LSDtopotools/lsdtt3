@@ -7,7 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Loop labels of lsdtt_vector_to_junction_network (river-lines plan SB2):
+// Loop labels of lsdtt_vector_to_junction_network:
 // loop_reason and closes_cycle on the labelled edges.
 //
 // A 50 x 30 DEM, 10 m cells, falling 1 m per cell to the east, and two

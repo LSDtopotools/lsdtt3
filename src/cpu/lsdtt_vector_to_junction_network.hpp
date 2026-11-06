@@ -90,7 +90,7 @@ struct lsdtt_vector_to_junction_network_options
     // downstream D8-based loop resolver.
     bool break_cycles = false;
 
-    // Direction (river-lines plan SB3). false (default): each junction drains
+    // Direction. false (default): each junction drains
     // through its steepest downhill edge, by DEM elevation. true: through the
     // edge whose DIGITISED order leaves it (lines prepared downstream, e.g. by
     // lsdtt-fetch-river-lines), even where the DEM rises along it locally;

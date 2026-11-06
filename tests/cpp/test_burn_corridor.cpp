@@ -7,15 +7,15 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// burn_to_corridor, phase VT2 (river-lines plan 12.10-12.15): the burned
+// stream_burn_mode burn_to_corridor: the burned
 // profile comes from the minima of the ORIGINAL DEM under the line, and the
 // rest of the DEM is carved and filled to drain to it.
 //
 // Synthetic DEMs, 80 x 40 cells of 10 m. The standard valley falls 0.05 m/m
 // east and rises 0.1 m/m away from a floor along row 24.
 //
-// Every burned case is also checked for the conditioned-DEM properties
-// (plan tests 3 and 8): each path falls strictly downstream; every valid
+// Every burned case is also checked for the conditioned-DEM properties:
+// each path falls strictly downstream; every valid
 // cell not on the DEM edge has a strictly lower neighbour; the steepest
 // descent from every line cell (but a path's last) is a line cell; filling
 // the output, or carving then filling it, changes no cell; the D8
@@ -53,7 +53,7 @@
 //     the channel is in the floor, no banks; X = 10 m: within 15 m of the
 //     line; X = 0: on the line, banks raised.
 //   Interior end: a line ending in a pond behind a dam is given an exit.
-//   Cut cap in 2-D (12.14): a 10 m deep, 30-cell hole on the line (N = 16):
+//   Cut cap in 2-D: a 10 m deep, 30-cell hole on the line (N = 16):
 //     used at the default cap, rejected at 5 m (cut <= 5 m), linear and chi.
 //   NoData on the path (R4): a 3-cell NoData hole on the line: X = 20 m goes
 //     round it; X = 0 skips the reach (no_corridor_path).
@@ -182,7 +182,7 @@ std::set<std::int64_t> line_cells(const lsdtt::burn_corridor_result& r)
     return s;
 }
 
-// The conditioned-DEM properties (plan tests 3 and 8).
+// The conditioned-DEM properties.
 void check_conditioned(const std::string& tag, const lsdtt::lsdtt_raster_cpu& dem, const run_out& ro)
 {
     const auto& out = ro.out;
@@ -621,7 +621,7 @@ int main()
         check_conditioned("interior end", dem, ro);
     }
 
-    // ===== cut cap in 2-D (12.14) =========================================================
+    // ===== cut cap in 2-D =========================================================
     {
         // A 10 m deep hole of 30 cells (rows 23-25, columns 30-39) on the floor.
         auto h = [](int r, int c) { return valley(r, c) - ((r >= 23 && r <= 25 && c >= 30 && c <= 39) ? 10.0 : 0.0); };

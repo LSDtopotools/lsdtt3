@@ -1086,8 +1086,7 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
-    // burn_to_corridor: the vector network is the truth (river-lines plan VT2,
-    // 12.10-12.14). Works from the input DEM (not the filled one) and returns
+    // burn_to_corridor: the vector network is the truth. Works from the input DEM (not the filled one) and returns
     // here: none of the snap_to_network machinery below is used.
     // -------------------------------------------------------------------------
     if (burn_mode == lsdtt::stream_burn_mode::burn_to_corridor)
@@ -1126,7 +1125,8 @@ int main(int argc, char* argv[])
                 if (!(co.max_cut_metres > 0.0)) throw std::invalid_argument("burn_profile_max_cut_metres must be > 0");
                 if (co.m_over_n < 0.0) throw std::invalid_argument("m_over_n must be >= 0");
                 if (!(co.chi_A0 > 0.0)) throw std::invalid_argument("chi_A0 must be > 0");
-                // Step 6 always carves with least-cost breach (plan 12.14 R5).
+                // The off-line carve always uses least-cost breach (it alone takes
+                // the fixed line cells).
                 const float bmc = ff["breach_max_cost"];
                 co.breach.max_dist       = ifs["breach_max_dist_pixels"];
                 co.breach.max_cost       = bmc > 0.0f ? static_cast<double>(bmc) : std::numeric_limits<double>::infinity();
@@ -1186,7 +1186,7 @@ int main(int argc, char* argv[])
                           << cr.median_area_change << ", largest " << cr.max_area_change << ", "
                           << 100.0 * cr.frac_area_change_over_10pct << "% of line cells change by more than 10%\n";
 
-            // Final whole-DEM conditioning, as the other modes do (plan V4), so
+            // Final whole-DEM conditioning, as the other modes do, so
             // routing on the output is integrated with the burned channel.
             lsdtt::lsdtt_raster_cpu final_dem;
             try
@@ -1436,7 +1436,7 @@ int main(int argc, char* argv[])
                   << fb.median_head_elevation << " m, outlet at (" << fb.x << ", " << fb.y << ")\n";
     }
     {
-        // Edges cut out of the drainage graph, by reason (river-lines plan SB2).
+        // Edges cut out of the drainage graph, by reason.
         std::map<std::string, int> by_reason;
         int n_labelled = 0, n_cycle = 0;
         for (const auto& e : vector_network.edges())

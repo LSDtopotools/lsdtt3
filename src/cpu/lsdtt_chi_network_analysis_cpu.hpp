@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "lsdtt_chi_extraction_cpu.hpp"
@@ -130,6 +131,10 @@ struct lsdtt_chi_network_fit_node_table
     std::vector<std::uint8_t> is_source;
     std::vector<std::uint8_t> is_junction;
     std::vector<std::uint8_t> is_split_point;
+
+    // Channel key of the chi data maps (attach_chi_source_keys); empty if not
+    // attached, and then the CSV has no source_key column.
+    std::vector<std::int32_t> source_key;
 };
 
 
@@ -155,7 +160,23 @@ struct lsdtt_chi_network_fit_segment_table
 
     std::vector<float> max_abs_residual;
     std::vector<std::int32_t> n_nodes;
+
+    // Channel key of the segment's upstream node (attach_chi_source_keys);
+    // empty if not attached, and then the CSV has no source_key column.
+    std::vector<std::int32_t> source_key;
 };
+
+// Per fitted basin (same index as the fit collection), node flat -> the chi
+// data maps' source_key (-1 in basins the data maps do not key). Built by
+// build_chi_fit_source_key_map (lsdtt_chi_data_maps_cpu).
+using lsdtt_chi_fit_source_key_map =
+    std::vector<std::unordered_map<std::int64_t, std::int32_t>>;
+
+// Fill table.source_key for every row (by basin_index and flat / upstream_flat).
+void attach_chi_source_keys(lsdtt_chi_network_fit_node_table& table,
+                            const lsdtt_chi_fit_source_key_map& keys);
+void attach_chi_source_keys(lsdtt_chi_network_fit_segment_table& table,
+                            const lsdtt_chi_fit_source_key_map& keys);
 
 
 // Per-basin channel-steepness (k_sn) summary, one row per fitted basin.
@@ -259,7 +280,7 @@ void write_chi_network_fit_segments_csv(
 // upstream end to its downstream end.  Attributes written per feature:
 //   basin_index, outlet_flat, segment_id, branch_id, k_sn (dz/dchi),
 //   downstream_chi, upstream_chi, downstream_elevation, upstream_elevation,
-//   n_nodes
+//   n_nodes, and source_key (of the upstream node) when `keys` is given.
 //
 // fmt must be a binary vector format (flatgeobuf or gpkg; not csv).
 void write_chi_network_fit_segments_vector(
@@ -267,7 +288,8 @@ void write_chi_network_fit_segments_vector(
     const lsdtt_raster_meta&   meta,
     const std::string&         filename,
     vector_output_format       fmt,
-    bool                       spatial_index = false
+    bool                       spatial_index = false,
+    const lsdtt_chi_fit_source_key_map* keys = nullptr
 );
 
 } // namespace lsdtt

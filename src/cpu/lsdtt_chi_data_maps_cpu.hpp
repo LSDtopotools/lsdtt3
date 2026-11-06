@@ -43,15 +43,60 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_chi_extraction_cpu.hpp"
+#include "lsdtt_chi_network_analysis_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt
 {
+
+// Per-basin channel keys of a chi collection, as the data maps assign them.
+//   basin_key   0-based over the complete, non-empty basins in collection
+//               order; -1 for an empty or incomplete basin (its upslope area
+//               touches nodata), which the data maps do not write.
+//   source_key  per node (same order as basin.flats), global over the keyed
+//               basins: a headwater (no donors) gets a new key; any other node
+//               takes the key of its primary donor, the donor with the longest
+//               upstream flow path (ties: the first donor in node order). So
+//               the longest channel keeps its key to the outlet. -1 in an
+//               unkeyed basin.
+//   is_source   1 at headwaters.
+//   flow_distance_m   from the basin outlet along D8, every basin.
+//   drainage_area_m2  contributing area (s-vector size x cell area), every basin.
+struct lsdtt_chi_basin_source_keys
+{
+    std::int32_t basin_key = -1;
+    std::vector<std::int32_t> source_key;
+    std::vector<std::uint8_t> is_source;
+    std::vector<double> flow_distance_m;
+    std::vector<double> drainage_area_m2;
+};
+
+// Assign the keys above for every basin of a collection. With verbose, prints
+// one line per basin (no nodes / incomplete / complete) and the count of
+// complete basins, as write_chi_data_maps reports them.
+[[nodiscard]] std::vector<lsdtt_chi_basin_source_keys> assign_chi_source_keys(
+    const lsdtt_chi_collection_result& chi_networks,
+    const lsdtt_flow_base&             flow,
+    int                                n_cols,
+    double                             cell_size,
+    bool                               verbose = false
+);
+
+// The keys above as a per-basin flat -> source_key lookup, for attaching to
+// the chi fit outputs (attach_chi_source_keys,
+// write_chi_network_fit_segments_vector). The fit collection must have been
+// fitted from `chi_networks`, basin for basin.
+[[nodiscard]] lsdtt_chi_fit_source_key_map build_chi_fit_source_key_map(
+    const lsdtt_chi_collection_result&               chi_networks,
+    const std::vector<lsdtt_chi_basin_source_keys>& keys
+);
 
 // Write all chi data-map outputs for a pre-extracted chi collection.
 //

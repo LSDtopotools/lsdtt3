@@ -149,7 +149,7 @@ struct breach_least_cost_options
     // (Barnes et al. 2014b) and print the resolver's report.
     flat_resolution_choice fill_flat_resolution = flat_resolution_choice::inline_gradient;
     breach_lc_edge_policy edge_policy = breach_lc_edge_policy::outlet;
-    // Optional FIXED cells (river-lines plan 12.10 step 6: burned line cells
+    // Optional FIXED cells (stream_burn_mode burn_to_corridor: burned line cells
     // whose elevations are already set). nullptr (the default) leaves the
     // algorithm exactly as above. When given, it must hold one byte per cell
     // (row-major, 1 = fixed), and:
@@ -160,7 +160,7 @@ struct breach_least_cost_options
     //     search that has stepped into the bank zone (or starts there) may
     //     only step onto a fixed cell next: a breach path never runs along
     //     a fixed line, so a pit beside the line lower than it is left for the
-    //     fill instead of being carved out parallel to the line (plan 12.13 R1).
+    //     fill instead of being carved out parallel to the line.
     const std::vector<uint8_t>* fixed_cells = nullptr;
 };
 
