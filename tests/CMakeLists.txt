@@ -1859,6 +1859,13 @@ add_test(NAME unit_stream_burning_source_seed
          COMMAND lsdtt-test-vector-source-seed "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_source_seed")
 lsdtt_set_tests_properties(unit_stream_burning_source_seed PROPERTIES LABELS "stream_burning")
 
+# Corridor burning (stream_burn_mode burn_to_corridor, river-lines plan VT):
+# offset valley at three corridor widths, and a ridge across the valley.
+add_executable(lsdtt-test-burn-corridor cpp/test_burn_corridor.cpp)
+target_link_libraries(lsdtt-test-burn-corridor PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_corridor COMMAND lsdtt-test-burn-corridor)
+lsdtt_set_tests_properties(unit_stream_burning_corridor PROPERTIES LABELS "stream_burning")
+
 # Loop labels on the vector junction network (river-lines plan SB2):
 # loop_reason and closes_cycle, exact on a hand-built DEM (a stolen receiver
 # slot that cuts the network, and a real braid).

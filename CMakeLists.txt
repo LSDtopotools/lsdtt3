@@ -479,6 +479,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp
     src/cpu/lsdtt_river_line_prepare_cpu.cpp
+    src/cpu/lsdtt_burn_corridor_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp
     src/cpu/lsdtt_vector_network_d8_clean_cpu.cpp
     src/cpu/lsdtt_burn_vectormap_cpu.cpp

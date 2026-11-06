@@ -1882,6 +1882,7 @@ stream_burn_mode resolve_stream_burn_mode(const std::string& s)
     if (s == "burn_in_place")        return stream_burn_mode::burn_in_place;
     if (s == "snap_to_network")      return stream_burn_mode::snap_to_network;
     if (s == "snap_to_accumulation") return stream_burn_mode::snap_to_accumulation;
+    if (s == "burn_to_corridor")     return stream_burn_mode::burn_to_corridor;
     std::cerr << "Warning: unknown stream_burn_mode '" << s
               << "'; defaulting to burn_in_place.\n";
     return stream_burn_mode::burn_in_place;

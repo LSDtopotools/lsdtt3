@@ -47,6 +47,8 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -67,6 +69,7 @@
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
 #include "../src/core/lsdtt_types.hpp"
+#include "../src/cpu/lsdtt_burn_corridor_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
 #include "../src/cpu/lsdtt_least_cost_path.hpp"
@@ -267,8 +270,33 @@ int main(int argc, char* argv[])
         "reaches that follow the LiDAR thalweg, and bridge the remaining "
         "obstruction gaps (roads/embankments) with least-cost-path carving "
         "(run_lcp_burn) to recover one continuous network. Preserves the LiDAR "
-        "thalweg and writes the burned DEM plus the network extracted from it.",
+        "thalweg and writes the burned DEM plus the network extracted from it. "
+        "burn_to_corridor: for a vector network that is the truth (e.g. OS Open Rivers prepared by "
+        "lsdtt-fetch-river-lines, oriented downstream): the DEM's own flow path is kept wherever "
+        "it stays within vector_corridor_half_width_metres of the line, and elsewhere the lowest "
+        "path inside that corridor is burned, network order, upstream first. 0 = burn in place.",
         "Burn mode", "param", ""};
+
+    // --- burn_to_corridor (the vector network is the truth) ---
+    float_default_map["vector_corridor_half_width_metres"] = 0.0f;
+    help_map["vector_corridor_half_width_metres"] = {"float","0",
+        "burn_to_corridor: how far the DEM's flow routing may pull the channel away from the vector line [m].",
+        "The DEM's own steepest-descent path is accepted wherever it stays within this distance of "
+        "the vector reach until it reaches the next junction; otherwise the lowest path inside the "
+        "corridor is burned (a capturing burn: the burned path is where steepest descent goes). "
+        "0 (or under half a cell) = the line's own cells, i.e. burn in place, as a network. A few "
+        "cells = follow the DEM valley but stay near the mapped river. Large = repair only strong "
+        "divergences. Each junction also gets a disc of max(this, 1.5 cells) so reaches can meet.",
+        "burn_to_corridor", "param", ""};
+
+    bool_default_map["write_burn_depth_raster"] = false;
+    help_map["write_burn_depth_raster"] = {"bool","false",
+        "Write the change made to the DEM: original minus burned [m].",
+        "Output file: <write_fname>_burn_depth.tif. Positive where the DEM was lowered, negative "
+        "where filling raised it, nodata where it is unchanged. Measured against the input DEM, "
+        "not the filled one, so a cut through a filled hollow is not understated. Currently "
+        "written by stream_burn_mode burn_to_corridor.",
+        "burn_to_corridor", "switch", ""};
 
     // --- snap_to_accumulation / LCP burn (accurate vector layers, e.g. VML) ---
     float_default_map["trace_max_divergence_metres"] = 10.0f;
@@ -380,8 +408,11 @@ int main(int argc, char* argv[])
     bool_default_map["write_burned_profiles_csv"] = true;
     help_map["write_burned_profiles_csv"] = {"bool","true",
         "Write the burned stream elevation profiles as a CSV file.",
-        "Only used when stream_burn_mode is burn_in_place. "
-        "Schema: feature_id, flow_distance, x, y, dem_elevation, burned_elevation.",
+        "burn_in_place: feature_id, flow_distance, x, y, dem_elevation, burned_elevation. "
+        "burn_to_corridor: one row per channel cell, downstream order within each reach: "
+        "reach_id, from_node, to_node, status, point_index, distance_m (along the reach), x, y, "
+        "z_original (the input DEM, unfilled), z_filled, z_burned (the final DEM); the log "
+        "reports any channel that rises downstream.",
         "burn_in_place outputs", "switch", ""};
 
     bool_default_map["write_burned_profiles_points"] = false;
@@ -980,6 +1011,176 @@ int main(int argc, char* argv[])
     {
         std::cout << "\nDEM is marked as already filled. "
                   << "Skipping fill step.\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // burn_to_corridor: the vector network is the truth (river-lines plan VT).
+    // Runs on the filled DEM and returns here: none of the snap_to_network
+    // machinery below is used.
+    // -------------------------------------------------------------------------
+    if (burn_mode == lsdtt::stream_burn_mode::burn_to_corridor)
+    {
+        if (!bf["run_stream_burn"])
+        {
+            std::cout << "\nrun_stream_burn=false: nothing to do in burn_to_corridor mode.\n";
+        }
+        else
+        {
+            std::cout << "\n--- Burning the vector network to a corridor ---\n"
+                      << "Vector file: " << stream_vector_path << "\n";
+            std::vector<std::vector<lsdtt::lsdtt_xy>> lines;
+            try
+            {
+                lines = lsdtt::clip_vector_lines_to_dem(stream_vector_path, routed_dem);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "FATAL: reading the vector network failed: " << e.what() << "\n";
+                return 1;
+            }
+            lsdtt::burn_corridor_options co;
+            co.corridor_half_width_metres = ff["vector_corridor_half_width_metres"];
+            co.min_gradient = std::max(1.0e-6, static_cast<double>(ff["fill_min_slope"]));
+            const double cs = routed_dem.get_meta().cell_size;
+            std::cout << "Corridor half width: " << co.corridor_half_width_metres << " m ("
+                      << co.corridor_half_width_metres / cs << " cells)\n";
+            lsdtt::lsdtt_raster_cpu burned = routed_dem;
+            const lsdtt::burn_corridor_result cr =
+                lsdtt::burn_vector_network_to_corridor(burned, lines, co);
+            for (const auto& n : cr.notes) std::cout << "  " << n << "\n";
+            {
+                std::map<std::string, int> why;
+                for (const auto& rc : cr.reaches) if (rc.status == "skipped") ++why[rc.skip_reason];
+                for (const auto& [w, k] : why) std::cout << "  skipped (" << w << "): " << k << "\n";
+            }
+            std::cout << "Lines: " << lines.size() << ", nodes " << cr.n_nodes << ", reaches "
+                      << cr.reaches.size() << ": followed " << cr.n_followed << ", burned "
+                      << cr.n_burned << ", skipped " << cr.n_skipped << "; cells lowered "
+                      << cr.n_cells_lowered << ", re-graded in the final pass " << cr.n_cells_regraded << "; channel ends inside the DEM drained "
+                      << cr.n_ends_drained << " (" << cr.n_cells_daylighted << " cells)\n";
+
+            // Re-fill: a burned path ending below its surroundings at an
+            // interior outlet would otherwise be a pit.
+            lsdtt::lsdtt_raster_cpu final_dem = lsdtt::fill_pits(burned, ff["fill_min_slope"], ifs["n_threads"]);
+            {
+                long n_raised = 0;
+                const auto& a = burned.get_data_array();
+                const auto& b = final_dem.get_data_array();
+                const auto& m = burned.get_mask_array();
+                for (int r = 0; r < burned.get_meta().n_rows; ++r)
+                    for (int c = 0; c < burned.get_meta().n_cols; ++c)
+                        if (m(r, c) && b(r, c) > a(r, c) + 1e-6f) ++n_raised;
+                std::cout << "Re-fill after burning raised " << n_raised << " cell(s)\n";
+            }
+
+            if (bf["write_burned_outputs"])
+            {
+                const std::string f = pp.make_output_path("_burned", ".tif");
+                std::cout << "Writing: " << f << "\n";
+                lsdtt::lsdtt_data_loader w;
+                w.write_full(final_dem.get_data(), final_dem.get_meta(), f);
+
+                const lsdtt::vector_output_format vf = lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+                const std::string cf = pp.make_output_path("_corridor_channels", lsdtt::output_extension(vf));
+                std::cout << "Writing: " << cf << "\n";
+                lsdtt::lsdtt_vector_schema schema;
+                using ft = lsdtt::lsdtt_vector_field_type;
+                schema.field_names = {"reach_id", "from_node", "to_node", "status", "skip_reason", "length_m",
+                                      "upstream_length_m", "max_separation_m", "max_burn_depth_m",
+                                      "burn_length_m"};
+                schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type,
+                                      ft::string_type, ft::double_type, ft::double_type, ft::double_type, ft::double_type,
+                                      ft::double_type};
+                lsdtt::lsdtt_data_loader vw;
+                vw.begin_vector_write(cf, "corridor_channels", schema, final_dem.get_meta().crs_wkt, vf,
+                                      bf["calculate_spatial_index"]);
+                for (const auto& rc : cr.reaches)
+                {
+                    if (rc.channel.size() < 2) continue;   // skipped reaches have no channel
+                    vw.write_line(rc.channel, {static_cast<std::int64_t>(rc.reach_id),
+                                               static_cast<std::int64_t>(rc.from_node),
+                                               static_cast<std::int64_t>(rc.to_node), rc.status, rc.skip_reason, rc.length_m,
+                                               rc.upstream_length_m, rc.max_separation_m, rc.max_burn_depth_m,
+                                               rc.burn_length_m});
+                }
+                vw.finish_vector_write();
+            }
+            // Downhill check on the final DEM, and the profiles.
+            {
+                const auto& meta = final_dem.get_meta();
+                auto at = [&](const lsdtt::lsdtt_raster_cpu& r, const lsdtt::lsdtt_xy& p) -> double
+                {
+                    const int c = static_cast<int>(std::floor((p.x - meta.x_min) / meta.cell_size));
+                    const int rr = static_cast<int>(std::floor((meta.y_max() - p.y) / meta.cell_size));
+                    return r.get_data_array()(rr, c);
+                };
+                for (const auto* which : {&burned, &final_dem})
+                {
+                    int n_rising = 0;
+                    double max_rise = 0.0;
+                    std::string ids;
+                    for (const auto& rc : cr.reaches)
+                    {
+                        bool rises = false;
+                        for (size_t i = 1; i < rc.channel.size(); ++i)
+                        {
+                            const double rise = at(*which, rc.channel[i]) - at(*which, rc.channel[i - 1]);
+                            if (rise > 0.0) { rises = true; max_rise = std::max(max_rise, rise); }
+                        }
+                        if (rises) { ++n_rising; if (ids.size() < 60) ids += " " + std::to_string(rc.reach_id); }
+                    }
+                    std::cout << "Downhill check, " << (which == &burned ? "after burning" : "final DEM (after re-fill)")
+                              << ": " << n_rising << " of " << cr.reaches.size() << " channel(s) rise anywhere";
+                    if (n_rising > 0) std::cout << " (largest rise " << max_rise << " m; reaches" << ids << ")";
+                    std::cout << "\n";
+                }
+
+                if (bf["write_burned_profiles_csv"])
+                {
+                    const std::string f = pp.make_output_path("_burned_profiles", ".csv");
+                    std::cout << "Writing: " << f << "\n";
+                    std::ofstream csv(f);
+                    csv << "reach_id,from_node,to_node,status,point_index,distance_m,x,y,z_original,z_filled,z_burned\n";
+                    csv << std::setprecision(10);
+                    for (const auto& rc : cr.reaches)
+                    {
+                        double dist = 0.0;
+                        for (size_t i = 0; i < rc.channel.size(); ++i)
+                        {
+                            if (i > 0)
+                                dist += std::hypot(rc.channel[i].x - rc.channel[i - 1].x,
+                                                   rc.channel[i].y - rc.channel[i - 1].y);
+                            csv << rc.reach_id << "," << rc.from_node << "," << rc.to_node << "," << rc.status
+                                << "," << i << "," << dist << "," << rc.channel[i].x << "," << rc.channel[i].y
+                                << "," << at(dem, rc.channel[i]) << "," << at(routed_dem, rc.channel[i]) << ","
+                                << at(final_dem, rc.channel[i]) << "\n";
+                        }
+                    }
+                }
+            }
+            if (bf["write_burn_depth_raster"])
+            {
+                lsdtt::lsdtt_raster_cpu depth = final_dem;
+                auto& d = depth.get_data_array();
+                const auto& o = dem.get_data_array();
+                const auto& m = dem.get_mask_array();
+                const float nd = depth.get_meta().no_data_value;
+                for (int r = 0; r < depth.get_meta().n_rows; ++r)
+                    for (int c = 0; c < depth.get_meta().n_cols; ++c)
+                    {
+                        const float v = m(r, c) ? o(r, c) - d(r, c) : nd;
+                        d(r, c) = (m(r, c) && std::fabs(v) > 1e-6f) ? v : nd;
+                    }
+                const std::string f = pp.make_output_path("_burn_depth", ".tif");
+                std::cout << "Writing: " << f << "\n";
+                lsdtt::lsdtt_data_loader w;
+                w.write_full(depth.get_data(), depth.get_meta(), f);
+            }
+        }
+        pp.print_help(help_map, pp.get_write_fname() + "_README", k_status, k_citation);
+        pp.print_parameters();
+        std::cout << "\nlsdtt-stream-burning: done.\n";
+        return run_record.succeed();
     }
 
     // -------------------------------------------------------------------------
