@@ -306,6 +306,33 @@ lsdtt_raster_cpu breach_depressions_least_cost(
     const std::size_t  n     = static_cast<std::size_t>(nrows * ncols);
     const bool edge_is_outlet = options.edge_policy == breach_lc_edge_policy::outlet;
 
+    // Fixed cells and their bank zone (see the options). Empty = none.
+    const std::vector<uint8_t>* fixed = options.fixed_cells;
+    if (fixed && fixed->size() != n)
+    {
+        throw std::invalid_argument(
+            "lsdtt::breach_depressions_least_cost: fixed_cells must hold one value per cell");
+    }
+    std::vector<uint8_t> bank;
+    if (fixed)
+    {
+        bank.assign(n, uint8_t{0});
+        for (std::int64_t r = 0; r < nrows; ++r)
+            for (std::int64_t c = 0; c < ncols; ++c)
+            {
+                if (!(*fixed)[static_cast<std::size_t>(r * ncols + c)]) continue;
+                for (int k = 0; k < 8; ++k)
+                {
+                    const std::int64_t rn = r + k_wb_dr[k], cn = c + k_wb_dc[k];
+                    if (rn < 0 || cn < 0 || rn >= nrows || cn >= ncols) continue;
+                    const std::size_t j = static_cast<std::size_t>(rn * ncols + cn);
+                    if (!(*fixed)[j]) bank[j] = uint8_t{1};
+                }
+            }
+    }
+    auto is_fixed = [&](std::size_t i) { return fixed && (*fixed)[i] != 0; };
+    auto in_bank  = [&](std::size_t i) { return fixed && bank[i] != 0; };
+
     breach_least_cost_diagnostics diag;
 
     // ---- inputs: validity from the mask, double working copy ----------------
@@ -348,6 +375,7 @@ lsdtt_raster_cpu breach_depressions_least_cost(
         {
             const std::size_t i = at(r, c);
             if (!valid[i]) continue;
+            if (is_fixed(i)) continue;   // fixed cells are never pits
             const double zi = z[i];
 
             bool   is_pit = true;
@@ -445,6 +473,8 @@ lsdtt_raster_cpu breach_depressions_least_cost(
 
             const std::int64_t r = static_cast<std::int64_t>(node.i) / ncols;
             const std::int64_t c = static_cast<std::int64_t>(node.i) % ncols;
+            // From the bank zone only a step onto a fixed cell is allowed.
+            const bool from_bank = in_bank(node.i);
 
             // The outlet's backlink always points at node.i, so a solved path
             // is lowered from node.i back to the pit.
@@ -463,6 +493,21 @@ lsdtt_raster_cpu breach_depressions_least_cost(
                 }
                 const std::size_t ni = at(rn, cn);
                 if (encountered[ni] == 1) continue;
+                if (fixed)
+                {
+                    const double zt = pit_z - (static_cast<double>(length + 1) * small);
+                    if (is_fixed(ni))
+                    {
+                        // A fixed cell low enough is an outlet; otherwise it
+                        // is impassable. It is never lowered (the carve stops
+                        // at node.i).
+                        if (valid[ni] && z[ni] > zt) continue;
+                    }
+                    else if (from_bank && valid[ni])
+                    {
+                        continue;
+                    }
+                }
 
                 touched.push_back(ni);
                 const std::int64_t next_steps = length + 1;

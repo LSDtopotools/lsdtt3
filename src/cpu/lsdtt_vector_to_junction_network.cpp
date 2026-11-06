@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_to_junction_network.hpp"
+#include "lsdtt_vector_ops_cpu.hpp"
 #include "../utils/lsdtt_junction_graph_orders.hpp"
 #include "../core/lsdtt_gdal_init.hpp"
 
@@ -57,6 +58,7 @@ struct oct_closer
 struct raw_polyline
 {
     std::vector<lsdtt_xy> xy;
+    std::string name;   // value of the optional name field (empty if none)
 };
 
 struct raw_vertex
@@ -83,21 +85,13 @@ struct compact_edge_builder
 {
     std::int32_t junction_a = -1;
     std::int32_t junction_b = -1;
+    int n_forward = 0;     // raw parts traversed a -> b as digitised
+    int n_backward = 0;
     double length_metres = 0.0;
     std::vector<lsdtt_xy> xy;
 };
 
-struct quantised_key
-{
-    long long qx = 0;
-    long long qy = 0;
 
-    bool operator<(const quantised_key& other) const noexcept
-    {
-        if (qx != other.qx) return qx < other.qx;
-        return qy < other.qy;
-    }
-};
 
 OGRPolygon make_bbox_polygon(
     const lsdtt_raster_meta& meta,
@@ -188,13 +182,7 @@ double resolved_clip_inset_distance(
 
 
 
-quantised_key make_key(double x, double y, double tol)
-{
-    quantised_key k;
-    k.qx = static_cast<long long>(std::llround(x / tol));
-    k.qy = static_cast<long long>(std::llround(y / tol));
-    return k;
-}
+
 
 bool point_is_on_dem_edge(
     const lsdtt_raster_meta& meta,
@@ -416,7 +404,8 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
     const std::string&      vector_path,
     const lsdtt_raster_cpu& dem,
     double                  point_tol,
-    double                  clip_inset_metres)
+    double                  clip_inset_metres,
+    const std::string&      name_field = std::string())
 {
     lsdtt::gdal_init();
 
@@ -511,11 +500,26 @@ std::vector<raw_polyline> load_clipped_stream_polylines(
 
             if (clipped)
             {
+                const std::size_t before = polylines.size();
                 collect_clipped_linestrings(
                     clipped.get(),
                     point_tol,
                     polylines
                 );
+                if (!name_field.empty())
+                {
+                    const int fi = feature->GetFieldIndex(name_field.c_str());
+                    if (fi < 0)
+                    {
+                        OGRFeature::DestroyFeature(feature);
+                        throw std::runtime_error(
+                            "lsdtt_vector_to_junction_network: name field '" + name_field +
+                            "' not found in " + vector_path);
+                    }
+                    const std::string v = feature->IsFieldSetAndNotNull(fi)
+                        ? std::string(feature->GetFieldAsString(fi)) : std::string();
+                    for (std::size_t q = before; q < polylines.size(); ++q) polylines[q].name = v;
+                }
             }
 
             OGRFeature::DestroyFeature(feature);
@@ -642,6 +646,29 @@ std::vector<std::vector<lsdtt_xy>> clip_vector_lines_to_dem(
     std::vector<std::vector<lsdtt_xy>> out;
     out.reserve(polylines.size());
     for (auto& p : polylines) out.push_back(std::move(p.xy));
+    return out;
+}
+
+clipped_vector_lines clip_vector_lines_to_dem_with_names(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const std::string&                              name_field,
+    const lsdtt_vector_to_junction_network_options& options)
+{
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    std::vector<raw_polyline> polylines = filter_boundary_polylines(
+        load_clipped_stream_polylines(vector_path, dem, resolved_vertex_tolerance(options, meta),
+                                      resolved_clip_inset_distance(meta), name_field),
+        meta, resolved_edge_tolerance(options, meta), resolved_minimum_clipped_edge_length(options, meta),
+        resolved_both_edge_min_penetration(options, meta));
+    clipped_vector_lines out;
+    out.lines.reserve(polylines.size());
+    out.names.reserve(polylines.size());
+    for (auto& p : polylines)
+    {
+        out.lines.push_back(std::move(p.xy));
+        out.names.push_back(std::move(p.name));
+    }
     return out;
 }
 
@@ -843,13 +870,16 @@ void lsdtt_vector_to_junction_network::create(
         // Distinct endpoints of all polylines.
         std::vector<lsdtt_xy> endpoints;
         {
-            std::set<quantised_key> seen;
+            lsdtt_point_snapper seen(vertex_tol);
             for (const auto& p : polylines)
             {
                 if (p.xy.size() < 2) continue;
                 for (const lsdtt_xy& e : {p.xy.front(), p.xy.back()})
-                    if (seen.insert(make_key(e.x, e.y, vertex_tol)).second)
-                        endpoints.push_back(e);
+                {
+                    const std::size_t before = seen.size();
+                    (void)seen.id_for(e);
+                    if (seen.size() > before) endpoints.push_back(e);
+                }
             }
         }
 
@@ -941,14 +971,17 @@ void lsdtt_vector_to_junction_network::create(
     // -------------------------------------------------------------------------
     // Build raw endpoint graph from clipped linework.
     // -------------------------------------------------------------------------
-    std::map<quantised_key, std::int32_t> vertex_lookup;
+    // Snapped location id (lsdtt_point_snapper, joins by distance) -> raw
+    // vertex id, or -1 when the location is over NoData.
+    lsdtt_point_snapper vertex_snapper(vertex_tol);
+    std::map<int, std::int32_t> vertex_lookup;
     std::vector<raw_vertex> raw_vertices;
     std::vector<raw_edge>   raw_edges;
 
     auto get_or_make_vertex =
         [&](const lsdtt_xy& p) -> std::int32_t
         {
-            const quantised_key key = make_key(p.x, p.y, vertex_tol);
+            const int key = vertex_snapper.id_for(p);
             auto it = vertex_lookup.find(key);
 
             if (it != vertex_lookup.end())
@@ -1152,6 +1185,8 @@ void lsdtt_vector_to_junction_network::create(
 
                 std::vector<lsdtt_xy> geom =
                     oriented_geometry(current_edge, current_vertex);
+                if (current_vertex == current_edge.start_vertex) ++builder.n_forward;
+                else ++builder.n_backward;
 
                 if (builder.xy.empty())
                 {
@@ -1203,6 +1238,7 @@ void lsdtt_vector_to_junction_network::create(
             edge.junction_b = builder.junction_b;
             edge.length_metres = builder.length_metres;
             edge.xy = std::move(builder.xy);
+            edge.digitised_a_to_b = builder.n_backward == 0 ? 1 : (builder.n_forward == 0 ? -1 : 0);
 
             edges_.push_back(std::move(edge));
         }
@@ -1230,9 +1266,12 @@ void lsdtt_vector_to_junction_network::create(
     }
 
     // -------------------------------------------------------------------------
-    // One receiver per junction, from DEM elevation.
+    // One receiver per junction: from DEM elevation (default), or from the
+    // digitised order (options.use_digitised_direction, plan SB3).
     // -------------------------------------------------------------------------
-    for (auto& j : junctions_)
+    // Elevation rule for one junction, over the incident edges `allowed` lets
+    // through: the steepest downhill edge, or an outlet when none falls.
+    auto assign_by_elevation = [&](lsdtt_vector_network_junction& j, auto allowed)
     {
         double best_slope = -std::numeric_limits<double>::infinity();
         std::int32_t best_receiver = k_outlet_junction;
@@ -1242,6 +1281,7 @@ void lsdtt_vector_to_junction_network::create(
         for (const std::int32_t edge_id : j.incident_edges)
         {
             const auto& e = edges_[static_cast<std::size_t>(edge_id)];
+            if (!allowed(e)) continue;
 
             const std::int32_t other =
                 (e.junction_a == j.junction_id) ? e.junction_b : e.junction_a;
@@ -1271,7 +1311,6 @@ void lsdtt_vector_to_junction_network::create(
             j.is_outlet = true;
             j.receiver_junction = k_outlet_junction;
             j.downstream_edge_id = -1;
-            outlets_.push_back(j.junction_id);
         }
         else
         {
@@ -1293,6 +1332,144 @@ void lsdtt_vector_to_junction_network::create(
             j.receiver_junction = best_receiver;
             j.downstream_edge_id = best_edge;
         }
+    };
+    const auto any_edge = [](const lsdtt_vector_network_edge&) { return true; };
+
+    // Digitised rule for one junction: drain through an edge whose digitised
+    // order leaves it (several: the steepest, uphill or not); with none, fall
+    // back to elevation over the edges of mixed direction; else an outlet.
+    auto leaves = [](const lsdtt_vector_network_edge& e, std::int32_t jid)
+    {
+        if (e.junction_a == e.junction_b) return false;   // a self-loop leads nowhere
+        return (e.digitised_a_to_b > 0 && e.junction_a == jid) ||
+               (e.digitised_a_to_b < 0 && e.junction_b == jid);
+    };
+    auto assign_by_digitised = [&](lsdtt_vector_network_junction& j)
+    {
+        std::int32_t best_edge = -1, best_receiver = k_outlet_junction;
+        double best_drop = -std::numeric_limits<double>::infinity();
+        for (const std::int32_t edge_id : j.incident_edges)
+        {
+            const auto& e = edges_[static_cast<std::size_t>(edge_id)];
+            if (!leaves(e, j.junction_id)) continue;
+            const std::int32_t other = (e.junction_a == j.junction_id) ? e.junction_b : e.junction_a;
+            const double drop = (j.elevation - junctions_[static_cast<std::size_t>(other)].elevation) /
+                                std::max(e.length_metres, 1.0e-12);
+            if (drop > best_drop) { best_drop = drop; best_edge = edge_id; best_receiver = other; }
+        }
+        if (best_edge >= 0)
+        {
+            j.is_outlet = false;
+            j.receiver_junction = best_receiver;
+            j.downstream_edge_id = best_edge;
+            return;
+        }
+        assign_by_elevation(j, [](const lsdtt_vector_network_edge& e)
+                            { return e.digitised_a_to_b == 0 && e.junction_a != e.junction_b; });
+    };
+
+    n_direction_fallback_networks_ = 0;
+    direction_fallbacks_.clear();
+    for (auto& j : junctions_)
+    {
+        if (options.use_digitised_direction) assign_by_digitised(j);
+        else assign_by_elevation(j, any_edge);
+    }
+
+    if (options.use_digitised_direction)
+    {
+        // Whole-network guard. A river network drains to its outlet, so its
+        // outlets should not stand above its channel heads: a network whose
+        // mean outlet elevation exceeds the median elevation of its heads (no
+        // junction drains into them) was digitised upstream as a whole, and is
+        // oriented by elevation instead. Only interior junctions count. A local rise along one reach is not
+        // judged here; that is the point of using the digitised order.
+        const std::size_t nj = junctions_.size();
+        std::vector<std::int32_t> comp(nj, -1);
+        std::int32_t n_comp = 0;
+        for (std::size_t s0 = 0; s0 < nj; ++s0)
+        {
+            if (comp[s0] >= 0) continue;
+            std::vector<std::int32_t> stack{static_cast<std::int32_t>(s0)};
+            comp[s0] = n_comp;
+            while (!stack.empty())
+            {
+                const std::int32_t u = stack.back();
+                stack.pop_back();
+                for (const std::int32_t eid : junctions_[static_cast<std::size_t>(u)].incident_edges)
+                {
+                    const auto& e = edges_[static_cast<std::size_t>(eid)];
+                    const std::int32_t v = (e.junction_a == u) ? e.junction_b : e.junction_a;
+                    if (comp[static_cast<std::size_t>(v)] >= 0) continue;
+                    comp[static_cast<std::size_t>(v)] = n_comp;
+                    stack.push_back(v);
+                }
+            }
+            ++n_comp;
+        }
+        std::vector<int> is_receiver(nj, 0);
+        for (const auto& j : junctions_)
+            if (j.receiver_junction >= 0) is_receiver[static_cast<std::size_t>(j.receiver_junction)] = 1;
+        std::vector<std::vector<double>> heads(static_cast<std::size_t>(n_comp));
+        std::vector<double> outlet_sum(static_cast<std::size_t>(n_comp), 0.0);
+        std::vector<int> outlet_n(static_cast<std::size_t>(n_comp), 0);
+        std::vector<int> comp_size(static_cast<std::size_t>(n_comp), 0);
+        std::vector<std::int32_t> first_outlet(static_cast<std::size_t>(n_comp), -1);
+        for (std::size_t k = 0; k < nj; ++k)
+        {
+            const auto& j = junctions_[k];
+            const std::size_t c = static_cast<std::size_t>(comp[k]);
+            ++comp_size[c];
+            // Junctions on the DEM edge are left out: where a network is cut by
+            // the DEM box its end there is not its real outlet or head, and over
+            // a NoData margin its elevation is borrowed from the nearest valid
+            // cell. A network with no interior outlet or head is not judged.
+            if (j.is_dem_edge_junction) continue;
+            if (j.receiver_junction < 0)
+            {
+                outlet_sum[c] += j.elevation;
+                ++outlet_n[c];
+                if (first_outlet[c] < 0) first_outlet[c] = static_cast<std::int32_t>(k);
+            }
+            else if (!is_receiver[k]) heads[c].push_back(j.elevation);
+        }
+        std::vector<int> fallback(static_cast<std::size_t>(n_comp), 0);
+        for (std::size_t c = 0; c < static_cast<std::size_t>(n_comp); ++c)
+        {
+            if (outlet_n[c] == 0 || heads[c].empty()) continue;
+            std::vector<double> h = heads[c];
+            std::nth_element(h.begin(), h.begin() + static_cast<std::ptrdiff_t>(h.size() / 2), h.end());
+            const double median_head = h[h.size() / 2];
+            if (outlet_sum[c] / outlet_n[c] > median_head)
+            {
+                fallback[c] = 1;
+                ++n_direction_fallback_networks_;
+                lsdtt_direction_fallback_record rec;
+                rec.n_junctions = comp_size[c];
+                rec.n_heads = static_cast<int>(heads[c].size());
+                rec.mean_outlet_elevation = outlet_sum[c] / outlet_n[c];
+                rec.median_head_elevation = median_head;
+                const auto& fo = junctions_[static_cast<std::size_t>(first_outlet[c])];
+                rec.x = fo.x;
+                rec.y = fo.y;
+                direction_fallbacks_.push_back(rec);
+            }
+        }
+        for (std::size_t k = 0; k < nj; ++k)
+        {
+            if (fallback[static_cast<std::size_t>(comp[k])]) assign_by_elevation(junctions_[k], any_edge);
+        }
+        for (auto& e : edges_)
+        {
+            e.oriented_by_digitised =
+                fallback[static_cast<std::size_t>(comp[static_cast<std::size_t>(e.junction_a)])] ? 0 : 1;
+        }
+    }
+
+    outlets_.clear();
+    for (const auto& j : junctions_)
+    {
+        if (j.is_outlet) outlets_.push_back(j.junction_id);
     }
 
     // -------------------------------------------------------------------------
@@ -1315,13 +1492,19 @@ void lsdtt_vector_to_junction_network::create(
 
     for (auto& e : edges_)
     {
-        bool a_to_b =
-            junctions_[static_cast<std::size_t>(e.junction_a)].receiver_junction ==
-            e.junction_b;
-
-        bool b_to_a =
-            junctions_[static_cast<std::size_t>(e.junction_b)].receiver_junction ==
-            e.junction_a;
+        // Which end claims the edge. By receiver junction (the original rule);
+        // with the digitised direction, by downstream EDGE, because two
+        // parallel edges digitised in opposite directions make two junctions
+        // each other's receiver through different edges (a directed 2-cycle,
+        // broken below by break_receiver_cycles).
+        const auto& ca = junctions_[static_cast<std::size_t>(e.junction_a)];
+        const auto& cb = junctions_[static_cast<std::size_t>(e.junction_b)];
+        bool a_to_b = options.use_digitised_direction
+                          ? ca.downstream_edge_id == e.edge_id
+                          : ca.receiver_junction == e.junction_b;
+        bool b_to_a = options.use_digitised_direction
+                          ? cb.downstream_edge_id == e.edge_id
+                          : cb.receiver_junction == e.junction_a;
 
         if (a_to_b && b_to_a)
         {
@@ -1405,6 +1588,7 @@ void lsdtt_vector_to_junction_network::create(
                     // Loop-closing edge: label it and exclude it from the
                     // directed graph so the network builds despite the cycle.
                     e.is_loop_edge = true;
+                    e.loop_reason  = "unclaimed";
                     ja.is_on_loop  = true;
                     jb.is_on_loop  = true;
                     continue;
@@ -1458,6 +1642,7 @@ void lsdtt_vector_to_junction_network::create(
                     != e.edge_id)
             {
                 e.is_loop_edge = true;
+                e.loop_reason = "parallel";
                 junctions_[static_cast<std::size_t>(e.junction_a)].is_on_loop = true;
                 junctions_[static_cast<std::size_t>(e.junction_b)].is_on_loop = true;
             }
@@ -1471,6 +1656,7 @@ void lsdtt_vector_to_junction_network::create(
     if (options.break_cycles)
     {
         break_receiver_cycles();
+        classify_loop_edges();
     }
 
     // -------------------------------------------------------------------------
@@ -1771,6 +1957,8 @@ void lsdtt_vector_to_junction_network::break_receiver_cycles()
         if (de >= 0)
         {
             edges_[static_cast<std::size_t>(de)].is_loop_edge = true;
+            if (edges_[static_cast<std::size_t>(de)].loop_reason.empty())
+                edges_[static_cast<std::size_t>(de)].loop_reason = "receiver_cycle";
             jh.is_on_loop = true;
             const std::int32_t orec = jh.receiver_junction;
             if (orec >= 0)
@@ -2032,6 +2220,58 @@ void lsdtt_vector_to_junction_network::write_junctions_fgb(
 }
 
 // -----------------------------------------------------------------------------
+// classify_loop_edges
+//
+// For each labelled edge: does a path of UNLABELLED edges join its two
+// junctions? Yes = it closes a real undirected cycle; no = labelling it cut the
+// network. Same test as the D8 cleaner's loop resolver, which leaves the second
+// kind alone ("actually a bridge").
+// -----------------------------------------------------------------------------
+void lsdtt_vector_to_junction_network::classify_loop_edges()
+{
+    const std::size_t n_j = junctions_.size();
+    std::vector<std::vector<std::pair<std::int32_t, std::int32_t>>> adj(n_j);
+    for (const auto& e : edges_)
+    {
+        if (e.is_loop_edge || e.junction_a < 0 || e.junction_b < 0) continue;
+        adj[static_cast<std::size_t>(e.junction_a)].push_back({e.junction_b, e.edge_id});
+        adj[static_cast<std::size_t>(e.junction_b)].push_back({e.junction_a, e.edge_id});
+    }
+    // Components of the unlabelled graph: a labelled edge closes a cycle
+    // exactly when both its ends are in the same component.
+    std::vector<std::int32_t> comp(n_j, -1);
+    std::int32_t n_comp = 0;
+    std::vector<std::int32_t> stack;
+    for (std::size_t s = 0; s < n_j; ++s)
+    {
+        if (comp[s] >= 0) continue;
+        comp[s] = n_comp;
+        stack.assign(1, static_cast<std::int32_t>(s));
+        while (!stack.empty())
+        {
+            const std::int32_t u = stack.back();
+            stack.pop_back();
+            for (const auto& [v, ei] : adj[static_cast<std::size_t>(u)])
+            {
+                (void)ei;
+                if (comp[static_cast<std::size_t>(v)] >= 0) continue;
+                comp[static_cast<std::size_t>(v)] = n_comp;
+                stack.push_back(v);
+            }
+        }
+        ++n_comp;
+    }
+    for (auto& e : edges_)
+    {
+        if (!e.is_loop_edge) { e.closes_cycle = -1; continue; }
+        if (e.junction_a < 0 || e.junction_b < 0) { e.closes_cycle = 0; continue; }
+        e.closes_cycle = (e.junction_a == e.junction_b ||
+                          comp[static_cast<std::size_t>(e.junction_a)] ==
+                              comp[static_cast<std::size_t>(e.junction_b)]) ? 1 : 0;
+    }
+}
+
+// -----------------------------------------------------------------------------
 // write_edges_fgb
 // -----------------------------------------------------------------------------
 void lsdtt_vector_to_junction_network::write_edges_fgb(
@@ -2053,7 +2293,11 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         "junction_a",
         "junction_b",
         "length_m",
-        "is_loop_edge"
+        "is_loop_edge",
+        "loop_reason",
+        "closes_cycle",
+        "elevation_a",
+        "elevation_b"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
@@ -2064,7 +2308,11 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::int64_type
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::string_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::double_type
     };
 
 
@@ -2090,12 +2338,85 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
                 static_cast<std::int64_t>(e.junction_a),
                 static_cast<std::int64_t>(e.junction_b),
                 e.length_metres,
-                static_cast<std::int64_t>(e.is_loop_edge ? 1 : 0)
+                static_cast<std::int64_t>(e.is_loop_edge ? 1 : 0),
+                e.loop_reason,
+                static_cast<std::int64_t>(e.closes_cycle),
+                e.junction_a >= 0 ? junctions_[static_cast<std::size_t>(e.junction_a)].elevation
+                                  : std::numeric_limits<double>::quiet_NaN(),
+                e.junction_b >= 0 ? junctions_[static_cast<std::size_t>(e.junction_b)].elevation
+                                  : std::numeric_limits<double>::quiet_NaN()
             }
         );
     }
 
     loader.finish_vector_write();
+}
+
+
+vector_source_seed seed_vector_source_on_valid_dem(
+    const lsdtt_raster_cpu&                  dem,
+    const lsdtt_vector_to_junction_network&  network,
+    std::int32_t                             junction_id)
+{
+    vector_source_seed seed;
+    if (junction_id < 0 || junction_id >= network.n_junctions()) return seed;
+
+    const lsdtt_raster_meta& meta = dem.get_meta();
+    const lsdtt_array2d_u8&  mask = dem.get_mask_array();
+    const auto valid_flat = [&](double x, double y) -> std::int64_t
+    {
+        const double fc = std::floor((x - meta.x_min) / meta.cell_size);
+        const double fr = std::floor((meta.y_max() - y) / meta.cell_size);
+        if (!(fc >= 0.0 && fc < meta.n_cols && fr >= 0.0 && fr < meta.n_rows)) return -1;
+        const int col = static_cast<int>(fc);
+        const int row = static_cast<int>(fr);
+        if (mask(row, col) == 0) return -1;
+        return static_cast<std::int64_t>(row) * meta.n_cols + col;
+    };
+
+    const lsdtt_vector_network_junction& J =
+        network.junctions()[static_cast<std::size_t>(junction_id)];
+    seed.xy = {J.x, J.y};
+    seed.flat = valid_flat(J.x, J.y);
+    if (seed.flat >= 0 || J.downstream_edge_id < 0) return seed;
+
+    const lsdtt_vector_network_edge& E =
+        network.edges()[static_cast<std::size_t>(J.downstream_edge_id)];
+    if (E.xy.size() < 2) return seed;
+    // Orient the stored geometry so it runs from the junction downstream.
+    const bool forward = (E.upstream_junction == junction_id);
+    const auto vtx = [&](std::size_t k) -> const lsdtt_xy&
+    {
+        return forward ? E.xy[k] : E.xy[E.xy.size() - 1 - k];
+    };
+
+    const double step = 0.5 * meta.cell_size;
+    double walked = 0.0;
+    for (std::size_t k = 1; k < E.xy.size(); ++k)
+    {
+        const lsdtt_xy a = vtx(k - 1);
+        const lsdtt_xy b = vtx(k);
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        const int n = std::max(1, static_cast<int>(std::ceil(len / step)));
+        for (int s = 1; s <= n; ++s)
+        {
+            const double t = static_cast<double>(s) / n;
+            const double x = a.x + t * (b.x - a.x);
+            const double y = a.y + t * (b.y - a.y);
+            const std::int64_t f = valid_flat(x, y);
+            if (f >= 0)
+            {
+                seed.flat = f;
+                seed.xy = {x, y};
+                seed.walked_metres = walked + t * len;
+                return seed;
+            }
+        }
+        walked += len;
+    }
+    seed.flat = -1;
+    seed.walked_metres = walked;
+    return seed;
 }
 
 } // namespace lsdtt

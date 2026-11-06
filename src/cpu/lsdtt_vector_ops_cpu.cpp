@@ -25,24 +25,64 @@ lsdtt_snap_key make_snap_key(double x, double y, double tolerance_metres)
     return key;
 }
 
+lsdtt_point_snapper::lsdtt_point_snapper(double tolerance_metres)
+    : tol_(tolerance_metres > 0.0 ? tolerance_metres : 0.0),
+      cell_(tolerance_metres > 0.0 ? tolerance_metres : 1.0)
+{
+}
+
+long long lsdtt_point_snapper::cell_of(double v) const
+{
+    return static_cast<long long>(std::floor(v / cell_));
+}
+
+int lsdtt_point_snapper::find(const lsdtt_xy& p) const
+{
+    const long long ci = cell_of(p.x), cj = cell_of(p.y);
+    int best = -1;
+    double best_d = 0.0;
+    for (long long i = ci - 1; i <= ci + 1; ++i)
+    {
+        for (long long j = cj - 1; j <= cj + 1; ++j)
+        {
+            const auto it = cells_.find({i, j});
+            if (it == cells_.end()) continue;
+            for (const int id : it->second)
+            {
+                const lsdtt_xy& q = points_[static_cast<std::size_t>(id)];
+                const double d = std::hypot(q.x - p.x, q.y - p.y);
+                if (d <= tol_ && (best < 0 || d < best_d || (d == best_d && id < best)))
+                {
+                    best = id;
+                    best_d = d;
+                }
+            }
+        }
+    }
+    return best;
+}
+
+int lsdtt_point_snapper::id_for(const lsdtt_xy& p)
+{
+    const int found = find(p);
+    if (found >= 0) return found;
+    const int id = static_cast<int>(points_.size());
+    points_.push_back(p);
+    cells_[{cell_of(p.x), cell_of(p.y)}].push_back(id);
+    return id;
+}
+
 lsdtt_endpoint_graph build_line_endpoint_graph(
     const lsdtt_vector_layer& lines,
     double                    snap_tolerance_metres)
 {
     lsdtt_endpoint_graph graph;
-    std::map<lsdtt_snap_key, int> node_lookup;
+    lsdtt_point_snapper snapper(snap_tolerance_metres > 0.0 ? snap_tolerance_metres : 1e-6);
 
     auto node_for = [&](const lsdtt_xy& p) -> int
     {
-        const lsdtt_snap_key key =
-            make_snap_key(p.x, p.y, snap_tolerance_metres);
-        auto it = node_lookup.find(key);
-        if (it != node_lookup.end())
-        {
-            return it->second;
-        }
-        const int id = graph.n_nodes++;
-        node_lookup.emplace(key, id);
+        const int id = snapper.id_for(p);
+        graph.n_nodes = static_cast<int>(snapper.size());
         return id;
     };
 

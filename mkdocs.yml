@@ -132,6 +132,7 @@ nav:
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
       - Fetch lithology (Macrostrat): cli_reference/cli_reference_lsdtt_fetch_lithology.md
+      - Fetch river lines: cli_reference/cli_reference_lsdtt_fetch_river_lines.md
       - Lithology to erodibility: cli_reference/cli_reference_lsdtt_lithology_erodibility.md
       - Synthetic surfaces: cli_reference/cli_reference_lsdtt_synthetic_surfaces.md
       - Synthetic networks: cli_reference/cli_reference_lsdtt_synthetic_networks.md

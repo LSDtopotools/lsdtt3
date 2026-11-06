@@ -89,6 +89,17 @@ struct lsdtt_vector_to_junction_network_options
     // its endpoints are marked is_on_loop. The geometry is retained for a
     // downstream D8-based loop resolver.
     bool break_cycles = false;
+
+    // Direction (river-lines plan SB3). false (default): each junction drains
+    // through its steepest downhill edge, by DEM elevation. true: through the
+    // edge whose DIGITISED order leaves it (lines prepared downstream, e.g. by
+    // lsdtt-fetch-river-lines), even where the DEM rises along it locally;
+    // elevation decides only between several such edges and for edges whose
+    // parts disagree. Whole-network guard: a connected network whose interior
+    // outlets (not on the DEM edge) stand higher on average than the median of
+    // its interior channel heads is taken to be digitised upstream, and is oriented by elevation instead
+    // (n_direction_fallback_networks counts them).
+    bool use_digitised_direction = false;
 };
 
 struct lsdtt_vector_network_junction
@@ -122,6 +133,16 @@ struct lsdtt_vector_network_junction
     std::int32_t s_vector_size  = 0;
 };
 
+// A network the use_digitised_direction guard sent back to elevation.
+struct lsdtt_direction_fallback_record
+{
+    int    n_junctions = 0;
+    int    n_heads = 0;
+    double mean_outlet_elevation = 0.0;
+    double median_head_elevation = 0.0;
+    double x = 0.0, y = 0.0;   // its first outlet
+};
+
 struct lsdtt_vector_network_edge
 {
     std::int32_t edge_id = -1;
@@ -139,9 +160,29 @@ struct lsdtt_vector_network_edge
 
     bool is_loop_edge = false;   // loop-closing edge; excluded from the DAG
 
+    // Why the edge was labelled is_loop_edge (empty when it was not):
+    //   "unclaimed"       neither end junction drains through it: each has a
+    //                     steeper downhill edge, so by DEM elevation the edge
+    //                     runs uphill from both ends (a rise in the DEM along
+    //                     a channel, e.g. a DSM "dam", gives this);
+    //   "parallel"        a second edge oriented out of a junction that already
+    //                     drains through another;
+    //   "receiver_cycle"  broken out of a directed receiver cycle.
+    std::string loop_reason;
+    // For a labelled edge: 1 when its two junctions are also joined by a path
+    // of unlabelled edges (it closes a real undirected cycle), 0 when it does
+    // not (labelling it cut the network in two). -1 for unlabelled edges.
+    int closes_cycle = -1;
+
     double length_metres = 0.0;
 
     std::vector<lsdtt_xy> xy;
+
+    // Digitised direction of the compact edge: +1 every part runs junction_a
+    // -> junction_b as digitised, -1 every part runs b -> a, 0 mixed.
+    int digitised_a_to_b = 0;
+    // 1 when the receiver came from the digitised order, 0 from elevation.
+    int oriented_by_digitised = 0;
 };
 
 class lsdtt_vector_to_junction_network
@@ -178,6 +219,16 @@ public:
     [[nodiscard]] std::int32_t n_junctions() const noexcept
     {
         return static_cast<std::int32_t>(junctions_.size());
+    }
+
+    [[nodiscard]] int n_direction_fallback_networks() const noexcept
+    {
+        return n_direction_fallback_networks_;
+    }
+    [[nodiscard]] const std::vector<lsdtt_direction_fallback_record>&
+    direction_fallbacks() const noexcept
+    {
+        return direction_fallbacks_;
     }
 
     [[nodiscard]] std::int32_t n_edges() const noexcept
@@ -275,6 +326,12 @@ private:
     void require_built() const;
     void require_valid_junction(std::int32_t junction) const;
 
+    // Sets closes_cycle on every edge (see lsdtt_vector_network_edge).
+    // Networks oriented by elevation because their digitised direction ran
+    // uphill as a whole (use_digitised_direction only).
+    int n_direction_fallback_networks_ = 0;
+    std::vector<lsdtt_direction_fallback_record> direction_fallbacks_;
+    void classify_loop_edges();
     void break_receiver_cycles();
     void build_outlet_keys();
     void build_topological_order();
@@ -307,6 +364,47 @@ private:
     const lsdtt_raster_cpu&                         dem,
     const lsdtt_vector_to_junction_network_options& options =
         lsdtt_vector_to_junction_network_options{});
+
+// clip_vector_lines_to_dem, also returning each line's value of `name_field`
+// (a string attribute; empty values where it is unset). An empty name_field
+// gives empty names. Throws if the field does not exist.
+struct clipped_vector_lines
+{
+    std::vector<std::vector<lsdtt_xy>> lines;
+    std::vector<std::string>           names;   // one per line
+};
+[[nodiscard]] clipped_vector_lines clip_vector_lines_to_dem_with_names(
+    const std::string&                              vector_path,
+    const lsdtt_raster_cpu&                         dem,
+    const std::string&                              name_field,
+    const lsdtt_vector_to_junction_network_options& options =
+        lsdtt_vector_to_junction_network_options{});
+
+// Where to seed a vector source junction on the DEM.
+//
+// A source junction made where a line enters the DEM is often over NoData: a
+// DEM warped to UTM has a NoData margin, and the clip is to the DEM's box, not
+// to its valid data. Skipping such a source loses the inflowing channel
+// altogether. This walks DOWNSTREAM along the junction's own downstream edge
+// (never across the next junction), in half-cell steps, to the first point over
+// a valid DEM cell, and returns that cell.
+//
+//   flat            row * n_cols + col of the cell to seed, or -1 when no point
+//                   of the edge lies over valid data (the source is dropped);
+//   xy              the point used;
+//   walked_metres   distance along the edge from the junction (0 when the
+//                   junction itself is over valid data: nothing moved).
+struct vector_source_seed
+{
+    std::int64_t flat = -1;
+    lsdtt_xy     xy;
+    double       walked_metres = 0.0;
+};
+
+[[nodiscard]] vector_source_seed seed_vector_source_on_valid_dem(
+    const lsdtt_raster_cpu&                  dem,
+    const lsdtt_vector_to_junction_network&  network,
+    std::int32_t                             junction_id);
 
 // Merge fragmented polylines into continuous lines by contracting degree-2
 // junctions. Endpoints within `snap_tol` metres are treated as the same node (so

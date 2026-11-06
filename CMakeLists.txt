@@ -276,6 +276,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_http_fetch.cpp
     src/core/lsdtt_macrostrat_fetch.cpp
     src/core/lsdtt_octopus_fetch.cpp
+    src/core/lsdtt_river_line_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
     src/core/lsdtt_outlet_bounds_discovery.cpp
@@ -477,6 +478,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_niemi_ensemble_cpu.cpp
     src/cpu/lsdtt_vector_to_junction_network.cpp
     src/cpu/lsdtt_vector_ops_cpu.cpp
+    src/cpu/lsdtt_river_line_prepare_cpu.cpp
+    src/cpu/lsdtt_burn_corridor_cpu.cpp
     src/cpu/lsdtt_vector_line_repair_cpu.cpp
     src/cpu/lsdtt_vector_network_d8_clean_cpu.cpp
     src/cpu/lsdtt_burn_vectormap_cpu.cpp
@@ -673,6 +676,7 @@ lsdtt_cli(lsdtt-linear-stats           cli/lsdtt-linear-stats.cpp)
 lsdtt_cli(lsdtt-swath-profile          cli/lsdtt-swath-profile.cpp)
 lsdtt_cli(lsdtt-lithology-erodibility  cli/lsdtt-lithology-erodibility.cpp)
 lsdtt_cli(lsdtt-fetch-lithology        cli/lsdtt-fetch-lithology.cpp)
+lsdtt_cli(lsdtt-fetch-river-lines      cli/lsdtt-fetch-river-lines.cpp)
 lsdtt_cli(lsdtt-fetch-erosion-rates    cli/lsdtt-fetch-erosion-rates.cpp)
 lsdtt_cli(lsdtt-lem                    cli/lsdtt-lem.cpp)
 lsdtt_cli(lsdtt-advection-diffusion    cli/lsdtt-advection-diffusion.cpp)

@@ -450,7 +450,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_topological_distance_triple_divides_on_selected_ridgelines` | `bool` | `false` | `switch` | - | Write nodes where the maximum left/right flow topological distance exceeds the threshold. | Writes separate per-threshold CSV and point/paired-path FlatGeobuf outputs. |
 | `topological_distance_triple_divide_threshold` | `float` | `0.0` | `param` | - | Flow topological distance threshold for topological triple divides. | A node qualifies when max(left distance, right distance) is greater than this value. |
 | `topological_distance_triple_divide_thresholds` | `string` | - | `param` | - | Comma-separated flow topological distance thresholds in metres. | When supplied, one topological triple-divide CSV and FlatGeobuf is written for each value. An empty value falls back to the singular topological_distance_triple_divide_threshold parameter. |
-| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated contributing-pixel thresholds for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value; CSV and FlatGeobuf filenames end in `_native_triple_divides_area_<value>`. |
+| `native_tdj_channel_thresholds` | `string` | - | `param` | - | Comma-separated contributing-pixel thresholds for native TDJs. | Native TDJs are recalculated on the selected ridgelines for each value; CSV and FlatGeobuf filenames end in `_native_triple_divides_area_` followed by the value. |
 
 ### Paired flow paths
 

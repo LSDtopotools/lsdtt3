@@ -678,4 +678,17 @@ void declare_erodibility_calibration_parameters(std::map<std::string, bool>&    
                                                 lsdtt_help_registry&                help_map,
                                                 const std::string&                  prefix = "");
 
+// declare_water_line_gap_bridging_parameters: the gates for bridging the gap
+//   between two facing dangling line ends (lsdtt_vector_line_repair_cpu):
+//   max_gap_length_metres, max_nonroad_gap_metres, max_facing_angle_degrees,
+//   max_heading_misalignment_degrees, road_max_facing_angle_degrees,
+//   tangent_fit_length_metres, road_intersection_tolerance_metres,
+//   require_mutual_best. Used by lsdtt-water-line-repair and
+//   lsdtt-fetch-river-lines (gap_bridge_algorithm_choice: facing_tips).
+void declare_water_line_gap_bridging_parameters(std::map<std::string, float>& float_default_map,
+                                                std::map<std::string, bool>&  bool_default_map,
+                                                lsdtt_help_registry&          help_map,
+                                                const std::string&            group = "Gap bridging",
+                                                const std::string&            parent = "");
+
 } // namespace lsdtt

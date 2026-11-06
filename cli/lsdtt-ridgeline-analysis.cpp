@@ -897,7 +897,8 @@ int main(int argc, char* argv[])
     string_default_map["native_tdj_channel_thresholds"] = "";
     help_map["native_tdj_channel_thresholds"] = {"string", "",
         "Comma-separated contributing-pixel thresholds for native TDJs.",
-        "Native TDJs are recalculated on the selected ridgelines for each value.",
+        "Native TDJs are recalculated on the selected ridgelines for each value; CSV and "
+        "FlatGeobuf filenames end in `_native_triple_divides_area_` followed by the value.",
         "Triple divide outputs", "param", ""};
 
     // --- Paired flow paths (lengthwise asymmetry, Goren & Shelef 2024) ---

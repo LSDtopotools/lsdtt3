@@ -20,6 +20,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include <limits>
 #include <string>
 
@@ -148,6 +149,19 @@ struct breach_least_cost_options
     // (Barnes et al. 2014b) and print the resolver's report.
     flat_resolution_choice fill_flat_resolution = flat_resolution_choice::inline_gradient;
     breach_lc_edge_policy edge_policy = breach_lc_edge_policy::outlet;
+    // Optional FIXED cells (river-lines plan 12.10 step 6: burned line cells
+    // whose elevations are already set). nullptr (the default) leaves the
+    // algorithm exactly as above. When given, it must hold one byte per cell
+    // (row-major, 1 = fixed), and:
+    //   * a fixed cell is never a pit, never raised and never lowered;
+    //   * in a search, a fixed neighbour at or below the target is an outlet
+    //     (as any low cell is); a fixed neighbour above it is impassable;
+    //   * the "bank zone" is the non-fixed 8-neighbours of fixed cells. A
+    //     search that has stepped into the bank zone (or starts there) may
+    //     only step onto a fixed cell next: a breach path never runs along
+    //     a fixed line, so a pit beside the line lower than it is left for the
+    //     fill instead of being carved out parallel to the line (plan 12.13 R1).
+    const std::vector<uint8_t>* fixed_cells = nullptr;
 };
 
 // Counters from one call. The six pit counters correspond to Whitebox's

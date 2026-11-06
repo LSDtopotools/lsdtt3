@@ -1,0 +1,8 @@
+read_path: __READ_PATH__
+write_path: __WRITE_PATH__
+write_fname: rivnosrc
+
+west: -2.52
+south: 53.01
+east: -2.32
+north: 53.12

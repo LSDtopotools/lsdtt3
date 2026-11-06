@@ -1850,6 +1850,53 @@ lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
+# Stream-burning source seeding (river-lines plan SB1): a source over the NoData
+# margin of a warped DEM is moved downstream along its edge to the first valid
+# cell instead of being skipped. Exact answers from a hand-built DEM.
+add_executable(lsdtt-test-vector-source-seed cpp/test_vector_source_seed.cpp)
+target_link_libraries(lsdtt-test-vector-source-seed PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_source_seed
+         COMMAND lsdtt-test-vector-source-seed "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_source_seed")
+lsdtt_set_tests_properties(unit_stream_burning_source_seed PROPERTIES LABELS "stream_burning")
+
+# Corridor burning (stream_burn_mode burn_to_corridor, river-lines plan VT):
+# offset valley at three corridor widths, and a ridge across the valley.
+add_executable(lsdtt-test-burn-corridor cpp/test_burn_corridor.cpp)
+target_link_libraries(lsdtt-test-burn-corridor PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_corridor COMMAND lsdtt-test-burn-corridor)
+lsdtt_set_tests_properties(unit_stream_burning_corridor PROPERTIES LABELS "stream_burning")
+
+# Loop labels on the vector junction network (river-lines plan SB2):
+# loop_reason and closes_cycle, exact on a hand-built DEM (a stolen receiver
+# slot that cuts the network, and a real braid).
+add_executable(lsdtt-test-vector-loop-labels cpp/test_vector_loop_labels.cpp)
+target_link_libraries(lsdtt-test-vector-loop-labels PRIVATE lsdtt3_cpu)
+add_test(NAME unit_stream_burning_loop_labels
+         COMMAND lsdtt-test-vector-loop-labels "${CMAKE_CURRENT_BINARY_DIR}/stream_burning_loop_labels")
+lsdtt_set_tests_properties(unit_stream_burning_loop_labels PROPERTIES LABELS "stream_burning")
+
+# lsdtt-fetch-river-lines -> lsdtt-stream-burning (river-lines plan, phase 1b):
+# the fixture network, and a reversed / near-miss / multipart copy of it, each
+# prepared by lsdtt-fetch-river-lines, must give stream burning's reference
+# vector summary and the burned DEM frozen for smoke_stream_burning above.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME smoke_fetch_river_lines_to_stream_burning
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fetch_river_lines_to_stream_burning.py"
+            --fetch-exe "$<TARGET_FILE:lsdtt-fetch-river-lines>"
+            --burn-exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --burn-param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_smoke.param.in"
+            --fixture-dir "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_fetch_river_lines_to_stream_burning"
+            --expect-burned-sha256 f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b)
+    lsdtt_mark_test_runtime(python smoke_fetch_river_lines_to_stream_burning)
+else()
+    lsdtt_mark_test_unregistered(python smoke_fetch_river_lines_to_stream_burning)
+endif()
+lsdtt_set_tests_properties(smoke_fetch_river_lines_to_stream_burning PROPERTIES
+    LABELS "cli;fetch;stream_burning"
+    FIXTURES_REQUIRED stream_burning_fixture)
+
 # Least-cost-path burn: regression test for the use-after-free segfault fixed on
 # 2026-10-07, and the only test that runs raster_least_cost_path. See the
 # parameter file.
@@ -2362,6 +2409,13 @@ lsdtt_set_tests_properties(smoke_outlet_matching_edge_only PROPERTIES
 # =============================================================================
 # lsdtt-water-line-repair
 #
+# Line-end joining by distance (lsdtt_point_snapper, river-lines plan D9):
+# exact cases, including the two the old grid-rounding key got wrong.
+add_executable(lsdtt-test-point-snapper cpp/test_point_snapper.cpp)
+target_link_libraries(lsdtt-test-point-snapper PRIVATE lsdtt3_cpu)
+add_test(NAME unit_water_line_repair_point_snapper COMMAND lsdtt-test-point-snapper)
+lsdtt_set_tests_properties(unit_water_line_repair_point_snapper PROPERTIES LABELS "water")
+
 # No test until 2026-10-14. Pure vector: tests/data/water_line_repair_fixture
 # lays out one case per bridging rule (see water_line_repair_smoke.param.in).
 # The bridge count in stdout is the assertion; each variant changes one rule
@@ -7945,6 +7999,33 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "lithology_field_name: lith_primary"
 )
 
+# -----------------------------------------------------------------------------
+# lsdtt-fetch-river-lines CLI, offline: the committed Open Rivers extract read
+# as a local file with the Open Rivers field names (24 links, nothing clipped).
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_fetch_river_lines_local
+    lsdtt-fetch-river-lines
+    fetch_river_lines_local.param.in
+    rivloc_river_lines.fgb
+    --expect rivloc_river_nodes.fgb
+    --expect rivloc_river_topology.csv
+    --expect rivloc_ATTRIBUTION.txt
+    --expect-vector-feature-min rivloc_river_lines.fgb:24
+    --stdout-contains "(EPSG:32630)"
+    --stdout-contains "Network: 24 lines"
+    --stdout-contains "stream_vector_path: rivloc_river_lines.fgb"
+)
+
+add_lsdtt_cli_smoke_test(
+    failure_fetch_river_lines_no_source
+    lsdtt-fetch-river-lines
+    fetch_river_lines_no_source.param.in
+    unused_expected_output
+    --expect-failure
+    --stderr-contains "FATAL: set river_line_source"
+)
+
 add_lsdtt_cli_smoke_test(
     failure_fetch_lithology_no_bbox
     lsdtt-fetch-lithology
@@ -8163,6 +8244,26 @@ add_test(NAME unit_fetch_erosion_rates
          COMMAND lsdtt-test-octopus-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/octopus_erosion_rates"
                  "${CMAKE_CURRENT_BINARY_DIR}/fetch_erosion_rates_work")
 lsdtt_set_tests_properties(unit_fetch_erosion_rates PROPERTIES LABELS "fetch")
+
+# River-line preparation (lsdtt-fetch-river-lines), in process and GDAL-free:
+# hand-built polylines covering T-junctions, near misses, reversal, braids,
+# multipart features, clipping, node-id merging, conflicts and fragments.
+add_executable(lsdtt-test-river-line-prepare cpp/test_river_line_prepare.cpp)
+target_link_libraries(lsdtt-test-river-line-prepare PRIVATE lsdtt3_cpu)
+target_include_directories(lsdtt-test-river-line-prepare PRIVATE ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/src/cpu)
+add_test(NAME unit_fetch_river_lines_prepare COMMAND lsdtt-test-river-line-prepare)
+lsdtt_set_tests_properties(unit_fetch_river_lines_prepare PROPERTIES LABELS "fetch")
+
+# River-line fetch adapters, offline: the committed Open Rivers extract
+# (tests/data/river_lines) zipped into a cache at run time, checked against a
+# reference built from its node ids; local_file and reversed-copy relations.
+add_executable(lsdtt-test-river-line-fetch cpp/test_river_line_fetch.cpp)
+target_link_libraries(lsdtt-test-river-line-fetch PRIVATE lsdtt3_cpu)
+target_include_directories(lsdtt-test-river-line-fetch PRIVATE ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/src/cpu)
+add_test(NAME unit_fetch_river_lines_adapters
+         COMMAND lsdtt-test-river-line-fetch "${CMAKE_CURRENT_SOURCE_DIR}/data/river_lines"
+                 "${CMAKE_CURRENT_BINARY_DIR}/fetch_river_lines_work")
+lsdtt_set_tests_properties(unit_fetch_river_lines_adapters PROPERTIES LABELS "fetch")
 
 add_executable(lsdtt-test-coastal-mask cpp/test_coastal_mask.cpp)
 target_link_libraries(lsdtt-test-coastal-mask PRIVATE lsdtt3_core)
