@@ -100,9 +100,9 @@ _WORKFLOW = (
     " outlet_on_dem_edge parent_id nesting_depth (complete=False: basin cut by the DEM edge"
     " or nodata, so enlarge the box).\n"
     "fit.nodes: basin_id outlet_flat flat receiver_flat chi observed_elevation fitted_elevation"
-    " residual_elevation branch_id is_main_stem is_source is_junction (one row per channel pixel).\n"
+    " residual_elevation branch_id is_main_stem is_source is_junction source_key (one row per channel pixel).\n"
     "fit.segments: basin_id segment_id parent_segment_id branch_id downstream_chi upstream_chi"
-    " downstream_elevation upstream_elevation ksn n_nodes (one row per straight chi segment).\n"
+    " downstream_elevation upstream_elevation ksn n_nodes source_key (one row per straight chi segment).\n"
     "fit.summary: basin_id n_segments mean_ksn median_ksn min_ksn max_ksn chi_weighted_mean_ksn"
     " main_stem_mean_ksn main_stem_median_ksn (one row per basin).\n"
 )
@@ -119,7 +119,7 @@ _GOTCHAS = """@gotchas
 - Basin IDs are zero-based in tables (B.table, B.polygons, fit.nodes/segments/summary), but the raster B.labels stores basin_id+1, with 0 outside every basin. Use B.mask(basin_id) for one basin.
 - fit.nodes has a 'flat' pixel index but no row/col: row=flat//n_cols, col=flat%n_cols, or F.row_col(flat_index). The same holds for every *_flat column.
 - F.drainage_area() is in m^2; F.contributing_pixels() is a pixel count, as are thresholds such as threshold_contributing_pixels.
-- Column names differ from the lsdtt-* CLI CSVs that lsdviztools3 expects: rename basin_id->basin_index, and ksn->k_sn in fit.segments, before using lsdviztools3 chi plots: fit.segments.rename(columns={'basin_id':'basin_index','ksn':'k_sn'}).
+- Column names differ from the lsdtt-* CLI CSVs that lsdviztools3 expects: rename basin_id->basin_index, and ksn->k_sn in fit.segments, before using lsdviztools3 chi plots: fit.segments.rename(columns={'basin_id':'basin_index','ksn':'k_sn'}). fit.tributaries and fit.knickpoints need only basin_id->basin_index.
 """
 
 _TOPICS = {
@@ -186,7 +186,8 @@ divide_migration(flow:F,dem:R,outlets,...)->DivideMigrationResult
 C=N.chi(outlets?,m_over_n=0.45,reference_area=1.0,denominator?) (outlets: the same (row,col) array given to F.basins; None = every network outlet); C.n_basins; C.nodes()->D; C.raster()->R (chi)
 fit=C.fit(dem:R,critical_divergence_metres=5.0,mainstem='max_flow_length')->ChiFit (pass the filled DEM; 10 m suits 30 m data); ksn is the slope of each straight segment in chi-elevation space
 fit.nodes->D (one row per channel pixel: basin_id, flat, chi, observed_elevation, fitted_elevation, branch_id, is_main_stem; no row/col, use F.row_col(flat_index))
-fit.segments->D (one row per segment: basin_id, segment_id, ksn, downstream_chi, upstream_chi, n_nodes); fit.summary->D (one row per basin: median_ksn, mean_ksn, chi_weighted_mean_ksn, main_stem_median_ksn)
+fit.segments->D (one row per segment: basin_id, segment_id, ksn, downstream_chi, upstream_chi, n_nodes, source_key); fit.summary->D (one row per basin: median_ksn, mean_ksn, chi_weighted_mean_ksn, main_stem_median_ksn)
+fit.tributaries->D (one row per tributary = fit branch: source_key, junction_drainage_area_m2, area_fraction, area_rank_in_basin, ksn_max, n_descendants); fit.knickpoints->D (one row per node where two segments meet: delta_ksn = upstream - downstream, log_ratio_ksn, at_junction, x, y, chi); fit.knickpoint_thresholds->D (p90 p95 median_plus_3mad otsu on abs_delta_ksn / abs_log_ratio_ksn; q3_plus_3iqr on ksn)
 fit.disorder(); fit.disorder_bootstrap(replicates=1000,...); inv=fit.invert_ksn(m_over_n_values,...)->ChiInversion; inv.nodes; inv.summary; inv.u_star_raster(basin_id=0)->R
 N.chi_sweep(dem:R,m_over_n_values,outlets?,...)->D (disorder per basin for each m/n); F.chi_from_outlets(outlets?,m_over_n=0.45,...)->R (chi raster without a network)
 ! chi needs N built from F on the same grid as the elevation R. With reference_area=1, ksn has units of m^(2*m_over_n).

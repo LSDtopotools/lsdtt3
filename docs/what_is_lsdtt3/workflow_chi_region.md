@@ -122,6 +122,9 @@ In `workflows/results/<run_id>/<region>/`:
 | `chi/<region>_chi_ksn_basin_summary_mn_<m/n>.csv` | k_sn per basin (mean, median, range, main stem) |
 | `chi/<region>_chi_fit_segments_mn_<m/n>.csv`, `_fit_segment_lines_mn_<m/n>.fgb` | Piecewise chi fits, as a table and as lines |
 | `chi/<region>_chi_fit_nodes_mn_<m/n>.csv` | Every channel node with chi, elevation and fitted k_sn |
+| `chi/<region>_chi_tributaries_mn_<m/n>.csv` | One row per tributary (a branch of the fit, from its head to where it joins its parent): its `source_key`, its drainage area just before the junction, that area as a fraction of the basin, its rank by area, and its k_sn range |
+| `chi/<region>_chi_knickpoints_mn_<m/n>.csv` | Every node where two fitted segments meet: k_sn either side, `delta_ksn` (upstream minus downstream), and `at_junction` (1 at a tributary mouth) |
+| `chi/<region>_chi_knickpoint_thresholds_mn_<m/n>.csv` | Suggested thresholds for a major knickpoint (90th and 95th percentiles, median + 3 MAD, Otsu) and an outlier k_sn for segments |
 | `chi/<region>_chi_coordinate_mn_<m/n>.tif` | Chi for every pixel of the analysed basins |
 | `chi/<region>_chi_disorder_sweep.csv` | Disorder against m/n |
 | `figures/<region>_ksn_map.png` | k_sn (log scale) along the fitted channel segments, over a hillshade |
@@ -135,3 +138,15 @@ the `chi_analysis` block. They also switch on the chi outputs they draw
 `write_chi_coordinate_raster`).
 
 `<m/n>` is written with `p` for the decimal point (`0p450`).
+
+Every fit table carries `source_key`, the channel key of the chi data maps,
+so a tributary can be found by the same key in every output. The tributary
+and knickpoint tables are switched by `write_chi_tributary_table` and
+`write_chi_knickpoint_table` (both on by default). lsdviztools3 draws them:
+- `lsdviz3-chi` with `--remove-ksn-above`, `--min-tributary-area-m2`,
+  `--min-tributary-area-fraction` or `--top-tributaries` leaves tributaries
+  out of the plots (for example links routed over a dam onto a steep face),
+  and maps what was removed;
+- `lsdviz3-knickpoints` shows the distribution of k_sn changes with the
+  suggested thresholds, and the major knickpoints on the profiles, along
+  chi and on a map.

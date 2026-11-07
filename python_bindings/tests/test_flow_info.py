@@ -88,6 +88,22 @@ class FlowInfoTest(unittest.TestCase):
         self.assertEqual(chi.raster().shape, self.dem.shape)
         fit = chi.fit(self.dem)
         self.assertIn("ksn", fit.segments.columns)
+        # Channel keys and the tributary / knickpoint tables, as lsdtt-chi-analysis.
+        segments = fit.segments
+        self.assertIn("source_key", segments.columns)
+        self.assertIn("source_key", fit.nodes.columns)
+        tributaries = fit.tributaries
+        branches = segments[["basin_id", "branch_id"]].drop_duplicates()
+        self.assertEqual(len(tributaries), len(branches))
+        self.assertTrue((tributaries.loc[tributaries.branch_id == 0, "area_rank_in_basin"] == 0).all())
+        knickpoints = fit.knickpoints
+        within = knickpoints[knickpoints.at_junction == 0]
+        self.assertEqual(len(within), int((segments.parent_segment_id >= 0).sum()))
+        self.assertTrue(np.allclose(within.delta_ksn, within.ksn_upstream - within.ksn_downstream))
+        thresholds = fit.knickpoint_thresholds
+        self.assertEqual(len(thresholds), 9)
+        self.assertEqual(set(thresholds.method),
+                         {"p90", "p95", "median_plus_3mad", "otsu", "q3_plus_3iqr"})
         self.assertIn("disorder", fit.disorder().columns)
         self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
 

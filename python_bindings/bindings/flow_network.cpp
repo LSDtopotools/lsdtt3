@@ -15,6 +15,8 @@
 #include <cpu/lsdtt_channel_network_analysis_cpu.hpp>
 #include <cpu/lsdtt_chi_extraction_cpu.hpp>
 #include <cpu/lsdtt_chi_network_analysis_cpu.hpp>
+#include <cpu/lsdtt_chi_data_maps_cpu.hpp>
+#include <cpu/lsdtt_chi_knickpoints_cpu.hpp>
 #include <cpu/lsdtt_chi_disorder_cpu.hpp>
 #include <cpu/lsdtt_chi_ksn_inversion_cpu.hpp>
 
@@ -455,20 +457,57 @@ ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_diver
     if (mainstem == "max_flow_length") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
     else if (mainstem == "max_chi") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_chi;
     else throw std::invalid_argument("mainstem must be 'max_flow_length' or 'max_chi'");
-    return ChiFit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow());
+    const auto& meta = chi.flow().meta();
+    auto keys = lsdtt::assign_chi_source_keys(chi.native(), chi.flow(), meta.n_cols, meta.cell_size);
+    return ChiFit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow(),
+                  chi.native(), std::move(keys));
 }
 
 nb::object chi_fit_nodes(const ChiFit& fit)
 {
-    const auto t = lsdtt::export_chi_network_fit_nodes(fit.native()); nb::dict d;
-    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["flat"]=t.flat; d["receiver_flat"]=t.receiver_flat; d["chi"]=t.chi; d["observed_elevation"]=t.observed_elevation; d["fitted_elevation"]=t.fitted_elevation; d["residual_elevation"]=t.residual_elevation; d["abs_residual_elevation"]=t.abs_residual_elevation; d["branch_id"]=t.branch_id; d["is_main_stem"]=t.is_main_stem; d["is_source"]=t.is_source; d["is_junction"]=t.is_junction; d["is_split_point"]=t.is_split_point;
+    auto t = lsdtt::export_chi_network_fit_nodes(fit.native()); lsdtt::attach_chi_source_keys(t, fit.key_map()); nb::dict d;
+    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["flat"]=t.flat; d["receiver_flat"]=t.receiver_flat; d["chi"]=t.chi; d["observed_elevation"]=t.observed_elevation; d["fitted_elevation"]=t.fitted_elevation; d["residual_elevation"]=t.residual_elevation; d["abs_residual_elevation"]=t.abs_residual_elevation; d["branch_id"]=t.branch_id; d["is_main_stem"]=t.is_main_stem; d["is_source"]=t.is_source; d["is_junction"]=t.is_junction; d["is_split_point"]=t.is_split_point; d["source_key"]=t.source_key;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
 nb::object chi_fit_segments(const ChiFit& fit)
 {
-    const auto t=lsdtt::export_chi_network_fit_segments(fit.native()); nb::dict d;
-    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["segment_id"]=t.segment_id; d["parent_segment_id"]=t.parent_segment_id; d["branch_id"]=t.branch_id; d["downstream_flat"]=t.downstream_flat; d["upstream_flat"]=t.upstream_flat; d["downstream_chi"]=t.downstream_chi; d["upstream_chi"]=t.upstream_chi; d["downstream_elevation"]=t.downstream_elevation; d["upstream_elevation"]=t.upstream_elevation; d["ksn"]=t.k_sn; d["max_abs_residual"]=t.max_abs_residual; d["n_nodes"]=t.n_nodes;
+    auto t=lsdtt::export_chi_network_fit_segments(fit.native()); lsdtt::attach_chi_source_keys(t, fit.key_map()); nb::dict d;
+    d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["segment_id"]=t.segment_id; d["parent_segment_id"]=t.parent_segment_id; d["branch_id"]=t.branch_id; d["downstream_flat"]=t.downstream_flat; d["upstream_flat"]=t.upstream_flat; d["downstream_chi"]=t.downstream_chi; d["upstream_chi"]=t.upstream_chi; d["downstream_elevation"]=t.downstream_elevation; d["upstream_elevation"]=t.upstream_elevation; d["ksn"]=t.k_sn; d["max_abs_residual"]=t.max_abs_residual; d["n_nodes"]=t.n_nodes; d["source_key"]=t.source_key;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+lsdtt::lsdtt_chi_tributary_knickpoint_tables chi_fit_tables(const ChiFit& fit)
+{
+    return lsdtt::build_chi_tributaries_and_knickpoints(fit.native(), fit.chi(), fit.keys(), fit.flow().meta());
+}
+
+nb::object chi_fit_tributaries(const ChiFit& fit)
+{
+    const auto rows = chi_fit_tables(fit).tributaries;
+    std::vector<std::int32_t> basin, bkey, skey, branch, parent, order, rank, nseg, maxseg, ndesc; std::vector<std::int64_t> head, junction;
+    std::vector<double> hx, hy, jx, jy, ja, ba, frac, len, span, kmin, kmed, kmax, kmaxchi;
+    for (const auto& r : rows) { basin.push_back(r.basin_index); bkey.push_back(r.basin_key); skey.push_back(r.source_key); branch.push_back(r.branch_id); parent.push_back(r.parent_branch_id); order.push_back(r.branch_order); head.push_back(r.head_flat); junction.push_back(r.junction_flat); hx.push_back(r.head_x); hy.push_back(r.head_y); jx.push_back(r.junction_x); jy.push_back(r.junction_y); ja.push_back(r.junction_drainage_area_m2); ba.push_back(r.basin_drainage_area_m2); frac.push_back(r.area_fraction); rank.push_back(r.area_rank_in_basin); len.push_back(r.length_m); span.push_back(r.chi_span); nseg.push_back(r.n_segments); kmin.push_back(r.ksn_min); kmed.push_back(r.ksn_median); kmax.push_back(r.ksn_max); maxseg.push_back(r.ksn_max_segment_id); kmaxchi.push_back(r.ksn_max_chi); ndesc.push_back(r.n_descendants); }
+    nb::dict d; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["parent_branch_id"]=parent; d["branch_order"]=order; d["head_flat"]=head; d["junction_flat"]=junction; d["head_x"]=hx; d["head_y"]=hy; d["junction_x"]=jx; d["junction_y"]=jy; d["junction_drainage_area_m2"]=ja; d["basin_drainage_area_m2"]=ba; d["area_fraction"]=frac; d["area_rank_in_basin"]=rank; d["length_m"]=len; d["chi_span"]=span; d["n_segments"]=nseg; d["ksn_min"]=kmin; d["ksn_median"]=kmed; d["ksn_max"]=kmax; d["ksn_max_segment_id"]=maxseg; d["ksn_max_chi"]=kmaxchi; d["n_descendants"]=ndesc;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_knickpoints(const ChiFit& fit)
+{
+    const auto rows = chi_fit_tables(fit).knickpoints;
+    std::vector<std::int32_t> basin, bkey, skey, branch, useg, dseg, junction; std::vector<std::int64_t> flat;
+    std::vector<double> x, y, chi, z, fd, da, kup, kdown, delta, lr, fromhead, chin;
+    for (const auto& k : rows) { basin.push_back(k.basin_index); bkey.push_back(k.basin_key); skey.push_back(k.source_key); branch.push_back(k.branch_id); useg.push_back(k.upstream_segment_id); dseg.push_back(k.downstream_segment_id); flat.push_back(k.flat); x.push_back(k.x); y.push_back(k.y); chi.push_back(k.chi); z.push_back(k.elevation); fd.push_back(k.flow_distance_m); da.push_back(k.drainage_area_m2); kup.push_back(k.ksn_upstream); kdown.push_back(k.ksn_downstream); delta.push_back(k.delta_ksn); lr.push_back(k.log_ratio_ksn); junction.push_back(k.at_junction); fromhead.push_back(k.chi_from_branch_head); chin.push_back(k.chi_normalised); }
+    nb::dict d; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["upstream_segment_id"]=useg; d["downstream_segment_id"]=dseg; d["flat"]=flat; d["x"]=x; d["y"]=y; d["chi"]=chi; d["elevation"]=z; d["flow_distance_m"]=fd; d["drainage_area_m2"]=da; d["ksn_upstream"]=kup; d["ksn_downstream"]=kdown; d["delta_ksn"]=delta; d["log_ratio_ksn"]=lr; d["at_junction"]=junction; d["chi_from_branch_head"]=fromhead; d["chi_normalised"]=chin;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_knickpoint_thresholds(const ChiFit& fit)
+{
+    const auto rows = chi_fit_tables(fit).thresholds;
+    std::vector<std::string> measure, method; std::vector<double> thr; std::vector<std::int64_t> above, total;
+    for (const auto& r : rows) { measure.push_back(r.measure); method.push_back(r.method); thr.push_back(r.threshold); above.push_back(r.n_above); total.push_back(r.n_total); }
+    nb::dict d; d["measure"]=measure; d["method"]=method; d["threshold"]=thr; d["n_above"]=above; d["n_total"]=total;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -858,13 +897,40 @@ nodes : pandas.DataFrame
     ``fitted_elevation`` (m), ``residual_elevation`` (observed - fitted, m),
     ``abs_residual_elevation`` (m), ``branch_id``, ``is_main_stem``,
     ``is_source``, ``is_junction``, ``is_split_point`` (pixel where segments
-    meet). There are no row/col columns: use ``flat`` as above.
+    meet), ``source_key`` (the chi data maps' channel key; -1 in a basin whose
+    upslope area touches nodata). There are no row/col columns: use ``flat``
+    as above.
 segments : pandas.DataFrame
     One row per segment: ``basin_id``, ``outlet_flat``, ``segment_id``,
     ``parent_segment_id``, ``branch_id``, ``downstream_flat``,
     ``upstream_flat``, ``downstream_chi``, ``upstream_chi`` (m),
     ``downstream_elevation``, ``upstream_elevation`` (m), ``ksn``,
-    ``max_abs_residual`` (m), ``n_nodes``.
+    ``max_abs_residual`` (m), ``n_nodes``, ``source_key``.
+tributaries : pandas.DataFrame
+    One row per tributary (a branch of the fit, head to the node where it
+    joins its parent; branch 0 is the main stem), as lsdtt-chi-analysis
+    ``write_chi_tributary_table``: ``basin_id``, ``basin_key``, ``source_key``,
+    ``branch_id``, ``parent_branch_id``, ``branch_order``, ``head_flat``,
+    ``junction_flat``, ``head_x``, ``head_y``, ``junction_x``, ``junction_y``,
+    ``junction_drainage_area_m2`` (just before the junction),
+    ``basin_drainage_area_m2``, ``area_fraction``, ``area_rank_in_basin``
+    (1 = largest tributary), ``length_m``, ``chi_span``, ``n_segments``,
+    ``ksn_min``, ``ksn_median``, ``ksn_max``, ``ksn_max_segment_id``,
+    ``ksn_max_chi``, ``n_descendants``.
+knickpoints : pandas.DataFrame
+    One row per node where two fitted segments meet, as lsdtt-chi-analysis
+    ``write_chi_knickpoint_table``: ``basin_id``, ``basin_key``, ``source_key``,
+    ``branch_id``, ``upstream_segment_id``, ``downstream_segment_id``,
+    ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,
+    ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``
+    (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a
+    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.
+knickpoint_thresholds : pandas.DataFrame
+    Suggested thresholds for a major knickpoint, over the rows with
+    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,
+    ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,
+    ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),
+    ``threshold``, ``n_above``, ``n_total``.
 summary : pandas.DataFrame
     One row per basin: ``basin_id``, ``outlet_flat``, ``n_segments``,
     ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,
@@ -875,6 +941,12 @@ summary : pandas.DataFrame
             "Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.")
         .def_prop_ro("segments", &chi_fit_segments, nb::sig("def segments(self) -> pandas.DataFrame"),
             "Per-segment k_sn table (pandas.DataFrame); see the class documentation for columns.")
+        .def_prop_ro("tributaries", &chi_fit_tributaries, nb::sig("def tributaries(self) -> pandas.DataFrame"),
+            "Per-tributary table (pandas.DataFrame): area where it joins, its fraction of the basin, rank, k_sn summary; see the class documentation for columns.")
+        .def_prop_ro("knickpoints", &chi_fit_knickpoints, nb::sig("def knickpoints(self) -> pandas.DataFrame"),
+            "Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.")
+        .def_prop_ro("knickpoint_thresholds", &chi_fit_knickpoint_thresholds, nb::sig("def knickpoint_thresholds(self) -> pandas.DataFrame"),
+            "Suggested major-knickpoint thresholds (pandas.DataFrame); see the class documentation for columns.")
         .def_prop_ro("summary", &chi_fit_summary, nb::sig("def summary(self) -> pandas.DataFrame"),
             "Per-basin k_sn summary table (pandas.DataFrame); see the class documentation for columns.")
         .def("disorder", &chi_fit_disorder, R"doc(
