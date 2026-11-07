@@ -40,6 +40,7 @@ _DRIVERS = frozenset(
         "lsdtt-ridgeline-analysis", "lsdtt-basin-surface-metrics",
         "lsdtt-divide-migration", "lsdtt-raster-calculator",
         "lsdtt-fetch-raster", "lsdtt-fetch-lithology", "lsdtt-fetch-erosion-rates",
+        "lsdtt-fetch-river-lines",
         "lsdtt-bankfull-width",
         "lsdtt-spectral-analysis",
         "lsdtt-chi-analysis",

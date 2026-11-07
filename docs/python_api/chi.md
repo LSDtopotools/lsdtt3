@@ -129,13 +129,40 @@ nodes : pandas.DataFrame
     ``fitted_elevation`` (m), ``residual_elevation`` (observed - fitted, m),
     ``abs_residual_elevation`` (m), ``branch_id``, ``is_main_stem``,
     ``is_source``, ``is_junction``, ``is_split_point`` (pixel where segments
-    meet). There are no row/col columns: use ``flat`` as above.
+    meet), ``source_key`` (the chi data maps' channel key; -1 in a basin whose
+    upslope area touches nodata). There are no row/col columns: use ``flat``
+    as above.
 segments : pandas.DataFrame
     One row per segment: ``basin_id``, ``outlet_flat``, ``segment_id``,
     ``parent_segment_id``, ``branch_id``, ``downstream_flat``,
     ``upstream_flat``, ``downstream_chi``, ``upstream_chi`` (m),
     ``downstream_elevation``, ``upstream_elevation`` (m), ``ksn``,
-    ``max_abs_residual`` (m), ``n_nodes``.
+    ``max_abs_residual`` (m), ``n_nodes``, ``source_key``.
+tributaries : pandas.DataFrame
+    One row per tributary (a branch of the fit, head to the node where it
+    joins its parent; branch 0 is the main stem), as lsdtt-chi-analysis
+    ``write_chi_tributary_table``: ``basin_id``, ``basin_key``, ``source_key``,
+    ``branch_id``, ``parent_branch_id``, ``branch_order``, ``head_flat``,
+    ``junction_flat``, ``head_x``, ``head_y``, ``junction_x``, ``junction_y``,
+    ``junction_drainage_area_m2`` (just before the junction),
+    ``basin_drainage_area_m2``, ``area_fraction``, ``area_rank_in_basin``
+    (1 = largest tributary), ``length_m``, ``chi_span``, ``n_segments``,
+    ``ksn_min``, ``ksn_median``, ``ksn_max``, ``ksn_max_segment_id``,
+    ``ksn_max_chi``, ``n_descendants``.
+knickpoints : pandas.DataFrame
+    One row per node where two fitted segments meet, as lsdtt-chi-analysis
+    ``write_chi_knickpoint_table``: ``basin_id``, ``basin_key``, ``source_key``,
+    ``branch_id``, ``upstream_segment_id``, ``downstream_segment_id``,
+    ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,
+    ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``
+    (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a
+    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.
+knickpoint_thresholds : pandas.DataFrame
+    Suggested thresholds for a major knickpoint, over the rows with
+    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,
+    ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,
+    ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),
+    ``threshold``, ``n_above``, ``n_total``.
 summary : pandas.DataFrame
     One row per basin: ``basin_id``, ``outlet_flat``, ``n_segments``,
     ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,
@@ -284,6 +311,14 @@ ChiInversion
 def invert_ksn(self, m_over_n_values: object, reference_area: float = 1.0, coarse_cell_size_metres: float = 2000.0, roughness_weight: float = 10000.0, diagonal_jitter: float = 1e-08, use_mae: bool = True) -> lsdtt3.ChiInversion
 ```
 
+#### `knickpoint_thresholds`
+
+Suggested major-knickpoint thresholds (pandas.DataFrame); see the class documentation for columns.
+
+#### `knickpoints`
+
+Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.
+
 #### `nodes`
 
 Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.
@@ -295,6 +330,10 @@ Per-segment k_sn table (pandas.DataFrame); see the class documentation for colum
 #### `summary`
 
 Per-basin k_sn summary table (pandas.DataFrame); see the class documentation for columns.
+
+#### `tributaries`
+
+Per-tributary table (pandas.DataFrame): area where it joins, its fraction of the basin, rank, k_sn summary; see the class documentation for columns.
 
 ---
 

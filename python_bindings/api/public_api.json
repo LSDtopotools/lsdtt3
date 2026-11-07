@@ -818,7 +818,7 @@
     {
       "name": "ChiFit",
       "kind": "class",
-      "doc": "Piecewise-linear fits of channel profiles in chi-elevation space.\n\nMade by ``ChiCollection.fit(dem)``. Each segment is a straight line in\n(chi, elevation); its slope ``ksn = dz/dchi`` is the channel steepness\nindex. With ``reference_area = 1`` m^2 this is k_sn in m^(2 theta), where\ntheta = m_over_n; with another A0 it is k_sn / A0**theta (dimensionless).\nAll three tables are pandas DataFrames; ``basin_id`` is 0-based and\n``flat`` values are flat indices (row = flat // n_cols, col = flat % n_cols;\nor ``FlowInfo.row_col(flat)``). lsdviztools3 chi plots expect the column\nnames ``basin_index`` and ``k_sn``: rename with\n``df.rename(columns={\"basin_id\": \"basin_index\", \"ksn\": \"k_sn\"})``.\n\nReturned by ``ChiCollection.fit()``; not constructible directly.\n\nAttributes\n----------\nnodes : pandas.DataFrame\n    One row per channel pixel: ``basin_id``, ``outlet_flat``, ``flat``,\n    ``receiver_flat``, ``chi`` (m), ``observed_elevation`` (m),\n    ``fitted_elevation`` (m), ``residual_elevation`` (observed - fitted, m),\n    ``abs_residual_elevation`` (m), ``branch_id``, ``is_main_stem``,\n    ``is_source``, ``is_junction``, ``is_split_point`` (pixel where segments\n    meet). There are no row/col columns: use ``flat`` as above.\nsegments : pandas.DataFrame\n    One row per segment: ``basin_id``, ``outlet_flat``, ``segment_id``,\n    ``parent_segment_id``, ``branch_id``, ``downstream_flat``,\n    ``upstream_flat``, ``downstream_chi``, ``upstream_chi`` (m),\n    ``downstream_elevation``, ``upstream_elevation`` (m), ``ksn``,\n    ``max_abs_residual`` (m), ``n_nodes``.\nsummary : pandas.DataFrame\n    One row per basin: ``basin_id``, ``outlet_flat``, ``n_segments``,\n    ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,\n    ``median_ksn``, ``min_ksn``, ``max_ksn``, ``chi_weighted_mean_ksn``,\n    ``main_stem_mean_ksn``, ``main_stem_median_ksn``.\n\nMethods\n-------\ndisorder() -> object\n    Return full-network chi-disorder per basin.\ndisorder_bootstrap(replicates: int = 1000, seed: int = 5489, sample_full_tributary_count: bool = True, n_side_branches: int = 3, with_replacement: bool = True) -> object\n    Bootstrap disorder over side branches.\ndisorder_jackknife() -> object\n    Leave-one-side-branch-out disorder samples.\ndisorder_subset_sensitivity(n_side_branches: int = 3) -> object\n    Evaluate disorder across mainstem-plus-tributary subsets.\ninvert_ksn(m_over_n_values: object, reference_area: float = 1.0, coarse_cell_size_metres: float = 2000.0, roughness_weight: float = 10000.0, diagonal_jitter: float = 1e-08, use_mae: bool = True) -> ChiInversion\n    Run regularised spatial ksn/u-star inversion over m/n trials.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Piecewise-linear fits of channel profiles in chi-elevation space.\n\nMade by ``ChiCollection.fit(dem)``. Each segment is a straight line in\n(chi, elevation); its slope ``ksn = dz/dchi`` is the channel steepness\nindex. With ``reference_area = 1`` m^2 this is k_sn in m^(2 theta), where\ntheta = m_over_n; with another A0 it is k_sn / A0**theta (dimensionless).\nAll three tables are pandas DataFrames; ``basin_id`` is 0-based and\n``flat`` values are flat indices (row = flat // n_cols, col = flat % n_cols;\nor ``FlowInfo.row_col(flat)``). lsdviztools3 chi plots expect the column\nnames ``basin_index`` and ``k_sn``: rename with\n``df.rename(columns={\"basin_id\": \"basin_index\", \"ksn\": \"k_sn\"})``.\n\nReturned by ``ChiCollection.fit()``; not constructible directly.\n\nAttributes\n----------\nnodes : pandas.DataFrame\n    One row per channel pixel: ``basin_id``, ``outlet_flat``, ``flat``,\n    ``receiver_flat``, ``chi`` (m), ``observed_elevation`` (m),\n    ``fitted_elevation`` (m), ``residual_elevation`` (observed - fitted, m),\n    ``abs_residual_elevation`` (m), ``branch_id``, ``is_main_stem``,\n    ``is_source``, ``is_junction``, ``is_split_point`` (pixel where segments\n    meet), ``source_key`` (the chi data maps' channel key; -1 in a basin whose\n    upslope area touches nodata). There are no row/col columns: use ``flat``\n    as above.\nsegments : pandas.DataFrame\n    One row per segment: ``basin_id``, ``outlet_flat``, ``segment_id``,\n    ``parent_segment_id``, ``branch_id``, ``downstream_flat``,\n    ``upstream_flat``, ``downstream_chi``, ``upstream_chi`` (m),\n    ``downstream_elevation``, ``upstream_elevation`` (m), ``ksn``,\n    ``max_abs_residual`` (m), ``n_nodes``, ``source_key``.\ntributaries : pandas.DataFrame\n    One row per tributary (a branch of the fit, head to the node where it\n    joins its parent; branch 0 is the main stem), as lsdtt-chi-analysis\n    ``write_chi_tributary_table``: ``basin_id``, ``basin_key``, ``source_key``,\n    ``branch_id``, ``parent_branch_id``, ``branch_order``, ``head_flat``,\n    ``junction_flat``, ``head_x``, ``head_y``, ``junction_x``, ``junction_y``,\n    ``junction_drainage_area_m2`` (just before the junction),\n    ``basin_drainage_area_m2``, ``area_fraction``, ``area_rank_in_basin``\n    (1 = largest tributary), ``length_m``, ``chi_span``, ``n_segments``,\n    ``ksn_min``, ``ksn_median``, ``ksn_max``, ``ksn_max_segment_id``,\n    ``ksn_max_chi``, ``n_descendants``.\nknickpoints : pandas.DataFrame\n    One row per node where two fitted segments meet, as lsdtt-chi-analysis\n    ``write_chi_knickpoint_table``: ``basin_id``, ``basin_key``, ``source_key``,\n    ``branch_id``, ``upstream_segment_id``, ``downstream_segment_id``,\n    ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,\n    ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``\n    (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a\n    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.\nknickpoint_thresholds : pandas.DataFrame\n    Suggested thresholds for a major knickpoint, over the rows with\n    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,\n    ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,\n    ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),\n    ``threshold``, ``n_above``, ``n_total``.\nsummary : pandas.DataFrame\n    One row per basin: ``basin_id``, ``outlet_flat``, ``n_segments``,\n    ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,\n    ``median_ksn``, ``min_ksn``, ``max_ksn``, ``chi_weighted_mean_ksn``,\n    ``main_stem_mean_ksn``, ``main_stem_median_ksn``.\n\nMethods\n-------\ndisorder() -> object\n    Return full-network chi-disorder per basin.\ndisorder_bootstrap(replicates: int = 1000, seed: int = 5489, sample_full_tributary_count: bool = True, n_side_branches: int = 3, with_replacement: bool = True) -> object\n    Bootstrap disorder over side branches.\ndisorder_jackknife() -> object\n    Leave-one-side-branch-out disorder samples.\ndisorder_subset_sensitivity(n_side_branches: int = 3) -> object\n    Evaluate disorder across mainstem-plus-tributary subsets.\ninvert_ksn(m_over_n_values: object, reference_area: float = 1.0, coarse_cell_size_metres: float = 2000.0, roughness_weight: float = 10000.0, diagonal_jitter: float = 1e-08, use_mae: bool = True) -> ChiInversion\n    Run regularised spatial ksn/u-star inversion over m/n trials.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "disorder",
@@ -890,6 +890,18 @@
           ]
         },
         {
+          "name": "knickpoint_thresholds",
+          "kind": "property",
+          "doc": "Suggested major-knickpoint thresholds (pandas.DataFrame); see the class documentation for columns.",
+          "signatures": []
+        },
+        {
+          "name": "knickpoints",
+          "kind": "property",
+          "doc": "Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.",
+          "signatures": []
+        },
+        {
           "name": "nodes",
           "kind": "property",
           "doc": "Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.",
@@ -905,6 +917,12 @@
           "name": "summary",
           "kind": "property",
           "doc": "Per-basin k_sn summary table (pandas.DataFrame); see the class documentation for columns.",
+          "signatures": []
+        },
+        {
+          "name": "tributaries",
+          "kind": "property",
+          "doc": "Per-tributary table (pandas.DataFrame): area where it joins, its fraction of the basin, rank, k_sn summary; see the class documentation for columns.",
           "signatures": []
         }
       ],
@@ -8207,6 +8225,7 @@
     "lsdtt-fetch-erosion-rates",
     "lsdtt-fetch-lithology",
     "lsdtt-fetch-raster",
+    "lsdtt-fetch-river-lines",
     "lsdtt-flat-surface-finder",
     "lsdtt-fluvial-surfaces",
     "lsdtt-graphflood",
@@ -8254,6 +8273,7 @@
     "lsdtt-fetch-erosion-rates",
     "lsdtt-fetch-lithology",
     "lsdtt-fetch-raster",
+    "lsdtt-fetch-river-lines",
     "lsdtt-flat-surface-finder",
     "lsdtt-fluvial-surfaces",
     "lsdtt-graphflood",
