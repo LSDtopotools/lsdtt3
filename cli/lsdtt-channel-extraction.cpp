@@ -49,6 +49,7 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_burn_streams_cpu.hpp"
 #include "../src/cpu/lsdtt_channel_sources_wiener_cpu.hpp"
+#include "../src/cpu/lsdtt_channel_gradient_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
@@ -248,6 +249,30 @@ int main(int argc, char* argv[])
         "gpkg: writes a GeoPackage in the raster CRS. "
         "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
         "Channel network output", "param", "write_channel_network_points"};
+
+    // --- Output --- along-channel gradient at every channel cell
+    bool_default_map["write_channel_slope_points"] = false;
+    help_map["write_channel_slope_points"] = {"bool", "false",
+        "Write every channel cell with its along-channel gradient and smoothed elevation.",
+        "A channel cell has at least threshold_contributing_pixels contributing pixels. "
+        "Each point carries flat, drainage_area_m2, flow_distance_m (to the outlet along "
+        "D8), elevation_m (the pit-filled DEM), smoothed_elevation_m and slope_m_per_m "
+        "(the least-squares line of elevation against along-channel distance over +/- "
+        "slope_window_half_length_metres: its value at the cell, and its gradient), "
+        "slope_valid and slope_window_length_m (the span used). Output: "
+        "<write_fname>_channel_slope_points.<ext>. lsdviztools3 lsdviz3-channel-slopes "
+        "plots it (profiles, slope against distance and drainage area, map).",
+        "Channel slopes", "switch", ""};
+    lsdtt::declare_channel_slope_window_parameter(
+        float_default_map, help_map, "Channel slopes", "write_channel_slope_points");
+    string_default_map["channel_slope_points_write_vector_format"] =
+        lsdtt::inherit_write_vector_format;
+    help_map["channel_slope_points_write_vector_format"] = {"string","same_as_write_vector_format",
+        "Output format for the channel slope points.",
+        "csv: writes latitude/longitude point rows in EPSG:4326. "
+        "gpkg: writes a GeoPackage in the raster CRS. "
+        "flatgeobuf or fgb: writes FlatGeobuf in the raster CRS.",
+        "Channel slopes", "param", "write_channel_slope_points"};
 
     // --- Output --- channel network lines
     bool_default_map["write_channel_network_lines"] = false;
@@ -604,6 +629,10 @@ int main(int argc, char* argv[])
     lsdtt::point_output_format cn_points_output_format =
         lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
             sf["channel_network_points_write_vector_format"], sf["write_vector_format"]));
+
+    lsdtt::point_output_format channel_slope_points_format =
+        lsdtt::resolve_point_output_format(lsdtt::resolve_output_format_override(
+            sf["channel_slope_points_write_vector_format"], sf["write_vector_format"]));
 
     lsdtt::vector_output_format cn_lines_output_format =
         lsdtt::resolve_vector_output_format(lsdtt::resolve_output_format_override(
@@ -1314,6 +1343,72 @@ int main(int argc, char* argv[])
     std::cout << "Channel cells : " << channel_network->n_channel_cells() << "\n";
     std::cout << "Junctions     : " << channel_network->n_junctions() << "\n";
     std::cout << "Outlet nodes  : " << channel_network->n_outlet_junctions() << "\n";
+
+    // -------------------------------------------------------------------------
+    // Along-channel gradient at every channel cell
+    // -------------------------------------------------------------------------
+    if (bf["write_channel_slope_points"])
+    {
+        std::cout << "\n--- Channel slopes ---\n";
+        const double half = ff["slope_window_half_length_metres"];
+        const lsdtt::lsdtt_raster_meta& m = routed_dem.get_meta();
+        if (!(half >= 2.0 * m.cell_size))
+        {
+            std::cerr << "FATAL: slope_window_half_length_metres (" << half
+                      << ") must be at least two cell sizes (" << 2.0 * m.cell_size << " m).\n";
+            return 1;
+        }
+        const std::uint64_t threshold = static_cast<std::uint64_t>(ifs["threshold_contributing_pixels"]);
+        const std::vector<float> flow_distance = flow->get_distance_from_outlet_raster().data;
+        const std::string out = pp.make_output_path(
+            "_channel_slope_points", lsdtt::output_extension(channel_slope_points_format));
+        std::cout << "Window: +/- " << half << " m along the channel; channel cells: >= "
+                  << threshold << " contributing pixels\n";
+        lsdtt::lsdtt_vector_schema schema;
+        using ft = lsdtt::lsdtt_vector_field_type;
+        schema.field_names = {"flat", "drainage_area_m2", "flow_distance_m", "elevation_m",
+                              "smoothed_elevation_m", "slope_m_per_m", "slope_valid",
+                              "slope_window_length_m"};
+        schema.field_types = {ft::int64_type, ft::double_type, ft::double_type, ft::double_type,
+                              ft::double_type, ft::double_type, ft::int64_type, ft::double_type};
+        long n_valid = 0;
+        try
+        {
+            lsdtt::lsdtt_data_loader writer;
+            const double cell_area = m.cell_size * m.cell_size;
+            const auto& zd = routed_dem.get_data();
+            const std::size_t n = lsdtt::write_masked_pixels_as_points(
+                writer, m, m.n_rows, m.n_cols, out, "channel_slope_points", schema,
+                channel_slope_points_format, bf["calculate_spatial_index"],
+                [&](int, int, std::size_t idx)
+                {
+                    const auto f = static_cast<std::int64_t>(idx);
+                    return flow->is_valid_cell(f) && flow->s_vector_size_unchecked(f) >= threshold;
+                },
+                [&](int, int, std::size_t idx) -> std::vector<lsdtt::lsdtt_vector_field_value>
+                {
+                    const auto f = static_cast<std::int64_t>(idx);
+                    const auto r = lsdtt::channel_slope_at(*flow, routed_dem, f, half, threshold);
+                    if (r.slope_valid) ++n_valid;
+                    auto num = [](double v) -> lsdtt::lsdtt_vector_field_value
+                    {
+                        if (std::isfinite(v)) return v;
+                        return std::monostate{};
+                    };
+                    return {f, static_cast<double>(flow->s_vector_size_unchecked(f)) * cell_area,
+                            static_cast<double>(flow_distance[idx]), static_cast<double>(zd[idx]),
+                            num(r.smoothed_elevation_m), num(r.slope_m_per_m),
+                            static_cast<std::int64_t>(r.slope_valid ? 1 : 0), r.window_length_m};
+                });
+            std::cout << "Channel cells: " << n << " (" << n_valid << " with a valid slope)\n"
+                      << "Writing: " << out << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: channel slopes: " << e.what() << "\n";
+            return 1;
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Step 5 - Write channel network

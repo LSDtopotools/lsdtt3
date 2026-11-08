@@ -441,6 +441,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_extraction_cpu.cpp
     src/cpu/lsdtt_chi_network_analysis_cpu.cpp
     src/cpu/lsdtt_chi_knickpoints_cpu.cpp
+    src/cpu/lsdtt_channel_gradient_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp
     src/cpu/lsdtt_chi_data_maps_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp

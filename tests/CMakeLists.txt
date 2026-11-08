@@ -790,6 +790,17 @@ add_lsdtt_cli_smoke_test(
     tiny_channel_network_lines.fgb
 )
 
+# write_channel_slope_points: the tiny DEM falls 5 m per 1 m cell along its rows,
+# so the first channel cell's along-channel slope and smoothed elevation are exact.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_slope_points
+    lsdtt-channel-extraction
+    channel_extraction_slope_points.param.in
+    tinyslope_channel_slope_points.csv
+    --expect-file-contains "tinyslope_channel_slope_points.csv:latitude,longitude,flat,drainage_area_m2,flow_distance_m,elevation_m,smoothed_elevation_m,slope_m_per_m,slope_valid,slope_window_length_m"
+    --expect-file-contains "tinyslope_channel_slope_points.csv:,0,1,8,100,100,5,1,2"
+)
+
 add_lsdtt_cli_smoke_test(
     rigorous_channel_lines_feature_count
     lsdtt-channel-extraction
@@ -1880,7 +1891,9 @@ lsdtt_set_tests_properties(unit_stream_burning_loop_labels PROPERTIES LABELS "st
 # the fixture network, and a reversed / near-miss / multipart copy of it, each
 # prepared by lsdtt-fetch-river-lines, must give stream burning's reference
 # vector summary and the burned DEM frozen for smoke_stream_burning above.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+# The script reads the prepared lines with osgeo (GDAL Python), so it is a
+# python_geo test.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
     add_test(NAME smoke_fetch_river_lines_to_stream_burning
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fetch_river_lines_to_stream_burning.py"
@@ -1892,7 +1905,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect-burned-sha256 f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b)
     lsdtt_mark_test_runtime(python smoke_fetch_river_lines_to_stream_burning)
 else()
-    lsdtt_mark_test_unregistered(python smoke_fetch_river_lines_to_stream_burning)
+    lsdtt_mark_test_unregistered(python_geo smoke_fetch_river_lines_to_stream_burning)
 endif()
 lsdtt_set_tests_properties(smoke_fetch_river_lines_to_stream_burning PROPERTIES
     LABELS "cli;fetch;stream_burning"
@@ -5900,6 +5913,24 @@ add_test(NAME unit_chi_lithology_channel_stats
          COMMAND lsdtt-test-lithology-channel-stats
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
 lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "chi")
+
+# Along-channel gradient (lsdtt_channel_gradient_cpu): a synthetic valley of
+# known floor gradient with a steeper tributary; the window follows the main
+# valley past the junction, one-sided windows, the threshold, and the shared
+# least-squares fit used by lsdtt-bankfull-width.
+add_executable(lsdtt-test-channel-gradient cpp/test_channel_gradient.cpp)
+target_link_libraries(lsdtt-test-channel-gradient PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_gradient COMMAND lsdtt-test-channel-gradient)
+lsdtt_set_tests_properties(unit_channel_gradient PROPERTIES LABELS "channel")
+
+# Snapping a point to the NEAREST channel cell by straight-line distance, not
+# along its D8 path (snap_point_to_contributing_pixels_threshold_nearest):
+# the tributary-side point that D8 snapping takes to the junction, and 2000
+# random points against a brute-force nearest.
+add_executable(lsdtt-test-nearest-point-snap cpp/test_nearest_point_snap.cpp)
+target_link_libraries(lsdtt-test-nearest-point-snap PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_nearest_point_snap COMMAND lsdtt-test-nearest-point-snap)
+lsdtt_set_tests_properties(unit_channel_nearest_point_snap PROPERTIES LABELS "channel")
 
 # Tributaries and knickpoints of a chi fit: a hand-built main stem and
 # tributary with known k_sn segments, areas and flow distances (boundary rows,
@@ -11400,6 +11431,7 @@ set(LSDTT_PYTHON_GEO_TESTS
     rigorous_fluvial_surfaces_cross_section_levels_workflow  # osgeo
     rigorous_fluvial_surfaces_whole_mask_segmentation        # osgeo
     unit_python_binding_free_tests                  # pytest
+    smoke_fetch_river_lines_to_stream_burning       # osgeo
 )
 
 # Scripts other than run_cli_smoke.py that run GDAL's command-line programs.

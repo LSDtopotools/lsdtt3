@@ -290,6 +290,9 @@ lsdtt_evidence(rigorous_hillslope_channel_coupling_legacy_threshold system smoke
 
 # lsdtt-chi-analysis and lithology
 lsdtt_evidence(smoke_chi_analysis_erodibility_calibration system smoke characterisation)
+lsdtt_evidence(unit_channel_gradient unit exact_solution)  # floor gradient 0.01 exact
+lsdtt_evidence(smoke_channel_extraction_slope_points system smoke exact_solution)
+lsdtt_evidence(unit_channel_nearest_point_snap unit exact_solution property)  # vs brute force
 lsdtt_evidence(unit_chi_knickpoints unit exact_solution)  # hand-built fit, known k_sn / areas
 lsdtt_evidence(smoke_chi_tributaries_knickpoints system smoke characterisation)
 lsdtt_evidence(smoke_chi_lithology_ksn system smoke exact_solution)  # 9600 px per unit, k_sn 20 / 5 bins

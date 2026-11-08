@@ -46,6 +46,13 @@
 //      tolerance of the reported one; if none is, the one closest in area.
 //      This stops a sample on a small tributary snapping to the trunk next to
 //      it, which nearest-cell snapping cannot detect.
+//   5. nearest (snap_point_to_contributing_pixels_threshold_nearest)
+//      For a POINT (x, y in the raster CRS), not a pixel: the qualifying cell
+//      whose centre is nearest the point itself, by straight-line distance,
+//      whatever the D8 path from the point does. Unlike expanding_square,
+//      distances are measured from the point, not from the centre of the
+//      pixel it falls in, so a point near the edge of its pixel takes the
+//      truly nearest cell. For field measurements made in a channel.
 //
 // Notes
 // -----
@@ -63,6 +70,7 @@
 
 #include <string>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
@@ -263,6 +271,10 @@ struct lsdtt_snap_result
 
     int           search_radius_pixels = -1;
     std::int64_t  downstream_steps     = -1;
+
+    // Straight-line distance from the input point to the snapped cell centre
+    // (m). Set by snap_point_to_contributing_pixels_threshold_nearest only.
+    double snap_distance_metres = std::numeric_limits<double>::quiet_NaN();
 };
 
 // -----------------------------------------------------------------------------
@@ -338,6 +350,31 @@ snap_pixel_to_reported_drainage_area_expanding_square(
     int                                      col,
     double                                   reported_area_m2,
     const lsdtt_reported_area_snap_options&  options
+);
+
+// -----------------------------------------------------------------------------
+// snap_point_to_contributing_pixels_threshold_nearest
+//
+// Nearest snapping (method 5 above). (x, y) is a point in the raster CRS. Over
+// the valid cells with at least contributing_pixels_threshold contributing
+// pixels and within Chebyshev distance max_search_radius_pixels of the point's
+// pixel, take the cell whose centre is nearest the point (Euclidean); ties go
+// to the larger contributing-pixel count, then the smaller flat index. The
+// search is exact: rings are scanned outward and stop once a ring's nearest
+// possible cell (ring - 0.5 cells away, since the point lies within its own
+// pixel) is farther than the best found. min_search_radius_pixels is not used.
+//
+// Status: success; input_out_of_bounds when the point is off the grid;
+// threshold_not_found_in_search_window when no qualifying cell is in range.
+// snap_distance_metres is set on success; search_radius_pixels is the ring of
+// the chosen cell; downstream_steps is -1. input_* describe the point's pixel.
+// -----------------------------------------------------------------------------
+[[nodiscard]] lsdtt_snap_result
+snap_point_to_contributing_pixels_threshold_nearest(
+    const lsdtt_flow_base&           flow,
+    double                           x,
+    double                           y,
+    const lsdtt_square_snap_options& options = lsdtt_square_snap_options{}
 );
 
 // -----------------------------------------------------------------------------

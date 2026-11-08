@@ -237,16 +237,8 @@ int main(int argc, char* argv[])
         "channel_profile_csv_path is ignored.",
         "Channel profile", "switch", ""};
 
-    float_default_map["slope_window_half_length_metres"] = 25.0f;
-    help_map["slope_window_half_length_metres"] = {"float", "25.0",
-        "Half-length of the along-channel slope-fit window [m].",
-        "Slope is the least-squares slope of pit-filled elevation against "
-        "along-channel distance over +/- this distance, so it has no "
-        "cross-channel component. Must be at least two cell sizes; use "
-        "roughly 5-10 channel widths. Near the source or outlet a one-sided "
-        "window is accepted only if the valid cells span at least this "
-        "distance, otherwise slope_valid is 0.",
-        "Channel profile", "param", "write_channel_profile_csv"};
+    lsdtt::declare_channel_slope_window_parameter(
+        float_default_map, help_map, "Channel profile", "write_channel_profile_csv");
 
     bool_default_map["write_cross_section_sample_points"] = true;
     help_map["write_cross_section_sample_points"] = {"bool", "true",
