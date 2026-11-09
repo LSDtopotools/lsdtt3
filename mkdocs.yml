@@ -69,6 +69,7 @@ nav:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md
       - Field points on the channel network: what_is_lsdtt3/channel_points.md
+      - Burning mapped rivers into a DEM: what_is_lsdtt3/burning_river_lines.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows:
       - Running workflows: what_is_lsdtt3/workflows.md

@@ -1,9 +1,10 @@
 # CLI reference: lsdtt-stream-burning
 
-Conditions a DEM using a user-supplied vector channel network. The tool builds two parallel network views (vector topology vs D8-routed DEM channels), then applies one of three `stream_burn_mode` workflows:
+Conditions a DEM using a user-supplied vector channel network. The tool builds two parallel network views (vector topology vs D8-routed DEM channels), then applies one of four `stream_burn_mode` workflows:
 
 - `burn_in_place` — directly lower DEM cells under the vector polylines to enforce downhill channel profiles.
 - `snap_to_network` — compare vector and DEM junction topology, then optionally repair mismatches/gaps.
+- `burn_to_corridor` — the vector network is the truth: each line's channel (within `vector_corridor_half_width_metres` of it) is burned to a profile joining the minima of the input DEM under it, the rest of the DEM is made to drain to the channels, and the whole DEM is conditioned once more. See [Burning mapped rivers into a DEM](../what_is_lsdtt3/burning_river_lines.md).
 - `snap_to_accumulation` — for accurate vectors (for example OS VectorMap Local), trace D8 flow along the vector and, with `run_lcp_burn: true`, least-cost carve only the unresolved connectivity gaps between accepted vector reaches to recover a continuous routed network.
 
 ## Usage
