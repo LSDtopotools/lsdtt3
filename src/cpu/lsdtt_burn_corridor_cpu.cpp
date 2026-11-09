@@ -292,11 +292,14 @@ struct path_build
 // -----------------------------------------------------------------------------
 // burn_vector_network_to_corridor
 // -----------------------------------------------------------------------------
-burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& original,
-                                                     lsdtt_raster_cpu& out_dem,
-                                                     const std::vector<std::vector<lsdtt_xy>>& lines,
-                                                     const std::vector<std::string>& names,
-                                                     const burn_corridor_options& opts)
+namespace
+{
+// One burn of the given lines (see burn_vector_network_to_corridor).
+burn_corridor_result burn_corridor_pass(const lsdtt_raster_cpu& original,
+                                        lsdtt_raster_cpu& out_dem,
+                                        const std::vector<std::vector<lsdtt_xy>>& lines,
+                                        const std::vector<std::string>& names,
+                                        const burn_corridor_options& opts)
 {
     burn_corridor_result res;
     const lsdtt_raster_meta& meta = original.get_meta();
@@ -1102,6 +1105,28 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                     if (Q < 0 || qi <= 0 || want > cap)
                     {
                         ++res.n_cross_path_unresolved;
+                        burn_corridor_cross_path_receiver cp;
+                        cp.path_id = rp.path_id;
+                        cp.index = static_cast<int>(i);
+                        cp.cell = f;
+                        cp.xy = g.centre(f);
+                        cp.receiver_cell = recv;
+                        cp.receiver_xy = g.centre(recv);
+                        if (Q >= 0)
+                        {
+                            cp.receiver_path_id = Q;
+                            cp.reason = qi <= 0 ? "head_of_path" : "monotone";
+                        }
+                        else
+                        {
+                            // an exit route's cell: whose route
+                            cp.receiver_path_id = route_of[static_cast<size_t>(recv)];
+                            cp.reason = cp.receiver_path_id == rp.path_id ? "own_exit_route" : "exit_route";
+                        }
+                        cp.z_m = zf;
+                        cp.z_own_next_m = work[static_cast<size_t>(own_next)];
+                        cp.z_receiver_m = work[static_cast<size_t>(recv)];
+                        res.cross_path_receivers.push_back(cp);
                         break;
                     }
                     work[static_cast<size_t>(recv)] = static_cast<float>(want);
@@ -1124,6 +1149,7 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         res.n_bank_cells_at_raised_line = 0;
         res.n_cross_path_raised = 0;
         res.n_cross_path_unresolved = 0;
+        res.cross_path_receivers.clear();
         for (const auto& rp : res.paths)
             for (size_t i = 0; i < rp.cells.size(); ++i)
             {
@@ -1269,6 +1295,115 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         }
     }
     out_dem = lsdtt_raster_cpu(std::vector<float>(work), std::vector<uint8_t>(mk), meta);
+    return res;
+}
+
+// The parts of a line over valid cells, in order: the line sampled every
+// quarter cell, cut wherever a sample falls on NoData or off the grid. Parts
+// shorter than one cell are dropped.
+std::vector<std::vector<lsdtt_xy>> split_line_at_nodata(const lsdtt_raster_cpu& dem,
+                                                        const std::vector<lsdtt_xy>& line,
+                                                        bool& touches_nodata)
+{
+    touches_nodata = false;
+    const lsdtt_raster_meta& m = dem.get_meta();
+    const auto& mask = dem.get_mask();
+    const double cs = m.cell_size;
+    auto valid_at = [&](const lsdtt_xy& p)
+    {
+        const double fc = (p.x - m.x_min) / cs, fr = (m.y_max() - p.y) / cs;
+        if (fc < 0.0 || fr < 0.0) return false;
+        const int c = static_cast<int>(fc), r = static_cast<int>(fr);
+        if (r >= m.n_rows || c >= m.n_cols) return false;
+        return mask[static_cast<size_t>(r) * static_cast<size_t>(m.n_cols) + static_cast<size_t>(c)] != 0;
+    };
+    std::vector<std::vector<lsdtt_xy>> parts;
+    std::vector<lsdtt_xy> cur;
+    auto close = [&]()
+    {
+        if (cur.size() >= 2 && line_length(cur) >= cs) parts.push_back(cur);
+        cur.clear();
+    };
+    for (size_t i = 0; i + 1 < line.size(); ++i)
+    {
+        const lsdtt_xy a = line[i], b = line[i + 1];
+        const int n = std::max(1, static_cast<int>(std::ceil(std::hypot(b.x - a.x, b.y - a.y) / (0.25 * cs))));
+        for (int s = (i == 0 ? 0 : 1); s <= n; ++s)
+        {
+            const double t = static_cast<double>(s) / n;
+            const lsdtt_xy p{a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)};
+            if (valid_at(p)) cur.push_back(p);
+            else { touches_nodata = true; close(); }
+        }
+    }
+    close();
+    return parts;
+}
+} // namespace
+
+burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& original,
+                                                     lsdtt_raster_cpu& out_dem,
+                                                     const std::vector<std::vector<lsdtt_xy>>& lines,
+                                                     const std::vector<std::string>& names,
+                                                     const burn_corridor_options& opts)
+{
+    burn_corridor_result first = burn_corridor_pass(original, out_dem, lines, names, opts);
+
+    // Lines whose reach found no corridor path and that touch NoData: replace
+    // them by their parts over valid cells. Usually two or more pieces (a gap
+    // inside the line); one piece when the only part cut off is shorter than
+    // a cell (e.g. an isolated valid scrap the reach would otherwise start on).
+    std::vector<std::vector<std::vector<lsdtt_xy>>> parts(lines.size());
+    int n_split = 0;
+    for (const auto& rc : first.reaches)
+    {
+        if (rc.status != "skipped" || rc.skip_reason != "no_corridor_path") continue;
+        const size_t li = static_cast<size_t>(rc.line_index);
+        bool touches = false;
+        auto pieces = split_line_at_nodata(original, lines[li], touches);
+        if (touches && !pieces.empty()) { parts[li] = std::move(pieces); ++n_split; }
+    }
+    if (n_split == 0) return first;
+
+    std::vector<std::vector<lsdtt_xy>> lines2;
+    std::vector<std::string> names2;
+    std::vector<int> origin, piece, n_pieces;
+    for (size_t li = 0; li < lines.size(); ++li)
+    {
+        const std::string nm = li < names.size() ? names[li] : std::string();
+        if (parts[li].empty())
+        {
+            lines2.push_back(lines[li]);
+            names2.push_back(nm);
+            origin.push_back(static_cast<int>(li));
+            piece.push_back(0);
+            n_pieces.push_back(1);
+            continue;
+        }
+        for (size_t k = 0; k < parts[li].size(); ++k)
+        {
+            lines2.push_back(parts[li][k]);
+            names2.push_back(nm);
+            origin.push_back(static_cast<int>(li));
+            piece.push_back(static_cast<int>(k));
+            n_pieces.push_back(static_cast<int>(parts[li].size()));
+        }
+    }
+    burn_corridor_result res = burn_corridor_pass(original, out_dem, lines2, names.empty() ? names : names2, opts);
+    int n_pieces_total = 0;
+    for (const auto& pp : parts) n_pieces_total += static_cast<int>(pp.size());
+    for (auto& rc : res.reaches)
+    {
+        const size_t k = static_cast<size_t>(rc.line_index);
+        rc.piece = piece[k];
+        rc.n_pieces = n_pieces[k];
+        if (!parts[static_cast<size_t>(origin[k])].empty()) rc.piece_line = lines2[k];
+        rc.line_index = origin[k];
+    }
+    res.n_lines_split_at_nodata = n_split;
+    res.n_pieces = n_pieces_total;
+    res.notes.push_back(std::to_string(n_split) + " line(s) crossing NoData cut into " +
+                        std::to_string(n_pieces_total) + " piece(s)");
     return res;
 }
 

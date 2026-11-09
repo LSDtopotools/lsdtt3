@@ -345,6 +345,7 @@ lsdtt_evidence(smoke_stream_burning_corridor system smoke property characterisat
 lsdtt_evidence(smoke_stream_burning_corridor_x2 system smoke property)
 lsdtt_evidence(smoke_stream_burning_corridor_min_elevation_below_land system smoke metamorphic)
 lsdtt_evidence(smoke_stream_burning_corridor_min_elevation_sea system smoke property)
+lsdtt_evidence(smoke_stream_burning_corridor_nodata_pieces system smoke property)
 lsdtt_evidence(unit_water_line_repair_point_snapper unit exact_solution)
 lsdtt_evidence(smoke_fetch_erosion_rates_offline system smoke exact_solution property metamorphic)  # = committed response
 lsdtt_evidence(smoke_fetch_erosion_rates_offline_lsdn system smoke exact_solution)

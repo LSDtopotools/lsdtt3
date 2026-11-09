@@ -56,7 +56,13 @@
 //   Cut cap in 2-D: a 10 m deep, 30-cell hole on the line (N = 16):
 //     used at the default cap, rejected at 5 m (cut <= 5 m), linear and chi.
 //   NoData on the path (R4): a 3-cell NoData hole on the line: X = 20 m goes
-//     round it; X = 0 skips the reach (no_corridor_path).
+//     round it (the line is not cut); X = 0 cannot, so the line is cut into
+//     the two pieces either side of the hole, each fitted as its own path.
+//   Cross-path receivers: line A on the floor and line B in a 10 m trench on
+//     the next row: A's cells drain into B, which cannot be raised without
+//     rising, and each is recorded with B as the receiver.
+//   Every case: one record per unresolved cross-path receiver and per
+//     drained end.
 //
 // Usage: lsdtt-test-burn-corridor
 // -----------------------------------------------------------------------------
@@ -185,6 +191,12 @@ std::set<std::int64_t> line_cells(const lsdtt::burn_corridor_result& r)
 // The conditioned-DEM properties.
 void check_conditioned(const std::string& tag, const lsdtt::lsdtt_raster_cpu& dem, const run_out& ro)
 {
+    // the recorded unresolved cross-path receivers match the count, and the
+    // recorded exit routes match the drained ends
+    check(tag + ": one record per unresolved cross-path receiver and per drained end",
+          static_cast<long>(ro.r.cross_path_receivers.size()) == ro.r.n_cross_path_unresolved &&
+              static_cast<int>(ro.r.exit_routes.size()) == ro.r.n_ends_drained,
+          num(ro.r.cross_path_receivers.size()) + "/" + num(ro.r.n_cross_path_unresolved));
     const auto& out = ro.out;
     const auto lines = line_cells(ro.r);
     bool rises = false, profile_gradient = true;
@@ -569,6 +581,56 @@ int main()
         check_conditioned("distributary", dem, ro);
     }
 
+    // ===== unresolved cross-path receivers ===============================================
+    {
+        // Two separate lines one row apart, both running east to the edge: A on
+        // the valley floor, B in a trench 10 m lower along the next row. A's
+        // cells fall more steeply into B than along A, and raising B's cells
+        // that much would make B rise, so the flow leaves A for B: every such
+        // A cell is recorded, with reason monotone (or head_of_path at B's
+        // first cell) and B as the receiving path.
+        auto h = [](int r, int c) { return valley(r, c) - (r == k_floor_row + 1 && c >= 1 ? 10.0 : 0.0); };
+        const auto dem = make_dem(h);
+        const std::vector<std::vector<lsdtt::lsdtt_xy>> net = {row_line(k_floor_row, 1, 78),
+                                                               row_line(k_floor_row + 1, 1, 78)};
+        const auto ro = run(dem, net, base);
+        const auto& cps = ro.r.cross_path_receivers;
+        int a_id = -1, b_id = -1;
+        for (const auto& p : ro.r.paths)
+        {
+            const int r0 = static_cast<int>(p.cells.front() / k_nc);
+            if (r0 == k_floor_row) a_id = p.path_id;
+            if (r0 == k_floor_row + 1) b_id = p.path_id;
+        }
+        bool all_a_to_b = !cps.empty() && a_id >= 0 && b_id >= 0;
+        bool reasons_ok = true, z_ok = true, xy_ok = true;
+        for (const auto& cp : cps)
+        {
+            all_a_to_b = all_a_to_b && cp.path_id == a_id && cp.receiver_path_id == b_id &&
+                         cp.cell / k_nc == k_floor_row && cp.receiver_cell / k_nc == k_floor_row + 1;
+            reasons_ok = reasons_ok && (cp.reason == "monotone" || cp.reason == "head_of_path");
+            // the receiver is the steeper descent from the cell (its own next
+            // step may be diagonal, so compare slopes, not elevations)
+            const auto& pa = ro.r.paths.at(static_cast<size_t>(cp.path_id));
+            const std::int64_t nx = pa.cells.at(static_cast<size_t>(cp.index) + 1);
+            const double d_own = std::hypot(cx(static_cast<int>(nx % k_nc)) - cp.xy.x, cy(static_cast<int>(nx / k_nc)) - cp.xy.y);
+            const double d_rec = std::hypot(cp.receiver_xy.x - cp.xy.x, cp.receiver_xy.y - cp.xy.y);
+            z_ok = z_ok && (cp.z_m - cp.z_receiver_m) / d_rec > (cp.z_m - cp.z_own_next_m) / d_own &&
+                   cp.z_own_next_m < cp.z_m;
+            xy_ok = xy_ok && std::fabs(cp.xy.x - cx(static_cast<int>(cp.cell % k_nc))) < 1e-9 &&
+                    std::fabs(cp.receiver_xy.y - cy(k_floor_row + 1)) < 1e-9;
+        }
+        check("cross-path: A's cells that drain into B are recorded, with B as receiver",
+              all_a_to_b && static_cast<long>(cps.size()) == ro.r.n_cross_path_unresolved,
+              num(cps.size()) + " recorded, A " + num(a_id) + " B " + num(b_id));
+        std::string first;
+        if (!cps.empty())
+            first = cps[0].reason + " z " + num(cps[0].z_m) + " next " + num(cps[0].z_own_next_m) + " recv " +
+                    num(cps[0].z_receiver_m) + " n " + num(cps.size());
+        check("cross-path: reason monotone / head_of_path, the receiver the steeper descent",
+              reasons_ok && z_ok && xy_ok, first + " r" + num(reasons_ok) + " z" + num(z_ok) + " xy" + num(xy_ok));
+    }
+
     // ===== offset valley at X = 50 / 10 / 0 (tests 7 and 10) ==============================
     {
         const auto dem = make_dem([](int r, int c) { return valley(r, c); });
@@ -692,10 +754,34 @@ int main()
             for (const auto f : p.cells) if (!dem.get_mask()[static_cast<size_t>(f)]) clean = false;
         check("nodata hole: X = 20 m goes round it", r20.r.n_fitted == 1 && clean);
         check_conditioned("nodata hole X = 20", dem, r20);
+        check("nodata hole: X = 20 m does not cut the line", r20.r.n_lines_split_at_nodata == 0 &&
+              r20.r.reaches.size() == 1 && r20.r.reaches[0].n_pieces == 1);
+        // X = 0: no corridor path crosses the hole, so the line is cut into the
+        // two pieces either side of it, each burned on its own: the first ends
+        // beside the hole (columns <= 29), the second starts after it (>= 33).
         const auto r0 = run(dem, {row_line(k_floor_row, 1, 78)}, base);
-        check("nodata hole: X = 0 skips the reach (no_corridor_path)",
-              r0.r.n_skipped == 1 && r0.r.reaches.at(0).skip_reason == "no_corridor_path",
-              r0.r.reaches.at(0).skip_reason);
+        bool pieces_ok = r0.r.n_lines_split_at_nodata == 1 && r0.r.n_pieces == 2 && r0.r.reaches.size() == 2 &&
+                         r0.r.n_fitted == 2 && r0.r.n_skipped == 0;
+        int max_c_first = -1, min_c_second = 1000;
+        for (const auto& rc : r0.r.reaches)
+        {
+            pieces_ok = pieces_ok && rc.line_index == 0 && rc.n_pieces == 2 && rc.piece_line.size() >= 2;
+            for (const auto& q : rc.channel)
+            {
+                const int c = static_cast<int>(std::floor((q.x - k_x0) / k_cs));
+                if (rc.piece == 0) max_c_first = std::max(max_c_first, c);
+                else min_c_second = std::min(min_c_second, c);
+            }
+        }
+        check("nodata hole: X = 0 cuts the line into 2 pieces at the hole, both fitted",
+              pieces_ok && max_c_first <= 29 && min_c_second >= 33,
+              num(r0.r.n_pieces) + " pieces, first to col " + num(max_c_first) + ", second from " + num(min_c_second));
+        bool clean0 = true;
+        for (const auto& p : r0.r.paths)
+            for (const auto f : p.cells) if (!dem.get_mask()[static_cast<size_t>(f)]) clean0 = false;
+        check("nodata hole X = 0: no path cell on NoData, the pieces are separate paths",
+              clean0 && r0.r.paths.size() == 2 && r0.r.paths[0].joins_path_id < 0 && r0.r.paths[1].joins_path_id < 0);
+        check_conditioned("nodata hole X = 0", dem, r0);
     }
 
     std::cout << "\n" << (g_n_checks - g_n_failed) << " / " << g_n_checks << " checks passed\n";

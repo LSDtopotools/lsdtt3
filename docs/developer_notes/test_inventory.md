@@ -12,7 +12,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 874 | 204 | 135 | 128 | 19 | 175 | 381 | 243 | . | 43 | 216 | 658 |
+| CTest | 875 | 204 | 136 | 128 | 19 | 175 | 382 | 243 | . | 43 | 216 | 659 |
 | pytest | 235 | 78 | 58 | 45 | . | 9 | 27 | 61 | . | 61 | 232 | 3 |
 
 ## CTest by domain
@@ -64,14 +64,14 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `parameters` | 15 | 1 | . | . | . | . | . | . | . | 14 |
 | `point_input` | 3 | 2 | . | 2 | . | 1 | . | 2 | . | . |
 | `quartz` | 1 | 1 | . | . | . | . | . | . | . | . |
-| `raster` | 52 | 16 | 9 | 6 | 2 | 12 | 19 | 14 | . | 1 |
+| `raster` | 53 | 16 | 10 | 6 | 2 | 12 | 20 | 14 | . | 1 |
 | `raster_algebra` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `ridgeline` | 5 | 1 | . | . | . | 4 | 5 | . | . | . |
 | `slope_area` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `snapping` | 3 | 2 | 1 | 1 | . | . | 2 | 1 | . | . |
 | `statistics` | 2 | . | . | . | . | 2 | . | . | . | . |
 | `step_change` | 5 | 2 | 3 | 2 | . | . | 1 | . | . | . |
-| `stream_burning` | 13 | 3 | 4 | 4 | . | 4 | 7 | 2 | . | . |
+| `stream_burning` | 14 | 3 | 5 | 4 | . | 4 | 8 | 2 | . | . |
 | `streamlines` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `surface_metrics` | 49 | 13 | 7 | 12 | . | 16 | 33 | 5 | . | 4 |
 | `synthetic_networks` | 31 | 2 | 4 | 3 | 1 | 6 | 17 | 9 | . | 4 |
@@ -135,7 +135,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-sediment-routing` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `lsdtt-slope-area` | 9 | . | . | 2 | . | 4 | 4 | 5 | . | . |
 | `lsdtt-spectral-analysis` | 7 | . | . | 1 | . | 2 | 5 | . | . | 2 |
-| `lsdtt-stream-burning` | 11 | . | 3 | 3 | . | 5 | 8 | 2 | . | . |
+| `lsdtt-stream-burning` | 12 | . | 4 | 3 | . | 5 | 9 | 2 | . | . |
 | `lsdtt-surface-metrics` | 11 | 3 | . | 1 | . | . | 7 | 2 | . | 2 |
 | `lsdtt-swath-profile` | 1 | 1 | . | 1 | . | . | 1 | . | . | . |
 | `lsdtt-synthetic-networks` | 22 | 2 | 3 | 1 | . | 4 | 12 | 9 | . | 1 |

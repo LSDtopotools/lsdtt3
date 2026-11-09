@@ -1938,7 +1938,12 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect corrx2_corridor_channels.fgb
             --expect-file-contains "../stdout.log:fitted 5, skipped 0"
             --expect-file-contains "../stdout.log:Final conditioning (carve_before_fill true) changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
-            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere")
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere"
+            # 3 line cells whose flow leaves the line (unresolved cross-path
+            # receivers), all into exit routes: written as points.
+            --expect corrx2_cross_path_receivers.fgb
+            --expect-vector-feature-min corrx2_cross_path_receivers.fgb:3
+            --expect-file-contains "../stdout.log:_cross_path_receivers.fgb (3 cell(s))")
     # min_elevation (sea removal), off by default in this CLI. Below the
     # lowest land (-400 m; the DEM reaches -316 m) it removes nothing: sub-zero
     # land is kept and routed, and the burned DEM is byte-identical to the
@@ -1965,6 +1970,24 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
             --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere"
             --expect-raster-stat mesea_burned.tif:min:-100.0:-99.0)
+    # Lines crossing NoData: with min_elevation -40 m two lines are cut by
+    # removed cells, and at X = 0 no corridor path crosses a gap. Each is
+    # replaced by its pieces over valid cells (4 in all), every piece is
+    # fitted, and the burn drains everywhere. _corridor_channels carries
+    # line_index / piece / n_pieces.
+    lsdtt_add_harness_test(smoke_stream_burning_corridor_nodata_pieces
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_nodata_pieces.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor_nodata_pieces"
+            --expect mepc_burned.tif
+            --expect mepc_corridor_channels.fgb
+            --expect-vector-feature-min mepc_corridor_channels.fgb:7
+            --expect-file-contains "../stdout.log:2 line(s) crossing NoData cut into 4 piece(s)"
+            --expect-file-contains "../stdout.log:fitted 7, skipped 0"
+            --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 6 path(s) rise anywhere")
     lsdtt_add_harness_test(failure_stream_burning_corridor_bad_fit
             --exe "$<TARGET_FILE:lsdtt-stream-burning>"
             --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
@@ -1989,11 +2012,13 @@ else()
     lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_x2)
     lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_min_elevation_below_land)
     lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_min_elevation_sea)
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_nodata_pieces)
     lsdtt_mark_test_unregistered(python failure_stream_burning_corridor_bad_fit)
     lsdtt_mark_test_unregistered(python failure_stream_burning_corridor_missing_name_field)
 endif()
 lsdtt_set_tests_properties(smoke_stream_burning_corridor smoke_stream_burning_corridor_x2
     smoke_stream_burning_corridor_min_elevation_below_land smoke_stream_burning_corridor_min_elevation_sea
+    smoke_stream_burning_corridor_nodata_pieces
     failure_stream_burning_corridor_bad_fit failure_stream_burning_corridor_missing_name_field PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)

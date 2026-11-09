@@ -163,6 +163,15 @@ struct burn_corridor_reach
     int n_record_lows = 0;
     int n_rejected_lows = 0;
     std::vector<lsdtt_xy> channel;    // cell centres of the channel used (empty if skipped)
+    // A vector line that touches NoData and on which no corridor path can be
+    // found (at X = 0, any NoData gap on the line) is replaced by its parts
+    // over valid cells (parts under one cell long dropped), each burned as its
+    // own reach: one ends at a gap like a line ending over NoData, the next
+    // starts after it as a source. The pieces are never joined: there is no
+    // elevation in the gap. A single piece is the line trimmed of such parts.
+    int piece = 0;                    // 0-based piece of the input line
+    int n_pieces = 1;                 // pieces the input line was cut into
+    std::vector<lsdtt_xy> piece_line; // the piece's vector line (empty unless cut or trimmed)
 };
 
 struct burn_corridor_path
@@ -212,6 +221,30 @@ struct burn_corridor_exit_route
                                       // this route set (not the path's end or a fixed exit cell)
 };
 
+// A line cell whose steepest descent goes to another path's cell (or an exit
+// route's), which cannot be raised enough without breaking that path's
+// downstream fall, so the flow leaves the line there: an "unresolved
+// cross-path receiver". Mostly at bifurcations.
+struct burn_corridor_cross_path_receiver
+{
+    int path_id = -1;                 // the path whose cell loses the flow
+    int index = -1;                   // the cell's index along that path
+    std::int64_t cell = -1;
+    lsdtt_xy xy;
+    std::int64_t receiver_cell = -1;  // where the flow goes instead
+    lsdtt_xy receiver_xy;
+    int receiver_path_id = -1;        // the path owning it; for an exit route's cell, the
+                                      // path whose end that route drains (-1 if unknown)
+    std::string reason;               // monotone: raising it would make its path rise;
+                                      // head_of_path: it is the first cell of a path;
+                                      // exit_route: it belongs to another path's exit route;
+                                      // own_exit_route: to this path's own exit route
+                                      // (the flow still leaves by this path's exit)
+    double z_m = 0.0;                 // the cell, its own next cell and the receiver
+    double z_own_next_m = 0.0;
+    double z_receiver_m = 0.0;
+};
+
 struct burn_corridor_result
 {
     std::vector<burn_corridor_reach> reaches;
@@ -228,6 +261,8 @@ struct burn_corridor_result
     long n_rejected_lows = 0;
     int n_pin_conflicts = 0;
     int n_cut_cap_exceeded = 0;
+    int n_lines_split_at_nodata = 0;  // input lines cut into pieces (or trimmed) at NoData
+    int n_pieces = 0;                 // the pieces they were cut into
     int n_ends_drained = 0;
     std::vector<burn_corridor_exit_route> exit_routes;   // one per drained end
     long n_cells_daylighted = 0;      // on those exits
@@ -237,6 +272,7 @@ struct burn_corridor_result
     long n_bank_cells_at_raised_line = 0;   // banks beside line cells above the cleaned DEM
     long n_cross_path_raised = 0;     // line cells of another path raised so a line keeps its flow (e.g. at a bifurcation)
     long n_cross_path_unresolved = 0; // ... where that would break the other path's monotone profile
+    std::vector<burn_corridor_cross_path_receiver> cross_path_receivers;   // those cells
     breach_least_cost_diagnostics breach;   // of the last step-6 carve
     double max_area_change = 0.0;     // chi fit: largest relative change of A on the line between passes
     double median_area_change = 0.0;  // chi fit: median of that change

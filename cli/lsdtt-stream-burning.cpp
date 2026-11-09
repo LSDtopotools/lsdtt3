@@ -651,7 +651,12 @@ int main(int argc, char* argv[])
         "a lower cell of another line, exit_type line, or of an earlier end's route, exit_type "
         "exit_route; to_path_id names the line or route reached; max_cut_m is the deepest cut "
         "below the input DEM on the cells the route lowered; empty when every end is on the edge "
-        "or on another line), in write_vector_format.",
+        "or on another line), and _cross_path_receivers (points: line cells whose steepest "
+        "descent goes to another path's cell that could not be raised without making that path "
+        "rise, so the flow leaves the line there, mostly at bifurcations; reason monotone, "
+        "head_of_path, exit_route (another path's exit route) or own_exit_route (this path's "
+        "own, so the flow still leaves by its exit); empty when there are none), in "
+        "write_vector_format.",
         "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_channel_score_raster"] = false;
@@ -1284,10 +1289,12 @@ int main(int argc, char* argv[])
                 using ft = lsdtt::lsdtt_vector_field_type;
                 schema.field_names = {"reach_id", "from_node", "to_node", "path_id", "name", "status", "skip_reason",
                                       "length_m", "upstream_length_m", "max_separation_m", "max_cut_m",
-                                      "max_raise_m", "n_record_lows", "n_rejected_lows"};
+                                      "max_raise_m", "n_record_lows", "n_rejected_lows", "line_index", "piece",
+                                      "n_pieces"};
                 schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type,
                                       ft::string_type, ft::string_type, ft::double_type, ft::double_type,
-                                      ft::double_type, ft::double_type, ft::double_type, ft::int64_type, ft::int64_type};
+                                      ft::double_type, ft::double_type, ft::double_type, ft::int64_type, ft::int64_type,
+                                      ft::int64_type, ft::int64_type, ft::int64_type};
                 lsdtt::lsdtt_data_loader vw;
                 vw.begin_vector_write(cf, "corridor_channels", schema, final_dem.get_meta().crs_wkt, vf,
                                       bf["calculate_spatial_index"]);
@@ -1295,7 +1302,8 @@ int main(int argc, char* argv[])
                 {
                     // A skipped reach has no channel: it is written with its vector line.
                     const std::vector<lsdtt::lsdtt_xy>& geom =
-                        rc.channel.size() >= 2 ? rc.channel : cl.lines[static_cast<size_t>(rc.line_index)];
+                        rc.channel.size() >= 2 ? rc.channel
+                        : (rc.piece_line.size() >= 2 ? rc.piece_line : cl.lines[static_cast<size_t>(rc.line_index)]);
                     if (geom.size() < 2) continue;
                     vw.write_line(geom, {static_cast<std::int64_t>(rc.reach_id),
                                                static_cast<std::int64_t>(rc.from_node),
@@ -1304,7 +1312,10 @@ int main(int argc, char* argv[])
                                                rc.skip_reason, rc.length_m, rc.upstream_length_m,
                                                rc.max_separation_m, rc.max_cut_m, rc.max_raise_m,
                                                static_cast<std::int64_t>(rc.n_record_lows),
-                                               static_cast<std::int64_t>(rc.n_rejected_lows)});
+                                               static_cast<std::int64_t>(rc.n_rejected_lows),
+                                               static_cast<std::int64_t>(rc.line_index),
+                                               static_cast<std::int64_t>(rc.piece),
+                                               static_cast<std::int64_t>(rc.n_pieces)});
                 }
                 vw.finish_vector_write();
 
@@ -1328,6 +1339,24 @@ int main(int argc, char* argv[])
                                           static_cast<std::int64_t>(xr.n_cells_lowered), xr.max_cut_m});
                 }
                 xw.finish_vector_write();
+
+                // Line cells whose flow leaves the line for another path's cell.
+                const std::string pf = pp.make_output_path("_cross_path_receivers", lsdtt::output_extension(vf));
+                std::cout << "Writing: " << pf << " (" << cr.cross_path_receivers.size() << " cell(s))\n";
+                lsdtt::lsdtt_vector_schema ps;
+                ps.field_names = {"path_id", "index", "receiver_path_id", "reason", "z_m", "z_own_next_m",
+                                  "z_receiver_m", "receiver_x", "receiver_y"};
+                ps.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type, ft::double_type,
+                                  ft::double_type, ft::double_type, ft::double_type, ft::double_type};
+                lsdtt::lsdtt_data_loader pw;
+                pw.begin_vector_write(pf, "cross_path_receivers", ps, final_dem.get_meta().crs_wkt, vf,
+                                      bf["calculate_spatial_index"]);
+                for (const auto& cp : cr.cross_path_receivers)
+                    pw.write_point(cp.xy.x, cp.xy.y,
+                                   {static_cast<std::int64_t>(cp.path_id), static_cast<std::int64_t>(cp.index),
+                                    static_cast<std::int64_t>(cp.receiver_path_id), cp.reason, cp.z_m,
+                                    cp.z_own_next_m, cp.z_receiver_m, cp.receiver_xy.x, cp.receiver_xy.y});
+                pw.finish_vector_write();
             }
 
             if (bf["write_burned_profiles_csv"])
