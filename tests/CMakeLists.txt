@@ -8239,6 +8239,24 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "lithology_field_name: lith_primary"
 )
 
+# OS Open Rivers download against the committed extract (opt-in, network):
+# fetch_river_lines with the same options on the extract (local_file) and on
+# the downloaded national file (gb_os_open_rivers, about 50 MB, cached in the
+# work directory) must give the same prepared lines inside the extract's box.
+# See tests/cpp/test_fetch_river_lines_os_network.cpp.
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_executable(lsdtt-test-fetch-river-lines-os-network cpp/test_fetch_river_lines_os_network.cpp)
+    target_link_libraries(lsdtt-test-fetch-river-lines-os-network PRIVATE lsdtt3_cpu)
+    add_test(NAME network_fetch_river_lines_os
+             COMMAND lsdtt-test-fetch-river-lines-os-network
+                     "${LSDTT_TEST_DATA_DIR}/river_lines/os_open_rivers_extract/Data/oprvrs_gb.gpkg"
+                     "${CMAKE_CURRENT_BINARY_DIR}/network_fetch_river_lines_os")
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/network_fetch_river_lines_os)
+    lsdtt_set_tests_properties(network_fetch_river_lines_os PROPERTIES LABELS "network;fetch")
+else()
+    lsdtt_mark_test_unregistered(network network_fetch_river_lines_os)
+endif()
+
 # -----------------------------------------------------------------------------
 # lsdtt-fetch-river-lines CLI, offline: the committed Open Rivers extract read
 # as a local file with the Open Rivers field names (24 links, nothing clipped).

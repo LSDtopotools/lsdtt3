@@ -12,7 +12,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 875 | 204 | 136 | 128 | 19 | 175 | 382 | 243 | . | 43 | 216 | 659 |
+| CTest | 876 | 204 | 136 | 129 | 19 | 176 | 382 | 243 | . | 43 | 216 | 660 |
 | pytest | 240 | 78 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 237 | 3 |
 
 ## CTest by domain
@@ -38,7 +38,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `divide_migration` | 13 | 7 | . | 2 | . | 3 | 8 | 4 | . | . |
 | `docs` | 3 | . | . | . | . | . | . | . | . | 3 |
 | `erodibility_calibration` | 30 | 8 | 1 | 4 | 1 | 1 | 12 | 10 | . | . |
-| `fetch` | 79 | 11 | 4 | 5 | 1 | 4 | 17 | 47 | . | 8 |
+| `fetch` | 80 | 11 | 4 | 6 | 1 | 5 | 17 | 47 | . | 8 |
 | `flow` | 47 | 6 | 7 | 7 | 3 | 25 | 28 | 13 | . | . |
 | `fluvial_surfaces` | 94 | 20 | 19 | 18 | 1 | 28 | 53 | 18 | . | 2 |
 | `gdal` | 7 | . | 3 | . | . | 2 | . | 1 | . | 1 |
@@ -57,7 +57,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `marsh` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `mask` | 1 | 1 | . | . | . | . | . | 1 | . | . |
 | `mountain_front` | 1 | 1 | . | . | . | . | . | 1 | . | . |
-| `network` | 287 | 74 | 45 | 47 | 8 | 67 | 144 | 79 | . | 3 |
+| `network` | 288 | 74 | 45 | 48 | 8 | 68 | 144 | 79 | . | 3 |
 | `outlet_matching` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `packaging` | 3 | . | . | . | . | . | 1 | . | . | 2 |
 | `paired_flowpaths` | 4 | 1 | . | . | . | 3 | 3 | . | . | . |

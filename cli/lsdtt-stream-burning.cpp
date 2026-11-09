@@ -1480,6 +1480,10 @@ int main(int argc, char* argv[])
             std::cout << "); " << n_cycle << " close a real cycle, " << n_labelled - n_cycle
                       << " cut the network (fields loop_reason, closes_cycle in _vector_edges)\n";
         }
+        // Edges kept but reversed: draining uphill, or against the digitised order.
+        std::cout << "Reversed edges      : " << vector_network.n_edges_running_uphill()
+                  << " run uphill by DEM elevation, " << vector_network.n_edges_against_digitised()
+                  << " against the digitised direction (fields runs_uphill, against_digitised in _vector_edges)\n";
     }
 
     // -------------------------------------------------------------------------

@@ -802,6 +802,31 @@ void lsdtt_vector_to_junction_network::clear() noexcept
 // -----------------------------------------------------------------------------
 // create
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// classify_edge_directions: runs_uphill and against_digitised on every edge
+// -----------------------------------------------------------------------------
+void lsdtt_vector_to_junction_network::classify_edge_directions()
+{
+    n_edges_running_uphill_ = 0;
+    n_edges_against_digitised_ = 0;
+    for (auto& e : edges_)
+    {
+        e.runs_uphill = -1;
+        e.against_digitised = -1;
+        if (e.is_loop_edge || e.upstream_junction < 0 || e.receiver_junction < 0) continue;
+        const double zu = junctions_[static_cast<std::size_t>(e.upstream_junction)].elevation;
+        const double zr = junctions_[static_cast<std::size_t>(e.receiver_junction)].elevation;
+        e.runs_uphill = (zr > zu) ? 1 : 0;
+        if (e.runs_uphill == 1) ++n_edges_running_uphill_;
+        if (e.digitised_a_to_b != 0)
+        {
+            const bool a_to_b = e.upstream_junction == e.junction_a;
+            e.against_digitised = ((e.digitised_a_to_b > 0) != a_to_b) ? 1 : 0;
+            if (e.against_digitised == 1) ++n_edges_against_digitised_;
+        }
+    }
+}
+
 void lsdtt_vector_to_junction_network::create(
     const std::string&                              vector_path,
     const lsdtt_raster_cpu&                         dem,
@@ -1683,6 +1708,7 @@ void lsdtt_vector_to_junction_network::create(
     build_outlet_keys();
     build_strahler_order();
     build_s_vector();
+    classify_edge_directions();
 
     is_built_ = true;
 
@@ -2297,7 +2323,9 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         "loop_reason",
         "closes_cycle",
         "elevation_a",
-        "elevation_b"
+        "elevation_b",
+        "runs_uphill",
+        "against_digitised"
     };
     schema.field_types = {
         lsdtt_vector_field_type::int64_type,
@@ -2312,7 +2340,9 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
         lsdtt_vector_field_type::string_type,
         lsdtt_vector_field_type::int64_type,
         lsdtt_vector_field_type::double_type,
-        lsdtt_vector_field_type::double_type
+        lsdtt_vector_field_type::double_type,
+        lsdtt_vector_field_type::int64_type,
+        lsdtt_vector_field_type::int64_type
     };
 
 
@@ -2344,7 +2374,9 @@ void lsdtt_vector_to_junction_network::write_edges_fgb(
                 e.junction_a >= 0 ? junctions_[static_cast<std::size_t>(e.junction_a)].elevation
                                   : std::numeric_limits<double>::quiet_NaN(),
                 e.junction_b >= 0 ? junctions_[static_cast<std::size_t>(e.junction_b)].elevation
-                                  : std::numeric_limits<double>::quiet_NaN()
+                                  : std::numeric_limits<double>::quiet_NaN(),
+                static_cast<std::int64_t>(e.runs_uphill),
+                static_cast<std::int64_t>(e.against_digitised)
             }
         );
     }
