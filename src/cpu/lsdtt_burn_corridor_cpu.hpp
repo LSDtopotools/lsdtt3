@@ -289,4 +289,73 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                                                      const std::vector<std::string>& names,
                                                      const burn_corridor_options& opts);
 
+// Checks burn_corridor_options as lsdtt-stream-burning does (and the Python
+// binding, so both refuse the same values): max_pit_pixels >= 0,
+// max_cut_metres > 0, m_over_n >= 0, chi_A0 > 0, the corridor half-width >= 0
+// and the least-cost breach options. Throws std::invalid_argument naming the
+// parameter.
+void validate_burn_corridor_options(const burn_corridor_options& o);
+
+// ---- after the burn: shared by lsdtt-stream-burning and the Python binding ----
+
+// The final whole-DEM conditioning, as the other burning modes do, so routing
+// on the output is integrated with the burned channel: optionally breach
+// (breach_algorithm_choice lindsay2016 or least_cost, the latter with
+// `breach`), then fill_pits with fill_min_slope.
+struct corridor_final_conditioning_options
+{
+    bool carve_before_fill = false;
+    std::string breach_algorithm_choice = "lindsay2016";   // lindsay2016 | least_cost
+    breach_least_cost_options breach;
+    float fill_min_slope = 0.0001f;
+    int n_threads = 0;
+};
+lsdtt_raster_cpu condition_after_corridor_burn(const lsdtt_raster_cpu& burned,
+                                               const corridor_final_conditioning_options& opts);
+
+// The two checks the CLI logs: what the final conditioning changed (on the
+// line cells and elsewhere; both should be 0), and whether any path rises
+// downstream after the burn or on the final DEM (both should be 0).
+struct corridor_burn_checks
+{
+    long n_line_cells_changed = 0;
+    long n_other_cells_changed = 0;
+    double max_line_change_m = 0.0;
+    int n_paths = 0;
+    int n_rising_after_burn = 0;
+    int n_rising_final = 0;
+    double max_rise_after_burn_m = 0.0;
+    double max_rise_final_m = 0.0;
+    std::vector<int> rising_after_burn_path_ids;
+    std::vector<int> rising_final_path_ids;
+};
+corridor_burn_checks check_corridor_burn(const burn_corridor_result& result,
+                                         const lsdtt_raster_cpu& burned,
+                                         const lsdtt_raster_cpu& final_dem);
+
+// One row per path cell (downstream order), the columns of
+// <write_fname>_burned_profiles.csv in that order.
+struct burned_profile_row
+{
+    int path_id = -1, path_rank = -1, reach_id = -1;
+    std::string name;
+    long point_index = 0;
+    double distance_m = 0, flow_distance_m = 0, x = 0, y = 0;
+    double z_original = 0, z_cleaned = 0, z_profile = 0, z_final = 0;
+    int pit_filled = 0;
+    std::int64_t pit_id = -1;
+    int is_record_low = 0, is_rejected_low = 0;
+    double drainage_area_m2 = 0, chi = 0;
+    int joins_path_id = -1;
+    double join_distance_m = 0;
+    int starts_on_path_id = -1;
+};
+const std::vector<std::string>& burned_profile_columns();
+std::vector<burned_profile_row> burned_profile_rows(const burn_corridor_result& result,
+                                                    const lsdtt_raster_cpu& final_dem);
+
+// Original minus final (m): positive where lowered, negative where raised,
+// nodata where unchanged (within 1e-6 m) or outside the original's mask.
+lsdtt_raster_cpu corridor_burn_depth(const lsdtt_raster_cpu& original, const lsdtt_raster_cpu& final_dem);
+
 } // namespace lsdtt

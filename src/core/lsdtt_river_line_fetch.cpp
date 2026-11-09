@@ -36,6 +36,8 @@
 
 #include "lsdtt_gdal_init.hpp"
 #include "lsdtt_macrostrat_fetch.hpp"   // utm_epsg_for
+#include "lsdtt_param_parser.hpp"      // lsdtt3_package_version
+#include "lsdtt_raster_fetch.hpp"      // bounds_from_vector_file
 
 namespace lsdtt
 {
@@ -683,6 +685,151 @@ lsdtt_river_line_read_result read_river_lines(const lsdtt_river_line_fetch_optio
                           o.road_vector_path);
     }
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// build_river_line_fetch_options (moved from lsdtt-fetch-river-lines)
+// ---------------------------------------------------------------------------
+namespace
+{
+bool parse_degrees_text(const std::string& s, double& out)
+{
+    if (s.empty()) return false;
+    std::size_t pos = 0;
+    try { out = std::stod(s, &pos); }
+    catch (const std::exception&) { return false; }
+    return pos == s.size() && std::isfinite(out);
+}
+} // namespace
+
+lsdtt_river_line_fetch_options build_river_line_fetch_options(
+    const lsdtt_river_line_parameters& p,
+    const std::function<std::string(const std::string&)>& resolve_path,
+    std::vector<std::string>& warnings,
+    std::string* area_note)
+{
+    auto S = [&](const char* k, const char* d = "") -> std::string
+    { auto it = p.s.find(k); return it == p.s.end() ? std::string(d) : it->second; };
+    auto F = [&](const char* k, double d) { auto it = p.f.find(k); return it == p.f.end() ? d : it->second; };
+    auto I = [&](const char* k, int d) { auto it = p.i.find(k); return it == p.i.end() ? d : it->second; };
+    auto B = [&](const char* k, bool d) { auto it = p.b.find(k); return it == p.b.end() ? d : it->second; };
+    auto file = [&](const std::string& f) { return f.rfind("/vsi", 0) == 0 ? f : resolve_path(f); };
+
+    lsdtt_river_line_fetch_options o;
+    o.source = S("river_line_source");
+    if (o.source.empty())
+        throw std::invalid_argument("set river_line_source: local_file or gb_os_open_rivers");
+
+    // Area
+    const bool edges_given = !S("west").empty() || !S("east").empty() || !S("south").empty() || !S("north").empty();
+    if (!S("bounds_fname").empty())
+    {
+        if (edges_given)
+            throw std::invalid_argument("give either bounds_fname or west/south/east/north, not both");
+        std::string path = S("bounds_fname");
+        if (!std::filesystem::path(path).is_absolute())
+            path = S("bounds_path").empty() ? resolve_path(path)
+                                            : (std::filesystem::path(S("bounds_path")) / path).string();
+        const lsdtt_bounds_from_vector_result b = bounds_from_vector_file(path, S("bounds_layer"));
+        if (!b.ok) throw std::invalid_argument("bounds_fname: " + b.message);
+        if (!b.warning.empty()) warnings.push_back(b.warning);
+        o.west = b.west; o.south = b.south; o.east = b.east; o.north = b.north;
+        if (b.geometry_kind == "raster") o.bounds_raster_path = path;
+        if (area_note) *area_note = "Area from " + path + " (" + b.geometry_kind + ", " + b.source_crs + ")";
+    }
+    else if (!parse_degrees_text(S("west"), o.west) || !parse_degrees_text(S("east"), o.east) ||
+             !parse_degrees_text(S("south"), o.south) || !parse_degrees_text(S("north"), o.north))
+    {
+        throw std::invalid_argument("give the area: west, south, east and north (WGS84 degrees), or bounds_fname");
+    }
+
+    o.output_epsg = I("output_epsg", 0);
+    if (o.output_epsg == 3857 || o.output_epsg == 3785 || o.output_epsg == 900913)
+        throw std::invalid_argument("output_epsg: Web Mercator distorts distances and is refused by lsdtt; "
+                                    "use 0 or another metric CRS");
+    o.clip_buffer_metres = F("clip_buffer_metres", -1.0);
+    o.node_snap_tolerance_metres = F("node_snap_tolerance_metres", -1.0);
+    o.min_line_length_metres = F("min_line_length_metres", 0.0);
+    const std::string gb = S("gap_bridge_algorithm_choice", "none");
+    if (gb == "facing_tips") o.gap_bridge.enabled = true;
+    else if (gb != "none") throw std::invalid_argument("gap_bridge_algorithm_choice must be none or facing_tips");
+    o.gap_bridge.max_gap_length_metres = F("max_gap_length_metres", 25.0);
+    o.gap_bridge.max_nonroad_gap_metres = F("max_nonroad_gap_metres", 30.0);
+    o.gap_bridge.max_facing_angle_degrees = F("max_facing_angle_degrees", 45.0);
+    o.gap_bridge.max_heading_misalignment_degrees = F("max_heading_misalignment_degrees", 50.0);
+    o.gap_bridge.road_max_facing_angle_degrees = F("road_max_facing_angle_degrees", 60.0);
+    o.gap_bridge.tangent_fit_length_metres = F("tangent_fit_length_metres", 15.0);
+    o.gap_bridge.road_intersection_tolerance_metres = F("road_intersection_tolerance_metres", 10.0);
+    o.gap_bridge.require_mutual_best = B("require_mutual_best", true);
+    if (!S("road_vector_fname").empty())
+    {
+        if (!o.gap_bridge.enabled)
+            warnings.push_back("road_vector_fname is only used with gap_bridge_algorithm_choice: facing_tips; ignored");
+        else
+        {
+            o.road_vector_path = file(S("road_vector_fname"));
+            o.road_layer = S("road_layer");
+        }
+    }
+    o.road_name_field = S("road_name_field", "roadName");
+    const std::string dr = S("direction_repair_algorithm_choice", "network_outlet");
+    if (dr == "network_outlet") o.repair_direction = true;
+    else if (dr == "none") o.repair_direction = false;
+    else throw std::invalid_argument("direction_repair_algorithm_choice must be network_outlet or none");
+
+    o.keep_feature_classes.clear();
+    {
+        static const std::set<std::string> known = {"river", "stream", "lake_connector", "canal",
+                                                    "drain", "tidal", "other"};
+        std::stringstream ss(S("river_feature_classes", "river,stream,lake_connector"));
+        std::string c;
+        while (std::getline(ss, c, ','))
+        {
+            c.erase(0, c.find_first_not_of(" \t"));
+            c.erase(c.find_last_not_of(" \t") + 1);
+            if (c.empty()) continue;
+            if (!known.count(c))
+                throw std::invalid_argument("river_feature_classes: '" + c + "' is not one of "
+                                            "river, stream, lake_connector, canal, drain, tidal, other");
+            o.keep_feature_classes.push_back(c);
+        }
+        if (o.keep_feature_classes.empty()) throw std::invalid_argument("river_feature_classes is empty");
+    }
+
+    if (o.source == "local_file")
+    {
+        if (S("river_lines_fname").empty())
+            throw std::invalid_argument("river_line_source local_file needs river_lines_fname");
+        o.river_lines_path = file(S("river_lines_fname"));
+        o.river_lines_layer = S("river_lines_layer");
+        o.fields.feature_class_field = S("feature_class_field_name");
+        o.fields.direction_field = S("direction_field_name");
+        o.fields.direction_values = parse_direction_field_mapping(S("direction_field_mapping"));
+        o.fields.digitised_downstream = B("digitised_downstream", false);
+        o.fields.start_node_field = S("start_node_field_name");
+        o.fields.end_node_field = S("end_node_field_name");
+        o.fields.culvert_field = S("culvert_field_name");
+        if (!o.fields.direction_field.empty() && o.fields.digitised_downstream)
+            throw std::invalid_argument("give direction_field_name or digitised_downstream, not both");
+        if (o.fields.start_node_field.empty() != o.fields.end_node_field.empty())
+            throw std::invalid_argument("give both start_node_field_name and end_node_field_name, or neither");
+    }
+    else
+    {
+        for (const char* k : {"river_lines_fname", "feature_class_field_name", "direction_field_name",
+                              "direction_field_mapping", "start_node_field_name", "end_node_field_name",
+                              "culvert_field_name"})
+            if (!S(k).empty())
+                warnings.push_back(std::string(k) + " is only used with river_line_source: local_file; ignored for " +
+                                   o.source);
+    }
+    if (!S("river_cache_dir").empty()) o.cache_dir = resolve_path(S("river_cache_dir"));
+
+    o.http.timeout_seconds = I("http_timeout_seconds", 60);
+    o.http.connect_timeout_seconds = I("http_connect_timeout_seconds", 15);
+    o.http.max_retry = I("http_max_retry", 3);
+    o.http.user_agent = "lsdtt3 lsdtt-fetch-river-lines/" + lsdtt3_package_version();
+    return o;
 }
 
 } // namespace lsdtt

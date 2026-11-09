@@ -13,7 +13,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | CTest | 875 | 204 | 136 | 128 | 19 | 175 | 382 | 243 | . | 43 | 216 | 659 |
-| pytest | 235 | 78 | 58 | 45 | . | 9 | 27 | 61 | . | 61 | 232 | 3 |
+| pytest | 240 | 78 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 237 | 3 |
 
 ## CTest by domain
 
@@ -162,6 +162,7 @@ None.
 | `test_api_naming.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_api_reference_contract.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_binding_source_contract.py` | 2 | . | . | . | . | . | . | . | . | 2 | 2 | . |
+| `test_burn_to_corridor.py` | 5 | . | 1 | 2 | . | 1 | . | 1 | . | . | 5 | . |
 | `test_channel_point_attributes.py` | 4 | 2 | . | 1 | . | . | . | 1 | . | 1 | 4 | . |
 | `test_cli_packaging.py` | 6 | 3 | . | . | . | . | . | 1 | . | 2 | 6 | . |
 | `test_contributing_threshold_migrations.py` | 2 | . | . | 2 | . | . | . | 2 | . | 2 | 2 | . |

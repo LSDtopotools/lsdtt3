@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "lsdtt_depression_hierarchy_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_vector_ops_cpu.hpp"
 
 namespace lsdtt
@@ -1405,6 +1406,138 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
     res.notes.push_back(std::to_string(n_split) + " line(s) crossing NoData cut into " +
                         std::to_string(n_pieces_total) + " piece(s)");
     return res;
+}
+
+// ---------------------------------------------------------------------------
+// after the burn (moved from lsdtt-stream-burning)
+// ---------------------------------------------------------------------------
+void validate_burn_corridor_options(const burn_corridor_options& o)
+{
+    if (o.max_pit_pixels < 0) throw std::invalid_argument("burn_profile_max_pit_pixels must be >= 0");
+    if (!(o.max_cut_metres > 0.0)) throw std::invalid_argument("burn_profile_max_cut_metres must be > 0");
+    if (o.m_over_n < 0.0) throw std::invalid_argument("m_over_n must be >= 0");
+    if (!(o.chi_A0 > 0.0)) throw std::invalid_argument("chi_A0 must be > 0");
+    if (!(o.corridor_half_width_metres >= 0.0))
+        throw std::invalid_argument("vector_corridor_half_width_metres must be >= 0");
+    validate_breach_least_cost_options(o.breach);
+}
+
+lsdtt_raster_cpu condition_after_corridor_burn(const lsdtt_raster_cpu& burned,
+                                               const corridor_final_conditioning_options& o)
+{
+    if (o.breach_algorithm_choice != "lindsay2016" && o.breach_algorithm_choice != "least_cost")
+        throw std::invalid_argument("breach_algorithm_choice must be lindsay2016 or least_cost; got '" +
+                                    o.breach_algorithm_choice + "'");
+    lsdtt_raster_cpu src = burned;
+    if (o.carve_before_fill)
+    {
+        if (o.breach_algorithm_choice == "least_cost") src = breach_depressions_least_cost(burned, o.breach);
+        else src = breach_depressions(burned, o.n_threads);
+    }
+    return fill_pits(src, o.fill_min_slope, o.n_threads);
+}
+
+corridor_burn_checks check_corridor_burn(const burn_corridor_result& cr, const lsdtt_raster_cpu& burned,
+                                         const lsdtt_raster_cpu& final_dem)
+{
+    corridor_burn_checks out;
+    out.n_paths = static_cast<int>(cr.paths.size());
+    std::vector<uint8_t> on_line(burned.get_data().size(), 0);
+    for (const auto& p : cr.paths)
+        for (const auto c : p.cells) on_line[static_cast<size_t>(c)] = 1;
+    const auto& a = burned.get_data();
+    const auto& b = final_dem.get_data();
+    const auto& m = burned.get_mask();
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        if (!m[i] || a[i] == b[i]) continue;
+        if (on_line[i])
+        {
+            ++out.n_line_cells_changed;
+            out.max_line_change_m = std::max(out.max_line_change_m, std::fabs(static_cast<double>(b[i]) - a[i]));
+        }
+        else ++out.n_other_cells_changed;
+    }
+    for (int which = 0; which < 2; ++which)
+    {
+        const auto& z = which == 0 ? a : b;
+        int& n = which == 0 ? out.n_rising_after_burn : out.n_rising_final;
+        double& mx = which == 0 ? out.max_rise_after_burn_m : out.max_rise_final_m;
+        auto& ids = which == 0 ? out.rising_after_burn_path_ids : out.rising_final_path_ids;
+        for (const auto& p : cr.paths)
+        {
+            bool rises = false;
+            for (size_t i = 1; i < p.cells.size(); ++i)
+            {
+                const double rise = static_cast<double>(z[static_cast<size_t>(p.cells[i])]) -
+                                    static_cast<double>(z[static_cast<size_t>(p.cells[i - 1])]);
+                if (rise > 0.0) { rises = true; mx = std::max(mx, rise); }
+            }
+            if (rises) { ++n; ids.push_back(p.path_id); }
+        }
+    }
+    return out;
+}
+
+const std::vector<std::string>& burned_profile_columns()
+{
+    static const std::vector<std::string> c = {
+        "path_id", "path_rank", "reach_id", "name", "point_index", "distance_m", "flow_distance_m", "x", "y",
+        "z_original", "z_cleaned", "z_profile", "z_final", "pit_filled", "pit_id", "is_record_low",
+        "is_rejected_low", "drainage_area_m2", "chi", "joins_path_id", "join_distance_m", "starts_on_path_id"};
+    return c;
+}
+
+std::vector<burned_profile_row> burned_profile_rows(const burn_corridor_result& cr, const lsdtt_raster_cpu& final_dem)
+{
+    std::vector<burned_profile_row> rows;
+    const auto& zf = final_dem.get_data();
+    for (const auto& p : cr.paths)
+        for (size_t i = 0; i < p.cells.size(); ++i)
+        {
+            const auto& rc = cr.reaches[static_cast<size_t>(p.cell_reach[i])];
+            burned_profile_row r;
+            r.path_id = p.path_id;
+            r.path_rank = p.path_rank;
+            r.reach_id = rc.reach_id;
+            r.name = rc.name;
+            r.point_index = static_cast<long>(i);
+            r.distance_m = p.distance_m[i];
+            r.flow_distance_m = p.flow_distance_m[i];
+            r.x = p.xy[i].x;
+            r.y = p.xy[i].y;
+            r.z_original = p.z_original[i];
+            r.z_cleaned = p.z_cleaned[i];
+            r.z_profile = p.z_profile[i];
+            r.z_final = zf[static_cast<size_t>(p.cells[i])];
+            r.pit_filled = p.z_cleaned[i] > p.z_original[i] ? 1 : 0;
+            r.pit_id = p.pit_id[i];
+            r.is_record_low = static_cast<int>(p.is_record_low[i]);
+            r.is_rejected_low = static_cast<int>(p.is_rejected_low[i]);
+            r.drainage_area_m2 = p.drainage_area_m2[i];
+            r.chi = p.chi[i];
+            r.joins_path_id = p.joins_path_id;
+            r.join_distance_m = p.join_distance_m;
+            r.starts_on_path_id = p.starts_on_path_id;
+            rows.push_back(std::move(r));
+        }
+    return rows;
+}
+
+lsdtt_raster_cpu corridor_burn_depth(const lsdtt_raster_cpu& original, const lsdtt_raster_cpu& final_dem)
+{
+    lsdtt_raster_cpu depth = final_dem;
+    auto& d = depth.get_data_array();
+    const auto& o = original.get_data_array();
+    const auto& m = original.get_mask_array();
+    const float nd = depth.get_meta().no_data_value;
+    for (int r = 0; r < depth.get_meta().n_rows; ++r)
+        for (int c = 0; c < depth.get_meta().n_cols; ++c)
+        {
+            const float v = m(r, c) ? o(r, c) - d(r, c) : nd;
+            d(r, c) = (m(r, c) && std::fabs(v) > 1e-6f) ? v : nd;
+        }
+    return depth;
 }
 
 } // namespace lsdtt

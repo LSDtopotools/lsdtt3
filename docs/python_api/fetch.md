@@ -831,6 +831,111 @@ def fetch_dem_for_outlets(outlets: object, source: str = 'cop30_aws', target_eps
 
 ---
 
+## `fetch_river_lines`
+
+Fetch or read river centrelines for an area and prepare them for burning.
+
+lsdtt-fetch-river-lines, through the same C++ routines, with its parameter
+names and the same checks: the lines are clipped to the area (plus a buffer),
+noded, oriented downstream (a direction vote per network) and given a
+topology. Nothing is written to disk except the download cache.
+
+Parameters
+----------
+river_line_source : str, keyword-only
+    ``local_file`` (any OGR line file) or ``gb_os_open_rivers`` (OS Open
+    Rivers, downloaded keylessly and cached).
+west, south, east, north : float or None, default=None
+    The area in WGS84 degrees; or give ``bounds_fname``.
+bounds_fname : str, default=""
+    A raster or vector file whose extent is the area (a raster also sets the
+    output CRS and the clip box).
+bounds_layer : str, default=""
+    Layer of a vector ``bounds_fname``; empty for the first.
+output_epsg : int, default=0
+    Output CRS; 0 is the bounds raster's CRS, else the UTM zone of the area.
+clip_buffer_metres : float, default=-1.0
+    Margin (m) around the area; negative is 5% of the shorter side, at least
+    200 m.
+river_lines_fname : str, default=""
+    ``local_file``: the line file.
+river_lines_layer : str, default=""
+    ``local_file``: its layer; empty for the first.
+feature_class_field_name : str, default=""
+    ``local_file``: field giving the feature class.
+direction_field_name : str, default=""
+    ``local_file``: field giving the flow direction.
+direction_field_mapping : str, default=""
+    ``local_file``: values of that field and their meaning, as
+    ``value=1`` (digitised downstream) / ``value=-1`` (upstream) pairs,
+    comma-separated, e.g. ``"in_direction=1,in_opposite_direction=-1"``;
+    spaces in a value are written as underscores.
+digitised_downstream : bool, default=False
+    ``local_file``: the lines are digitised downstream.
+start_node_field_name : str, default=""
+    ``local_file``: field of the start node id (with ``end_node_field_name``).
+end_node_field_name : str, default=""
+    ``local_file``: field of the end node id.
+culvert_field_name : str, default=""
+    ``local_file``: field flagging culverts.
+river_feature_classes : str, default="river,stream,lake_connector"
+    Feature classes kept, comma-separated (river, stream, lake_connector,
+    canal, drain, tidal, other).
+node_snap_tolerance_metres : float, default=-1.0
+    Ends within this distance (m) are one node; negative is 1 m.
+min_line_length_metres : float, default=0.0
+    Shorter dangling lines are dropped.
+direction_repair_algorithm_choice : str, default="network_outlet"
+    ``network_outlet`` flips lines against their network's flow; ``none``
+    only flags them.
+gap_bridge_algorithm_choice : str, default="none"
+    ``facing_tips`` joins dangling ends that face each other across a gap.
+max_gap_length_metres : float, default=25.0
+    Gap bridging: longest road-associated bridge (m).
+max_nonroad_gap_metres : float, default=30.0
+    Gap bridging: longest bridge not crossing a road (m).
+max_facing_angle_degrees : float, default=45.0
+    Gap bridging: largest angle between a tip and the bridge.
+max_heading_misalignment_degrees : float, default=50.0
+    Gap bridging: largest misalignment of the two tips' headings.
+road_max_facing_angle_degrees : float, default=60.0
+    Gap bridging: facing angle allowed across a road.
+tangent_fit_length_metres : float, default=15.0
+    Gap bridging: length (m) of line used for a tip's heading.
+road_intersection_tolerance_metres : float, default=10.0
+    Gap bridging: distance (m) within which a bridge crosses a road.
+require_mutual_best : bool, default=True
+    Gap bridging: only join tips that are each other's best candidate.
+road_vector_fname : str, default=""
+    Gap bridging: road centrelines (any OGR line file).
+road_layer : str, default=""
+    Gap bridging: the roads layer; empty for the first.
+road_name_field : str, default="roadName"
+    Gap bridging: the roads' name field.
+river_cache_dir : str, default=""
+    Download cache; empty is the user cache directory.
+http_timeout_seconds : int, default=60
+    Download timeout (s).
+http_connect_timeout_seconds : int, default=15
+    Connection timeout (s).
+http_max_retry : int, default=3
+    Download retries.
+
+Returns
+-------
+RiverLinesResult
+    ``lines``, ``nodes``, ``topology``, ``attribution`` and ``report``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def fetch_river_lines(*, river_line_source: str, west: float | None = None, south: float | None = None, east: float | None = None, north: float | None = None, bounds_fname: str = '', bounds_layer: str = '', output_epsg: int = 0, clip_buffer_metres: float = -1.0, river_lines_fname: str = '', river_lines_layer: str = '', feature_class_field_name: str = '', direction_field_name: str = '', direction_field_mapping: str = '', digitised_downstream: bool = False, start_node_field_name: str = '', end_node_field_name: str = '', culvert_field_name: str = '', river_feature_classes: str = 'river,stream,lake_connector', node_snap_tolerance_metres: float = -1.0, min_line_length_metres: float = 0.0, direction_repair_algorithm_choice: str = 'network_outlet', gap_bridge_algorithm_choice: str = 'none', max_gap_length_metres: float = 25.0, max_nonroad_gap_metres: float = 30.0, max_facing_angle_degrees: float = 45.0, max_heading_misalignment_degrees: float = 50.0, road_max_facing_angle_degrees: float = 60.0, tangent_fit_length_metres: float = 15.0, road_intersection_tolerance_metres: float = 10.0, require_mutual_best: bool = True, road_vector_fname: str = '', road_layer: str = '', road_name_field: str = 'roadName', river_cache_dir: str = '', http_timeout_seconds: int = 60, http_connect_timeout_seconds: int = 15, http_max_retry: int = 3) -> lsdtt3.RiverLinesResult
+```
+
+---
+
 ## `gdal_data_description`
 
 As proj_data_description(), for GDAL's own data directory.
