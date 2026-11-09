@@ -158,7 +158,38 @@ default (-9999) in this tool.
 
 Do not set it to 0 on a DEM with real land below sea level (reclaimed land,
 fens, a DTM of a coast with a large tidal range). That land would be removed
-and its rivers lost. Either set it just below the lowest land, or leave it off.
+and its rivers lost. Either set it just below the lowest land, or leave it off
+and remove the sea from a vector instead, before burning, with
+[`lsdtt-raster-preprocessing`](../cli_reference/cli_reference_lsdtt_raster_preprocessing.md):
+
+```text
+min_elevation: -9999
+sea_mask_fname: sea_below_low_water.fgb
+sea_mask_side_choice: auto
+write_sea_mask_raster: true
+```
+
+`sea_mask_fname` takes sea (or land) polygons, or a coastline as lines that
+need not be closed. `sea_mask_side_choice` says which side is sea:
+
+- `sea_inside` or `land_inside` for polygons;
+- `sea_left` or `sea_right` for lines, looking along the direction they were
+  digitised;
+- `auto` decides from the DEM itself. The side already NoData much more
+  often, or else the side with the lower median elevation, is sea, and the
+  log gives the evidence. It refuses when the two sides look alike.
+
+For lines, the sea is what a flood from the sea side reaches without crossing
+them. If the flood leaks to the land side, because the line has a gap or does
+not cross the DEM, only the sea side within `sea_mask_max_distance_metres` is
+removed, and the log says so. The removed sea is always an outlet: an interior
+NoData fill never fills it back in.
+
+In Great Britain, the sea below the low water mark can be built from the OS
+OpenMap Local or VectorMap District tiles (OS OpenData, keyless) as their
+`TidalWater` polygons minus their `Foreshore` polygons. The low water mark
+there is mean low water in England and Wales, and mean low water springs in
+Scotland.
 
 ## Checking a run
 

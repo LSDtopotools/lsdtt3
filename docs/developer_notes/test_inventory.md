@@ -12,7 +12,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 876 | 204 | 136 | 129 | 19 | 176 | 382 | 243 | . | 43 | 216 | 660 |
+| CTest | 882 | 208 | 138 | 131 | 19 | 176 | 386 | 245 | . | 43 | 217 | 665 |
 | pytest | 240 | 78 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 237 | 3 |
 
 ## CTest by domain
@@ -64,7 +64,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `parameters` | 15 | 1 | . | . | . | . | . | . | . | 14 |
 | `point_input` | 3 | 2 | . | 2 | . | 1 | . | 2 | . | . |
 | `quartz` | 1 | 1 | . | . | . | . | . | . | . | . |
-| `raster` | 53 | 16 | 10 | 6 | 2 | 12 | 20 | 14 | . | 1 |
+| `raster` | 59 | 20 | 12 | 8 | 2 | 12 | 24 | 16 | . | 1 |
 | `raster_algebra` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `ridgeline` | 5 | 1 | . | . | . | 4 | 5 | . | . | . |
 | `slope_area` | 1 | . | . | . | . | . | 1 | . | . | . |
@@ -130,7 +130,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-mountain-front` | 5 | . | . | 3 | . | 4 | 4 | . | . | 1 |
 | `lsdtt-outlet-matching` | 6 | . | 1 | 1 | . | 3 | 3 | 3 | . | . |
 | `lsdtt-raster-calculator` | 4 | . | . | 1 | . | 2 | 3 | 1 | . | . |
-| `lsdtt-raster-preprocessing` | 34 | 9 | 2 | 1 | . | 7 | 21 | 12 | . | 1 |
+| `lsdtt-raster-preprocessing` | 39 | 12 | 3 | 2 | . | 7 | 25 | 13 | . | 1 |
 | `lsdtt-ridgeline-analysis` | 8 | 1 | . | . | . | 7 | 8 | . | . | . |
 | `lsdtt-sediment-routing` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `lsdtt-slope-area` | 9 | . | . | 2 | . | 4 | 4 | 5 | . | . |

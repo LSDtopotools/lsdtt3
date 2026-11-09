@@ -706,6 +706,54 @@ add_lsdtt_cli_smoke_test(
 # the number. The fixture covers all three outcomes -- a real replacement, a
 # blank-to-nodata, and a point off the grid, which must warn and be skipped
 # rather than fail the run.
+# Sea mask from a vector (raster-preprocessing sea_mask_fname), on the
+# committed 40 x 40 coastal DEM and vectors in tests/data/sea_mask. The
+# sea-mask raster is 1 = sea, 0 = land over all 1600 cells, so its mean is the
+# sea fraction.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_lines
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_lines.param.in
+    smcoast_fill.tif
+    --expect-file-contains "../stdout.log:Side: sea_left (sea on the left of most lines (median elevation -1 m left"
+    --expect-file-contains "../stdout.log:Sea mask: 800 cell(s) set to nodata"
+    --expect-raster-stat smcoast_sea_mask.tif:mean:0.4999:0.5001
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_gap
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_gap.param.in
+    smgap_fill.tif
+    --expect-file-contains "../stdout.log:the lines have a gap or do not cross the DEM. Fell back to the sea side within 60 m"
+    --expect-file-contains "../stdout.log:(fallback band after a leak)"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_polygon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_polygon.param.in
+    smpoly_fill.tif
+    --expect-file-contains "../stdout.log:Side: sea_inside (median elevation -1 m inside"
+    --expect-file-contains "../stdout.log:Sea mask: 800 cell(s) set to nodata"
+    --expect-raster-stat smpoly_sea_mask.tif:mean:0.4999:0.5001
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_lagoon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_lagoon.param.in
+    smlag_fill.tif
+    --expect-file-contains "../stdout.log:Sea mask: 36 cell(s) set to nodata"
+    --expect-file-contains "../stdout.log:Sea mask kept: 36 filled sea cell(s) set back to nodata"
+    --expect-raster-stat smlag_sea_mask.tif:mean:0.0224:0.0226
+)
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_sea_mask_bad_side
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_bad_side.param.in
+    smbad_fill.tif
+    --expect-failure
+    --stderr-contains "sea_mask_side_choice sea_inside is for polygons"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_raster_preprocessing_replace_pixels
     lsdtt-raster-preprocessing
@@ -5354,6 +5402,14 @@ add_test(NAME unit_point_input
 lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
+
+# The sea from a vector (lsdtt_sea_mask_cpu): polygons or an open coastline,
+# auto side from the DEM (NoData, then median elevation), leak and fallback,
+# refusals, and an enclosed lagoon that pit filling treats as an outlet.
+add_executable(lsdtt-test-sea-mask cpp/test_sea_mask.cpp)
+target_link_libraries(lsdtt-test-sea-mask PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_sea_mask COMMAND lsdtt-test-sea-mask)
+lsdtt_set_tests_properties(unit_raster_sea_mask PROPERTIES LABELS "raster")
 
 # Writing a point layer back out with its attributes and added fields
 # (lsdtt_point_attribute_output): schema typed from the values read ("01" kept

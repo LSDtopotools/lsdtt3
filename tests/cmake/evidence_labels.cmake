@@ -678,6 +678,11 @@ endforeach()
 lsdtt_evidence(unit_csv_table_field_parsers unit exact_solution negative)
 lsdtt_evidence(unit_point_input unit exact_solution metamorphic negative)
 lsdtt_evidence(unit_point_attribute_output unit exact_solution metamorphic negative)
+lsdtt_evidence(unit_raster_sea_mask unit exact_solution metamorphic property negative)
+lsdtt_evidence(smoke_raster_preprocessing_sea_mask_lines system smoke exact_solution)
+lsdtt_evidence(smoke_raster_preprocessing_sea_mask_gap system smoke property)
+lsdtt_evidence(smoke_raster_preprocessing_sea_mask_polygon system smoke exact_solution metamorphic)
+lsdtt_evidence(smoke_raster_preprocessing_sea_mask_lagoon system smoke exact_solution)
 # Removed and misspelt keys are refused (negative); a deprecated alias or an
 # unrelated key is accepted with a warning (conformance, rule R1 of the
 # pytest-marker plan); the exact messages and carried values are pinned by

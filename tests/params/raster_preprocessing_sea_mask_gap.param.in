@@ -1,0 +1,14 @@
+# Sea mask from a coastline with a gap: the flood from the sea side leaks to
+# the land side, and the sea side within 60 m of the lines is used instead.
+read_path: __READ_PATH__
+read_fname: sea_mask/coast_dem.tif
+write_path: __WRITE_PATH__
+write_fname: smgap
+enforce_projection: false
+write_output_format: gtiff
+min_elevation: -9999
+write_fill_raster: true
+write_hillshade_raster: false
+write_sea_mask_raster: true
+sea_mask_fname: sea_mask/coastline_gap.fgb
+sea_mask_max_distance_metres: 60

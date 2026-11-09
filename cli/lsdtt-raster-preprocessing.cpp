@@ -86,6 +86,7 @@
 #include "../src/cpu/lsdtt_usgs_elevation.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../src/cpu/lsdtt_sea_mask_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/cpu/lsdtt_fill_flat_resolution_reporting_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_linear_features_cpu.hpp"
@@ -398,6 +399,43 @@ int main(int argc, char* argv[])
 
     // --- Threshold masking ---
     lsdtt::declare_min_elevation_parameter(float_default_map, help_map, 0.0f, "Threshold masking");
+
+    // --- Sea mask from a vector (polygons or an open coastline) ---
+    string_default_map["sea_mask_fname"] = "";
+    help_map["sea_mask_fname"] = {"string", "",
+        "Vector file of sea (or land) polygons, or a coastline: the sea becomes nodata. Empty = off.",
+        "For DEMs with land below 0 m (a coastal DTM with a large tidal range, reclaimed land), where "
+        "min_elevation would remove real land: set min_elevation to -9999 and give the sea as a vector. "
+        "Relative to read_path unless absolute; any OGR format and CRS (reprojected); only features "
+        "meeting the DEM are read, so a national file is fine. Polygons: cells whose centre is inside. "
+        "Lines (need not be closed): the sea is what a flood from the sea side of the lines reaches "
+        "without crossing them; if it reaches the land side (a gap, or lines that do not cross the "
+        "DEM) the sea side within sea_mask_max_distance_metres is used instead, and the log says so. "
+        "The removed sea is always an outlet: interior_nodata_method fill never refills it. A file "
+        "with both polygons and lines is refused.",
+        "Sea mask", "param", ""};
+    string_default_map["sea_mask_layer"] = "";
+    help_map["sea_mask_layer"] = {"string", "",
+        "Layer of sea_mask_fname to read (empty: the first).", "",
+        "Sea mask", "param", "sea_mask_fname"};
+    string_default_map["sea_mask_side_choice"] = "auto";
+    help_map["sea_mask_side_choice"] = {"string", "auto",
+        "Which side of the vector is sea: auto, sea_inside, land_inside, sea_left, sea_right.",
+        "sea_inside / land_inside for polygons; sea_left / sea_right for lines, looking along the "
+        "direction they were digitised (OpenStreetMap coastlines have the land on the left: "
+        "sea_right). auto decides from the DEM and logs the evidence: the side whose cells are "
+        "already nodata much more often, else the side with the lower median elevation (by at "
+        "least 0.5 m); for lines per line part, from the cells within 3 cells of it. auto refuses "
+        "when neither tells the sides apart.",
+        "Sea mask", "param", "sea_mask_fname"};
+    float_default_map["sea_mask_max_distance_metres"] = 500.0f;
+    help_map["sea_mask_max_distance_metres"] = {"float", "500",
+        "Lines only: the fallback after a leak, the sea side within this distance (m) of the lines.",
+        "", "Sea mask", "param", "sea_mask_fname"};
+    bool_default_map["write_sea_mask_raster"] = false;
+    help_map["write_sea_mask_raster"] = {"bool", "false",
+        "Write the sea mask: 1 = sea, 0 = land (<write_fname>_sea_mask.tif).", "",
+        "Sea mask", "switch", "sea_mask_fname"};
 
     float_default_map["maximum_elevation"] = 30000.0f;
     help_map["maximum_elevation"] = {"float","30000",
@@ -1980,6 +2018,61 @@ int main(int argc, char* argv[])
     }
 
     // -------------------------------------------------------------------------
+    // Step 2d - Sea mask from a vector (polygons or an open coastline)
+    // -------------------------------------------------------------------------
+    std::vector<std::uint8_t> sea_cells;   // kept: the interior nodata fill must not refill the sea
+    if (!sf["sea_mask_fname"].empty())
+    {
+        std::cout << "\n--- Sea mask ---\n";
+        const std::filesystem::path given(sf["sea_mask_fname"]);
+        const std::string sea_path = (given.is_absolute() || sf["sea_mask_fname"].rfind("/vsi", 0) == 0)
+                                         ? sf["sea_mask_fname"] : pp.get_read_path() + sf["sea_mask_fname"];
+        try
+        {
+            lsdtt::sea_mask_options so;
+            so.side = lsdtt::parse_sea_side_choice(sf["sea_mask_side_choice"], "sea_mask_side_choice");
+            so.max_distance_metres = ff["sea_mask_max_distance_metres"];
+            const lsdtt::vector_layer_grid_geometry vg =
+                lsdtt::read_vector_layer_on_grid(dem, sea_path, sf["sea_mask_layer"]);
+            std::cout << "Sea mask file: " << sea_path << " (layer " << vg.layer_name << "): "
+                      << vg.n_polygon_features << " polygon and " << vg.n_line_features
+                      << " line feature(s) meeting the DEM";
+            if (vg.n_other_features) std::cout << ", " << vg.n_other_features << " other(s) ignored";
+            std::cout << "\n";
+            if (vg.n_polygon_features > 0 && vg.n_line_features > 0)
+                throw std::invalid_argument("sea_mask_fname holds both polygons and lines; give one kind");
+            lsdtt::sea_mask_result sr;
+            if (vg.n_polygon_features > 0) sr = lsdtt::sea_mask_from_polygons(dem, vg.polygon_cover, so);
+            else if (vg.n_line_features > 0) sr = lsdtt::sea_mask_from_lines(dem, vg.line_cells, vg.lines, so);
+            else
+            {
+                sr.sea.assign(dem.get_mask().size(), 0);
+                sr.geometry = "none";
+                sr.notes.push_back("no polygon or line of the sea mask meets the DEM: nothing removed");
+            }
+            for (const auto& n : sr.notes) std::cout << "  " << n << "\n";
+            if (!sr.side_used.empty())
+                std::cout << "Side: " << sr.side_used << (sr.evidence.empty() ? "" : " (" + sr.evidence + ")") << "\n";
+            const std::size_t n_removed = lsdtt::apply_sea_mask(dem, sr.sea);
+            std::cout << "Sea mask: " << n_removed << " cell(s) set to nodata"
+                      << (sr.fell_back ? " (fallback band after a leak)" : "") << "\n";
+            if (bf["write_sea_mask_raster"])
+            {
+                std::vector<float> v(sr.sea.begin(), sr.sea.end());
+                const std::string o = pp.make_output_path("_sea_mask.tif");
+                std::cout << "Writing: " << o << "\n";
+                loader.write_full(v, dem.get_meta(), o, out_fmt);
+            }
+            sea_cells = std::move(sr.sea);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: sea mask: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Step 3 - Interior nodata filling
     // -------------------------------------------------------------------------
     lsdtt::lsdtt_raster_cpu nodata_filled_dem = dem;
@@ -2007,7 +2100,13 @@ int main(int argc, char* argv[])
         // The later steps use the filled DEM only when asked to; "sink" (or an
         // invalid value) goes through the helper to be reported or refused.
         if (fill_interior)
+        {
             dem = nodata_filled_dem;
+            // The masked sea is always an outlet: never refilled.
+            if (!sea_cells.empty())
+                std::cout << "Sea mask kept: " << lsdtt::apply_sea_mask(dem, sea_cells)
+                          << " filled sea cell(s) set back to nodata\n";
+        }
         else
             std::cout << lsdtt::apply_interior_nodata_method(
                              dem, sf["interior_nodata_method"], sf["nodata_fill_method_choice"],

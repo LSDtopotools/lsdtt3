@@ -1,0 +1,16 @@
+# An enclosed lagoon (36 cells, not touching the DEM edge) as a sea polygon,
+# with interior_nodata_method fill: the masked sea is always an outlet, so the
+# fill does not keep it filled (the 36 cells are set back to nodata).
+read_path: __READ_PATH__
+read_fname: sea_mask/coast_dem.tif
+write_path: __WRITE_PATH__
+write_fname: smlag
+enforce_projection: false
+write_output_format: gtiff
+min_elevation: -9999
+write_fill_raster: true
+write_hillshade_raster: false
+write_sea_mask_raster: true
+sea_mask_fname: sea_mask/lagoon.fgb
+sea_mask_side_choice: sea_inside
+interior_nodata_method: fill
