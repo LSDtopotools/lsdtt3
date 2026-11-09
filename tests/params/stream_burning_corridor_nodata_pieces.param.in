@@ -1,0 +1,19 @@
+# As stream_burning_corridor with min_elevation -40 m: the removed cells cut
+# two lines, and at X = 0 no corridor path crosses a gap, so those lines are
+# replaced by their pieces over valid cells, each burned on its own.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: mepc
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: burn_to_corridor
+run_stream_burn: true
+vector_corridor_half_width_metres: 0
+vector_name_field: id
+
+write_burned_outputs: true
+write_burned_profiles_csv: true
+write_burn_depth_raster: true
+n_threads: 1
+min_elevation: -40

@@ -1,0 +1,13 @@
+# A polygon side choice for a line file: refused.
+read_path: __READ_PATH__
+read_fname: sea_mask/coast_dem.tif
+write_path: __WRITE_PATH__
+write_fname: smbad
+enforce_projection: false
+write_output_format: gtiff
+min_elevation: -9999
+write_fill_raster: true
+write_hillshade_raster: false
+write_sea_mask_raster: true
+sea_mask_fname: sea_mask/coastline.fgb
+sea_mask_side_choice: sea_inside

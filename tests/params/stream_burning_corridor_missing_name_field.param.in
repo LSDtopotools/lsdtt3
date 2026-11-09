@@ -1,0 +1,9 @@
+# burn_to_corridor with a vector_name_field the lines do not have: refused.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: corrbadname
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: burn_to_corridor
+run_stream_burn: true
+vector_name_field: no_such_field

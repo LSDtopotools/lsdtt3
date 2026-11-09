@@ -643,7 +643,20 @@ int main(int argc, char* argv[])
         "<write_fname>_burned.tif (the carved elevation surface) and "
         "<write_fname>_burned_network_lines.fgb plus _burned_network_junctions.fgb "
         "(the D8 stream network extracted from the burned DEM, for checking that "
-        "flow paths route correctly under roads and other obstructions).",
+        "flow paths route correctly under roads and other obstructions). In "
+        "burn_to_corridor mode, writes <write_fname>_burned.tif, "
+        "_corridor_channels (one line per reach: the channel used, or the vector "
+        "line if skipped) and _exit_routes (one line per channel end inside the DEM: "
+        "the route lowered to drain it to the DEM edge or NoData, exit_type edge, or to "
+        "a lower cell of another line, exit_type line, or of an earlier end's route, exit_type "
+        "exit_route; to_path_id names the line or route reached; max_cut_m is the deepest cut "
+        "below the input DEM on the cells the route lowered; empty when every end is on the edge "
+        "or on another line), and _cross_path_receivers (points: line cells whose steepest "
+        "descent goes to another path's cell that could not be raised without making that path "
+        "rise, so the flow leaves the line there, mostly at bifurcations; reason monotone, "
+        "head_of_path, exit_route (another path's exit route) or own_exit_route (this path's "
+        "own, so the flow still leaves by its exit); empty when there are none), in "
+        "write_vector_format.",
         "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_channel_score_raster"] = false;
@@ -839,6 +852,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    // Off by default: the burning modes predate it, and DTMs such as the OS
+    // 5 m DTM hold real land below 0 m.
+    lsdtt::declare_min_elevation_parameter(float_default_map, help_map, -9999.0f, "DEM preparation");
 
     if (cli_args.help_requested)
     {
@@ -993,6 +1009,13 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::lsdtt_raster_cpu dem(loader);
+    // Sea removal (min_elevation), before anything else reads the DEM.
+    if (ff["min_elevation"] > -9998.0f)
+    {
+        const std::size_t n_removed = lsdtt::apply_min_elevation(dem, ff["min_elevation"]);
+        std::cout << "min_elevation " << ff["min_elevation"] << " m: " << n_removed
+                  << " cell(s) at or below it set to nodata\n";
+    }
     // Interior nodata: kept as sinks or filled (interior_nodata_method).
     try
     {
@@ -1121,10 +1144,6 @@ int main(int argc, char* argv[])
                 co.m_over_n = ff["m_over_n"];
                 co.chi_A0 = ff["chi_A0"];
                 co.boundary_conditions = sf["boundary_conditions"];
-                if (co.max_pit_pixels < 0) throw std::invalid_argument("burn_profile_max_pit_pixels must be >= 0");
-                if (!(co.max_cut_metres > 0.0)) throw std::invalid_argument("burn_profile_max_cut_metres must be > 0");
-                if (co.m_over_n < 0.0) throw std::invalid_argument("m_over_n must be >= 0");
-                if (!(co.chi_A0 > 0.0)) throw std::invalid_argument("chi_A0 must be > 0");
                 // The off-line carve always uses least-cost breach (it alone takes
                 // the fixed line cells).
                 const float bmc = ff["breach_max_cost"];
@@ -1134,7 +1153,7 @@ int main(int argc, char* argv[])
                 co.breach.flat_increment = static_cast<double>(ff["breach_flat_increment"]);
                 co.breach.fill_min_slope = ff["fill_min_slope"];
                 co.breach.edge_policy    = lsdtt::parse_breach_lc_edge_policy(sf["breach_edge_policy"], "breach_edge_policy");
-                lsdtt::validate_breach_least_cost_options(co.breach);
+                lsdtt::validate_burn_corridor_options(co);
             }
             catch (const std::invalid_argument& e)
             {
@@ -1191,15 +1210,13 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_raster_cpu final_dem;
             try
             {
-                lsdtt::lsdtt_raster_cpu src = burned;
-                if (bf["carve_before_fill"])
-                {
-                    if (sf["breach_algorithm_choice"] == "least_cost")
-                        src = lsdtt::breach_depressions_least_cost(burned, co.breach);
-                    else
-                        src = lsdtt::breach_depressions(burned, ifs["n_threads"]);
-                }
-                final_dem = lsdtt::fill_pits(src, ff["fill_min_slope"], ifs["n_threads"]);
+                lsdtt::corridor_final_conditioning_options fo;
+                fo.carve_before_fill = bf["carve_before_fill"];
+                fo.breach_algorithm_choice = sf["breach_algorithm_choice"];
+                fo.breach = co.breach;
+                fo.fill_min_slope = ff["fill_min_slope"];
+                fo.n_threads = ifs["n_threads"];
+                final_dem = lsdtt::condition_after_corridor_burn(burned, fo);
             }
             catch (const std::exception& e)
             {
@@ -1207,49 +1224,23 @@ int main(int argc, char* argv[])
                 return 1;
             }
             {
-                std::vector<uint8_t> on_line(burned.get_data().size(), 0);
-                for (const auto& p : cr.paths)
-                    for (const auto c : p.cells) on_line[static_cast<size_t>(c)] = 1;
-                long n_line = 0, n_off = 0;
-                double max_line = 0.0;
-                const auto& a = burned.get_data();
-                const auto& b = final_dem.get_data();
-                const auto& m = burned.get_mask();
-                for (size_t i = 0; i < a.size(); ++i)
-                {
-                    if (!m[i] || a[i] == b[i]) continue;
-                    if (on_line[i]) { ++n_line; max_line = std::max(max_line, std::fabs(static_cast<double>(b[i]) - a[i])); }
-                    else ++n_off;
-                }
+                const lsdtt::corridor_burn_checks ck = lsdtt::check_corridor_burn(cr, burned, final_dem);
                 std::cout << "Final conditioning (carve_before_fill " << (bf["carve_before_fill"] ? "true" : "false")
-                          << ") changed " << n_line << " line cell(s) (largest change " << max_line << " m) and "
-                          << n_off << " other cell(s)\n";
-            }
-
-            auto at = [&](const lsdtt::lsdtt_raster_cpu& r, std::int64_t f) -> double
-            {
-                return r.get_data()[static_cast<size_t>(f)];
-            };
-            // Downhill check, after the burn and on the final DEM.
-            for (const auto* which : {&burned, &final_dem})
-            {
-                int n_rising = 0;
-                double max_rise = 0.0;
-                std::string ids;
-                for (const auto& p : cr.paths)
+                          << ") changed " << ck.n_line_cells_changed << " line cell(s) (largest change "
+                          << ck.max_line_change_m << " m) and " << ck.n_other_cells_changed << " other cell(s)\n";
+                // Downhill check, after the burn and on the final DEM.
+                for (int which = 0; which < 2; ++which)
                 {
-                    bool rises = false;
-                    for (size_t i = 1; i < p.cells.size(); ++i)
-                    {
-                        const double rise = at(*which, p.cells[i]) - at(*which, p.cells[i - 1]);
-                        if (rise > 0.0) { rises = true; max_rise = std::max(max_rise, rise); }
-                    }
-                    if (rises) { ++n_rising; if (ids.size() < 60) ids += " " + std::to_string(p.path_id); }
+                    const int n_rising = which == 0 ? ck.n_rising_after_burn : ck.n_rising_final;
+                    const double max_rise = which == 0 ? ck.max_rise_after_burn_m : ck.max_rise_final_m;
+                    const auto& id_list = which == 0 ? ck.rising_after_burn_path_ids : ck.rising_final_path_ids;
+                    std::string ids;
+                    for (const int id : id_list) if (ids.size() < 60) ids += " " + std::to_string(id);
+                    std::cout << "Downhill check, " << (which == 0 ? "after the burn" : "final DEM")
+                              << ": " << n_rising << " of " << ck.n_paths << " path(s) rise anywhere";
+                    if (n_rising > 0) std::cout << " (largest rise " << max_rise << " m; paths" << ids << ")";
+                    std::cout << "\n";
                 }
-                std::cout << "Downhill check, " << (which == &burned ? "after the burn" : "final DEM")
-                          << ": " << n_rising << " of " << cr.paths.size() << " path(s) rise anywhere";
-                if (n_rising > 0) std::cout << " (largest rise " << max_rise << " m; paths" << ids << ")";
-                std::cout << "\n";
             }
 
             if (bf["write_burned_outputs"])
@@ -1266,10 +1257,12 @@ int main(int argc, char* argv[])
                 using ft = lsdtt::lsdtt_vector_field_type;
                 schema.field_names = {"reach_id", "from_node", "to_node", "path_id", "name", "status", "skip_reason",
                                       "length_m", "upstream_length_m", "max_separation_m", "max_cut_m",
-                                      "max_raise_m", "n_record_lows", "n_rejected_lows"};
+                                      "max_raise_m", "n_record_lows", "n_rejected_lows", "line_index", "piece",
+                                      "n_pieces"};
                 schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type,
                                       ft::string_type, ft::string_type, ft::double_type, ft::double_type,
-                                      ft::double_type, ft::double_type, ft::double_type, ft::int64_type, ft::int64_type};
+                                      ft::double_type, ft::double_type, ft::double_type, ft::int64_type, ft::int64_type,
+                                      ft::int64_type, ft::int64_type, ft::int64_type};
                 lsdtt::lsdtt_data_loader vw;
                 vw.begin_vector_write(cf, "corridor_channels", schema, final_dem.get_meta().crs_wkt, vf,
                                       bf["calculate_spatial_index"]);
@@ -1277,7 +1270,8 @@ int main(int argc, char* argv[])
                 {
                     // A skipped reach has no channel: it is written with its vector line.
                     const std::vector<lsdtt::lsdtt_xy>& geom =
-                        rc.channel.size() >= 2 ? rc.channel : cl.lines[static_cast<size_t>(rc.line_index)];
+                        rc.channel.size() >= 2 ? rc.channel
+                        : (rc.piece_line.size() >= 2 ? rc.piece_line : cl.lines[static_cast<size_t>(rc.line_index)]);
                     if (geom.size() < 2) continue;
                     vw.write_line(geom, {static_cast<std::int64_t>(rc.reach_id),
                                                static_cast<std::int64_t>(rc.from_node),
@@ -1286,9 +1280,51 @@ int main(int argc, char* argv[])
                                                rc.skip_reason, rc.length_m, rc.upstream_length_m,
                                                rc.max_separation_m, rc.max_cut_m, rc.max_raise_m,
                                                static_cast<std::int64_t>(rc.n_record_lows),
-                                               static_cast<std::int64_t>(rc.n_rejected_lows)});
+                                               static_cast<std::int64_t>(rc.n_rejected_lows),
+                                               static_cast<std::int64_t>(rc.line_index),
+                                               static_cast<std::int64_t>(rc.piece),
+                                               static_cast<std::int64_t>(rc.n_pieces)});
                 }
                 vw.finish_vector_write();
+
+                // The routes that drain channel ends inside the DEM.
+                const std::string xf = pp.make_output_path("_exit_routes", lsdtt::output_extension(vf));
+                std::cout << "Writing: " << xf << " (" << cr.exit_routes.size() << " route(s))\n";
+                lsdtt::lsdtt_vector_schema xs;
+                xs.field_names = {"path_id", "exit_type", "to_path_id", "length_m", "n_cells", "n_cells_lowered",
+                                  "max_cut_m"};
+                xs.field_types = {ft::int64_type, ft::string_type, ft::int64_type, ft::double_type, ft::int64_type,
+                                  ft::int64_type, ft::double_type};
+                lsdtt::lsdtt_data_loader xw;
+                xw.begin_vector_write(xf, "exit_routes", xs, final_dem.get_meta().crs_wkt, vf,
+                                      bf["calculate_spatial_index"]);
+                for (const auto& xr : cr.exit_routes)
+                {
+                    if (xr.xy.size() < 2) continue;
+                    xw.write_line(xr.xy, {static_cast<std::int64_t>(xr.path_id), xr.exit_type,
+                                          static_cast<std::int64_t>(xr.to_path_id), xr.length_m,
+                                          static_cast<std::int64_t>(xr.cells.size()),
+                                          static_cast<std::int64_t>(xr.n_cells_lowered), xr.max_cut_m});
+                }
+                xw.finish_vector_write();
+
+                // Line cells whose flow leaves the line for another path's cell.
+                const std::string pf = pp.make_output_path("_cross_path_receivers", lsdtt::output_extension(vf));
+                std::cout << "Writing: " << pf << " (" << cr.cross_path_receivers.size() << " cell(s))\n";
+                lsdtt::lsdtt_vector_schema ps;
+                ps.field_names = {"path_id", "index", "receiver_path_id", "reason", "z_m", "z_own_next_m",
+                                  "z_receiver_m", "receiver_x", "receiver_y"};
+                ps.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::string_type, ft::double_type,
+                                  ft::double_type, ft::double_type, ft::double_type, ft::double_type};
+                lsdtt::lsdtt_data_loader pw;
+                pw.begin_vector_write(pf, "cross_path_receivers", ps, final_dem.get_meta().crs_wkt, vf,
+                                      bf["calculate_spatial_index"]);
+                for (const auto& cp : cr.cross_path_receivers)
+                    pw.write_point(cp.xy.x, cp.xy.y,
+                                   {static_cast<std::int64_t>(cp.path_id), static_cast<std::int64_t>(cp.index),
+                                    static_cast<std::int64_t>(cp.receiver_path_id), cp.reason, cp.z_m,
+                                    cp.z_own_next_m, cp.z_receiver_m, cp.receiver_xy.x, cp.receiver_xy.y});
+                pw.finish_vector_write();
             }
 
             if (bf["write_burned_profiles_csv"])
@@ -1310,37 +1346,23 @@ int main(int argc, char* argv[])
                     return o.str();
                 };
                 std::ofstream csv(f);
-                csv << "path_id,path_rank,reach_id,name,point_index,distance_m,flow_distance_m,x,y,"
-                       "z_original,z_cleaned,z_profile,z_final,pit_filled,pit_id,is_record_low,is_rejected_low,"
-                       "drainage_area_m2,chi,joins_path_id,join_distance_m,starts_on_path_id\n";
-                for (const auto& p : cr.paths)
-                    for (size_t i = 0; i < p.cells.size(); ++i)
-                    {
-                        const auto& rc = cr.reaches[static_cast<size_t>(p.cell_reach[i])];
-                        csv << p.path_id << "," << p.path_rank << "," << rc.reach_id << "," << quoted(rc.name) << ","
-                            << i << "," << num(p.distance_m[i]) << "," << num(p.flow_distance_m[i]) << ","
-                            << num(p.xy[i].x) << "," << num(p.xy[i].y) << "," << num(p.z_original[i]) << ","
-                            << num(p.z_cleaned[i]) << "," << num(p.z_profile[i]) << ","
-                            << num(at(final_dem, p.cells[i])) << "," << (p.z_cleaned[i] > p.z_original[i] ? 1 : 0)
-                            << "," << p.pit_id[i] << "," << static_cast<int>(p.is_record_low[i]) << ","
-                            << static_cast<int>(p.is_rejected_low[i]) << "," << num(p.drainage_area_m2[i]) << ","
-                            << num(p.chi[i]) << "," << p.joins_path_id << "," << num(p.join_distance_m) << ","
-                            << p.starts_on_path_id << "\n";
-                    }
+                const auto& cols = lsdtt::burned_profile_columns();
+                for (size_t k = 0; k < cols.size(); ++k) csv << (k ? "," : "") << cols[k];
+                csv << "\n";
+                for (const auto& r : lsdtt::burned_profile_rows(cr, final_dem))
+                    csv << r.path_id << "," << r.path_rank << "," << r.reach_id << "," << quoted(r.name) << ","
+                        << r.point_index << "," << num(r.distance_m) << "," << num(r.flow_distance_m) << ","
+                        << num(r.x) << "," << num(r.y) << "," << num(r.z_original) << ","
+                        << num(r.z_cleaned) << "," << num(r.z_profile) << ","
+                        << num(r.z_final) << "," << r.pit_filled
+                        << "," << r.pit_id << "," << r.is_record_low << ","
+                        << r.is_rejected_low << "," << num(r.drainage_area_m2) << ","
+                        << num(r.chi) << "," << r.joins_path_id << "," << num(r.join_distance_m) << ","
+                        << r.starts_on_path_id << "\n";
             }
             if (bf["write_burn_depth_raster"])
             {
-                lsdtt::lsdtt_raster_cpu depth = final_dem;
-                auto& d = depth.get_data_array();
-                const auto& o = dem.get_data_array();
-                const auto& m = dem.get_mask_array();
-                const float nd = depth.get_meta().no_data_value;
-                for (int r = 0; r < depth.get_meta().n_rows; ++r)
-                    for (int c = 0; c < depth.get_meta().n_cols; ++c)
-                    {
-                        const float v = m(r, c) ? o(r, c) - d(r, c) : nd;
-                        d(r, c) = (m(r, c) && std::fabs(v) > 1e-6f) ? v : nd;
-                    }
+                const lsdtt::lsdtt_raster_cpu depth = lsdtt::corridor_burn_depth(dem, final_dem);
                 const std::string f = pp.make_output_path("_burn_depth", ".tif");
                 std::cout << "Writing: " << f << "\n";
                 lsdtt::lsdtt_data_loader w;
@@ -1458,6 +1480,10 @@ int main(int argc, char* argv[])
             std::cout << "); " << n_cycle << " close a real cycle, " << n_labelled - n_cycle
                       << " cut the network (fields loop_reason, closes_cycle in _vector_edges)\n";
         }
+        // Edges kept but reversed: draining uphill, or against the digitised order.
+        std::cout << "Reversed edges      : " << vector_network.n_edges_running_uphill()
+                  << " run uphill by DEM elevation, " << vector_network.n_edges_against_digitised()
+                  << " against the digitised direction (fields runs_uphill, against_digitised in _vector_edges)\n";
     }
 
     // -------------------------------------------------------------------------

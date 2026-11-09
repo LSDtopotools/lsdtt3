@@ -36,6 +36,12 @@
 //     guard orients it by elevation instead: 1 fallback network, and P drains
 //     towards Q.
 //
+// Reversed edges (runs_uphill, against_digitised): by elevation A-D is kept
+// but runs A -> D, against its digitised direction (downhill into the pit);
+// with use_digitised_direction it runs D -> A, with the data but uphill out of
+// the pit. The labelled A-B is not judged, and the network's counts equal the
+// per-edge flags.
+//
 // Usage: lsdtt-test-vector-loop-labels <work_dir>
 // -----------------------------------------------------------------------------
 
@@ -184,6 +190,29 @@ int main(int argc, char* argv[])
               e && !e->is_loop_edge && e->loop_reason.empty() && e->closes_cycle == -1);
     }
 
+    // Reversed edges (runs_uphill / against_digitised): A-D is kept but runs
+    // A -> D, against its digitised D -> A, downhill into the pit; the other
+    // main-stem edges agree with the data and fall; the labelled A-B is not
+    // judged; the counts equal the per-edge flags.
+    check("reversed: A-D against the digitised direction, not uphill",
+          ad && ad->against_digitised == 1 && ad->runs_uphill == 0,
+          ad ? std::to_string(ad->against_digitised) + "/" + std::to_string(ad->runs_uphill) : "missing");
+    for (auto pq : {std::make_pair(W, A), std::make_pair(B, C), std::make_pair(E, B)})
+    {
+        const auto* e = edge_between(net, pq.first, pq.second);
+        check("reversed: main-stem edge with the data and downhill",
+              e && e->against_digitised == 0 && e->runs_uphill == 0);
+    }
+    check("reversed: the labelled A-B is not judged", ab && ab->runs_uphill == -1 && ab->against_digitised == -1);
+    {
+        int up = 0, against = 0;
+        for (const auto& e : net.edges()) { up += e.runs_uphill == 1; against += e.against_digitised == 1; }
+        check("reversed: counts equal the flags, none uphill by elevation",
+              up == net.n_edges_running_uphill() && against == net.n_edges_against_digitised() && up == 0 &&
+                  against >= 1,
+              std::to_string(up) + " uphill, " + std::to_string(against) + " against");
+    }
+
     const auto* straight = edge_between(net, P, Q, false);
     const auto* bent = edge_between(net, P, Q, true);
     check("braid: both P-Q edges found", straight && bent);
@@ -209,6 +238,10 @@ int main(int argc, char* argv[])
     const auto* dda = edge_between(dnet, D, A);
     check("digitised: D drains to A although D is in the pit",
           dda && !dda->is_loop_edge && std::hypot(dda->xy.front().x - D.x, dda->xy.front().y - D.y) < 5);
+    check("reversed (digitised): D -> A follows the data but runs uphill out of the pit",
+          dda && dda->runs_uphill == 1 && dda->against_digitised == 0);
+    check("reversed (digitised): counted", dnet.n_edges_running_uphill() >= 1,
+          std::to_string(dnet.n_edges_running_uphill()));
     int main_labelled = 0;
     for (auto pq : {std::make_pair(W, A), std::make_pair(A, B), std::make_pair(B, C),
                     std::make_pair(E, B), std::make_pair(D, A)})

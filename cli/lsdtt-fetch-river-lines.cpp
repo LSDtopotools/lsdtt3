@@ -71,20 +71,6 @@ static void print_banner()
         << "=========================================================\n\n";
 }
 
-namespace
-{
-
-bool parse_degrees(const std::string& s, double& out)
-{
-    if (s.empty()) return false;
-    std::size_t pos = 0;
-    try { out = std::stod(s, &pos); }
-    catch (const std::exception&) { return false; }
-    return pos == s.size() && std::isfinite(out);
-}
-
-} // namespace
-
 int main(int argc, char* argv[])
 {
     if (!lsdtt::lsdtt_param_parser::help_json_requested(argc, argv))
@@ -305,132 +291,18 @@ int main(int argc, char* argv[])
 
     try
     {
-        lsdtt::lsdtt_river_line_fetch_options o;
-        o.source = sf["river_line_source"];
-        if (o.source.empty())
-            throw std::invalid_argument("set river_line_source: local_file or gb_os_open_rivers");
-
-        // Area
-        const bool edges_given = !sf["west"].empty() || !sf["east"].empty() ||
-                                 !sf["south"].empty() || !sf["north"].empty();
-        if (!sf["bounds_fname"].empty())
-        {
-            if (edges_given)
-                throw std::invalid_argument("give either bounds_fname or west/south/east/north, "
-                                            "not both");
-            std::string path = sf["bounds_fname"];
-            if (!std::filesystem::path(path).is_absolute())
-                path = sf["bounds_path"].empty()
-                           ? pp.add_read_path_if_needed(path)
-                           : (std::filesystem::path(sf["bounds_path"]) / path).string();
-            const lsdtt::lsdtt_bounds_from_vector_result b =
-                lsdtt::bounds_from_vector_file(path, sf["bounds_layer"]);
-            if (!b.ok) throw std::invalid_argument("bounds_fname: " + b.message);
-            if (!b.warning.empty()) std::cerr << "WARNING: " << b.warning << "\n";
-            o.west = b.west; o.south = b.south; o.east = b.east; o.north = b.north;
-            if (b.geometry_kind == "raster") o.bounds_raster_path = path;
-            std::cout << "Area from " << path << " (" << b.geometry_kind << ", " << b.source_crs << ")\n";
-        }
-        else if (!parse_degrees(sf["west"], o.west) || !parse_degrees(sf["east"], o.east) ||
-                 !parse_degrees(sf["south"], o.south) || !parse_degrees(sf["north"], o.north))
-        {
-            throw std::invalid_argument("give the area: west, south, east and north (WGS84 "
-                                        "degrees), or bounds_fname");
-        }
-
-        o.output_epsg = ifs["output_epsg"];
-        if (o.output_epsg == 3857 || o.output_epsg == 3785 || o.output_epsg == 900913)
-            throw std::invalid_argument("output_epsg: Web Mercator distorts distances and is "
-                                        "refused by lsdtt; use 0 or another metric CRS");
-        o.clip_buffer_metres = ff["clip_buffer_metres"];
-        o.node_snap_tolerance_metres = ff["node_snap_tolerance_metres"];
-        o.min_line_length_metres = ff["min_line_length_metres"];
-        if (sf["gap_bridge_algorithm_choice"] == "facing_tips") o.gap_bridge.enabled = true;
-        else if (sf["gap_bridge_algorithm_choice"] != "none")
-            throw std::invalid_argument("gap_bridge_algorithm_choice must be none or facing_tips");
-        o.gap_bridge.max_gap_length_metres = ff["max_gap_length_metres"];
-        o.gap_bridge.max_nonroad_gap_metres = ff["max_nonroad_gap_metres"];
-        o.gap_bridge.max_facing_angle_degrees = ff["max_facing_angle_degrees"];
-        o.gap_bridge.max_heading_misalignment_degrees = ff["max_heading_misalignment_degrees"];
-        o.gap_bridge.road_max_facing_angle_degrees = ff["road_max_facing_angle_degrees"];
-        o.gap_bridge.tangent_fit_length_metres = ff["tangent_fit_length_metres"];
-        o.gap_bridge.road_intersection_tolerance_metres = ff["road_intersection_tolerance_metres"];
-        o.gap_bridge.require_mutual_best = bf["require_mutual_best"];
-        if (!sf["road_vector_fname"].empty())
-        {
-            if (!o.gap_bridge.enabled)
-                std::cerr << "WARNING: road_vector_fname is only used with gap_bridge_algorithm_choice: "
-                          << "facing_tips; ignored\n";
-            else
-            {
-                const std::string& rf = sf["road_vector_fname"];
-                o.road_vector_path = (rf.rfind("/vsi", 0) == 0) ? rf : pp.add_read_path_if_needed(rf);
-                o.road_layer = sf["road_layer"];
-            }
-        }
-        o.road_name_field = sf["road_name_field"];
-        if (sf["direction_repair_algorithm_choice"] == "network_outlet") o.repair_direction = true;
-        else if (sf["direction_repair_algorithm_choice"] == "none") o.repair_direction = false;
-        else
-            throw std::invalid_argument("direction_repair_algorithm_choice must be network_outlet or none");
-
-        o.keep_feature_classes.clear();
-        {
-            static const std::set<std::string> known = {"river", "stream", "lake_connector", "canal",
-                                                        "drain", "tidal", "other"};
-            std::stringstream ss(sf["river_feature_classes"]);
-            std::string c;
-            while (std::getline(ss, c, ','))
-            {
-                c.erase(0, c.find_first_not_of(" \t"));
-                c.erase(c.find_last_not_of(" \t") + 1);
-                if (c.empty()) continue;
-                if (!known.count(c))
-                    throw std::invalid_argument("river_feature_classes: '" + c + "' is not one of "
-                                                "river, stream, lake_connector, canal, drain, tidal, other");
-                o.keep_feature_classes.push_back(c);
-            }
-            if (o.keep_feature_classes.empty())
-                throw std::invalid_argument("river_feature_classes is empty");
-        }
-
-        if (o.source == "local_file")
-        {
-            if (sf["river_lines_fname"].empty())
-                throw std::invalid_argument("river_line_source local_file needs river_lines_fname");
-            const std::string& f = sf["river_lines_fname"];
-            o.river_lines_path = (f.rfind("/vsi", 0) == 0) ? f : pp.add_read_path_if_needed(f);
-            o.river_lines_layer = sf["river_lines_layer"];
-            o.fields.feature_class_field = sf["feature_class_field_name"];
-            o.fields.direction_field = sf["direction_field_name"];
-            o.fields.direction_values = lsdtt::parse_direction_field_mapping(sf["direction_field_mapping"]);
-            o.fields.digitised_downstream = bf["digitised_downstream"];
-            o.fields.start_node_field = sf["start_node_field_name"];
-            o.fields.end_node_field = sf["end_node_field_name"];
-            o.fields.culvert_field = sf["culvert_field_name"];
-            if (!o.fields.direction_field.empty() && o.fields.digitised_downstream)
-                throw std::invalid_argument("give direction_field_name or digitised_downstream, not both");
-            if (o.fields.start_node_field.empty() != o.fields.end_node_field.empty())
-                throw std::invalid_argument("give both start_node_field_name and end_node_field_name, or neither");
-        }
-        else
-        {
-            for (const char* k : {"river_lines_fname", "feature_class_field_name", "direction_field_name",
-                                  "direction_field_mapping", "start_node_field_name",
-                                  "end_node_field_name", "culvert_field_name"})
-            {
-                if (!sf[k].empty())
-                    std::cerr << "WARNING: " << k << " is only used with river_line_source: "
-                              << "local_file; ignored for " << o.source << "\n";
-            }
-        }
-        if (!sf["river_cache_dir"].empty())
-            o.cache_dir = pp.add_read_path_if_needed(sf["river_cache_dir"]);
-
-        o.http.timeout_seconds = ifs["http_timeout_seconds"];
-        o.http.connect_timeout_seconds = ifs["http_connect_timeout_seconds"];
-        o.http.max_retry = ifs["http_max_retry"];
-        o.http.user_agent = "lsdtt3 lsdtt-fetch-river-lines/" + lsdtt::lsdtt3_package_version();
+        // Option building and validation are shared with the Python binding.
+        lsdtt::lsdtt_river_line_parameters prm;
+        for (const auto& [k, v] : sf) prm.s[k] = v;
+        for (const auto& [k, v] : ff) prm.f[k] = v;
+        for (const auto& [k, v] : ifs) prm.i[k] = v;
+        for (const auto& [k, v] : bf) prm.b[k] = v;
+        std::vector<std::string> option_warnings;
+        std::string area_note;
+        lsdtt::lsdtt_river_line_fetch_options o = lsdtt::build_river_line_fetch_options(
+            prm, [&](const std::string& f) { return pp.add_read_path_if_needed(f); }, option_warnings, &area_note);
+        if (!area_note.empty()) std::cout << area_note << "\n";
+        for (const auto& w : option_warnings) std::cerr << "WARNING: " << w << "\n";
 
         const lsdtt::vector_output_format vfmt =
             lsdtt::resolve_vector_output_format(sf["write_vector_format"]);

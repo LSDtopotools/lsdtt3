@@ -598,14 +598,7 @@ int main(int argc, char* argv[])
     };
 
     // --- Sea removal ---
-    float_default_map["min_elevation"] = 0.0f;
-    help_map["min_elevation"] = {"float","0.0",
-        "Pixels at or below this elevation are set to nodata. -9999 disables.",
-        "Default of 0.0 removes sea and ocean pixels from many DEM products. "
-        "Negative values apply as given: for a basin below sea level (Death "
-        "Valley -86 m, Dead Sea -430 m) set it just below the lowest land. "
-        "-9999 (or lower) disables masking.",
-        "Sea removal", "param", ""};
+    lsdtt::declare_min_elevation_parameter(float_default_map, help_map, 0.0f, "Sea removal");
 
     // --- Routing preparation ---
     lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);

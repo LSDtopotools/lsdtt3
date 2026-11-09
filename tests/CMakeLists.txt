@@ -706,6 +706,54 @@ add_lsdtt_cli_smoke_test(
 # the number. The fixture covers all three outcomes -- a real replacement, a
 # blank-to-nodata, and a point off the grid, which must warn and be skipped
 # rather than fail the run.
+# Sea mask from a vector (raster-preprocessing sea_mask_fname), on the
+# committed 40 x 40 coastal DEM and vectors in tests/data/sea_mask. The
+# sea-mask raster is 1 = sea, 0 = land over all 1600 cells, so its mean is the
+# sea fraction.
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_lines
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_lines.param.in
+    smcoast_fill.tif
+    --expect-file-contains "../stdout.log:Side: sea_left (sea on the left of most lines (median elevation -1 m left"
+    --expect-file-contains "../stdout.log:Sea mask: 800 cell(s) set to nodata"
+    --expect-raster-stat smcoast_sea_mask.tif:mean:0.4999:0.5001
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_gap
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_gap.param.in
+    smgap_fill.tif
+    --expect-file-contains "../stdout.log:the lines have a gap or do not cross the DEM. Fell back to the sea side within 60 m"
+    --expect-file-contains "../stdout.log:(fallback band after a leak)"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_polygon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_polygon.param.in
+    smpoly_fill.tif
+    --expect-file-contains "../stdout.log:Side: sea_inside (median elevation -1 m inside"
+    --expect-file-contains "../stdout.log:Sea mask: 800 cell(s) set to nodata"
+    --expect-raster-stat smpoly_sea_mask.tif:mean:0.4999:0.5001
+)
+add_lsdtt_cli_smoke_test(
+    smoke_raster_preprocessing_sea_mask_lagoon
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_lagoon.param.in
+    smlag_fill.tif
+    --expect-file-contains "../stdout.log:Sea mask: 36 cell(s) set to nodata"
+    --expect-file-contains "../stdout.log:Sea mask kept: 36 filled sea cell(s) set back to nodata"
+    --expect-raster-stat smlag_sea_mask.tif:mean:0.0224:0.0226
+)
+add_lsdtt_cli_smoke_test(
+    failure_raster_preprocessing_sea_mask_bad_side
+    lsdtt-raster-preprocessing
+    raster_preprocessing_sea_mask_bad_side.param.in
+    smbad_fill.tif
+    --expect-failure
+    --stderr-contains "sea_mask_side_choice sea_inside is for polygons"
+)
+
 add_lsdtt_cli_smoke_test(
     smoke_raster_preprocessing_replace_pixels
     lsdtt-raster-preprocessing
@@ -1891,6 +1939,135 @@ else()
     lsdtt_mark_test_unregistered(python smoke_stream_burning)
 endif()
 lsdtt_set_tests_properties(smoke_stream_burning PROPERTIES
+    LABELS "cli;stream_burning"
+    FIXTURES_REQUIRED stream_burning_fixture)
+
+# Corridor burning through the CLI (stream_burn_mode burn_to_corridor), on the
+# fixture DEM and network above. unit_stream_burning_corridor tests the engine;
+# these cover the CLI branch: parameter parsing, the final conditioning with
+# carve_before_fill false and true (least-cost breach), vector_name_field, and
+# the writers (_burned.tif, _burned_profiles.csv, _corridor_channels.fgb,
+# _burn_depth.tif). Checks by property, from the run log: every reach fitted,
+# no path rises downstream after the burn or on the final DEM, and the final
+# conditioning changes no cell (the burn already drains everywhere). The X = 0
+# outputs also carry sha256 oracles, verified deterministic across repeat runs,
+# so that moving the final conditioning and the CSV writer into shared C++ (for
+# the Python binding) cannot change them unnoticed.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    lsdtt_add_harness_test(smoke_stream_burning_corridor
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor"
+            --expect corr_burned.tif
+            --expect corr_burned_profiles.csv
+            --expect corr_corridor_channels.fgb
+            --expect corr_burn_depth.tif
+            --expect corr_exit_routes.fgb
+            --expect-vector-feature-min corr_exit_routes.fgb:3
+            --expect-file-contains "../stdout.log:_exit_routes.fgb (3 route(s))"
+            --expect-file-contains "corr_burned_profiles.csv:path_id,path_rank,reach_id,name,point_index,distance_m,flow_distance_m,x,y,z_original,z_cleaned,z_profile,z_final,pit_filled,pit_id,is_record_low,is_rejected_low,drainage_area_m2,chi,joins_path_id,join_distance_m,starts_on_path_id"
+            --expect-file-contains "../stdout.log:Lines: 5, nodes 8, reaches 5: fitted 5, skipped 0"
+            --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
+            --expect-file-contains "../stdout.log:Downhill check, after the burn: 0 of 4 path(s) rise anywhere"
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere"
+            --expect-sha256 corr_burned.tif:50939179f7018f87c7e6e63e8e085257800e5122ce9d822360990fe9645dd242
+            --expect-sha256 corr_burned_profiles.csv:993387e22891cf9fe0ee0774ef217803ac60493af5b9e54a78fed0d67b2d0949
+            --expect-sha256 corr_burn_depth.tif:cc7636b028bfa4c9f5e78d8b0c104f02f03472c7940cbc2294ade229746d4470)
+    lsdtt_add_harness_test(smoke_stream_burning_corridor_x2
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_x2.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor_x2"
+            --expect corrx2_burned.tif
+            --expect corrx2_burned_profiles.csv
+            --expect corrx2_corridor_channels.fgb
+            --expect-file-contains "../stdout.log:fitted 5, skipped 0"
+            --expect-file-contains "../stdout.log:Final conditioning (carve_before_fill true) changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere"
+            # 3 line cells whose flow leaves the line (unresolved cross-path
+            # receivers), all into exit routes: written as points.
+            --expect corrx2_cross_path_receivers.fgb
+            --expect-vector-feature-min corrx2_cross_path_receivers.fgb:3
+            --expect-file-contains "../stdout.log:_cross_path_receivers.fgb (3 cell(s))")
+    # min_elevation (sea removal), off by default in this CLI. Below the
+    # lowest land (-400 m; the DEM reaches -316 m) it removes nothing: sub-zero
+    # land is kept and routed, and the burned DEM is byte-identical to the
+    # default run above. At -100 m it removes 9365 cells, and the burn still
+    # fits every reach and drains everywhere.
+    lsdtt_add_harness_test(smoke_stream_burning_corridor_min_elevation_below_land
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_min_elevation_below_land.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor_min_elevation_below_land"
+            --expect mebl_burned.tif
+            --expect-file-contains "../stdout.log:min_elevation -400 m: 0 cell(s) at or below it set to nodata"
+            --expect-sha256 mebl_burned.tif:50939179f7018f87c7e6e63e8e085257800e5122ce9d822360990fe9645dd242)
+    lsdtt_add_harness_test(smoke_stream_burning_corridor_min_elevation_sea
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_min_elevation_sea.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor_min_elevation_sea"
+            --expect mesea_burned.tif
+            --expect-file-contains "../stdout.log:min_elevation -100 m: 9365 cell(s) at or below it set to nodata"
+            --expect-file-contains "../stdout.log:fitted 5, skipped 0"
+            --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 4 path(s) rise anywhere"
+            --expect-raster-stat mesea_burned.tif:min:-100.0:-99.0)
+    # Lines crossing NoData: with min_elevation -40 m two lines are cut by
+    # removed cells, and at X = 0 no corridor path crosses a gap. Each is
+    # replaced by its pieces over valid cells (4 in all), every piece is
+    # fitted, and the burn drains everywhere. _corridor_channels carries
+    # line_index / piece / n_pieces.
+    lsdtt_add_harness_test(smoke_stream_burning_corridor_nodata_pieces
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_nodata_pieces.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/smoke_stream_burning_corridor_nodata_pieces"
+            --expect mepc_burned.tif
+            --expect mepc_corridor_channels.fgb
+            --expect-vector-feature-min mepc_corridor_channels.fgb:7
+            --expect-file-contains "../stdout.log:2 line(s) crossing NoData cut into 4 piece(s)"
+            --expect-file-contains "../stdout.log:fitted 7, skipped 0"
+            --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
+            --expect-file-contains "../stdout.log:Downhill check, final DEM: 0 of 6 path(s) rise anywhere")
+    lsdtt_add_harness_test(failure_stream_burning_corridor_bad_fit
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_bad_fit.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/failure_stream_burning_corridor_bad_fit"
+            --expect corrbadfit_burned.tif
+            --expect-failure
+            --stderr-contains "FATAL: burn_profile_fit_algorithm_choice must be one of linear, chi"
+            --stderr-contains "got 'cubic'")
+    lsdtt_add_harness_test(failure_stream_burning_corridor_missing_name_field
+            --exe "$<TARGET_FILE:lsdtt-stream-burning>"
+            --cli-src-dir "${CMAKE_SOURCE_DIR}/cli"
+            --param-template "${LSDTT_TEST_PARAM_DIR}/stream_burning_corridor_missing_name_field.param.in"
+            --read-path "${LSDTT_STREAM_BURNING_FIXTURE_DIR}/out"
+            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/failure_stream_burning_corridor_missing_name_field"
+            --expect corrbadname_burned.tif
+            --expect-failure
+            --stderr-contains "name field 'no_such_field' not found")
+else()
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor)
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_x2)
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_min_elevation_below_land)
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_min_elevation_sea)
+    lsdtt_mark_test_unregistered(python smoke_stream_burning_corridor_nodata_pieces)
+    lsdtt_mark_test_unregistered(python failure_stream_burning_corridor_bad_fit)
+    lsdtt_mark_test_unregistered(python failure_stream_burning_corridor_missing_name_field)
+endif()
+lsdtt_set_tests_properties(smoke_stream_burning_corridor smoke_stream_burning_corridor_x2
+    smoke_stream_burning_corridor_min_elevation_below_land smoke_stream_burning_corridor_min_elevation_sea
+    smoke_stream_burning_corridor_nodata_pieces
+    failure_stream_burning_corridor_bad_fit failure_stream_burning_corridor_missing_name_field PROPERTIES
     LABELS "cli;stream_burning"
     FIXTURES_REQUIRED stream_burning_fixture)
 
@@ -5226,6 +5403,14 @@ lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
 
+# The sea from a vector (lsdtt_sea_mask_cpu): polygons or an open coastline,
+# auto side from the DEM (NoData, then median elevation), leak and fallback,
+# refusals, and an enclosed lagoon that pit filling treats as an outlet.
+add_executable(lsdtt-test-sea-mask cpp/test_sea_mask.cpp)
+target_link_libraries(lsdtt-test-sea-mask PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_sea_mask COMMAND lsdtt-test-sea-mask)
+lsdtt_set_tests_properties(unit_raster_sea_mask PROPERTIES LABELS "raster")
+
 # Writing a point layer back out with its attributes and added fields
 # (lsdtt_point_attribute_output): schema typed from the values read ("01" kept
 # as text), the _lsdtt suffix on a clashing added field, csv / gpkg / fgb
@@ -8109,6 +8294,24 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "(EPSG:32632)"
     --stdout-contains "lithology_field_name: lith_primary"
 )
+
+# OS Open Rivers download against the committed extract (opt-in, network):
+# fetch_river_lines with the same options on the extract (local_file) and on
+# the downloaded national file (gb_os_open_rivers, about 50 MB, cached in the
+# work directory) must give the same prepared lines inside the extract's box.
+# See tests/cpp/test_fetch_river_lines_os_network.cpp.
+if(LSDTT_ENABLE_NETWORK_TESTS)
+    add_executable(lsdtt-test-fetch-river-lines-os-network cpp/test_fetch_river_lines_os_network.cpp)
+    target_link_libraries(lsdtt-test-fetch-river-lines-os-network PRIVATE lsdtt3_cpu)
+    add_test(NAME network_fetch_river_lines_os
+             COMMAND lsdtt-test-fetch-river-lines-os-network
+                     "${LSDTT_TEST_DATA_DIR}/river_lines/os_open_rivers_extract/Data/oprvrs_gb.gpkg"
+                     "${CMAKE_CURRENT_BINARY_DIR}/network_fetch_river_lines_os")
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/network_fetch_river_lines_os)
+    lsdtt_set_tests_properties(network_fetch_river_lines_os PROPERTIES LABELS "network;fetch")
+else()
+    lsdtt_mark_test_unregistered(network network_fetch_river_lines_os)
+endif()
 
 # -----------------------------------------------------------------------------
 # lsdtt-fetch-river-lines CLI, offline: the committed Open Rivers extract read

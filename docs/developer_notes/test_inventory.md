@@ -12,8 +12,8 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 868 | 204 | 132 | 127 | 19 | 173 | 377 | 241 | . | 43 | 216 | 652 |
-| pytest | 231 | 76 | 58 | 44 | . | 9 | 27 | 60 | . | 60 | 228 | 3 |
+| CTest | 882 | 208 | 138 | 131 | 19 | 176 | 386 | 245 | . | 43 | 217 | 665 |
+| pytest | 240 | 78 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 237 | 3 |
 
 ## CTest by domain
 
@@ -38,7 +38,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `divide_migration` | 13 | 7 | . | 2 | . | 3 | 8 | 4 | . | . |
 | `docs` | 3 | . | . | . | . | . | . | . | . | 3 |
 | `erodibility_calibration` | 30 | 8 | 1 | 4 | 1 | 1 | 12 | 10 | . | . |
-| `fetch` | 79 | 11 | 4 | 5 | 1 | 4 | 17 | 47 | . | 8 |
+| `fetch` | 80 | 11 | 4 | 6 | 1 | 5 | 17 | 47 | . | 8 |
 | `flow` | 47 | 6 | 7 | 7 | 3 | 25 | 28 | 13 | . | . |
 | `fluvial_surfaces` | 94 | 20 | 19 | 18 | 1 | 28 | 53 | 18 | . | 2 |
 | `gdal` | 7 | . | 3 | . | . | 2 | . | 1 | . | 1 |
@@ -57,21 +57,21 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `marsh` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `mask` | 1 | 1 | . | . | . | . | . | 1 | . | . |
 | `mountain_front` | 1 | 1 | . | . | . | . | . | 1 | . | . |
-| `network` | 281 | 74 | 42 | 46 | 8 | 65 | 140 | 77 | . | 3 |
+| `network` | 288 | 74 | 45 | 48 | 8 | 68 | 144 | 79 | . | 3 |
 | `outlet_matching` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `packaging` | 3 | . | . | . | . | . | 1 | . | . | 2 |
 | `paired_flowpaths` | 4 | 1 | . | . | . | 3 | 3 | . | . | . |
 | `parameters` | 15 | 1 | . | . | . | . | . | . | . | 14 |
 | `point_input` | 3 | 2 | . | 2 | . | 1 | . | 2 | . | . |
 | `quartz` | 1 | 1 | . | . | . | . | . | . | . | . |
-| `raster` | 52 | 16 | 9 | 6 | 2 | 12 | 19 | 14 | . | 1 |
+| `raster` | 59 | 20 | 12 | 8 | 2 | 12 | 24 | 16 | . | 1 |
 | `raster_algebra` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `ridgeline` | 5 | 1 | . | . | . | 4 | 5 | . | . | . |
 | `slope_area` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `snapping` | 3 | 2 | 1 | 1 | . | . | 2 | 1 | . | . |
 | `statistics` | 2 | . | . | . | . | 2 | . | . | . | . |
 | `step_change` | 5 | 2 | 3 | 2 | . | . | 1 | . | . | . |
-| `stream_burning` | 7 | 3 | 1 | 3 | . | 2 | 3 | . | . | . |
+| `stream_burning` | 14 | 3 | 5 | 4 | . | 4 | 8 | 2 | . | . |
 | `streamlines` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `surface_metrics` | 49 | 13 | 7 | 12 | . | 16 | 33 | 5 | . | 4 |
 | `synthetic_networks` | 31 | 2 | 4 | 3 | 1 | 6 | 17 | 9 | . | 4 |
@@ -130,12 +130,12 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-mountain-front` | 5 | . | . | 3 | . | 4 | 4 | . | . | 1 |
 | `lsdtt-outlet-matching` | 6 | . | 1 | 1 | . | 3 | 3 | 3 | . | . |
 | `lsdtt-raster-calculator` | 4 | . | . | 1 | . | 2 | 3 | 1 | . | . |
-| `lsdtt-raster-preprocessing` | 34 | 9 | 2 | 1 | . | 7 | 21 | 12 | . | 1 |
+| `lsdtt-raster-preprocessing` | 39 | 12 | 3 | 2 | . | 7 | 25 | 13 | . | 1 |
 | `lsdtt-ridgeline-analysis` | 8 | 1 | . | . | . | 7 | 8 | . | . | . |
 | `lsdtt-sediment-routing` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `lsdtt-slope-area` | 9 | . | . | 2 | . | 4 | 4 | 5 | . | . |
 | `lsdtt-spectral-analysis` | 7 | . | . | 1 | . | 2 | 5 | . | . | 2 |
-| `lsdtt-stream-burning` | 5 | . | . | 2 | . | 3 | 4 | . | . | . |
+| `lsdtt-stream-burning` | 12 | . | 4 | 3 | . | 5 | 9 | 2 | . | . |
 | `lsdtt-surface-metrics` | 11 | 3 | . | 1 | . | . | 7 | 2 | . | 2 |
 | `lsdtt-swath-profile` | 1 | 1 | . | 1 | . | . | 1 | . | . | . |
 | `lsdtt-synthetic-networks` | 22 | 2 | 3 | 1 | . | 4 | 12 | 9 | . | 1 |
@@ -162,6 +162,8 @@ None.
 | `test_api_naming.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_api_reference_contract.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_binding_source_contract.py` | 2 | . | . | . | . | . | . | . | . | 2 | 2 | . |
+| `test_burn_to_corridor.py` | 5 | . | 1 | 2 | . | 1 | . | 1 | . | . | 5 | . |
+| `test_channel_point_attributes.py` | 4 | 2 | . | 1 | . | . | . | 1 | . | 1 | 4 | . |
 | `test_cli_packaging.py` | 6 | 3 | . | . | . | . | . | 1 | . | 2 | 6 | . |
 | `test_contributing_threshold_migrations.py` | 2 | . | . | 2 | . | . | . | 2 | . | 2 | 2 | . |
 | `test_cosmo_basin.py` | 2 | . | 2 | . | . | . | . | . | . | . | 2 | . |

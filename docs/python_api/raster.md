@@ -2,6 +2,71 @@
 
 This page is generated from the built Python runtime manifest. Do not edit signatures here.
 
+## `BurnCorridorResult`
+
+Result of :func:`burn_to_corridor` (lsdtt-stream-burning burn_to_corridor): the rasters and the tables the CLI writes.
+
+Returned by ``burn_to_corridor()``; not constructible directly.
+
+Attributes
+----------
+burn_depth : Raster
+    Original minus final (m): positive where lowered, negative where raised, nodata where unchanged (_burn_depth.tif).
+burned : Raster
+    The DEM after the burn, before the final conditioning.
+channels : object
+    GeoDataFrame, one line per reach: the channel used, or the vector line if skipped (_corridor_channels).
+cross_path_receivers : object
+    GeoDataFrame of points: line cells whose flow leaves the line for another path's cell (_cross_path_receivers).
+dem : Raster
+    The final DEM: burned, then breached / filled (the CLI's _burned.tif).
+exit_routes : object
+    GeoDataFrame, the routes lowered to drain channel ends inside the DEM (_exit_routes).
+profiles : object
+    pandas.DataFrame, one row per path cell, the columns of _burned_profiles.csv (lsdviztools3 lsdviz3-burned-profiles reads them).
+report : dict
+    dict of counts: reaches fitted / skipped, paths, pits, minima, ends drained, banks, cross-path cells, the final-pass changes and the downhill checks (all 0 when the burn drains everywhere), notes.
+
+Authors
+-------
+B. Gailleton
+
+### Members
+
+#### `burn_depth`
+
+Original minus final (m): positive where lowered, negative where raised, nodata where unchanged (_burn_depth.tif).
+
+#### `burned`
+
+The DEM after the burn, before the final conditioning.
+
+#### `channels`
+
+GeoDataFrame, one line per reach: the channel used, or the vector line if skipped (_corridor_channels).
+
+#### `cross_path_receivers`
+
+GeoDataFrame of points: line cells whose flow leaves the line for another path's cell (_cross_path_receivers).
+
+#### `dem`
+
+The final DEM: burned, then breached / filled (the CLI's _burned.tif).
+
+#### `exit_routes`
+
+GeoDataFrame, the routes lowered to drain channel ends inside the DEM (_exit_routes).
+
+#### `profiles`
+
+pandas.DataFrame, one row per path cell, the columns of _burned_profiles.csv (lsdviztools3 lsdviz3-burned-profiles reads them).
+
+#### `report`
+
+dict of counts: reaches fitted / skipped, paths, pits, minima, ends drained, banks, cross-path cells, the final-pass changes and the downhill checks (all 0 when the burn drains everywhere), notes.
+
+---
+
 ## `FlatSurfaceClassification`
 
 Floodplain and terrace classification of labelled flats.
@@ -218,7 +283,7 @@ edge (see ``RasterMeta``). Typical round trip::
     out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)
     out.write("doubled.tif")
 
-Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 257 more.
+Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 260 more.
 
 Attributes
 ----------
@@ -805,6 +870,53 @@ Northing of the southern edge of the grid (the bottom of the last row).
 
 ---
 
+## `RiverLinesResult`
+
+Result of :func:`fetch_river_lines` (lsdtt-fetch-river-lines): the prepared lines, nodes and topology.
+
+Returned by ``fetch_river_lines()``; not constructible directly.
+
+Attributes
+----------
+attribution : str
+    Licence and citation of the source (_ATTRIBUTION.txt).
+lines : object
+    GeoDataFrame of the prepared lines (the _river_lines file's fields), oriented downstream.
+nodes : object
+    GeoDataFrame of the nodes (_river_nodes).
+report : dict
+    dict: output CRS, area, counts by feature class, notes and warnings.
+topology : object
+    pandas.DataFrame, one row per connected network (_river_topology.csv).
+
+Authors
+-------
+B. Gailleton
+
+### Members
+
+#### `attribution`
+
+Licence and citation of the source (_ATTRIBUTION.txt).
+
+#### `lines`
+
+GeoDataFrame of the prepared lines (the _river_lines file's fields), oriented downstream.
+
+#### `nodes`
+
+GeoDataFrame of the nodes (_river_nodes).
+
+#### `report`
+
+dict: output CRS, area, counts by feature class, notes and warnings.
+
+#### `topology`
+
+pandas.DataFrame, one row per connected network (_river_topology.csv).
+
+---
+
 ## `SoilTopographicIndexResult`
 
 Soil-topographic-index outputs and diagnostics.
@@ -1191,6 +1303,81 @@ S. M. Mudd
 
 ```python
 def breach_least_cost(raster: lsdtt3.Raster, max_distance: int | None = None, max_cost: float = 3.4028234663852886e+38, prefer_shortest_path: bool = False, flat_increment: float = 0.0, fill_remainder: bool = True, n_threads: int = 0, edge_policy: str = 'outlet', fill_min_slope: float = 9.999999747378752e-05) -> lsdtt3.Raster
+```
+
+---
+
+## `burn_to_corridor`
+
+Burn a vector river network into a DEM, taking the vector as the truth.
+
+lsdtt-stream-burning with ``stream_burn_mode: burn_to_corridor``, through the
+same C++ routines and with its parameter names. Each line's channel is found
+within ``vector_corridor_half_width_metres`` of it, and burned to a profile
+joining the minima of the input DEM under it (small pits filled first;
+minima joined linearly, or in chi). The rest of the DEM is then carved and
+filled to drain to the channels, and the whole DEM is conditioned once more
+(breach if ``carve_before_fill``, then fill), so flow routing on the result
+follows the network.
+
+Parameters
+----------
+dem : Raster
+    The input DEM (not pit-filled).
+lines : geopandas.GeoDataFrame
+    River lines, oriented downstream (e.g. the ``lines`` of
+    :func:`fetch_river_lines`), with a CRS; reprojected to the DEM's.
+vector_name_field : str, default=""
+    Column holding the river name, copied to the outputs; empty for none.
+vector_corridor_half_width_metres : float, default=0.0
+    X: how far (m) the channel may move from the line. 0 burns the line's
+    own cells.
+burn_profile_max_pit_pixels : int, default=16
+    Pits of fewer cells are filled before the minima are taken.
+burn_profile_max_cut_metres : float, default=2000.0
+    A minimum that would cut deeper than this (m) is not used.
+burn_profile_fit_algorithm_choice : str, default="linear"
+    How minima are joined: ``linear`` (in distance) or ``chi``.
+m_over_n : float, default=0.45
+    Concavity for the chi fit.
+chi_A0 : float, default=1.0
+    Reference area (m^2) for the chi fit.
+fill_min_slope : float, default=0.0001
+    Minimum gradient (m/m) of the burned profile and of filled flats.
+boundary_conditions : str, default="oooo"
+    NESW edge codes for the pit cleaning.
+carve_before_fill : bool, default=False
+    Breach before the final fill.
+breach_algorithm_choice : str, default="lindsay2016"
+    ``lindsay2016`` or ``least_cost``, for the final breach.
+breach_max_dist_pixels : int, default=1000
+    Least-cost breach: longest breach path (cells).
+breach_max_cost : float, default=0.0
+    Least-cost breach: largest cost; 0 is unbounded.
+breach_minimize_dist : bool, default=False
+    Least-cost breach: weight the cost by distance.
+breach_flat_increment : float, default=0.0
+    Least-cost breach: drop per cell along a breach; 0 is automatic.
+breach_edge_policy : str, default="outlet"
+    Least-cost breach: ``outlet`` or ``whitebox``.
+min_elevation : float, default=-9999.0
+    Cells at or below this (m) become nodata first; -9999 disables. Leave it
+    off for DTMs with land below 0 m.
+n_threads : int, default=0
+    Threads for the final conditioning; 0 is the default.
+
+Returns
+-------
+BurnCorridorResult
+    ``dem`` (final), ``burned``, ``burn_depth``, ``profiles``,
+    ``channels``, ``exit_routes``, ``cross_path_receivers`` and ``report``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def burn_to_corridor(dem: lsdtt3.Raster, lines: object, *, vector_name_field: str = '', vector_corridor_half_width_metres: float = 0.0, burn_profile_max_pit_pixels: int = 16, burn_profile_max_cut_metres: float = 2000.0, burn_profile_fit_algorithm_choice: str = 'linear', m_over_n: float = 0.45, chi_A0: float = 1.0, fill_min_slope: float = 0.0001, boundary_conditions: str = 'oooo', carve_before_fill: bool = False, breach_algorithm_choice: str = 'lindsay2016', breach_max_dist_pixels: int = 1000, breach_max_cost: float = 0.0, breach_minimize_dist: bool = False, breach_flat_increment: float = 0.0, breach_edge_policy: str = 'outlet', min_elevation: float = -9999.0, n_threads: int = 0) -> lsdtt3.BurnCorridorResult
 ```
 
 ---

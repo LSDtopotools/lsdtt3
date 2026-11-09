@@ -485,8 +485,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. -9999 disables. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. Sea removed this way is connected to the DEM edge and acts as an open boundary. |
+| `min_elevation` | `float` | `0` | `param` | - | Cells at or below this elevation (m) become nodata before any analysis. -9999 disables. | For removing the sea, which many DEMs store as valid cells at about 0 m, and nodata stored as 0 (a block of zeros beside real terrain is a cliff that captures flow paths). Removed cells that touch the DEM edge act as an open boundary, so a river reaching the coast drains off the DEM there. Negative values apply as given: where land lies below sea level (fens, polders, Death Valley -86 m, the Dead Sea -430 m) set it just below the lowest land, or below the sea surface of the DEM, so that flow is still routed over the sub-zero land. -9999 (or lower) disables. |
 | `maximum_elevation` | `float` | `30000` | `param` | - | Pixels above this elevation (metres) are set to nodata. | Default covers the full range of terrestrial elevations. Reduce to remove artefacts in low-relief study areas. |
+
+### Sea mask
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `sea_mask_fname` | `string` | - | `param` | - | Vector file of sea (or land) polygons, or a coastline: the sea becomes nodata. Empty = off. | For DEMs with land below 0 m (a coastal DTM with a large tidal range, reclaimed land), where min_elevation would remove real land: set min_elevation to -9999 and give the sea as a vector. Relative to read_path unless absolute; any OGR format and CRS (reprojected); only features meeting the DEM are read, so a national file is fine. Polygons: cells whose centre is inside. Lines (need not be closed): the sea is what a flood from the sea side of the lines reaches without crossing them; if it reaches the land side (a gap, or lines that do not cross the DEM) the sea side within sea_mask_max_distance_metres is used instead, and the log says so. The removed sea is always an outlet: interior_nodata_method fill never refills it. A file with both polygons and lines is refused. |
+| `sea_mask_layer` | `string` | - | `param` | `sea_mask_fname` | Layer of sea_mask_fname to read (empty: the first). | - |
+| `sea_mask_side_choice` | `string` | `auto` | `param` | `sea_mask_fname` | Which side of the vector is sea: auto, sea_inside, land_inside, sea_left, sea_right. | sea_inside / land_inside for polygons; sea_left / sea_right for lines, looking along the direction they were digitised (OpenStreetMap coastlines have the land on the left: sea_right). auto decides from the DEM and logs the evidence: the side whose cells are already nodata much more often, else the side with the lower median elevation (by at least 0.5 m); for lines per line part, from the cells within 3 cells of it. auto refuses when neither tells the sides apart. |
+| `sea_mask_max_distance_metres` | `float` | `500` | `param` | `sea_mask_fname` | Lines only: the fallback after a leak, the sea side within this distance (m) of the lines. | - |
+| `write_sea_mask_raster` | `bool` | `false` | `switch` | `sea_mask_fname` | Write the sea mask: 1 = sea, 0 = land (&lt;write_fname&gt;_sea_mask.tif). | - |
 
 ### Binary mask
 

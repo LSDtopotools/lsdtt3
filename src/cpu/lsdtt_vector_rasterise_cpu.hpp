@@ -58,6 +58,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/lsdtt_types.hpp"
 #include "lsdtt_raster_cpu.hpp"
 
 namespace lsdtt {
@@ -123,6 +124,35 @@ polygon_bbox get_first_polygon_bbox_in_raster_crs(
     const std::string& vector_path,
     const std::string& raster_crs_wkt
 );
+
+// -----------------------------------------------------------------------------
+// read_vector_layer_on_grid
+//
+// The polygons and lines of one layer of `vector_path` (empty `layer_name`:
+// the first), reprojected to the grid's CRS and read only where they meet the
+// grid (a spatial filter on the grid's box, so a national file is cheap):
+//   polygon_cover  1 where a cell centre is inside a polygon;
+//   line_cells     1 on every cell a line touches (GDAL ALL_TOUCHED), so the
+//                  cells form a chain that a 4-connected flood cannot cross;
+//   lines          the line parts' vertices in the grid's CRS, one entry per
+//                  part, with the input feature index in line_feature.
+// Points and empty geometries are counted and ignored.
+// -----------------------------------------------------------------------------
+struct vector_layer_grid_geometry
+{
+    std::vector<std::uint8_t> polygon_cover;
+    std::vector<std::uint8_t> line_cells;
+    std::vector<std::vector<lsdtt_xy>> lines;
+    std::vector<int> line_feature;
+    int n_polygon_features = 0;
+    int n_line_features = 0;
+    int n_other_features = 0;
+    std::string layer_name;
+};
+vector_layer_grid_geometry read_vector_layer_on_grid(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    const std::string&      layer_name = "");
 
 // -----------------------------------------------------------------------------
 // rasterise_polylines

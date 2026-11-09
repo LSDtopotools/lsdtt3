@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -210,5 +211,32 @@ std::string default_river_cache_dir();
 
 // The field map used for OS Open Rivers.
 lsdtt_river_line_field_map os_open_rivers_field_map();
+
+// ---------------------------------------------------------------------------
+// The options of a fetch from its parameters, by the lsdtt-fetch-river-lines
+// parameter names (river_line_source, west/south/east/north or bounds_fname /
+// bounds_path / bounds_layer, output_epsg, river_feature_classes, the field
+// names, direction_repair_algorithm_choice, gap_bridge_algorithm_choice and
+// its gates, road_vector_fname, river_cache_dir, http_*). The CLI and the
+// Python binding both call this, so they validate and interpret the same
+// values the same way. A missing key has the CLI's default.
+//
+// resolve_path turns a file parameter into a path (the CLI adds read_path to
+// a relative name; /vsi paths are passed through before it is called).
+// Output paths are not set. Messages the CLI prints as warnings are appended
+// to `warnings`; invalid values throw std::invalid_argument.
+// ---------------------------------------------------------------------------
+struct lsdtt_river_line_parameters
+{
+    std::map<std::string, std::string> s;
+    std::map<std::string, double>      f;
+    std::map<std::string, int>         i;
+    std::map<std::string, bool>        b;
+};
+lsdtt_river_line_fetch_options build_river_line_fetch_options(
+    const lsdtt_river_line_parameters& p,
+    const std::function<std::string(const std::string&)>& resolve_path,
+    std::vector<std::string>& warnings,
+    std::string* area_note = nullptr);
 
 } // namespace lsdtt

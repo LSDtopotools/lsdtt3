@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 236,
+  "export_count": 240,
   "exports": [
     {
       "name": "BasinCollection",
@@ -94,6 +94,62 @@
           "name": "table",
           "kind": "property",
           "doc": "One row per basin (pandas.DataFrame).\n\nColumns: ``basin_id`` (0-based), ``outlet_flat``, ``outlet_row``,\n``outlet_col``, ``n_pixels``, ``area_metres2`` (m^2), ``complete`` (False if\nany basin pixel, including the outlet, is next to a nodata pixel or to an\nopen or base-level DEM edge, so the basin may be cut off), ``outlet_on_dem_edge``,\n``parent_id`` (the smallest other selected basin containing this outlet,\n-1 if none), ``nesting_depth`` (0 for a basin with no parent).",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "BurnCorridorResult",
+      "kind": "class",
+      "doc": "Result of :func:`burn_to_corridor` (lsdtt-stream-burning burn_to_corridor): the rasters and the tables the CLI writes.\n\nReturned by ``burn_to_corridor()``; not constructible directly.\n\nAttributes\n----------\nburn_depth : Raster\n    Original minus final (m): positive where lowered, negative where raised, nodata where unchanged (_burn_depth.tif).\nburned : Raster\n    The DEM after the burn, before the final conditioning.\nchannels : object\n    GeoDataFrame, one line per reach: the channel used, or the vector line if skipped (_corridor_channels).\ncross_path_receivers : object\n    GeoDataFrame of points: line cells whose flow leaves the line for another path's cell (_cross_path_receivers).\ndem : Raster\n    The final DEM: burned, then breached / filled (the CLI's _burned.tif).\nexit_routes : object\n    GeoDataFrame, the routes lowered to drain channel ends inside the DEM (_exit_routes).\nprofiles : object\n    pandas.DataFrame, one row per path cell, the columns of _burned_profiles.csv (lsdviztools3 lsdviz3-burned-profiles reads them).\nreport : dict\n    dict of counts: reaches fitted / skipped, paths, pits, minima, ends drained, banks, cross-path cells, the final-pass changes and the downhill checks (all 0 when the burn drains everywhere), notes.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "burn_depth",
+          "kind": "property",
+          "doc": "Original minus final (m): positive where lowered, negative where raised, nodata where unchanged (_burn_depth.tif).",
+          "signatures": []
+        },
+        {
+          "name": "burned",
+          "kind": "property",
+          "doc": "The DEM after the burn, before the final conditioning.",
+          "signatures": []
+        },
+        {
+          "name": "channels",
+          "kind": "property",
+          "doc": "GeoDataFrame, one line per reach: the channel used, or the vector line if skipped (_corridor_channels).",
+          "signatures": []
+        },
+        {
+          "name": "cross_path_receivers",
+          "kind": "property",
+          "doc": "GeoDataFrame of points: line cells whose flow leaves the line for another path's cell (_cross_path_receivers).",
+          "signatures": []
+        },
+        {
+          "name": "dem",
+          "kind": "property",
+          "doc": "The final DEM: burned, then breached / filled (the CLI's _burned.tif).",
+          "signatures": []
+        },
+        {
+          "name": "exit_routes",
+          "kind": "property",
+          "doc": "GeoDataFrame, the routes lowered to drain channel ends inside the DEM (_exit_routes).",
+          "signatures": []
+        },
+        {
+          "name": "profiles",
+          "kind": "property",
+          "doc": "pandas.DataFrame, one row per path cell, the columns of _burned_profiles.csv (lsdviztools3 lsdviz3-burned-profiles reads them).",
+          "signatures": []
+        },
+        {
+          "name": "report",
+          "kind": "property",
+          "doc": "dict of counts: reaches fitted / skipped, paths, pits, minima, ends drained, banks, cross-path cells, the final-pass changes and the downhill checks (all 0 when the burn drains everywhere), notes.",
           "signatures": []
         }
       ],
@@ -3385,7 +3441,7 @@
     {
       "name": "Raster",
       "kind": "class",
-      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 257 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 260 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "from_numpy",
@@ -4014,6 +4070,44 @@
           "name": "skeleton",
           "kind": "property",
           "doc": "(self) -> lsdtt3.Raster",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "RiverLinesResult",
+      "kind": "class",
+      "doc": "Result of :func:`fetch_river_lines` (lsdtt-fetch-river-lines): the prepared lines, nodes and topology.\n\nReturned by ``fetch_river_lines()``; not constructible directly.\n\nAttributes\n----------\nattribution : str\n    Licence and citation of the source (_ATTRIBUTION.txt).\nlines : object\n    GeoDataFrame of the prepared lines (the _river_lines file's fields), oriented downstream.\nnodes : object\n    GeoDataFrame of the nodes (_river_nodes).\nreport : dict\n    dict: output CRS, area, counts by feature class, notes and warnings.\ntopology : object\n    pandas.DataFrame, one row per connected network (_river_topology.csv).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "attribution",
+          "kind": "property",
+          "doc": "Licence and citation of the source (_ATTRIBUTION.txt).",
+          "signatures": []
+        },
+        {
+          "name": "lines",
+          "kind": "property",
+          "doc": "GeoDataFrame of the prepared lines (the _river_lines file's fields), oriented downstream.",
+          "signatures": []
+        },
+        {
+          "name": "nodes",
+          "kind": "property",
+          "doc": "GeoDataFrame of the nodes (_river_nodes).",
+          "signatures": []
+        },
+        {
+          "name": "report",
+          "kind": "property",
+          "doc": "dict: output CRS, area, counts by feature class, notes and warnings.",
+          "signatures": []
+        },
+        {
+          "name": "topology",
+          "kind": "property",
+          "doc": "pandas.DataFrame, one row per connected network (_river_topology.csv).",
           "signatures": []
         }
       ],
@@ -5494,6 +5588,37 @@
       ]
     },
     {
+      "name": "burn_to_corridor",
+      "kind": "function",
+      "doc": "Burn a vector river network into a DEM, taking the vector as the truth.\n\nlsdtt-stream-burning with ``stream_burn_mode: burn_to_corridor``, through the\nsame C++ routines and with its parameter names. Each line's channel is found\nwithin ``vector_corridor_half_width_metres`` of it, and burned to a profile\njoining the minima of the input DEM under it (small pits filled first;\nminima joined linearly, or in chi). The rest of the DEM is then carved and\nfilled to drain to the channels, and the whole DEM is conditioned once more\n(breach if ``carve_before_fill``, then fill), so flow routing on the result\nfollows the network.\n\nParameters\n----------\ndem : Raster\n    The input DEM (not pit-filled).\nlines : geopandas.GeoDataFrame\n    River lines, oriented downstream (e.g. the ``lines`` of\n    :func:`fetch_river_lines`), with a CRS; reprojected to the DEM's.\nvector_name_field : str, default=\"\"\n    Column holding the river name, copied to the outputs; empty for none.\nvector_corridor_half_width_metres : float, default=0.0\n    X: how far (m) the channel may move from the line. 0 burns the line's\n    own cells.\nburn_profile_max_pit_pixels : int, default=16\n    Pits of fewer cells are filled before the minima are taken.\nburn_profile_max_cut_metres : float, default=2000.0\n    A minimum that would cut deeper than this (m) is not used.\nburn_profile_fit_algorithm_choice : str, default=\"linear\"\n    How minima are joined: ``linear`` (in distance) or ``chi``.\nm_over_n : float, default=0.45\n    Concavity for the chi fit.\nchi_A0 : float, default=1.0\n    Reference area (m^2) for the chi fit.\nfill_min_slope : float, default=0.0001\n    Minimum gradient (m/m) of the burned profile and of filled flats.\nboundary_conditions : str, default=\"oooo\"\n    NESW edge codes for the pit cleaning.\ncarve_before_fill : bool, default=False\n    Breach before the final fill.\nbreach_algorithm_choice : str, default=\"lindsay2016\"\n    ``lindsay2016`` or ``least_cost``, for the final breach.\nbreach_max_dist_pixels : int, default=1000\n    Least-cost breach: longest breach path (cells).\nbreach_max_cost : float, default=0.0\n    Least-cost breach: largest cost; 0 is unbounded.\nbreach_minimize_dist : bool, default=False\n    Least-cost breach: weight the cost by distance.\nbreach_flat_increment : float, default=0.0\n    Least-cost breach: drop per cell along a breach; 0 is automatic.\nbreach_edge_policy : str, default=\"outlet\"\n    Least-cost breach: ``outlet`` or ``whitebox``.\nmin_elevation : float, default=-9999.0\n    Cells at or below this (m) become nodata first; -9999 disables. Leave it\n    off for DTMs with land below 0 m.\nn_threads : int, default=0\n    Threads for the final conditioning; 0 is the default.\n\nReturns\n-------\nBurnCorridorResult\n    ``dem`` (final), ``burned``, ``burn_depth``, ``profiles``,\n    ``channels``, ``exit_routes``, ``cross_path_receivers`` and ``report``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def burn_to_corridor(dem: lsdtt3.Raster, lines: object, *, vector_name_field: str = \\0, vector_corridor_half_width_metres: float = \\1, burn_profile_max_pit_pixels: int = \\2, burn_profile_max_cut_metres: float = \\3, burn_profile_fit_algorithm_choice: str = \\4, m_over_n: float = \\5, chi_A0: float = \\6, fill_min_slope: float = \\7, boundary_conditions: str = \\8, carve_before_fill: bool = \\9, breach_algorithm_choice: str = \\10, breach_max_dist_pixels: int = \\11, breach_max_cost: float = \\12, breach_minimize_dist: bool = \\13, breach_flat_increment: float = \\14, breach_edge_policy: str = \\15, min_elevation: float = \\16, n_threads: int = \\17) -> lsdtt3.BurnCorridorResult",
+          "defaults": [
+            "",
+            0.0,
+            16,
+            2000.0,
+            "linear",
+            0.45,
+            1.0,
+            0.0001,
+            "oooo",
+            false,
+            "lindsay2016",
+            1000,
+            0.0,
+            false,
+            0.0,
+            "outlet",
+            -9999.0,
+            0
+          ]
+        }
+      ]
+    },
+    {
       "name": "carve_depth",
       "kind": "function",
       "doc": "Return the non-negative elevation removed by depression breaching.\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nReturns\n-------\nRaster\n    ``raster - breach_depressions(raster)`` in metres.\n\nAuthors\n-------\nB. Gailleton",
@@ -6281,6 +6406,56 @@
             2048.0,
             256,
             200
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fetch_river_lines",
+      "kind": "function",
+      "doc": "Fetch or read river centrelines for an area and prepare them for burning.\n\nlsdtt-fetch-river-lines, through the same C++ routines, with its parameter\nnames and the same checks: the lines are clipped to the area (plus a buffer),\nnoded, oriented downstream (a direction vote per network) and given a\ntopology. Nothing is written to disk except the download cache.\n\nParameters\n----------\nriver_line_source : str, keyword-only\n    ``local_file`` (any OGR line file) or ``gb_os_open_rivers`` (OS Open\n    Rivers, downloaded keylessly and cached).\nwest, south, east, north : float or None, default=None\n    The area in WGS84 degrees; or give ``bounds_fname``.\nbounds_fname : str, default=\"\"\n    A raster or vector file whose extent is the area (a raster also sets the\n    output CRS and the clip box).\nbounds_layer : str, default=\"\"\n    Layer of a vector ``bounds_fname``; empty for the first.\noutput_epsg : int, default=0\n    Output CRS; 0 is the bounds raster's CRS, else the UTM zone of the area.\nclip_buffer_metres : float, default=-1.0\n    Margin (m) around the area; negative is 5% of the shorter side, at least\n    200 m.\nriver_lines_fname : str, default=\"\"\n    ``local_file``: the line file.\nriver_lines_layer : str, default=\"\"\n    ``local_file``: its layer; empty for the first.\nfeature_class_field_name : str, default=\"\"\n    ``local_file``: field giving the feature class.\ndirection_field_name : str, default=\"\"\n    ``local_file``: field giving the flow direction.\ndirection_field_mapping : str, default=\"\"\n    ``local_file``: values of that field and their meaning, as\n    ``value=1`` (digitised downstream) / ``value=-1`` (upstream) pairs,\n    comma-separated, e.g. ``\"in_direction=1,in_opposite_direction=-1\"``;\n    spaces in a value are written as underscores.\ndigitised_downstream : bool, default=False\n    ``local_file``: the lines are digitised downstream.\nstart_node_field_name : str, default=\"\"\n    ``local_file``: field of the start node id (with ``end_node_field_name``).\nend_node_field_name : str, default=\"\"\n    ``local_file``: field of the end node id.\nculvert_field_name : str, default=\"\"\n    ``local_file``: field flagging culverts.\nriver_feature_classes : str, default=\"river,stream,lake_connector\"\n    Feature classes kept, comma-separated (river, stream, lake_connector,\n    canal, drain, tidal, other).\nnode_snap_tolerance_metres : float, default=-1.0\n    Ends within this distance (m) are one node; negative is 1 m.\nmin_line_length_metres : float, default=0.0\n    Shorter dangling lines are dropped.\ndirection_repair_algorithm_choice : str, default=\"network_outlet\"\n    ``network_outlet`` flips lines against their network's flow; ``none``\n    only flags them.\ngap_bridge_algorithm_choice : str, default=\"none\"\n    ``facing_tips`` joins dangling ends that face each other across a gap.\nmax_gap_length_metres : float, default=25.0\n    Gap bridging: longest road-associated bridge (m).\nmax_nonroad_gap_metres : float, default=30.0\n    Gap bridging: longest bridge not crossing a road (m).\nmax_facing_angle_degrees : float, default=45.0\n    Gap bridging: largest angle between a tip and the bridge.\nmax_heading_misalignment_degrees : float, default=50.0\n    Gap bridging: largest misalignment of the two tips' headings.\nroad_max_facing_angle_degrees : float, default=60.0\n    Gap bridging: facing angle allowed across a road.\ntangent_fit_length_metres : float, default=15.0\n    Gap bridging: length (m) of line used for a tip's heading.\nroad_intersection_tolerance_metres : float, default=10.0\n    Gap bridging: distance (m) within which a bridge crosses a road.\nrequire_mutual_best : bool, default=True\n    Gap bridging: only join tips that are each other's best candidate.\nroad_vector_fname : str, default=\"\"\n    Gap bridging: road centrelines (any OGR line file).\nroad_layer : str, default=\"\"\n    Gap bridging: the roads layer; empty for the first.\nroad_name_field : str, default=\"roadName\"\n    Gap bridging: the roads' name field.\nriver_cache_dir : str, default=\"\"\n    Download cache; empty is the user cache directory.\nhttp_timeout_seconds : int, default=60\n    Download timeout (s).\nhttp_connect_timeout_seconds : int, default=15\n    Connection timeout (s).\nhttp_max_retry : int, default=3\n    Download retries.\n\nReturns\n-------\nRiverLinesResult\n    ``lines``, ``nodes``, ``topology``, ``attribution`` and ``report``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def fetch_river_lines(*, river_line_source: str, west: float | None = \\0, south: float | None = \\1, east: float | None = \\2, north: float | None = \\3, bounds_fname: str = \\4, bounds_layer: str = \\5, output_epsg: int = \\6, clip_buffer_metres: float = \\7, river_lines_fname: str = \\8, river_lines_layer: str = \\9, feature_class_field_name: str = \\10, direction_field_name: str = \\11, direction_field_mapping: str = \\12, digitised_downstream: bool = \\13, start_node_field_name: str = \\14, end_node_field_name: str = \\15, culvert_field_name: str = \\16, river_feature_classes: str = \\17, node_snap_tolerance_metres: float = \\18, min_line_length_metres: float = \\19, direction_repair_algorithm_choice: str = \\20, gap_bridge_algorithm_choice: str = \\21, max_gap_length_metres: float = \\22, max_nonroad_gap_metres: float = \\23, max_facing_angle_degrees: float = \\24, max_heading_misalignment_degrees: float = \\25, road_max_facing_angle_degrees: float = \\26, tangent_fit_length_metres: float = \\27, road_intersection_tolerance_metres: float = \\28, require_mutual_best: bool = \\29, road_vector_fname: str = \\30, road_layer: str = \\31, road_name_field: str = \\32, river_cache_dir: str = \\33, http_timeout_seconds: int = \\34, http_connect_timeout_seconds: int = \\35, http_max_retry: int = \\36) -> lsdtt3.RiverLinesResult",
+          "defaults": [
+            null,
+            null,
+            null,
+            null,
+            "",
+            "",
+            0,
+            -1.0,
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "",
+            "",
+            "",
+            "river,stream,lake_connector",
+            -1.0,
+            0.0,
+            "network_outlet",
+            "none",
+            25.0,
+            30.0,
+            45.0,
+            50.0,
+            60.0,
+            15.0,
+            10.0,
+            true,
+            "",
+            "",
+            "roadName",
+            "",
+            60,
+            15,
+            3
           ]
         }
       ]

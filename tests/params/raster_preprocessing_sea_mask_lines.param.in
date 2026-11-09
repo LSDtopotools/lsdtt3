@@ -1,0 +1,15 @@
+# Sea mask from an open coastline (tests/data/sea_mask): a straight coast
+# digitised north to south over a 40 x 40 DEM, sea (-1 m) east, land west
+# with a -3 m polder. auto finds the sea on the left by median elevation and
+# removes exactly the 800 cells east of the line; the polder stays.
+read_path: __READ_PATH__
+read_fname: sea_mask/coast_dem.tif
+write_path: __WRITE_PATH__
+write_fname: smcoast
+enforce_projection: false
+write_output_format: gtiff
+min_elevation: -9999
+write_fill_raster: true
+write_hillshade_raster: false
+write_sea_mask_raster: true
+sea_mask_fname: sea_mask/coastline.fgb

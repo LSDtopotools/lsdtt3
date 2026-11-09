@@ -1,0 +1,19 @@
+# burn_to_corridor on the stream-burning fixture (200 x 200 cells of 30 m,
+# diamond-square relief) with its committed five-line network, at X = 0: each
+# line's own cells are burned to a profile through the minima of the input DEM,
+# then the rest of the DEM is breached and filled to drain to them.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: corr
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: burn_to_corridor
+run_stream_burn: true
+vector_corridor_half_width_metres: 0
+vector_name_field: id
+
+write_burned_outputs: true
+write_burned_profiles_csv: true
+write_burn_depth_raster: true
+n_threads: 1

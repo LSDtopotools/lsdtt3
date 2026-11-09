@@ -1,0 +1,19 @@
+# As stream_burning_corridor with min_elevation below the lowest land (-400 m;
+# the fixture DEM reaches -316 m): nothing is removed, so sub-zero land is
+# kept and routed, and the outputs equal the default run's.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: mebl
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: burn_to_corridor
+run_stream_burn: true
+vector_corridor_half_width_metres: 0
+vector_name_field: id
+
+write_burned_outputs: true
+write_burned_profiles_csv: true
+write_burn_depth_raster: true
+n_threads: 1
+min_elevation: -400

@@ -183,6 +183,19 @@ struct lsdtt_vector_network_edge
     int digitised_a_to_b = 0;
     // 1 when the receiver came from the digitised order, 0 from elevation.
     int oriented_by_digitised = 0;
+
+    // Direction checks of a directed (not loop-labelled) edge; -1 when not
+    // judged (a labelled edge, or no digitised direction for against_digitised):
+    //   runs_uphill        1 when its receiver junction stands higher than its
+    //                      upstream junction by DEM elevation (the edge drains
+    //                      uphill: e.g. a dead-end junction that claims its only
+    //                      edge, or the digitised order followed up a rise);
+    //   against_digitised  1 when it is oriented against the direction its
+    //                      parts were digitised in (0 with it).
+    // Under dem_elevation a reach can be REVERSED this way rather than cut out
+    // (loop_reason unclaimed); these count it.
+    int runs_uphill = -1;
+    int against_digitised = -1;
 };
 
 class lsdtt_vector_to_junction_network
@@ -225,6 +238,9 @@ public:
     {
         return n_direction_fallback_networks_;
     }
+    // Directed edges with runs_uphill == 1 / against_digitised == 1.
+    [[nodiscard]] int n_edges_running_uphill() const noexcept { return n_edges_running_uphill_; }
+    [[nodiscard]] int n_edges_against_digitised() const noexcept { return n_edges_against_digitised_; }
     [[nodiscard]] const std::vector<lsdtt_direction_fallback_record>&
     direction_fallbacks() const noexcept
     {
@@ -331,7 +347,10 @@ private:
     // uphill as a whole (use_digitised_direction only).
     int n_direction_fallback_networks_ = 0;
     std::vector<lsdtt_direction_fallback_record> direction_fallbacks_;
+    int n_edges_running_uphill_ = 0;
+    int n_edges_against_digitised_ = 0;
     void classify_loop_edges();
+    void classify_edge_directions();
     void break_receiver_cycles();
     void build_outlet_keys();
     void build_topological_order();

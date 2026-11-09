@@ -273,6 +273,27 @@ void declare_channel_initiation_parameters(
 // -----------------------------------------------------------------------------
 // Along-channel gradient window
 // -----------------------------------------------------------------------------
+void declare_min_elevation_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_value,
+    const std::string&            group)
+{
+    float_default_map["min_elevation"] = default_value;
+    std::ostringstream d;
+    d << default_value;
+    help_map["min_elevation"] = {"float", d.str(),
+        "Cells at or below this elevation (m) become nodata before any analysis. -9999 disables.",
+        "For removing the sea, which many DEMs store as valid cells at about 0 m, and nodata "
+        "stored as 0 (a block of zeros beside real terrain is a cliff that captures flow "
+        "paths). Removed cells that touch the DEM edge act as an open boundary, so a river "
+        "reaching the coast drains off the DEM there. Negative values apply as given: where "
+        "land lies below sea level (fens, polders, Death Valley -86 m, the Dead Sea -430 m) "
+        "set it just below the lowest land, or below the sea surface of the DEM, so that "
+        "flow is still routed over the sub-zero land. -9999 (or lower) disables.",
+        group, "param", ""};
+}
+
 void declare_channel_slope_window_parameter(
     std::map<std::string, float>& float_default_map,
     lsdtt_help_registry&          help_map,

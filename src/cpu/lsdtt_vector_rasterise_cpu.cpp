@@ -882,6 +882,94 @@ lsdtt_raster_cpu rasterise_polylines(
 }
 
 // =============================================================================
+// read_vector_layer_on_grid
+// =============================================================================
+vector_layer_grid_geometry read_vector_layer_on_grid(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    const std::string&      layer_name)
+{
+    const lsdtt_raster_meta& meta = reference_raster.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error("read_vector_layer_on_grid: reference raster metadata is invalid");
+
+    GDALDataset* vec_ds = nullptr;
+    OGRLayer* layer = layer_name.empty() ? open_first_layer(vector_path, vec_ds)
+                                         : open_named_layer(vector_path, layer_name, vec_ds);
+    struct ds_guard_t { GDALDataset* ds; ~ds_guard_t() { if (ds) GDALClose(ds); } } guard{vec_ds};
+
+    vector_layer_grid_geometry out;
+    out.layer_name = layer->GetName();
+    set_layer_spatial_filter_from_raster_bbox(layer, meta);
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
+
+    std::vector<OGRGeometry*> polys, lines;
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    int feature_index = -1;
+    while ((feat = layer->GetNextFeature()) != nullptr)
+    {
+        ++feature_index;
+        OGRGeometry* geom = feat->GetGeometryRef();
+        const OGRwkbGeometryType t = geom ? wkbFlatten(geom->getGeometryType()) : wkbUnknown;
+        const bool is_poly = geom && !geom->IsEmpty() && (t == wkbPolygon || t == wkbMultiPolygon);
+        const bool is_line = geom && !geom->IsEmpty() && (t == wkbLineString || t == wkbMultiLineString);
+        if (!is_poly && !is_line)
+        {
+            ++out.n_other_features;
+            OGRFeature::DestroyFeature(feat);
+            continue;
+        }
+        OGRGeometry* clone = geom->clone();
+        if (ct && clone->transform(ct.get()) != OGRERR_NONE)
+        {
+            delete clone;
+            OGRFeature::DestroyFeature(feat);
+            throw std::runtime_error("read_vector_layer_on_grid: could not reproject a feature of " + vector_path);
+        }
+        if (is_poly) { polys.push_back(clone); ++out.n_polygon_features; }
+        else
+        {
+            ++out.n_line_features;
+            auto add_part = [&](const OGRLineString* ls)
+            {
+                std::vector<lsdtt_xy> xy;
+                xy.reserve(static_cast<std::size_t>(ls->getNumPoints()));
+                for (int k = 0; k < ls->getNumPoints(); ++k) xy.push_back({ls->getX(k), ls->getY(k)});
+                if (xy.size() >= 2) { out.lines.push_back(std::move(xy)); out.line_feature.push_back(feature_index); }
+            };
+            if (wkbFlatten(clone->getGeometryType()) == wkbLineString) add_part(clone->toLineString());
+            else for (const auto* part : clone->toMultiLineString()) add_part(part);
+            lines.push_back(clone);
+        }
+        OGRFeature::DestroyFeature(feat);
+    }
+
+    const std::size_t npix = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    double gt[6];
+    fill_geotransform(meta, gt);
+    out.polygon_cover.assign(npix, 0u);
+    out.line_cells.assign(npix, 0u);
+    if (!polys.empty())
+    {
+        GDALDataset* mem_ds = make_mem_byte_raster(meta.n_rows, meta.n_cols, gt);
+        burn_geometries(mem_ds, polys, /*all_touched=*/false);
+        out.polygon_cover = read_byte_band(mem_ds, meta.n_rows, meta.n_cols);
+        GDALClose(mem_ds);
+    }
+    if (!lines.empty())
+    {
+        GDALDataset* mem_ds = make_mem_byte_raster(meta.n_rows, meta.n_cols, gt);
+        burn_geometries(mem_ds, lines, /*all_touched=*/true);
+        out.line_cells = read_byte_band(mem_ds, meta.n_rows, meta.n_cols);
+        GDALClose(mem_ds);
+    }
+    free_geometries(polys);
+    free_geometries(lines);
+    return out;
+}
+
+// =============================================================================
 // rasterise_macrostrat_geology
 // =============================================================================
 macrostrat_geology_rasterise_result rasterise_macrostrat_geology(

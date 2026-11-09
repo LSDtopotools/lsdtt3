@@ -220,6 +220,22 @@ void declare_channel_initiation_parameters(
     const std::string&          prefix = "");
 
 // -----------------------------------------------------------------------------
+// min_elevation (float, m): cells at or below it become nodata before any
+// analysis (sea removal). -9999 (or lower) disables; any other value, negative
+// included, applies. The default differs by tool, so it is an argument: 0 where
+// the tool is usually given global DEMs with the sea at 0 m
+// (raster-preprocessing, basin-stats), -9999 where a change of default would
+// change existing results or land below 0 m is expected (stream-burning,
+// hillslope-channel-coupling). Apply with lsdtt::apply_min_elevation
+// (lsdtt_raster_flow_preprocessing_cpu).
+// -----------------------------------------------------------------------------
+void declare_min_elevation_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    float                         default_value,
+    const std::string&            group);
+
+// -----------------------------------------------------------------------------
 // slope_window_half_length_metres (float, m, 25): the half-length of the
 // along-channel window over which the channel gradient is fitted
 // (lsdtt_channel_gradient_cpu). Shared by lsdtt-bankfull-width and

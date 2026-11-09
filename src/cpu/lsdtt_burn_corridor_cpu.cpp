@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "lsdtt_depression_hierarchy_cpu.hpp"
+#include "lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "lsdtt_vector_ops_cpu.hpp"
 
 namespace lsdtt
@@ -292,11 +293,14 @@ struct path_build
 // -----------------------------------------------------------------------------
 // burn_vector_network_to_corridor
 // -----------------------------------------------------------------------------
-burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& original,
-                                                     lsdtt_raster_cpu& out_dem,
-                                                     const std::vector<std::vector<lsdtt_xy>>& lines,
-                                                     const std::vector<std::string>& names,
-                                                     const burn_corridor_options& opts)
+namespace
+{
+// One burn of the given lines (see burn_vector_network_to_corridor).
+burn_corridor_result burn_corridor_pass(const lsdtt_raster_cpu& original,
+                                        lsdtt_raster_cpu& out_dem,
+                                        const std::vector<std::vector<lsdtt_xy>>& lines,
+                                        const std::vector<std::string>& names,
+                                        const burn_corridor_options& opts)
 {
     burn_corridor_result res;
     const lsdtt_raster_meta& meta = original.get_meta();
@@ -929,8 +933,11 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         }
         return raised;
     };
+    // which exit route (by the drained path's id) fixed a cell, -1 if none
+    std::vector<int> route_of(static_cast<size_t>(ncell), -1);
     auto drain_ends = [&]()
     {
+        std::fill(route_of.begin(), route_of.end(), -1);
         for (const auto& rp : res.paths)
         {
             if (rp.cells.empty() || rp.joins_path_id >= 0) continue;
@@ -972,6 +979,7 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
             for (std::int64_t v = exit_cell;; v = prev[v]) { route.push_back(v); if (v == e) break; }
             std::reverse(route.begin(), route.end());
             const bool to_line = fixed[static_cast<size_t>(exit_cell)] != 0;
+            const long daylighted_before = res.n_cells_daylighted;
             if (to_line)
             {
                 // graded exactly from the end to the lower line cell
@@ -1000,6 +1008,31 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                 }
             }
             ++res.n_ends_drained;
+            burn_corridor_exit_route xr;
+            xr.path_id = rp.path_id;
+            xr.exit_type = "edge";
+            if (to_line)
+            {
+                const size_t fx = static_cast<size_t>(exit_cell);
+                if (owner_path[fx] >= 0) { xr.exit_type = "line"; xr.to_path_id = owner_path[fx]; }
+                else if (route_of[fx] >= 0) { xr.exit_type = "exit_route"; xr.to_path_id = route_of[fx]; }
+                else xr.exit_type = "line";
+            }
+            xr.cells = route;
+            // the cells this route set: all but the path's end, and, for a line
+            // exit, all but the (already fixed) exit cell
+            const size_t q_end = to_line ? route.size() - 1 : route.size();
+            for (size_t q = 0; q < route.size(); ++q)
+            {
+                xr.xy.push_back(g.centre(route[q]));
+                if (q > 0) xr.length_m += g.step(route[q - 1], route[q]);
+                if (q == 0 || q >= q_end) continue;
+                const size_t f = static_cast<size_t>(route[q]);
+                route_of[f] = rp.path_id;
+                xr.max_cut_m = std::max(xr.max_cut_m, static_cast<double>(zo[f]) - static_cast<double>(work[f]));
+            }
+            xr.n_cells_lowered = res.n_cells_daylighted - daylighted_before;
+            res.exit_routes.push_back(std::move(xr));
         }
     };
     // where each line cell occurs: (path, index), for the cross-path raise
@@ -1073,6 +1106,28 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                     if (Q < 0 || qi <= 0 || want > cap)
                     {
                         ++res.n_cross_path_unresolved;
+                        burn_corridor_cross_path_receiver cp;
+                        cp.path_id = rp.path_id;
+                        cp.index = static_cast<int>(i);
+                        cp.cell = f;
+                        cp.xy = g.centre(f);
+                        cp.receiver_cell = recv;
+                        cp.receiver_xy = g.centre(recv);
+                        if (Q >= 0)
+                        {
+                            cp.receiver_path_id = Q;
+                            cp.reason = qi <= 0 ? "head_of_path" : "monotone";
+                        }
+                        else
+                        {
+                            // an exit route's cell: whose route
+                            cp.receiver_path_id = route_of[static_cast<size_t>(recv)];
+                            cp.reason = cp.receiver_path_id == rp.path_id ? "own_exit_route" : "exit_route";
+                        }
+                        cp.z_m = zf;
+                        cp.z_own_next_m = work[static_cast<size_t>(own_next)];
+                        cp.z_receiver_m = work[static_cast<size_t>(recv)];
+                        res.cross_path_receivers.push_back(cp);
                         break;
                     }
                     work[static_cast<size_t>(recv)] = static_cast<float>(want);
@@ -1089,11 +1144,13 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         work = zo;
         fixed.assign(static_cast<size_t>(ncell), 0);
         res.n_ends_drained = 0;
+        res.exit_routes.clear();
         res.n_cells_daylighted = 0;
         res.n_bank_cells = 0;
         res.n_bank_cells_at_raised_line = 0;
         res.n_cross_path_raised = 0;
         res.n_cross_path_unresolved = 0;
+        res.cross_path_receivers.clear();
         for (const auto& rp : res.paths)
             for (size_t i = 0; i < rp.cells.size(); ++i)
             {
@@ -1240,6 +1297,247 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
     }
     out_dem = lsdtt_raster_cpu(std::vector<float>(work), std::vector<uint8_t>(mk), meta);
     return res;
+}
+
+// The parts of a line over valid cells, in order: the line sampled every
+// quarter cell, cut wherever a sample falls on NoData or off the grid. Parts
+// shorter than one cell are dropped.
+std::vector<std::vector<lsdtt_xy>> split_line_at_nodata(const lsdtt_raster_cpu& dem,
+                                                        const std::vector<lsdtt_xy>& line,
+                                                        bool& touches_nodata)
+{
+    touches_nodata = false;
+    const lsdtt_raster_meta& m = dem.get_meta();
+    const auto& mask = dem.get_mask();
+    const double cs = m.cell_size;
+    auto valid_at = [&](const lsdtt_xy& p)
+    {
+        const double fc = (p.x - m.x_min) / cs, fr = (m.y_max() - p.y) / cs;
+        if (fc < 0.0 || fr < 0.0) return false;
+        const int c = static_cast<int>(fc), r = static_cast<int>(fr);
+        if (r >= m.n_rows || c >= m.n_cols) return false;
+        return mask[static_cast<size_t>(r) * static_cast<size_t>(m.n_cols) + static_cast<size_t>(c)] != 0;
+    };
+    std::vector<std::vector<lsdtt_xy>> parts;
+    std::vector<lsdtt_xy> cur;
+    auto close = [&]()
+    {
+        if (cur.size() >= 2 && line_length(cur) >= cs) parts.push_back(cur);
+        cur.clear();
+    };
+    for (size_t i = 0; i + 1 < line.size(); ++i)
+    {
+        const lsdtt_xy a = line[i], b = line[i + 1];
+        const int n = std::max(1, static_cast<int>(std::ceil(std::hypot(b.x - a.x, b.y - a.y) / (0.25 * cs))));
+        for (int s = (i == 0 ? 0 : 1); s <= n; ++s)
+        {
+            const double t = static_cast<double>(s) / n;
+            const lsdtt_xy p{a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)};
+            if (valid_at(p)) cur.push_back(p);
+            else { touches_nodata = true; close(); }
+        }
+    }
+    close();
+    return parts;
+}
+} // namespace
+
+burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& original,
+                                                     lsdtt_raster_cpu& out_dem,
+                                                     const std::vector<std::vector<lsdtt_xy>>& lines,
+                                                     const std::vector<std::string>& names,
+                                                     const burn_corridor_options& opts)
+{
+    burn_corridor_result first = burn_corridor_pass(original, out_dem, lines, names, opts);
+
+    // Lines whose reach found no corridor path and that touch NoData: replace
+    // them by their parts over valid cells. Usually two or more pieces (a gap
+    // inside the line); one piece when the only part cut off is shorter than
+    // a cell (e.g. an isolated valid scrap the reach would otherwise start on).
+    std::vector<std::vector<std::vector<lsdtt_xy>>> parts(lines.size());
+    int n_split = 0;
+    for (const auto& rc : first.reaches)
+    {
+        if (rc.status != "skipped" || rc.skip_reason != "no_corridor_path") continue;
+        const size_t li = static_cast<size_t>(rc.line_index);
+        bool touches = false;
+        auto pieces = split_line_at_nodata(original, lines[li], touches);
+        if (touches && !pieces.empty()) { parts[li] = std::move(pieces); ++n_split; }
+    }
+    if (n_split == 0) return first;
+
+    std::vector<std::vector<lsdtt_xy>> lines2;
+    std::vector<std::string> names2;
+    std::vector<int> origin, piece, n_pieces;
+    for (size_t li = 0; li < lines.size(); ++li)
+    {
+        const std::string nm = li < names.size() ? names[li] : std::string();
+        if (parts[li].empty())
+        {
+            lines2.push_back(lines[li]);
+            names2.push_back(nm);
+            origin.push_back(static_cast<int>(li));
+            piece.push_back(0);
+            n_pieces.push_back(1);
+            continue;
+        }
+        for (size_t k = 0; k < parts[li].size(); ++k)
+        {
+            lines2.push_back(parts[li][k]);
+            names2.push_back(nm);
+            origin.push_back(static_cast<int>(li));
+            piece.push_back(static_cast<int>(k));
+            n_pieces.push_back(static_cast<int>(parts[li].size()));
+        }
+    }
+    burn_corridor_result res = burn_corridor_pass(original, out_dem, lines2, names.empty() ? names : names2, opts);
+    int n_pieces_total = 0;
+    for (const auto& pp : parts) n_pieces_total += static_cast<int>(pp.size());
+    for (auto& rc : res.reaches)
+    {
+        const size_t k = static_cast<size_t>(rc.line_index);
+        rc.piece = piece[k];
+        rc.n_pieces = n_pieces[k];
+        if (!parts[static_cast<size_t>(origin[k])].empty()) rc.piece_line = lines2[k];
+        rc.line_index = origin[k];
+    }
+    res.n_lines_split_at_nodata = n_split;
+    res.n_pieces = n_pieces_total;
+    res.notes.push_back(std::to_string(n_split) + " line(s) crossing NoData cut into " +
+                        std::to_string(n_pieces_total) + " piece(s)");
+    return res;
+}
+
+// ---------------------------------------------------------------------------
+// after the burn (moved from lsdtt-stream-burning)
+// ---------------------------------------------------------------------------
+void validate_burn_corridor_options(const burn_corridor_options& o)
+{
+    if (o.max_pit_pixels < 0) throw std::invalid_argument("burn_profile_max_pit_pixels must be >= 0");
+    if (!(o.max_cut_metres > 0.0)) throw std::invalid_argument("burn_profile_max_cut_metres must be > 0");
+    if (o.m_over_n < 0.0) throw std::invalid_argument("m_over_n must be >= 0");
+    if (!(o.chi_A0 > 0.0)) throw std::invalid_argument("chi_A0 must be > 0");
+    if (!(o.corridor_half_width_metres >= 0.0))
+        throw std::invalid_argument("vector_corridor_half_width_metres must be >= 0");
+    validate_breach_least_cost_options(o.breach);
+}
+
+lsdtt_raster_cpu condition_after_corridor_burn(const lsdtt_raster_cpu& burned,
+                                               const corridor_final_conditioning_options& o)
+{
+    if (o.breach_algorithm_choice != "lindsay2016" && o.breach_algorithm_choice != "least_cost")
+        throw std::invalid_argument("breach_algorithm_choice must be lindsay2016 or least_cost; got '" +
+                                    o.breach_algorithm_choice + "'");
+    lsdtt_raster_cpu src = burned;
+    if (o.carve_before_fill)
+    {
+        if (o.breach_algorithm_choice == "least_cost") src = breach_depressions_least_cost(burned, o.breach);
+        else src = breach_depressions(burned, o.n_threads);
+    }
+    return fill_pits(src, o.fill_min_slope, o.n_threads);
+}
+
+corridor_burn_checks check_corridor_burn(const burn_corridor_result& cr, const lsdtt_raster_cpu& burned,
+                                         const lsdtt_raster_cpu& final_dem)
+{
+    corridor_burn_checks out;
+    out.n_paths = static_cast<int>(cr.paths.size());
+    std::vector<uint8_t> on_line(burned.get_data().size(), 0);
+    for (const auto& p : cr.paths)
+        for (const auto c : p.cells) on_line[static_cast<size_t>(c)] = 1;
+    const auto& a = burned.get_data();
+    const auto& b = final_dem.get_data();
+    const auto& m = burned.get_mask();
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        if (!m[i] || a[i] == b[i]) continue;
+        if (on_line[i])
+        {
+            ++out.n_line_cells_changed;
+            out.max_line_change_m = std::max(out.max_line_change_m, std::fabs(static_cast<double>(b[i]) - a[i]));
+        }
+        else ++out.n_other_cells_changed;
+    }
+    for (int which = 0; which < 2; ++which)
+    {
+        const auto& z = which == 0 ? a : b;
+        int& n = which == 0 ? out.n_rising_after_burn : out.n_rising_final;
+        double& mx = which == 0 ? out.max_rise_after_burn_m : out.max_rise_final_m;
+        auto& ids = which == 0 ? out.rising_after_burn_path_ids : out.rising_final_path_ids;
+        for (const auto& p : cr.paths)
+        {
+            bool rises = false;
+            for (size_t i = 1; i < p.cells.size(); ++i)
+            {
+                const double rise = static_cast<double>(z[static_cast<size_t>(p.cells[i])]) -
+                                    static_cast<double>(z[static_cast<size_t>(p.cells[i - 1])]);
+                if (rise > 0.0) { rises = true; mx = std::max(mx, rise); }
+            }
+            if (rises) { ++n; ids.push_back(p.path_id); }
+        }
+    }
+    return out;
+}
+
+const std::vector<std::string>& burned_profile_columns()
+{
+    static const std::vector<std::string> c = {
+        "path_id", "path_rank", "reach_id", "name", "point_index", "distance_m", "flow_distance_m", "x", "y",
+        "z_original", "z_cleaned", "z_profile", "z_final", "pit_filled", "pit_id", "is_record_low",
+        "is_rejected_low", "drainage_area_m2", "chi", "joins_path_id", "join_distance_m", "starts_on_path_id"};
+    return c;
+}
+
+std::vector<burned_profile_row> burned_profile_rows(const burn_corridor_result& cr, const lsdtt_raster_cpu& final_dem)
+{
+    std::vector<burned_profile_row> rows;
+    const auto& zf = final_dem.get_data();
+    for (const auto& p : cr.paths)
+        for (size_t i = 0; i < p.cells.size(); ++i)
+        {
+            const auto& rc = cr.reaches[static_cast<size_t>(p.cell_reach[i])];
+            burned_profile_row r;
+            r.path_id = p.path_id;
+            r.path_rank = p.path_rank;
+            r.reach_id = rc.reach_id;
+            r.name = rc.name;
+            r.point_index = static_cast<long>(i);
+            r.distance_m = p.distance_m[i];
+            r.flow_distance_m = p.flow_distance_m[i];
+            r.x = p.xy[i].x;
+            r.y = p.xy[i].y;
+            r.z_original = p.z_original[i];
+            r.z_cleaned = p.z_cleaned[i];
+            r.z_profile = p.z_profile[i];
+            r.z_final = zf[static_cast<size_t>(p.cells[i])];
+            r.pit_filled = p.z_cleaned[i] > p.z_original[i] ? 1 : 0;
+            r.pit_id = p.pit_id[i];
+            r.is_record_low = static_cast<int>(p.is_record_low[i]);
+            r.is_rejected_low = static_cast<int>(p.is_rejected_low[i]);
+            r.drainage_area_m2 = p.drainage_area_m2[i];
+            r.chi = p.chi[i];
+            r.joins_path_id = p.joins_path_id;
+            r.join_distance_m = p.join_distance_m;
+            r.starts_on_path_id = p.starts_on_path_id;
+            rows.push_back(std::move(r));
+        }
+    return rows;
+}
+
+lsdtt_raster_cpu corridor_burn_depth(const lsdtt_raster_cpu& original, const lsdtt_raster_cpu& final_dem)
+{
+    lsdtt_raster_cpu depth = final_dem;
+    auto& d = depth.get_data_array();
+    const auto& o = original.get_data_array();
+    const auto& m = original.get_mask_array();
+    const float nd = depth.get_meta().no_data_value;
+    for (int r = 0; r < depth.get_meta().n_rows; ++r)
+        for (int c = 0; c < depth.get_meta().n_cols; ++c)
+        {
+            const float v = m(r, c) ? o(r, c) - d(r, c) : nd;
+            d(r, c) = (m(r, c) && std::fabs(v) > 1e-6f) ? v : nd;
+        }
+    return depth;
 }
 
 } // namespace lsdtt
