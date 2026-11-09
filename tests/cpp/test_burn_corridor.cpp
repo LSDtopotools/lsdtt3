@@ -619,6 +619,42 @@ int main()
         check("interior end: drained", ro.r.n_ends_drained == 1 && ro.r.n_cells_daylighted > 0,
               num(ro.r.n_ends_drained) + " ends, " + num(ro.r.n_cells_daylighted) + " cells");
         check_conditioned("interior end", dem, ro);
+        // The route is recorded: one, to the edge, from the path's last cell,
+        // over the dam, descending in the burned DEM, its lowered cells the
+        // ones counted as daylighted.
+        check("interior end: one exit route, exit_type edge, to_path_id -1",
+              ro.r.exit_routes.size() == 1 && ro.r.exit_routes[0].exit_type == "edge" &&
+                  ro.r.exit_routes[0].to_path_id == -1,
+              num(ro.r.exit_routes.size()));
+        if (ro.r.exit_routes.size() == 1)
+        {
+            const auto& xr = ro.r.exit_routes[0];
+            const auto& p = ro.r.paths.at(0);
+            const auto& g = dem.get_meta();
+            const std::int64_t last = xr.cells.back();
+            const int lr = static_cast<int>(last / g.n_cols), lc = static_cast<int>(last % g.n_cols);
+            const bool on_edge = lr == 0 || lc == 0 || lr == g.n_rows - 1 || lc == g.n_cols - 1;
+            check("exit route: starts at the path's last cell, ends on the DEM edge",
+                  xr.path_id == p.path_id && xr.cells.front() == p.cells.back() && on_edge,
+                  num(lr) + "," + num(lc));
+            bool crosses_dam = false, descends = true;
+            double len = 0.0;
+            for (size_t q = 0; q < xr.cells.size(); ++q)
+            {
+                if (xr.cells[q] % g.n_cols == 50) crosses_dam = true;
+                if (q > 0)
+                {
+                    len += std::hypot(xr.xy[q].x - xr.xy[q - 1].x, xr.xy[q].y - xr.xy[q - 1].y);
+                    if (zat(ro.out, xr.cells[q]) > zat(ro.out, xr.cells[q - 1])) descends = false;
+                }
+            }
+            check("exit route: crosses the dam, descends, length along its cells",
+                  crosses_dam && descends && std::fabs(len - xr.length_m) < 1e-6 && xr.xy.size() == xr.cells.size(),
+                  num(xr.length_m));
+            check("exit route: lowered cells = n_cells_daylighted, the dam cut over 4 m",
+                  xr.n_cells_lowered == ro.r.n_cells_daylighted && xr.max_cut_m > 4.0,
+                  num(xr.n_cells_lowered) + " " + num(xr.max_cut_m));
+        }
     }
 
     // ===== cut cap in 2-D =========================================================

@@ -643,7 +643,15 @@ int main(int argc, char* argv[])
         "<write_fname>_burned.tif (the carved elevation surface) and "
         "<write_fname>_burned_network_lines.fgb plus _burned_network_junctions.fgb "
         "(the D8 stream network extracted from the burned DEM, for checking that "
-        "flow paths route correctly under roads and other obstructions).",
+        "flow paths route correctly under roads and other obstructions). In "
+        "burn_to_corridor mode, writes <write_fname>_burned.tif, "
+        "_corridor_channels (one line per reach: the channel used, or the vector "
+        "line if skipped) and _exit_routes (one line per channel end inside the DEM: "
+        "the route lowered to drain it to the DEM edge or NoData, exit_type edge, or to "
+        "a lower cell of another line, exit_type line, or of an earlier end's route, exit_type "
+        "exit_route; to_path_id names the line or route reached; max_cut_m is the deepest cut "
+        "below the input DEM on the cells the route lowered; empty when every end is on the edge "
+        "or on another line), in write_vector_format.",
         "snap_to_network: junction gap repair", "switch", ""};
 
     bool_default_map["write_channel_score_raster"] = false;
@@ -1299,6 +1307,27 @@ int main(int argc, char* argv[])
                                                static_cast<std::int64_t>(rc.n_rejected_lows)});
                 }
                 vw.finish_vector_write();
+
+                // The routes that drain channel ends inside the DEM.
+                const std::string xf = pp.make_output_path("_exit_routes", lsdtt::output_extension(vf));
+                std::cout << "Writing: " << xf << " (" << cr.exit_routes.size() << " route(s))\n";
+                lsdtt::lsdtt_vector_schema xs;
+                xs.field_names = {"path_id", "exit_type", "to_path_id", "length_m", "n_cells", "n_cells_lowered",
+                                  "max_cut_m"};
+                xs.field_types = {ft::int64_type, ft::string_type, ft::int64_type, ft::double_type, ft::int64_type,
+                                  ft::int64_type, ft::double_type};
+                lsdtt::lsdtt_data_loader xw;
+                xw.begin_vector_write(xf, "exit_routes", xs, final_dem.get_meta().crs_wkt, vf,
+                                      bf["calculate_spatial_index"]);
+                for (const auto& xr : cr.exit_routes)
+                {
+                    if (xr.xy.size() < 2) continue;
+                    xw.write_line(xr.xy, {static_cast<std::int64_t>(xr.path_id), xr.exit_type,
+                                          static_cast<std::int64_t>(xr.to_path_id), xr.length_m,
+                                          static_cast<std::int64_t>(xr.cells.size()),
+                                          static_cast<std::int64_t>(xr.n_cells_lowered), xr.max_cut_m});
+                }
+                xw.finish_vector_write();
             }
 
             if (bf["write_burned_profiles_csv"])

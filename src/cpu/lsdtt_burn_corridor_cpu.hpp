@@ -192,6 +192,26 @@ struct burn_corridor_path
     double max_raise_m = 0.0;
 };
 
+// The route that drains a channel end inside the DEM (a path that ends neither
+// on the DEM edge nor on another path): the cheapest route from the end to the
+// DEM edge or NoData ("edge"), to a lower cell of another line ("line"), or to
+// a lower cell of an earlier end's exit route ("exit_route"). The route's
+// cells are lowered so it drains, then held fixed. Recorded for checking; the
+// DEM is the same with or without the record.
+struct burn_corridor_exit_route
+{
+    int path_id = -1;                 // the path whose end is drained
+    std::string exit_type;            // edge, line, exit_route
+    int to_path_id = -1;              // line: the path reached; exit_route: the path
+                                      // whose route is reached; edge: -1
+    std::vector<std::int64_t> cells;  // from the path's last cell to the exit cell
+    std::vector<lsdtt_xy> xy;         // their cell centres
+    double length_m = 0.0;            // along the route
+    long n_cells_lowered = 0;         // route cells whose elevation changed
+    double max_cut_m = 0.0;           // largest lowering below the original DEM of the cells
+                                      // this route set (not the path's end or a fixed exit cell)
+};
+
 struct burn_corridor_result
 {
     std::vector<burn_corridor_reach> reaches;
@@ -209,6 +229,7 @@ struct burn_corridor_result
     int n_pin_conflicts = 0;
     int n_cut_cap_exceeded = 0;
     int n_ends_drained = 0;
+    std::vector<burn_corridor_exit_route> exit_routes;   // one per drained end
     long n_cells_daylighted = 0;      // on those exits
     long n_offline_cells_carved = 0;  // off the line, below the original DEM
     long n_offline_cells_raised = 0;  // off the line, above the original DEM (fill and banks)

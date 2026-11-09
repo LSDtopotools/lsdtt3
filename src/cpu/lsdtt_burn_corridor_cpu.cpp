@@ -929,8 +929,11 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         }
         return raised;
     };
+    // which exit route (by the drained path's id) fixed a cell, -1 if none
+    std::vector<int> route_of(static_cast<size_t>(ncell), -1);
     auto drain_ends = [&]()
     {
+        std::fill(route_of.begin(), route_of.end(), -1);
         for (const auto& rp : res.paths)
         {
             if (rp.cells.empty() || rp.joins_path_id >= 0) continue;
@@ -972,6 +975,7 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
             for (std::int64_t v = exit_cell;; v = prev[v]) { route.push_back(v); if (v == e) break; }
             std::reverse(route.begin(), route.end());
             const bool to_line = fixed[static_cast<size_t>(exit_cell)] != 0;
+            const long daylighted_before = res.n_cells_daylighted;
             if (to_line)
             {
                 // graded exactly from the end to the lower line cell
@@ -1000,6 +1004,31 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
                 }
             }
             ++res.n_ends_drained;
+            burn_corridor_exit_route xr;
+            xr.path_id = rp.path_id;
+            xr.exit_type = "edge";
+            if (to_line)
+            {
+                const size_t fx = static_cast<size_t>(exit_cell);
+                if (owner_path[fx] >= 0) { xr.exit_type = "line"; xr.to_path_id = owner_path[fx]; }
+                else if (route_of[fx] >= 0) { xr.exit_type = "exit_route"; xr.to_path_id = route_of[fx]; }
+                else xr.exit_type = "line";
+            }
+            xr.cells = route;
+            // the cells this route set: all but the path's end, and, for a line
+            // exit, all but the (already fixed) exit cell
+            const size_t q_end = to_line ? route.size() - 1 : route.size();
+            for (size_t q = 0; q < route.size(); ++q)
+            {
+                xr.xy.push_back(g.centre(route[q]));
+                if (q > 0) xr.length_m += g.step(route[q - 1], route[q]);
+                if (q == 0 || q >= q_end) continue;
+                const size_t f = static_cast<size_t>(route[q]);
+                route_of[f] = rp.path_id;
+                xr.max_cut_m = std::max(xr.max_cut_m, static_cast<double>(zo[f]) - static_cast<double>(work[f]));
+            }
+            xr.n_cells_lowered = res.n_cells_daylighted - daylighted_before;
+            res.exit_routes.push_back(std::move(xr));
         }
     };
     // where each line cell occurs: (path, index), for the cross-path raise
@@ -1089,6 +1118,7 @@ burn_corridor_result burn_vector_network_to_corridor(const lsdtt_raster_cpu& ori
         work = zo;
         fixed.assign(static_cast<size_t>(ncell), 0);
         res.n_ends_drained = 0;
+        res.exit_routes.clear();
         res.n_cells_daylighted = 0;
         res.n_bank_cells = 0;
         res.n_bank_cells_at_raised_line = 0;

@@ -1916,6 +1916,9 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect corr_burned_profiles.csv
             --expect corr_corridor_channels.fgb
             --expect corr_burn_depth.tif
+            --expect corr_exit_routes.fgb
+            --expect-vector-feature-min corr_exit_routes.fgb:3
+            --expect-file-contains "../stdout.log:_exit_routes.fgb (3 route(s))"
             --expect-file-contains "corr_burned_profiles.csv:path_id,path_rank,reach_id,name,point_index,distance_m,flow_distance_m,x,y,z_original,z_cleaned,z_profile,z_final,pit_filled,pit_id,is_record_low,is_rejected_low,drainage_area_m2,chi,joins_path_id,join_distance_m,starts_on_path_id"
             --expect-file-contains "../stdout.log:Lines: 5, nodes 8, reaches 5: fitted 5, skipped 0"
             --expect-file-contains "../stdout.log:changed 0 line cell(s) (largest change 0 m) and 0 other cell(s)"
