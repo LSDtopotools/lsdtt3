@@ -56,8 +56,9 @@ for a pre-release.
 
 ## Building everything locally (`make_all_packages.sh`)
 
-**If your goal is "produce every Linux-side artefact without spending GitHub
-Actions minutes", this is the script.** It wraps the separate release paths:
+**If your goal is "produce every Linux-side artefact on this machine", to
+rehearse a release or to build the `.deb` and conda package that CI does not
+build, this is the script.** It wraps the separate release paths:
 
 | | artefact | what it wraps |
 |---|---|---|
@@ -90,8 +91,8 @@ the script checks the tag before compiling anything: `vX.Y.Z` must match the
 tag's own `CMakeLists.txt`, the tag minus its `v` must match its
 `pyproject.toml`, and every version copy in the tag must agree. Tags up to
 `v0.6.0` predate the shared number, so build them with `--skip wheel`. The run
-ends with a list of what the release still needs: the Windows and macOS bundles
-and the `gh release upload` command.
+ends with what the release still needs from you: uploading the `.deb` and the
+conda package, which are the only artefacts CI does not build.
 
 ### Clean versus dirty
 
@@ -254,30 +255,39 @@ git tag -a v0.5.1 -m "lsdtt3 0.5.1"
 git push origin v0.5.1           # pushing the branch does NOT push tags
 ```
 
-**4. Wait for Actions**, which builds and publishes the Linux `core` bundle
-(see [route 1](#route-1--tag-and-push-let-actions-build-it) for what it
-actually runs):
+**4. Wait for Actions.** `release.yml` builds, in this order (see
+[route 1](#route-1--tag-and-push-let-actions-build-it)):
+
+1. the Linux `core` bundle and the QGIS plugin zip, and creates the release;
+2. then, only if that passed: the Windows and macOS (`arm64`, `x86_64`)
+   backends, `qgis` profile, attached as each finishes;
+3. then the Python wheels for every platform (`python-wheels.yml`), attached
+   to the same release.
 
 ```bash
 gh run list --workflow "Build and release" --limit 3
-gh release view v0.5.1
+gh run watch                            # follow the newest run
+gh release view v0.5.1                  # what is attached so far
 ```
 
-**5. Build and attach the rest.** Every tag gets every artefact, so `v0.5.1` is
-one consistent snapshot; while the repository is private only the Linux bundle
-is built by Actions, so a release is published in stages:
+A cold Windows vcpkg cache (the first release, or after a `VCPKG_TAG` bump)
+builds GDAL from source and can take hours; later releases reuse the cache.
+
+**5. Attach the local-only packages and publish.** CI does not build the
+Debian or conda packages:
 
 ```bash
-tools/make_all_packages.sh --clean --tag v0.5.1 --skip wheel   # .deb, conda, plugin zip
-gh release upload v0.5.1 dist/v0.5.1/*
+tools/make_all_packages.sh --clean --tag v0.5.1 --only deb,conda
+gh release upload v0.5.1 dist/v0.5.1/*.deb dist/v0.5.1/*.conda
 ```
 
-then the Windows and macOS bundles, built by hand on those machines (see
-[Attaching the Windows and macOS bundles](#attaching-the-windows-and-macos-bundles)).
-Add the wheel only if this release supports the Python API
-(`docs/developer_notes/publishing_to_pypi.md`). Finally edit the release notes:
-the workflow writes a "Components" list (what changed since the previous
-release) and an "Artefacts" list; correct the latter to what is attached.
+If a CI job failed, rerun it from the Actions page, or build that artefact by
+hand (see [Building the Windows and macOS bundles by hand](#building-the-windows-and-macos-bundles-by-hand))
+and attach it with `gh release upload --clobber`. Publish the wheels to PyPI if
+wanted (`docs/developer_notes/publishing_to_pypi.md`), copy the files to the
+personal download directory, and check the release notes: the workflow writes a
+"Components" list (what changed since the previous release) and an "Artefacts"
+list; correct the latter if a job did not attach its file.
 
 **6. Sanity checks** — before step 3, and after step 4:
 
@@ -316,10 +326,10 @@ tools/set_version.py 0.5.2
 git commit -am "Bump version to 0.5.2"
 git push -u origin release/0.5
 git tag -a v0.5.2 -m "lsdtt3 0.5.2"
-git push origin v0.5.2              # release.yml builds the Linux bundle
+git push origin v0.5.2              # release.yml builds every CI artefact
 
-# 5. build and publish the rest from that tag exactly as for any release
-tools/make_all_packages.sh --clean --tag v0.5.2 --skip wheel
+# 5. attach the local-only packages from that tag exactly as for any release
+tools/make_all_packages.sh --clean --tag v0.5.2 --only deb,conda
 ```
 
 `main` is left alone: **no merge back.** The fix is already on `main` from
@@ -356,17 +366,17 @@ Two routes. Both build the identical bundle, because both end up running
 
 |  | Route 1 — push a tag, Actions builds | Route 2 — build and publish locally |
 |---|---|---|
-| Runs `make_release.sh` | `ubuntu-22.04` runner | your machine |
+| Runs `make_release.sh` | `ubuntu-22.04` runner, then Windows, macOS and wheel jobs | your machine (Linux bundle only) |
 | Version comes from | the tag name, passed by the workflow as `--version` | your `--version` flag |
 | CLI profile | `core` (the script default; the workflow passes no `--profile`) | whatever you pass |
 | Tag | **must already exist** — pushing it is the trigger | created by `gh` if absent, at default-branch tip |
 | Creates the GitHub release | `softprops/action-gh-release` step in the workflow | `gh release create`, inside the script |
 | Release notes | generated **plus a commit-author roll-call** (`git shortlog` since the previous tag) | `--generate-notes` only — no roll-call |
-| Actions minutes | one Linux build | none |
+| Other platforms | built and attached by the workflow | build each by hand on its platform |
 
-Route 1 is the one to use for an official release: it produces the fuller
-notes and it is the path that stays exercised. Route 2 is for prereleases and
-one-off bundles where you do not want to spend Actions minutes.
+Route 1 is the one to use for an official release: it builds every platform,
+produces the fuller notes, and is the path that stays exercised. Route 2 is for
+prereleases and one-off Linux bundles.
 
 ### Route 1 — tag and push, let Actions build it
 
@@ -375,7 +385,7 @@ git tag -a v0.5.1 -m "lsdtt3 0.5.1"
 git push origin v0.5.1
 ```
 
-That matches the workflow's `on: push: tags: - "v*"` trigger. The workflow then
+That matches the workflow's `on: push: tags: - "v*"` trigger. Its first job
 installs the build dependencies, runs
 
 ```bash
@@ -384,18 +394,22 @@ tools/make_release.sh --version 0.5.1      # VERSION="${GITHUB_REF_NAME#v}"
 
 — i.e. **exactly the command you would run locally**, without `--publish` — and
 a separate `softprops/action-gh-release` step creates the release and attaches
-`dist/lsdtt3-backend-linux-*.tar.gz`. So `make_release.sh` builds and packages
-in both routes; the difference is that in route 1 the *publishing* is done by
-the workflow instead of by the script's `--publish`.
+`dist/lsdtt3-backend-linux-*.tar.gz` and the plugin zip. So `make_release.sh`
+builds and packages in both routes; the difference is that in route 1 the
+*publishing* is done by the workflow instead of by the script's `--publish`.
+The later jobs build the Windows and macOS backends and the wheels and attach
+them to that release.
 
 The workflow can also be run manually from the Actions tab (`workflow_dispatch`).
-With no tag it builds at the current CMakeLists.txt version and uploads the
-bundle as a 14-day workflow artifact — it does not create a release.
+With no tag it builds the Linux, Windows and macOS backends and the plugin zip
+at the current CMakeLists.txt version and keeps them as 14-day workflow
+artefacts. It creates no release and builds no wheels, which need a tag. That is
+the way to try the Windows and macOS builds before tagging.
 
 To push every local tag at once (rarely what you want — it publishes anything
 you were still thinking about): `git push origin --tags`.
 
-### Route 2 — build and publish locally, zero Actions minutes
+### Route 2 — build and publish locally
 
 **Do not pre-create a local tag for this route.** `gh release create` (which
 `--publish` calls) says it plainly: *"If a matching git tag does not yet exist,
@@ -419,10 +433,13 @@ if the release already exists the script uploads with `--clobber`.
 > proper annotated tag on the remote, push the tag first and let route 1 do the
 > build.
 
-### Attaching the Windows and macOS bundles
+### Building the Windows and macOS bundles by hand
 
-Neither is built by CI: you build and package them by hand on that machine,
-then attach the artefact to the release the Linux build already created.
+`release.yml` builds both on every tag. Build one by hand only to replace a
+failed CI build or to test a change, then attach it to the release with
+`gh release upload --clobber`. Both ship the `qgis` profile: they exist to back
+the QGIS plugin, and the full CLI set on Windows or macOS is the Linux bundle
+under WSL2 or in a VM.
 
 **Each packaging script looks in a specific build directory**, and they do not
 all use the same one. Keep to these conventions and the commands below work
@@ -432,7 +449,7 @@ unedited:
 |---|---|---|---|---|
 | Linux | `build/release` | `build` — but `make_release.sh` passes `--build-dir build/release` for you | `core` | `dist/lsdtt3-backend-linux-x86_64-core-v<version>.tar.gz` |
 | Windows | `build/windows-qgis` | `build/windows-qgis` ✔ nothing to pass | `qgis` | `dist/lsdtt3-backend-win64-qgis-v<version>.zip` |
-| macOS | `build/macos-core` | `build/macos-core` ✔ nothing to pass | `core` | `dist/lsdtt3-backend-macos-<arch>-core-v<version>.tar.gz` |
+| macOS | `build/macos-qgis` | `build/macos-qgis` ✔ nothing to pass | `qgis` | `dist/lsdtt3-backend-macos-<arch>-qgis-v<version>.tar.gz` |
 
 The build directory is separate per platform on purpose: the Windows tree is
 configured with a different, deliberately minimal option set (no OpenMP, no
@@ -498,24 +515,21 @@ description with `-v`, so a dirty build remains identifiable.
 
 #### macOS
 
-Native macOS building and bundling are supported but **not yet integrated into CI** —
-each release requires a manual native build on a Mac. See
+See
 [`docs/developer_notes/building_on_macos.md`](../docs/developer_notes/building_on_macos.md)
 for the full walkthrough (Xcode CLT, Homebrew, CMake configuration, and bundling).
-
-The `package_macos_backend.sh` script was written on a Linux machine and has not yet
-run on real macOS hardware. The self-containment check fails hard, so the first run
-will report exactly what is missing rather than shipping a broken bundle — but it may
-find issues the Linux analogue does not anticipate.
+These are the commands the `build-macos` job of `release.yml` runs:
 
 ```bash
-cmake -S . -B build/macos-core -DCMAKE_BUILD_TYPE=Release
-cmake --build build/macos-core -j"$(sysctl -n hw.ncpu)"
+brew install cmake gdal fftw libomp netcdf eigen pkgconf
+cmake -S . -B build/macos-qgis -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build build/macos-qgis -j"$(sysctl -n hw.ncpu)" \
+    --target $(awk '$1 == "qgis" { print $2 }' tools/cli_profiles.txt)
 
-# BuildDir defaults to build/macos-core, cli-profile to core
+# build-dir defaults to build/macos-qgis, cli-profile to qgis
 tools/package_macos_backend.sh --version 0.5.1
 
-gh release upload v0.5.1 dist/lsdtt3-backend-macos-arm64-core-v0.5.1.tar.gz
+gh release upload --clobber v0.5.1 dist/lsdtt3-backend-macos-arm64-qgis-v0.5.1.tar.gz
 ```
 
 Bundles are architecture-specific: package on Apple Silicon for `arm64` users,
@@ -625,8 +639,8 @@ scripts).
 
 | Profile | Contents | Default for |
 |---|---|---|
-| `qgis` | small subset wired into the QGIS plugin | Windows bundles |
-| `core` | tested tools for official releases | Linux and macOS bundles, CI |
+| `qgis` | small subset wired into the QGIS plugin | Windows and macOS bundles |
+| `core` | tested tools for official releases | Linux bundles |
 | `all` | every current `lsdtt_cli()` target found in the build dir (excl. `lsdtt-test-*`) | local releases only |
 
 `core` has a rule: a CLI belongs in it when at least one CTest test exercises
@@ -647,9 +661,8 @@ packaging scripts, or `-CliProfile` on the PowerShell script. An explicit
 The profile appears in the bundle filename, e.g.
 `lsdtt3-backend-linux-x86_64-core-v0.5.1.tar.gz`.
 
-Windows and macOS bundles are built by hand on the respective machines
-with the per-platform scripts below, then attached with
-`gh release upload v<version> dist/<bundle>`.
+`release.yml` builds the Windows and macOS bundles with the per-platform
+scripts below; they also run by hand on those machines.
 
 There is one packaging script per platform, all producing the same bundle
 layout (`bin/`, `lib/` on Unix, `share/gdal`, `share/proj`, `setenv.*`,
@@ -659,7 +672,7 @@ layout (`bin/`, `lib/` on Unix, `share/gdal`, `share/proj`, `setenv.*`,
 |---|---|---|
 | `package_linux_backend.sh` | Linux x86_64 | `dist/lsdtt3-backend-linux-<arch>-<profile>-v<version>.tar.gz` |
 | `package_windows_backend.ps1` | Windows x64 | `dist/lsdtt3-backend-win64-<profile>-v<version>.zip` |
-| `package_macos_backend.sh` | macOS (arm64/x86_64) | `dist/lsdtt3-backend-macos-<arch>-<profile>-v<version>.tar.gz` *UNTESTED*|
+| `package_macos_backend.sh` | macOS (arm64/x86_64) | `dist/lsdtt3-backend-macos-<arch>-<profile>-v<version>.tar.gz` |
 
 Bundles are aimed at (often non-technical) end users: download, unpack, run
 one activation command, and the tools work. Each bundle contains a generated
@@ -757,7 +770,10 @@ lsdtt-raster-preprocessing --help
 
 `setenv.sh` must be **`source`d**, not run with `bash`: it only exports
 environment variables (`PATH`, `LD_LIBRARY_PATH`, `GDAL_DATA`, `PROJ_DATA`),
-which vanish with the child shell if executed.
+which vanish with the child shell if executed. Because it runs inside the
+user's own shell it sets no shell options: an earlier version's
+`set -euo pipefail` stayed on after sourcing and closed the terminal on the
+next failing command.
 
 ### Google Colab
 
@@ -831,10 +847,11 @@ later cell.
 
 ## `package_macos_backend.sh`
 
-**Status: UNTESTED** — written by analogy with the Linux script on a machine
-without macOS. The self-containment check fails hard, so the first run on a
-real Mac reports exactly what (if anything) is still wrong rather than
-shipping a broken bundle.
+**Status: first real runs are in CI.** It was written without a Mac, so it was
+reviewed and partly tested off-Mac: its dependency resolver and its dyld
+load-log parser are tested against a fake `otool`, and the C++ passes a clang +
+libc++ syntax check. Every check below fails hard, so a first run that goes
+wrong names what is wrong instead of shipping a broken bundle.
 
 ### What it does
 
@@ -842,17 +859,29 @@ shipping a broken bundle.
 - resolves the transitive dylib closure with `otool -L` and stages each
   library as a regular file named by its install-name basename (no
   symlinks); `/usr/lib` and `/System` libraries are excluded (they live in
-  the dyld shared cache and must not be copied)
+  the dyld shared cache and must not be copied). `@rpath/` references are
+  resolved the way dyld does it, through the `LC_RPATH` entries of the
+  referencing file and then of the executable; several Homebrew kegs point an
+  `@rpath` into another keg
 - rewrites install names with `install_name_tool`: library references become
   `@rpath/<name>`, executables get rpath `@executable_path/../lib`, staged
   dylibs get id `@rpath/<name>` — so no `DYLD_*` environment variables are
   needed at runtime (SIP strips them anyway)
+- **deletes every other `LC_RPATH`**. The build tree's and Homebrew's rpaths
+  (`/opt/homebrew/lib`, the libomp keg, ...) would otherwise survive, and dyld
+  searches them before the bundle's: on a user's Mac that has Homebrew, the
+  bundle would load that user's GDAL and PROJ
 - re-signs every modified binary ad-hoc (`codesign --force --sign -`),
   required on Apple Silicon because `install_name_tool` invalidates
   signatures
 - verifies every reference of every staged binary is either OS-provided or
-  an `@rpath` reference satisfied in `lib/`; aborts otherwise
-- copies GDAL/PROJ data; writes `setenv.sh` (PATH + data dirs only),
+  an `@rpath` reference satisfied in `lib/`, and that no foreign rpath is
+  left; aborts otherwise
+- runs every CLI with `-v` under `DYLD_PRINT_LIBRARIES=1` and aborts if any
+  image was loaded from outside the bundle and the OS. The build machine has
+  Homebrew, so this is where a leak would show
+- copies GDAL/PROJ data; writes `setenv.sh` (PATH + data dirs only; sourced
+  from bash or zsh, and sets no shell options),
   end-user `README.md` (including the Gatekeeper quarantine step:
   `xattr -dr com.apple.quarantine <bundle>`), `manifest.json`,
   `THIRD_PARTY_NOTICES.txt`; builds the tar.gz
@@ -861,9 +890,9 @@ shipping a broken bundle.
 
 - macOS build host with Xcode command-line tools (`otool`,
   `install_name_tool`, `codesign`), `gdal-config`, `python3`
-- completed macOS build in `build/macos-core` (the default; mirrors
+- completed macOS build in `build/macos-qgis` (the default; mirrors
   `build/windows-qgis` on Windows so the two platform trees never collide —
-  override with `--build-dir`)
+  override with `--build-dir`). The default profile is `qgis`
 - bundles are architecture-specific: package on an Apple Silicon Mac for
   `arm64` users, on an Intel Mac (or with a cross-built tree and
   `--arch x86_64`) for `x86_64` users

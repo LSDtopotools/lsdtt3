@@ -50,8 +50,6 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra
 
 ## Installation
 
-`lsdtt3` is currently in **private beta**.
-
 Everything below installs a pre-built release package: no compiler, no GDAL
 install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
 and troubleshooting, are in [the installation guide](docs/what_is_lsdtt3/install_lsdtt3.md).**
@@ -75,18 +73,20 @@ source lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh
 lsdtt-channel-extraction --help
 ```
 
-`setenv.sh` must be **`source`d**, not run with `bash` — it only exports
-environment variables, which would vanish with a child shell. It applies to the
-current terminal; append the same line (with the full path) to `~/.bashrc` to
-make it permanent.
+`setenv.sh` must be **`source`d** (from bash or zsh), not run with `bash` — it
+only exports environment variables, which would vanish with a child shell. It
+applies to the current terminal; append the same line (with the full path) to
+`~/.bashrc` to make it permanent.
 
 On **Windows**, first `wsl --install` from an administrator PowerShell, install
 **Ubuntu 22.04 LTS** from the Microsoft Store, then run the above inside it.
 Your Windows drives are visible under `/mnt/c/`. A native Windows `.zip` also
 exists but ships a reduced tool set — see the install guide.
 
-On **macOS** there is no package yet; run the Linux one inside a Multipass
-Ubuntu VM (`brew install --cask multipass`).
+On **macOS**, run the Linux package inside a Multipass Ubuntu VM
+(`brew install --cask multipass`) for the full tool set. Releases after 0.8.0
+also include native macOS packages (Apple Silicon and Intel) with the reduced
+QGIS tool set, as the backend for the QGIS plugin.
 
 On **Google Colab**, `!source setenv.sh` does not work — set the environment
 from Python instead. The install guide has the cell to paste.
@@ -98,8 +98,9 @@ release go together.
 
 ### Python package
 
-`lsdtt3` is not on PyPI. For releases that support the Python API, wheels are
-attached to the GitHub release; each one is for one Python version (`cp312` is
+`lsdtt3` is not on PyPI yet. Wheels for Linux, macOS and Windows are attached
+to every GitHub release after 0.8.0 (earlier releases have them only where the
+Python API was supported); each one is for one Python version (`cp312` is
 Python 3.12, `cp313` is Python 3.13). Keep the wheel's original file name and
 install it into a virtual, conda or pixi environment:
 

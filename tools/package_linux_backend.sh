@@ -437,15 +437,24 @@ fi
 # which is the Google Colab case described in the README below -- each `!` line
 # is a separate shell there, so the exports never persist.
 cat > "$STAGE_DIR/setenv.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PATH="$ROOT_DIR/bin:${PATH:-}"
-export LD_LIBRARY_PATH="$ROOT_DIR/lib:${LD_LIBRARY_PATH:-}"
-export GDAL_DATA="$ROOT_DIR/share/gdal"
-export PROJ_DATA="$ROOT_DIR/share/proj"
+# Source this file, in bash or zsh:   source /path/to/bundle/setenv.sh
+#
+# Deliberately sets no shell options: a sourced file's `set -e` / `set -u` stay
+# on in YOUR shell, which then exits on the next failing command.
+if [ -n "${BASH_SOURCE:-}" ]; then
+    _lsdtt_src="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+    eval '_lsdtt_src="${(%):-%x}"'
+else
+    _lsdtt_src="$0"
+fi
+_lsdtt_root="$(cd "$(dirname "$_lsdtt_src")" && pwd)"
+export PATH="$_lsdtt_root/bin:${PATH:-}"
+export LD_LIBRARY_PATH="$_lsdtt_root/lib:${LD_LIBRARY_PATH:-}"
+export GDAL_DATA="$_lsdtt_root/share/gdal"
+export PROJ_DATA="$_lsdtt_root/share/proj"
 export PROJ_LIB="$PROJ_DATA"
+unset _lsdtt_src _lsdtt_root
 EOF
 chmod +x "$STAGE_DIR/setenv.sh"
 

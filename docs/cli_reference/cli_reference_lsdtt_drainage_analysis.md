@@ -283,14 +283,14 @@ sti_term_mode: ksd
 sti_drainage_area_method: Dinf
 sti_window_radius_metres: 100.0
 
-sti_soil_fname: /mnt/c/LSDTopoTools/data/scotland_soils/hutton_series_code_min.fgb
+sti_soil_fname: /path/to/soils/hutton_series_code_min.fgb
 sti_soil_layer_name: hutton_series_code_min
-sti_landuse_fname: /mnt/c/LSDTopoTools/data/scotland_soils/sg_land_use_min.fgb
+sti_landuse_fname: /path/to/soils/sg_land_use_min.fgb
 sti_landuse_layer_name: sg_land_use_min
 
-sti_ksat_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_C_MED_KSAT.csv
-sti_spr_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SERIES_SPR.csv
-sti_sskib_fname: /mnt/c/LSDTopoTools/data/scotland_soils/SSKIB_OCT18_V1.2.xlsx
+sti_ksat_fname: /path/to/soils/SSKIB_C_MED_KSAT.csv
+sti_spr_fname: /path/to/soils/SERIES_SPR.csv
+sti_sskib_fname: /path/to/soils/SSKIB_OCT18_V1.2.xlsx
 
 sti_depth_cap_centimetres: 100.0
 sti_min_valid_depth_centimetres: 30.0

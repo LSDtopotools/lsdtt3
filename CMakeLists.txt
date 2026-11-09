@@ -151,6 +151,8 @@ option(LSDTT_OPENMP "Build with OpenMP parallelism" ON)
 set(LSDTT_HAS_OPENMP OFF)
 
 if(LSDTT_OPENMP)
+    # Apple Clang + keg-only Homebrew libomp: point FindOpenMP at the keg first.
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lsdtt_homebrew_openmp.cmake")
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
         set(LSDTT_HAS_OPENMP ON)
@@ -185,7 +187,11 @@ endif()
 # Two discovery paths:
 # 1) CMake config package (vcpkg, some Linux distros): provides the imported
 #    target FFTW3::fftw3. This is the path used by the Windows/vcpkg build.
-# 2) pkg-config (typical Linux apt install of libfftw3-dev).
+# 2) pkg-config (typical Linux apt install of libfftw3-dev; Homebrew fftw).
+#    Linked through the IMPORTED_TARGET, which carries the full library path.
+#    The bare FFTW3_LIBRARIES list holds only "fftw3" with no -L, which links
+#    on Linux (/usr/lib is a default search path) but not on Apple Silicon,
+#    where Homebrew's /opt/homebrew/lib is not.
 # =============================================================================
 set(LSDTT_HAS_FFTW OFF)
 set(LSDTT_FFTW_TARGET "")
@@ -197,9 +203,10 @@ if(FFTW3_FOUND AND TARGET FFTW3::fftw3)
 else()
     find_package(PkgConfig)
     if(PkgConfig_FOUND)
-        pkg_check_modules(FFTW3 fftw3)
+        pkg_check_modules(FFTW3 IMPORTED_TARGET fftw3)
         if(FFTW3_FOUND)
             set(LSDTT_HAS_FFTW ON)
+            set(LSDTT_FFTW_TARGET PkgConfig::FFTW3)
             message(STATUS "FFTW3 found (pkg-config) - spectral analysis enabled")
         endif()
     endif()
@@ -555,17 +562,9 @@ if(LSDTT_HAS_FFTW)
     # Give FFTW to the CPU library and the Utils library (signal1d code)
     target_compile_definitions(lsdtt3_cpu PUBLIC LSDTT_HAS_FFTW=1)
     target_compile_definitions(lsdtt3_utils PUBLIC LSDTT_HAS_FFTW=1)
-    if(LSDTT_FFTW_TARGET)
-        # CMake config path: imported target carries includes and libs
-        target_link_libraries(lsdtt3_cpu PUBLIC ${LSDTT_FFTW_TARGET})
-        target_link_libraries(lsdtt3_utils PUBLIC ${LSDTT_FFTW_TARGET})
-    else()
-        # pkg-config path
-        target_include_directories(lsdtt3_cpu PUBLIC ${FFTW3_INCLUDE_DIRS})
-        target_link_libraries(lsdtt3_cpu PUBLIC ${FFTW3_LIBRARIES})
-        target_include_directories(lsdtt3_utils PUBLIC ${FFTW3_INCLUDE_DIRS})
-        target_link_libraries(lsdtt3_utils PUBLIC ${FFTW3_LIBRARIES})
-    endif()
+    # Both discovery paths give an imported target carrying includes and libs.
+    target_link_libraries(lsdtt3_cpu PUBLIC ${LSDTT_FFTW_TARGET})
+    target_link_libraries(lsdtt3_utils PUBLIC ${LSDTT_FFTW_TARGET})
 endif()
 
 if(LSDTT_HAS_NETCDF)

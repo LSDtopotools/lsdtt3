@@ -122,6 +122,7 @@ nav:
       - Internal drainage: cli_reference/cli_reference_lsdtt_internal_drainage.md
     - Channel network analysis:
       - Channel network analysis: cli_reference/cli_reference_lsdtt_channel_network_analysis.md
+      - Slope-area analysis: cli_reference/cli_reference_lsdtt_slope_area.md
       - Chi analysis: cli_reference/cli_reference_lsdtt_chi_analysis.md
       - Cross sections: cli_reference/cli_reference_lsdtt_cross_sections.md
       - Bankfull width: cli_reference/cli_reference_lsdtt_bankfull_width.md
@@ -135,6 +136,7 @@ nav:
       - Cosmo column tool: cli_reference/cli_reference_lsdtt_cosmo_column_tool.md
     - Landscape evolution:
       - Landscape evolution model: cli_reference/cli_reference_lsdtt_lem.md
+      - Advection-diffusion model: cli_reference/cli_reference_lsdtt_advection_diffusion.md
       - Fetch lithology (Macrostrat): cli_reference/cli_reference_lsdtt_fetch_lithology.md
       - Fetch river lines: cli_reference/cli_reference_lsdtt_fetch_river_lines.md
       - Lithology to erodibility: cli_reference/cli_reference_lsdtt_lithology_erodibility.md
@@ -191,6 +193,7 @@ nav:
       - Python bindings architecture: developer_notes/python_bindings_architecture.md
     - Testing:
       - Testing and benchmarking: developer_notes/testing_and_benchmarking.md
+      - Test inventory: developer_notes/test_inventory.md
     - Packaging and release:
       - Making release packages: developer_notes/making_release_packages.md
       - Publishing to PyPI: developer_notes/publishing_to_pypi.md

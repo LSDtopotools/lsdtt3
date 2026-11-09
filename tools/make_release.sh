@@ -258,9 +258,10 @@ $v_out"
 done
 info "smoke check passed for ${#RELEASE_CLIS[@]} CLIs (profile: $CLI_PROFILE)"
 
-# The Python wheel matrix is built by hand and not for every release, so this
-# is the only check that the bindings still compile and pass their tests
-# against this C++. Exit 77 (no usable venv) is a failure here, not a skip.
+# The wheel matrix (python-wheels.yml) runs only after this script has passed
+# in release.yml's first job, so this is the cheap early check that the
+# bindings still compile and pass their tests against this C++. Exit 77 (no
+# usable venv) is a failure here, not a skip.
 smoke_args=(--repo-root "$REPO_ROOT" --work-dir "$BUILD_DIR/python_smoke"
             --python "$SMOKE_PYTHON")
 [[ "$SKIP_BUILD" -eq 1 ]] && smoke_args+=(--reuse)

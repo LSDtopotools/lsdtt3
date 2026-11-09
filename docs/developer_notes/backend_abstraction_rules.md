@@ -8,6 +8,12 @@ Instead, it uses **two different patterns** for two different kinds of component
 These rules are intended to keep the codebase consistent while allowing GPU
 support only where it is worthwhile.
 
+> **Status.** The file layouts and class names below (`*_dispatch.*`,
+> `lsdtt_dispatch_options`, `lsdtt_particle_tracer_base`, the `*_gpu` engines)
+> are the **pattern to follow**, not a list of files that exist. The only GPU
+> code in the tree today is the kernel library in `src/gpu/lsdtt_surface_gpu.*`
+> (`direct_polyfit`); see [GPU compute](gpu_compute.md) for what is built.
+
 ---
 
 ## Why these rules exist

@@ -17,11 +17,21 @@ cross-compilation path: every packaging script interrogates the native loader
 (`ldd`/`objdump` on Linux, `dumpbin` on Windows, `otool` on macOS) to work out
 what to bundle.
 
-| Platform | Built by | Script | Artefact |
-|---|---|---|---|
-| Linux x86_64 | GitHub Actions on a version tag | `tools/package_linux_backend.sh` | `lsdtt3-backend-linux-x86_64-<profile>-v<ver>.tar.gz` |
-| Windows x64 | by hand, VS developer shell | `tools/package_windows_backend.ps1` | `lsdtt3-backend-win64-<profile>-v<ver>.zip` |
-| macOS | by hand, on a Mac — **not yet in CI** | `tools/package_macos_backend.sh` | `lsdtt3-backend-macos-<arch>-<profile>-v<ver>.tar.gz` |
+| Platform | Profile | Built by | Script | Artefact |
+|---|---|---|---|---|
+| Linux x86_64 | `core` | `release.yml`, first job, on a version tag | `tools/package_linux_backend.sh` | `lsdtt3-backend-linux-x86_64-core-v<ver>.tar.gz` |
+| Windows x64 | `qgis` | `release.yml`, after Linux | `tools/package_windows_backend.ps1` | `lsdtt3-backend-win64-qgis-v<ver>.zip` |
+| macOS arm64, x86_64 | `qgis` | `release.yml`, after Linux | `tools/package_macos_backend.sh` | `lsdtt3-backend-macos-<arch>-qgis-v<ver>.tar.gz` |
+| QGIS plugin | — | `release.yml`, Linux job | `qgis_plugin/package_plugin.py` | `lsdtt3-qgis-plugin-<ver>.zip` |
+| Python wheels | — | `python-wheels.yml`, called by `release.yml` after Linux | cibuildwheel | `lsdtt3-<ver>-cp3XX-*.whl` (20) |
+
+**Windows and macOS ship the `qgis` profile only.** Those bundles exist to
+back the QGIS plugin. Anyone who wants the full CLI set on Windows uses the
+Linux bundle under WSL2, and on macOS the Linux bundle in a VM; both are the
+reference build, and faster.
+
+The same packaging scripts run locally, so any artefact can still be rebuilt
+by hand on its platform (`tools/README.md`).
 
 `tools/make_release.sh` is the single driver: resolve version → check it
 against `project(lsdtt3 VERSION ...)` → configure → **check that no optional
@@ -60,38 +70,52 @@ API break. Bump the **patch** version for fixes that need no change elsewhere.
 Components with the same major.minor work together; the QGIS plugin enforces
 that against the backend.
 
-**Every tag gets every artefact, except the Python wheel.** A tag is one
-consistent snapshot, so each artefact built from it contains everything on
-`main` at that commit. The wheel is built by hand, and only for releases where
-the Python API is supported; between wheels, `make_release.sh` builds the
-bindings once on Linux and runs their whole test suite, so a C++ change that
-breaks them stops the release. Releases are tagged on `main`; a `release/X.Y`
+**Every tag gets every artefact.** A tag is one consistent snapshot, so each
+artefact built from it contains everything on `main` at that commit. Releases
+up to 0.8.0 got wheels only by hand; from then on `release.yml` builds them on
+every tag. `make_release.sh` also builds the bindings once on Linux and runs
+their whole test suite in the first job, so a C++ change that breaks them stops
+the release before any other platform starts. Releases are tagged on `main`; a `release/X.Y`
 branch is cut only when a fix must ship while `main` holds work that should
 not. The commands, the worked example and the rebuild-without-a-version-change
 table are in `tools/README.md` ("Release cheat sheet").
 
 Which CLIs go in a bundle is a **profile** (`tools/cli_profiles.txt`, the single
-source of truth for all four scripts): `qgis` (the plugin subset, Windows
-default), `core` (Linux/macOS/CI default), `all` (local releases only). The
-profile name appears in the filename.
+source of truth for all four scripts): `qgis` (the plugin subset; Windows and
+macOS), `core` (Linux), `all` (local releases only). The profile name appears
+in the filename.
 
 ---
 
-## Why Linux is the CI build and the others are not
+## How the release workflow is ordered
 
-The **glibc of the build host is the bundle's compatibility floor.** Building
-Linux bundles on `ubuntu-22.04` in Actions gives a deliberately old,
-reproducible floor that a personal machine's rolling distro would not — that is
-the reason for CI, not convenience.
+`release.yml` runs only on `v*` tag pushes (and manual dispatch), never on
+ordinary pushes or pull requests. Its first job builds the Linux bundle and the
+plugin zip, runs the bindings tests, checks the CLI reference and the docs
+site, and creates the GitHub release. **Nothing else starts unless it
+succeeds**, so a broken tag fails once, on the cheapest runner. The Windows and
+macOS backends then build in parallel and attach themselves to that release;
+the wheels follow the Windows backend, because the two share one pinned vcpkg
+binary cache and a cold cache would otherwise build GDAL from source twice.
 
-Windows in CI would mean building GDAL through vcpkg on every run: hours on a
-cold cache, and Windows runners bill at 2× minutes. macOS runners bill at 10×.
-Both platforms are available locally, so both are built by hand and attached to
-the release the Linux build already created.
+The **glibc of the build host is the Linux bundle's compatibility floor.**
+Building on `ubuntu-22.04` gives a deliberately old, reproducible floor that a
+personal machine's rolling distro would not. The macOS bundles have the same
+property for macOS: Homebrew bottles target the runner's release, so a bundle
+built on `macos-15` needs macOS 15 or later.
 
-The repository is private, so Actions minutes are metered. CI therefore fires
-**only** on `v*` tag pushes and manual dispatch — never on ordinary pushes or
-pull requests.
+**macOS is the least exercised path.** No maintainer builds on a Mac, so the
+first real run of `package_macos_backend.sh` is in CI. It was reviewed and
+partly tested off-Mac for that reason: the whole tree passes a clang + libc++
+syntax check (including with macOS's `int64_t` = `long long`), the dependency
+resolver and the dyld load-log parser are tested against a fake `otool`, and
+the script fails hard, naming the library, if the bundle is not
+self-contained. A missing optional dependency (OpenMP, FFTW, Eigen, netCDF)
+is reported as a warning annotation on the run, not a failure.
+
+**The Windows vcpkg cache.** A cold cache builds GDAL from source: hours, once
+per `VCPKG_TAG`. Both workflows pin the same `VCPKG_TAG` and package list
+(`.github/vcpkg-packages.txt`); change them together.
 
 ---
 
@@ -99,12 +123,12 @@ pull requests.
 
 Two destinations, same files:
 
-1. **GitHub Releases** — created automatically by the tag build; the Windows
-   (and later macOS) bundles are attached afterwards with
-   `gh release upload v<version> dist/<bundle>`.
+1. **GitHub Releases** — created by the first job of the tag build; every
+   other CI artefact attaches itself to it. The Debian and conda packages are
+   built locally and attached with `gh release upload v<version> <file>`.
 2. **<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>** — a plain directory
-   on the personal web space, copied up by hand. This is the route that works
-   for people who are not repository collaborators, and it is the URL baked
+   on the personal web space, copied up by hand. It needs no GitHub account,
+   and it is the URL baked
    into the bundle README's Colab instructions. **Keep it in step with the
    GitHub release**: a user following the Colab instructions downloads from
    here, so a missing or stale file there is a broken install path even when
@@ -215,9 +239,15 @@ report.
 
 When a new library becomes a build dependency in `CMakeLists.txt`:
 
-1. Add the `-dev` package to the `Install dependencies` step of
+1. Add the `-dev` package to the Linux `Install dependencies` step of
    `.github/workflows/release.yml`.
-2. Add it to `apptainer_def/lsdtt3.def`.
+2. Add the Homebrew formula to the macOS `Install dependencies` step of
+   `release.yml`, to `before-all` under `[tool.cibuildwheel.macos]` in
+   `python_bindings/pyproject.toml`, and to the `brew install` line in
+   `building_on_macos.md`.
+3. Add the vcpkg port to `.github/vcpkg-packages.txt` (Windows backend and
+   Windows wheel; editing it changes the binary-cache key).
+4. Add it to `apptainer_def/lsdtt3.def`.
 
 There is **no** separate runtime package list to maintain — the packaging
 scripts resolve the runtime closure themselves and fail if anything is missing.
@@ -232,7 +262,7 @@ scripts resolve the runtime closure themselves and fail if anything is missing.
   FFTW and netCDF through `Depends:` so the package stays small and tracks
   distribution security updates, whereas the tarball backends vendor their
   closure so they run on a machine with no matching system libraries at all.
-- **conda-forge** — the intended route once the repository is public;
+- **conda-forge** — the intended route for the public repository;
   `conda-recipe/meta.yaml` is the draft recipe. It is also the right answer for
   QGIS integration, because QGIS and lsdtt3 would then share one conda-managed
   GDAL. Details in [`beta_testing_notes.md`](beta_testing_notes.md).

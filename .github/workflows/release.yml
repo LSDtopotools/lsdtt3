@@ -1,18 +1,37 @@
 name: Build and release
 
-# Runs ONLY on version tags (plus manual dispatch) to keep private-repo
-# Actions minutes to one Linux build per official release. Local test
-# releases use tools/make_release.sh directly and cost no minutes.
-# See tools/README.md for the full release workflow.
+# Builds every release artefact that can be built in CI, on version tags only.
+# Ordinary pushes and pull requests build nothing.
 #
 # Triggers:
-#   - push of a version tag (e.g. git tag v0.3.0 && git push origin v0.3.0)
-#     -> builds the backend bundle and attaches it to the GitHub Release
+#   - push of a version tag (git tag -a v0.9.0 -m "lsdtt3 0.9.0" && git push origin v0.9.0)
+#     -> builds everything below and attaches it to the GitHub release
 #   - manual run from the Actions tab
-#     -> builds the bundle and uploads it as a workflow artifact only
+#     -> builds the backends and the plugin zip as 14-day workflow artefacts;
+#        creates no release and builds no wheels (those need a tag)
+#
+# Order: the Linux job runs first and creates the release. Nothing else starts
+# unless it succeeds, so a broken tag fails once, cheaply, on Linux:
+#
+#   build-linux ──┬── build-windows (qgis) ──┐
+#   (core bundle, ├── build-macos (qgis,     ├── python-wheels (Linux, macOS
+#    plugin zip,  │   arm64 + x86_64)        │    arm64 + x86_64, Windows)
+#    release)     └──────────────────────────┘
+#
+# The wheels wait for the Windows backend because both use the same pinned
+# vcpkg binary cache: when that cache is cold (first release, or after a
+# VCPKG_TAG bump) GDAL builds from source once instead of twice in parallel.
+# The wheels still run if the Windows backend fails.
+#
+# Windows and macOS ship the qgis CLI profile only (tools/cli_profiles.txt):
+# the backend the QGIS plugin drives. Full CLI use on those platforms is
+# through WSL2 (Windows) or a Linux VM (macOS) with the Linux bundle.
 #
 # vX.Y.Z.postN tags are wheel-only rebuilds of the same source: they run only
 # python-wheels.yml (by hand), never this workflow.
+#
+# See tools/README.md for the release cheat sheet and
+# docs/developer_notes/making_release_packages.md for why it is built this way.
 
 on:
   push:
@@ -21,13 +40,30 @@ on:
       - "!v*.post*"
   workflow_dispatch:
 
+# Explicit, because a repository's default GITHUB_TOKEN may be read-only, and
+# creating a release and uploading assets need contents: write.
+permissions:
+  contents: write
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
+# Kept identical to python-wheels.yml so the Windows backend and the Windows
+# wheel share one vcpkg binary cache. Change them together.
+env:
+  VCPKG_TAG: "2026.10.16"
+  VCPKG_PINNED_ROOT: 'C:\vcpkg-pinned'
+  VCPKG_TRIPLET: x64-windows
+
 jobs:
+  # ---------------------------------------------------------------------------
   build-linux:
+    name: Linux backend, QGIS plugin, release
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       # Full history + tags so the LSDTT3_VERSION git describe string and
@@ -35,6 +71,18 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Resolve the release version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # Manual dispatch: no tag, so build at the current CMake version.
+            VERSION="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          fi
+          echo "Building release version: ${VERSION}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Install dependencies
         run: |
@@ -58,22 +106,21 @@ jobs:
           mkdocs-material==9.7.7
 
       # The same driver script used for local releases: configure, build,
-      # smoke-check, and package the self-contained backend bundle.
-      - name: Build and package
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            # Manual dispatch: no tag, so build at the current CMake version.
-            VERSION="$(sed -n 's/^project(lsdtt3 VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
-          fi
-          echo "Building release version: ${VERSION}"
-          tools/make_release.sh --version "${VERSION}"
+      # smoke-check, run the Python bindings tests, and package the
+      # self-contained backend bundle.
+      - name: Build and package the Linux backend
+        run: tools/make_release.sh --version "${{ steps.version.outputs.version }}"
 
       - name: Check CLI references and documentation
         run: |
           python3 tools/generate_cli_reference.py --check --bin-dir build/release
           PYTHONPATH=./python_bindings/src mkdocs build --strict
+
+      # Pure Python, seconds. Its version comes from metadata.txt, which the
+      # version-consistency check in make_release.sh has already compared
+      # with CMakeLists.txt.
+      - name: Package the QGIS plugin
+        run: python3 qgis_plugin/package_plugin.py --out-dir dist
 
       # Auto-generated notes only credit pull requests, so direct commits to
       # main are invisible. Prepend a commit-author roll-call so everyone who
@@ -110,12 +157,17 @@ jobs:
             echo ""
             echo "## Artefacts"
             echo ""
-            echo "- Linux backend bundle: attached by this workflow."
-            echo "- Debian package, conda package, QGIS plugin zip, Windows and macOS"
-            echo "  bundles: built locally from this tag and attached by hand"
-            echo "  (docs/developer_notes/making_release_packages.md)."
-            echo "- Python wheel: not built for this release, unless attached later"
-            echo "  by a manual python-wheels.yml run."
+            echo "Attached by the release workflow (each appears when its job finishes):"
+            echo ""
+            echo "- Linux x86_64 backend bundle, \`core\` profile"
+            echo "- Windows x64 and macOS (arm64, x86_64) backend bundles, \`qgis\` profile:"
+            echo "  the backend for the QGIS plugin. For the full CLI set on Windows or"
+            echo "  macOS, use the Linux bundle under WSL2 or a Linux VM."
+            echo "- QGIS plugin zip"
+            echo "- Python wheels for Linux, macOS and Windows"
+            echo ""
+            echo "Built locally from this tag and attached by hand: the Debian and conda"
+            echo "packages (docs/developer_notes/making_release_packages.md)."
             echo ""
             echo "## Commit authors ${since}"
             echo ""
@@ -126,18 +178,228 @@ jobs:
           } > release_rollcall.md
           cat release_rollcall.md
 
-      - name: Upload to GitHub Release
+      - name: Create the GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/lsdtt3-backend-linux-*.tar.gz
+          files: |
+            dist/lsdtt3-backend-linux-*.tar.gz
+            dist/lsdtt3-qgis-plugin-*.zip
           body_path: release_rollcall.md
           generate_release_notes: true
 
-      - name: Upload as workflow artifact (manual run)
+      - name: Upload as workflow artefact (manual run)
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v5
         with:
-          name: lsdtt3-backend-linux
-          path: dist/lsdtt3-backend-linux-*.tar.gz
+          name: lsdtt3-linux-and-plugin
+          path: |
+            dist/lsdtt3-backend-linux-*.tar.gz
+            dist/lsdtt3-qgis-plugin-*.zip
           retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Windows backend (qgis)
+    needs: build-linux
+    runs-on: windows-2025
+    # A cold vcpkg cache builds GDAL from source: hours, once per VCPKG_TAG.
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up pinned vcpkg
+        run: |
+          git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg $env:VCPKG_PINNED_ROOT
+          & "$env:VCPKG_PINNED_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:VCPKG_PINNED_ROOT" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_TRIPLET=$env:VCPKG_TRIPLET" >> $env:GITHUB_ENV
+
+      # Same paths and key as python-wheels.yml: one cache serves both.
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~\AppData\Local\vcpkg\archives
+            C:\vcpkg-pinned\downloads
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+          restore-keys: |
+            windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-
+            windows-vcpkg-
+
+      - name: Install native dependencies
+        run: |
+          $packages = Get-Content .github/vcpkg-packages.txt | Where-Object { $_ -and -not $_.StartsWith('#') }
+          & "$env:VCPKG_PINNED_ROOT\vcpkg.exe" install --triplet $env:VCPKG_TRIPLET @packages
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~\AppData\Local\vcpkg\archives
+            C:\vcpkg-pinned\downloads
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+
+      # The packaging script needs dumpbin and VCToolsRedistDir, i.e. an x64
+      # Visual Studio developer environment, exactly as for a local build.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: python -m pip install ninja
+
+      # The flags of the documented Windows flow (building_on_windows.md, and
+      # the -Tag path of package_windows_backend.ps1): no OpenMP (MSVC's is
+      # OpenMP 2.0), no Eigen, so the reduced qgis bundle.
+      - name: Configure
+        run: |
+          cmake -S . -B build/windows-qgis -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_PINNED_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TRIPLET" `
+            -DBUILD_TESTING=OFF -DLSDTT_OPENMP=OFF -DLSDTT_EIGEN=OFF `
+            -DLSDTT_GPU=OFF `
+            -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+
+      - name: Build the qgis CLIs
+        run: |
+          $clis = Get-Content tools/cli_profiles.txt |
+            Where-Object { $_ -notmatch '^\s*(#|$)' } |
+            ForEach-Object { $p = $_ -split '\s+'; if ($p[0] -eq 'qgis') { $p[1] } }
+          cmake --build build/windows-qgis --target @clis
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Package
+        run: |
+          .\tools\package_windows_backend.ps1 `
+            -Version "${{ needs.build-linux.outputs.version }}" `
+            -BuildDir build/windows-qgis `
+            -VcpkgRoot $env:VCPKG_PINNED_ROOT `
+            -Triplet $env:VCPKG_TRIPLET
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload --clobber "${{ github.ref_name }}" (Get-ChildItem dist/lsdtt3-backend-win64-*.zip).FullName
+          if ($LASTEXITCODE -ne 0) { throw "upload failed" }
+
+      - name: Upload as workflow artefact (manual run)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v5
+        with:
+          name: lsdtt3-backend-windows
+          path: dist/lsdtt3-backend-win64-*.zip
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS backend (qgis, ${{ matrix.arch }})
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # A bundle runs on the macOS release it was built on and newer:
+          # Homebrew bottles target the runner's macOS. Same runners as the
+          # wheels (python-wheels.yml).
+          - arch: arm64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Same list as docs/developer_notes/building_on_macos.md.
+      - name: Install dependencies
+        run: brew install cmake gdal fftw libomp netcdf eigen pkgconf
+
+      - name: Configure
+        run: |
+          cmake -S . -B build/macos-qgis -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            | tee configure.log
+
+      # A missing optional dependency is a CMake STATUS line, never an error,
+      # so say it loudly in the run summary. Not fatal: a single-threaded or
+      # FFTW-less qgis bundle still works, and debugging a release in CI is
+      # what this workflow is meant to avoid.
+      - name: Report optional dependencies
+        run: |
+          for dep in OpenMP FFTW3 Eigen3; do
+            if grep -Eq "^-- +${dep} +: ON" configure.log; then
+              echo "${dep}: ON"
+            else
+              echo "::warning title=macOS ${{ matrix.arch }}::${dep} is OFF in the macOS build (see the Configure step)"
+            fi
+          done
+          grep -q "netCDF-C found" configure.log \
+            || echo "::warning title=macOS ${{ matrix.arch }}::netCDF-C not found in the macOS build"
+
+      - name: Build the qgis CLIs
+        run: |
+          clis=$(awk '$1 == "qgis" { print $2 }' tools/cli_profiles.txt)
+          # shellcheck disable=SC2086
+          cmake --build build/macos-qgis -j"$(sysctl -n hw.ncpu)" --target ${clis}
+
+      - name: Package
+        run: |
+          tools/package_macos_backend.sh \
+            --version "${{ needs.build-linux.outputs.version }}" \
+            --build-dir build/macos-qgis \
+            --cli-profile qgis \
+            --arch "${{ matrix.arch }}"
+          ls -lh dist/*.tar.gz
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload --clobber "${GITHUB_REF_NAME}" dist/lsdtt3-backend-macos-*.tar.gz
+
+      - name: Upload as workflow artefact (manual run)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v5
+        with:
+          name: lsdtt3-backend-macos-${{ matrix.arch }}
+          path: dist/lsdtt3-backend-macos-*.tar.gz
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  python-wheels:
+    name: Python wheels
+    needs:
+      - build-linux
+      - build-windows
+    # Wheels need a tag (python-wheels.yml checks it against the version
+    # files). Run even if the Windows backend failed: only Linux must pass.
+    if: >-
+      always()
+      && needs.build-linux.result == 'success'
+      && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      tag: ${{ github.ref_name }}
+      platforms: all
+      upload: true
+    permissions:
+      contents: write

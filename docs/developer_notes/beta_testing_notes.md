@@ -182,7 +182,7 @@ Developer settings** (bottom of the left sidebar) **→ Personal access tokens �
 Tokens (classic) → Generate new token (classic)**. Give it any name, set an
 expiry, and check exactly two scopes:
 
-- **`repo`** (full private repo access)
+- **`repo`** (needed only while the repository is private; a public repository's releases download without it)
 - **`read:org`** (required to verify organisation membership)
 
 Click **Generate token**, copy the `ghp_...` string, and paste it when `gh auth
@@ -208,11 +208,11 @@ Windows files).
 The release procedure is not repeated here, so it cannot drift out of step:
 
 - [Making release packages](making_release_packages.md) — what the bundles
-  are, what runs in CI and what is built by hand, and why.
+  are, what CI builds on each release tag, and why.
 - [`tools/README.md`](https://github.com/LSDtopotools/lsdtt3/blob/main/tools/README.md)
   in the repository — the release cheat sheet: bumping the version, tagging,
-  local test releases with `tools/make_release.sh --publish --prerelease`
-  (no Actions minutes), and attaching Windows and macOS bundles.
+  local test releases with `tools/make_release.sh --publish --prerelease`,
+  and rebuilding a platform's bundle by hand if its CI job fails.
 
 For a beta tester, a local prerelease or a plain tarball from `dist/` is
 usually the right thing to send. Development builds identify themselves: `-v`

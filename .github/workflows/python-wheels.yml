@@ -1,14 +1,35 @@
 name: Build Python wheels
 
-# Builds wheels for ONE existing lsdtt3 tag: Linux only (5 wheels, the cheap
-# choice) or every platform (20 wheels; macOS runners bill at 10x and Windows
-# at 2x the Linux rate on a private repository). Run by hand, and only
-# for releases where the Python API is supported: lsdtt3 has one version number,
-# but not every vX.Y.Z gets wheels. This workflow never bumps a version, commits
-# or tags; tags are made by the maintainer (vX.Y.Z, or vX.Y.Z.postN for a
-# wheel-only rebuild of the same source).
+# Builds wheels for ONE existing lsdtt3 tag: Linux only (5 wheels) or every
+# platform (20 wheels: Linux x86_64, macOS arm64 and x86_64, Windows x64).
+#
+# Two ways in:
+#   - called by release.yml on every vX.Y.Z tag, after the Linux backend has
+#     built and created the release: all platforms, uploaded to the release;
+#   - by hand from the Actions tab, for a vX.Y.Z.postN wheel-only rebuild of
+#     the same source, or to rebuild one tag's wheels.
+#
+# Publishing to PyPI stays a separate, manual step
+# (docs/developer_notes/publishing_to_pypi.md). This workflow never bumps a
+# version, commits or tags.
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build (vX.Y.Z or vX.Y.Z.postN)
+        required: true
+        type: string
+      platforms:
+        description: linux or all
+        required: false
+        type: string
+        default: all
+      upload:
+        description: Upload the wheels to the GitHub release vX.Y.Z
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
@@ -90,9 +111,8 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
           echo "release=v${stem}" >> "${GITHUB_OUTPUT}"
 
-      # The build matrix is chosen here rather than skipped per job: a matrix
-      # job that is skipped still starts a runner, and a macOS runner bills at
-      # 10x even for that.
+      # The build matrix is chosen here rather than skipped per job, so a
+      # Linux-only run starts no macOS or Windows runner at all.
       - name: Choose the platforms to build
         id: platforms
         env:

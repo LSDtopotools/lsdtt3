@@ -56,7 +56,12 @@ endif()
 find_package(GDAL REQUIRED)
 
 if(LSDTT_PYTHON_OPENMP AND NOT WIN32)
+    # Apple Clang + keg-only Homebrew libomp: point FindOpenMP at the keg first.
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/lsdtt_homebrew_openmp.cmake")
     find_package(OpenMP QUIET)
+    if(NOT OpenMP_CXX_FOUND)
+        message(WARNING "OpenMP not found - the bindings will be single-threaded")
+    endif()
 endif()
 
 if(LSDTT_PYTHON_FFTW)
@@ -315,6 +320,9 @@ if(LSDTT_PYTHON_RELEASE_WHEEL)
             NAMES gdalvrt.xsd
             HINTS
                 "$ENV{CONDA_PREFIX}"
+                "$ENV{HOMEBREW_PREFIX}"
+                /opt/homebrew
+                /usr/local
                 "$ENV{VCPKG_INSTALLED_DIR}/$ENV{VCPKG_TARGET_TRIPLET}"
                 "$ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET}"
                 "$ENV{VCPKG_ROOT}/installed/x64-windows"
@@ -328,6 +336,9 @@ if(LSDTT_PYTHON_RELEASE_WHEEL)
             NAMES proj.db
             HINTS
                 "$ENV{CONDA_PREFIX}"
+                "$ENV{HOMEBREW_PREFIX}"
+                /opt/homebrew
+                /usr/local
                 "$ENV{VCPKG_INSTALLED_DIR}/$ENV{VCPKG_TARGET_TRIPLET}"
                 "$ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET}"
                 "$ENV{VCPKG_ROOT}/installed/x64-windows"

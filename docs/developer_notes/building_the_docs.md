@@ -82,27 +82,30 @@ web server that resolves directory indexes.
 The build output is a plain static site, so it can be served from anywhere
 that serves files. Two routes are set up.
 
-### GitHub Pages (once the repository is public)
+### GitHub Pages
 
 `.github/workflows/docs.yml` builds the site with `--strict` and deploys it to
-<https://lsdtopotools.github.io/lsdtt3/> on every push to `main` that touches
-`docs/`, `mkdocs.yml` or `qgis_plugin/README.md` (which the QGIS page
-includes), and on manual dispatch from the Actions tab.
+<https://lsdtopotools.github.io/lsdtt3/> **on every release tag** (`vX.Y.Z`,
+not the wheel-only `.postN` tags), and on manual dispatch from the Actions tab.
+Deploying on releases keeps the site describing a version users can install,
+rather than unreleased work on `main`. To publish a documentation-only fix
+between releases, run it by hand on `main` (Actions → *Documentation site* →
+**Run workflow**).
 
-**While the repository is private, the workflow does nothing.** Both jobs are
-guarded by `if: !github.event.repository.private`, so they are skipped, and a
-skipped job uses no Actions minutes. This matters because Pages from a private
-repository needs a paid plan, and CI minutes on a private repository are
-metered (see [Making release packages](making_release_packages.md)). Public
-repositories get standard runners free, so per-push deploys cost nothing once
-it is public.
+Both jobs are guarded by `if: !github.event.repository.private`, so nothing
+deploys while the repository is private (Pages from a private repository needs
+a paid plan).
 
 When the repository goes public, do this once:
 
 1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-2. Actions → *Documentation site* → **Run workflow**, to publish without waiting
-   for a docs change.
-3. Check <https://lsdtopotools.github.io/lsdtt3/>.
+2. **Settings → Environments → `github-pages` → Deployment branches and
+   tags:** add a **tag** rule `v*`. The environment allows only the default
+   branch out of the box, and a deploy triggered by a tag is rejected without
+   this rule.
+3. Actions → *Documentation site* → **Run workflow**, to publish without waiting
+   for the next release.
+4. Check <https://lsdtopotools.github.io/lsdtt3/>.
 
 Why the site works on Pages without changes:
 
@@ -117,7 +120,7 @@ Why the site works on Pages without changes:
   `pymdownx.snippets`, which reads files from the checkout at build time.
 
 A deployed Pages site is **public**, including the install pages and the
-download URLs they contain. That is the intent once the code is public.
+download URLs they contain.
 
 Do not also use `mkdocs gh-deploy`. It force-pushes a `gh-pages` branch, which
 is a different Pages source from the one the workflow uses.

@@ -24,8 +24,8 @@
 #   e) the QGIS plugin zip      - qgis_plugin/package_plugin.py (pure Python)
 #
 # lsdtt3 has ONE version number, so every artefact built from a tag carries
-# that tag's X.Y.Z. The Windows and macOS bundles are built on their own
-# platforms; the summary ends with the commands for them and for the upload.
+# that tag's X.Y.Z. CI (release.yml) builds the backends, plugin zip and
+# wheels on the tag; the summary ends with what is left: the local uploads.
 #
 # EACH COMPILED TARGET COMPILES THE C++ SEPARATELY. There is no shared object
 # cache between them: the tarball builds with the release CMake preset, the
@@ -141,8 +141,8 @@ Usage:
   tools/make_all_packages.sh [--clean | --dirty] [options]
 
 Builds the backend tarball, the Debian package, the Python wheel, the conda
-package and the QGIS plugin zip locally, so a private repository does not
-spend GitHub Actions minutes on them.
+package and the QGIS plugin zip locally: to rehearse a release, or to build the
+.deb and conda package, which CI does not build.
 
 Source selection (choose one; --clean is the default):
   --clean          Build a tagged version (the latest tag, or --tag). The tree
@@ -990,16 +990,20 @@ if [[ "$MODE" == "clean" ]]; then
         echo "      gh release upload ${RELEASE} ${OUT_DIR}/*.whl"
         echo "  - publish it to PyPI (docs/developer_notes/publishing_to_pypi.md)"
     else
-        echo "  - Linux backend bundle: built by release.yml when ${RELEASE} is pushed"
-        echo "  - Windows bundle, on Windows:"
-        echo "      tools/package_windows_backend.ps1 -Version ${BASE_VERSION} -Tag ${RELEASE}"
-        echo "  - macOS bundle, on a Mac:"
-        echo "      tools/package_macos_backend.sh --version ${BASE_VERSION} --tag ${RELEASE}"
-        (( want_wheel )) || echo "  - Python wheel: only if this release supports the Python API (--only wheel)"
-        echo "  - upload what was built here:"
-        echo "      gh release upload ${RELEASE} ${OUT_DIR}/*"
-        echo "  - edit the release notes: say which artefacts are attached, and"
-        echo "    \"Python wheel: not built for this release\" if none is"
+        echo "  - built by release.yml when ${RELEASE} is pushed: the Linux, Windows"
+        echo "    and macOS backends, the QGIS plugin zip and the Python wheels"
+        echo "  - upload the .deb and the conda package built here (the release"
+        echo "    already has CI's copies of everything else):"
+        local_only=""
+        for f in "${OUT_DIR}"/*.deb "${OUT_DIR}"/*.conda "${OUT_DIR}"/*.tar.bz2; do
+            [[ -e "$f" ]] && local_only+=" $f"
+        done
+        if [[ -n "$local_only" ]]; then
+            echo "      gh release upload ${RELEASE}${local_only}"
+        else
+            echo "      (neither was built in this run)"
+        fi
+        echo "  - publish the wheels to PyPI if wanted (docs/developer_notes/publishing_to_pypi.md)"
     fi
 fi
 

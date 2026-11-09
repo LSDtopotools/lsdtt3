@@ -28,7 +28,7 @@ Usage:
 
 Options:
   --version <ver>              Backend version (required)
-  --build-dir <path>           Build directory (default: build/macos-core)
+  --build-dir <path>           Build directory (default: build/macos-qgis)
   --tag <vX.Y.Z>               Build the tag instead of packaging an existing
                                build: export it with git archive into a
                                scratch tree, configure and build there
@@ -37,7 +37,7 @@ Options:
                                is ignored.
   --out-dir <path>             Output directory (default: dist)
   --arch <name>                Architecture label (default: uname -m)
-  --cli-profile <name>         CLI set: qgis / core / all (default: core).
+  --cli-profile <name>         CLI set: qgis / core / all (default: qgis).
                                Defined in tools/cli_profiles.txt; all = every
                                lsdtt-* executable in the build directory
   --profile <name>             Manifest profile label (default: <cli-profile>-macos)
@@ -59,10 +59,10 @@ TAG=""
 # Per-platform build directory, mirroring build/windows-qgis on Windows: the
 # macOS tree is configured separately from the Linux one, so they must not
 # share a build dir. See tools/README.md.
-BUILD_DIR="build/macos-core"
+BUILD_DIR="build/macos-qgis"
 OUT_DIR="dist"
 ARCH="$(uname -m)"
-CLI_PROFILE="core"
+CLI_PROFILE="qgis"
 PROFILE=""
 PLUGIN_VERSION_RANGE=""
 CLI_NAMES=()
@@ -191,11 +191,17 @@ if [[ -n "$TAG" ]]; then
     mkdir -p "$TAG_SRC"
     echo "Exporting $TAG to $TAG_SRC"
     git -C "$REPO_ROOT" archive --format=tar "$TAG" | tar -x -C "$TAG_SRC"
-    cmake -S "$TAG_SRC" -B "$TAG_SRC/build/macos-core" \
+    cmake -S "$TAG_SRC" -B "$TAG_SRC/build/macos-$CLI_PROFILE" \
         -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DLSDTT_EIGEN=ON
-    cmake --build "$TAG_SRC/build/macos-core" -j"$(sysctl -n hw.ncpu)"
+    # Build only what is packaged; profile 'all' (empty list here) builds everything.
+    if [[ ${#CLI_NAMES[@]} -gt 0 ]]; then
+        cmake --build "$TAG_SRC/build/macos-$CLI_PROFILE" -j"$(sysctl -n hw.ncpu)" \
+            --target "${CLI_NAMES[@]}"
+    else
+        cmake --build "$TAG_SRC/build/macos-$CLI_PROFILE" -j"$(sysctl -n hw.ncpu)"
+    fi
     REPO_ROOT="$TAG_SRC"
-    BUILD_DIR="$TAG_SRC/build/macos-core"
+    BUILD_DIR="$TAG_SRC/build/macos-$CLI_PROFILE"
 fi
 
 # The version is typed by hand here, unlike the Linux path where
@@ -331,29 +337,78 @@ mach_o_deps() {
     done
 }
 
-# Resolves an install-name reference to an on-disk file. Absolute paths are
-# used as-is; @rpath/@loader_path references are tried relative to the
-# directory of the referencing binary (covers the common Homebrew/vcpkg
-# layouts where dependent dylibs sit side by side).
+# Emits the LC_RPATH entries of a Mach-O file, one per line, unexpanded.
+# otool -l prints each as:   cmd LC_RPATH / cmdsize N / path <p> (offset M)
+mach_o_rpaths() {
+    otool -l "$1" 2>/dev/null | awk '
+        $1 == "cmd" && $2 == "LC_RPATH" { want = 1; next }
+        want && $1 == "path" { print $2; want = 0 }'
+}
+
+# Expands @loader_path / @executable_path at the front of a path.
+expand_load_path() {
+    local p="$1" loader_dir="$2" exe_dir="$3"
+    case "$p" in
+        @loader_path*)     echo "${loader_dir}${p#@loader_path}" ;;
+        @executable_path*) echo "${exe_dir}${p#@executable_path}" ;;
+        *)                 echo "$p" ;;
+    esac
+}
+
+# Resolves an install-name reference to an on-disk file, the way dyld would:
+#   /abs/path              as-is
+#   @loader_path/x         relative to the referencing file
+#   @executable_path/x     relative to the executable
+#   @rpath/x               each LC_RPATH of the referencing file, then each of
+#                          the executable's (dyld searches the loader chain),
+#                          then the referencing file's own directory
+# Homebrew mostly uses absolute /opt/homebrew/opt/... names, but several kegs
+# (and anything built with CMake defaults) use @rpath with an rpath that
+# points into ANOTHER keg, which the referencing directory alone cannot find.
 resolve_dep_path() {
-    local ref_dir="$1"
-    local dep="$2"
+    local ref_file="$1" exe_file="$2" dep="$3"
+    local ref_dir exe_dir
+    ref_dir="$(dirname "$ref_file")"
+    exe_dir="$(dirname "$exe_file")"
     case "$dep" in
         /*)
             echo "$dep"
             ;;
-        @rpath/*|@loader_path/*)
-            local rel="${dep#@*/}"
-            if [[ -e "$ref_dir/$rel" ]]; then
-                echo "$ref_dir/$rel"
-            else
-                echo ""
-            fi
+        @loader_path/*|@executable_path/*)
+            local cand
+            cand="$(expand_load_path "$dep" "$ref_dir" "$exe_dir")"
+            [[ -e "$cand" ]] && echo "$cand" || echo ""
+            ;;
+        @rpath/*)
+            local rel="${dep#@rpath/}" rp cand
+            while IFS= read -r rp; do
+                [[ -z "$rp" ]] && continue
+                cand="$(expand_load_path "$rp" "$ref_dir" "$exe_dir")/$rel"
+                if [[ -e "$cand" ]]; then
+                    echo "$cand"
+                    return
+                fi
+            done < <(mach_o_rpaths "$ref_file"; [[ "$ref_file" != "$exe_file" ]] && mach_o_rpaths "$exe_file")
+            [[ -e "$ref_dir/$rel" ]] && echo "$ref_dir/$rel" || echo ""
             ;;
         *)
             echo ""
             ;;
     esac
+}
+
+# Deletes every LC_RPATH of a file except the one the bundle relies on. The
+# build tree's rpaths (CMake adds e.g. /opt/homebrew/lib or the libomp keg) and
+# Homebrew's own survive staging otherwise, and dyld tries them BEFORE the
+# bundle's: on a user's Mac that has Homebrew, the bundle would then load the
+# user's libgdal / libproj instead of its own -- silently, and the smoke check
+# on the build machine could never notice, because Homebrew is always there.
+strip_foreign_rpaths() {
+    local f="$1" keep="$2" rp
+    while IFS= read -r rp; do
+        [[ -z "$rp" || "$rp" == "$keep" ]] && continue
+        install_name_tool -delete_rpath "$rp" "$f"
+    done < <(mach_o_rpaths "$f")
 }
 
 BUNDLE_NAME="lsdtt3-backend-macos-${ARCH}-${CLI_PROFILE}-v${VERSION}"
@@ -389,11 +444,10 @@ seen_name() {
 }
 
 for exe in "${EXE_PATHS[@]}"; do
-    exe_dir="$(dirname "$exe")"
     while IFS= read -r dep; do
         [[ -z "$dep" ]] && continue
         is_system_lib "$dep" && continue
-        resolved="$(resolve_dep_path "$exe_dir" "$dep")"
+        resolved="$(resolve_dep_path "$exe" "$exe" "$dep")"
         if [[ -z "$resolved" || ! -e "$resolved" ]]; then
             echo "ERROR: cannot resolve dependency '$dep' of $(basename "$exe")" >&2
             exit 1
@@ -422,11 +476,12 @@ while [[ ${#QUEUE[@]} -gt 0 ]]; do
         chmod u+w "$STAGE_LIB/$name"
     fi
 
-    dep_dir="$(dirname "$dep_real")"
+    # All CLIs come from one build tree with the same rpaths, so the first
+    # executable stands in for "the executable" in @executable_path / @rpath.
     while IFS= read -r next_dep; do
         [[ -z "$next_dep" ]] && continue
         is_system_lib "$next_dep" && continue
-        next_resolved="$(resolve_dep_path "$dep_dir" "$next_dep")"
+        next_resolved="$(resolve_dep_path "$dep_real" "${EXE_PATHS[0]}" "$next_dep")"
         if [[ -z "$next_resolved" || ! -e "$next_resolved" ]]; then
             echo "ERROR: cannot resolve dependency '$next_dep' of $name" >&2
             exit 1
@@ -439,6 +494,7 @@ done
 for exe in "$STAGE_BIN"/lsdtt-*; do
     [[ -f "$exe" ]] || continue
     install_name_tool -add_rpath '@executable_path/../lib' "$exe" 2>/dev/null || true
+    strip_foreign_rpaths "$exe" '@executable_path/../lib'
     while IFS= read -r dep; do
         [[ -z "$dep" ]] && continue
         is_system_lib "$dep" && continue
@@ -450,6 +506,7 @@ for lib in "$STAGE_LIB"/*; do
     [[ -f "$lib" ]] || continue
     install_name_tool -id "@rpath/$(basename "$lib")" "$lib"
     install_name_tool -add_rpath '@loader_path' "$lib" 2>/dev/null || true
+    strip_foreign_rpaths "$lib" '@loader_path'
     while IFS= read -r dep; do
         [[ -z "$dep" ]] && continue
         is_system_lib "$dep" && continue
@@ -473,6 +530,15 @@ done
 MISSING=0
 for f in "$STAGE_BIN"/lsdtt-* "$STAGE_LIB"/*; do
     [[ -f "$f" ]] || continue
+    while IFS= read -r rp; do
+        case "$rp" in
+            ''|'@executable_path/../lib'|'@loader_path') ;;
+            *)
+                echo "ERROR: $(basename "$f") keeps rpath '$rp' (dyld would search it before the bundle)" >&2
+                MISSING=1
+                ;;
+        esac
+    done < <(mach_o_rpaths "$f")
     while IFS= read -r dep; do
         [[ -z "$dep" ]] && continue
         is_system_lib "$dep" && continue
@@ -542,6 +608,44 @@ for name in "${CLI_NAMES[@]}"; do
     esac
 done
 echo "Smoke check passed: ${#CLI_NAMES[@]} staged programs started and reported GDAL"
+
+# What dyld ACTUALLY loaded. The checks above read load commands; this one
+# watches a real run, so it also catches a library pulled in from a path the
+# load commands do not show. Every image must come from the bundle or the OS.
+# On the build machine Homebrew is installed, so a leak shows up here as an
+# /opt/homebrew or /usr/local path -- exactly the case a user would hit.
+# dyld's line format has changed across macOS releases:
+#   dyld: loaded: /path                  (dyld3, macOS <= 11)
+#   dyld[1234]: <UUID> /path             (dyld4, macOS >= 12)
+LEAKED=0
+PARSED=0
+for name in "${CLI_NAMES[@]}"; do
+    while IFS= read -r line; do
+        case "$line" in dyld*) ;; *) continue ;; esac
+        img="${line#*: }"
+        img="${img#loaded: }"
+        case "$img" in "<"*"> "*) img="${img#*> }" ;; esac
+        [[ "$img" == /* ]] || continue
+        PARSED=$((PARSED + 1))
+        case "$img" in
+            "$STAGE_DIR"/*|/usr/lib/*|/System/*) ;;
+            *)
+                echo "ERROR: $name loaded '$img' from outside the bundle" >&2
+                LEAKED=1
+                ;;
+        esac
+    done < <(DYLD_PRINT_LIBRARIES=1 "$STAGE_BIN/$name" -v 2>&1 >/dev/null || true)
+done
+if [[ $LEAKED -ne 0 ]]; then
+    echo "ERROR: bundle loads libraries from the build machine; aborting" >&2
+    exit 1
+fi
+if [[ $PARSED -eq 0 ]]; then
+    # Unrecognised output format: say so rather than pass silently.
+    echo "WARNING: DYLD_PRINT_LIBRARIES output was not recognised; load-path check skipped" >&2
+else
+    echo "Load-path check passed: $PARSED images, all from the bundle or the OS"
+fi
 
 # ---- GDAL / PROJ data --------------------------------------------------------
 find_proj_data_dir() {
@@ -631,14 +735,24 @@ fi
 # setenv.sh only needs PATH and the data dirs: library lookup is baked into
 # the binaries via @rpath (DYLD_* vars are stripped by SIP anyway).
 cat > "$STAGE_DIR/setenv.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PATH="$ROOT_DIR/bin:${PATH:-}"
-export GDAL_DATA="$ROOT_DIR/share/gdal"
-export PROJ_DATA="$ROOT_DIR/share/proj"
+# Source this file, in bash or zsh:   source /path/to/bundle/setenv.sh
+#
+# Deliberately sets no shell options: a sourced file's `set -e` / `set -u` stay
+# on in YOUR shell, which then exits on the next failing command. zsh (the
+# macOS default) has no BASH_SOURCE, so the bundle location is found per shell.
+if [ -n "${BASH_SOURCE:-}" ]; then
+    _lsdtt_src="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+    eval '_lsdtt_src="${(%):-%x}"'
+else
+    _lsdtt_src="$0"
+fi
+_lsdtt_root="$(cd "$(dirname "$_lsdtt_src")" && pwd)"
+export PATH="$_lsdtt_root/bin:${PATH:-}"
+export GDAL_DATA="$_lsdtt_root/share/gdal"
+export PROJ_DATA="$_lsdtt_root/share/proj"
 export PROJ_LIB="$PROJ_DATA"
+unset _lsdtt_src _lsdtt_root
 EOF
 chmod +x "$STAGE_DIR/setenv.sh"
 

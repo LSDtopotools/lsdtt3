@@ -24,20 +24,24 @@ Both of these hold the same files. Use whichever you can reach.
 
 | Source | Notes |
 |---|---|
-| [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. While the repository is in private beta you need to be a collaborator to see it. |
+| [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. Every package is built and attached automatically when a release is made. |
 | <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they are more likeley to be out of date.  |
 
 File names look like this:
 
 ```
 lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
-lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native, but limited to QGIS packages)
+lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native, limited to the QGIS tool set)
+lsdtt3-backend-macos-arm64-qgis-v0.7.1.tar.gz      macOS, Apple Silicon (QGIS tool set; releases after 0.8.0)
+lsdtt3-backend-macos-x86_64-qgis-v0.7.1.tar.gz     macOS, Intel (QGIS tool set; releases after 0.8.0)
 lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 
 `core` and `qgis` are **profiles** — which set of command-line tools the
 package contains. `core` is the general-purpose set; `qgis` is the smaller
-subset the QGIS plugin drives.
+subset the QGIS plugin drives. Native Windows and macOS packages are `qgis`
+only: for the full tool set on those systems, run the Linux package under
+[WSL2](#windows-via-wsl2) or in a [Linux VM](#macos).
 
 > lsdtt3 has **one version number** for everything: the command-line tools,
 > the backend packages, the QGIS plugin and the Python package. Files from the
@@ -248,10 +252,15 @@ Note the leading `. ` (dot, space) — like `source` on Linux, it runs
 
 ## macOS
 
-**There is no macOS package yet.** The packaging script exists but has not been
-tested on real hardware, so none is published. Until then, run the Linux
-package inside a lightweight Ubuntu virtual machine using
-[Multipass](https://multipass.run), which Canonical maintain for exactly this.
+**For the full tool set, run the Linux package in a virtual machine.** A
+native macOS package exists only as the backend for the
+[QGIS plugin](#qgis-plugin): it ships the `qgis` profile, for Apple Silicon
+(`arm64`) and Intel (`x86_64`), and needs macOS 15 or later. It is built for
+every release after 0.8.0 and is new, so report any problem with it.
+
+For everything else, run the Linux package inside a lightweight Ubuntu virtual
+machine using [Multipass](https://multipass.run), which Canonical maintain for
+exactly this.
 
 ```bash
 brew install --cask multipass
@@ -319,8 +328,11 @@ The plugin adds an **lsdtt3** group to the QGIS Processing Toolbox. It runs the
 command-line tools, so it needs a backend package as well:
 
 1. Install a backend package for your system: the
-   [Windows native package](#windows-native-package) on Windows, or the
-   [Linux package](#linux-package) on Linux.
+   [Windows native package](#windows-native-package) on Windows, the
+   [Linux package](#linux-package) on Linux, or the macOS `qgis` package
+   (`lsdtt3-backend-macos-<arch>-qgis-v<version>.tar.gz`, releases after
+   0.8.0) on macOS. The macOS package's `README.md` covers unpacking it and
+   clearing the browser's quarantine flag.
 2. Download `lsdtt3-qgis-plugin-<version>.zip` from the same release.
 3. In QGIS: **Plugins → Manage and Install Plugins… → Install from ZIP**, and
    choose the zip.
@@ -343,12 +355,12 @@ in the settings.
 
 The `lsdtt3` Python package wraps the same C++ code for use from scripts and
 notebooks, keeping rasters and results in memory instead of files. It shares
-the lsdtt3 version number, but **wheels are not built for every release**: only
-for releases where the Python API is supported, so a version missing from PyPI
-or from a release page is expected.
+the lsdtt3 version number. From the first release after 0.8.0, wheels for
+Linux, macOS and Windows are built for every release and attached to its
+GitHub release; earlier releases have wheels only where the Python API was
+supported.
 
-**It is not on PyPI yet** while the repository is in private beta. When a
-release has wheels, they are attached to its GitHub release and put in the
+**It is not on PyPI yet.** Wheels are attached to the GitHub release and put in the
 [download directory](https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/). Each
 wheel is for one Python version (`cp312` is Python 3.12, `cp313` is Python
 3.13) and platform. Keep its original file name, since pip reads the version

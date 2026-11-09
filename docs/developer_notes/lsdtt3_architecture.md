@@ -29,7 +29,7 @@ Can also be used as a developer guide.
 lsdtt3/
 ├── apptainer_def/
 │   └── apptainer_setup.md
-├── .github/workflows/                     — release.yml (Linux bundle on v* tags), python-wheels.yml (manual), docs.yml
+├── .github/workflows/                     — release.yml (all backends, plugin zip, wheels on v* tags), python-wheels.yml (called by release.yml, or manual), docs.yml (site on v* tags)
 ├── cli/                                   — command-line executables (lsdtt-* dashed names)
 │   ├── lsdtt-advection-diffusion.cpp
 │   ├── lsdtt-bankfull-width.cpp
@@ -51,6 +51,7 @@ lsdtt3/
 │   ├── lsdtt-fetch-erosion-rates.cpp
 │   ├── lsdtt-fetch-lithology.cpp
 │   ├── lsdtt-fetch-raster.cpp
+│   ├── lsdtt-fetch-river-lines.cpp
 │   ├── lsdtt-flat-surface-finder.cpp
 │   ├── lsdtt-fluvial-surfaces.cpp
 │   ├── lsdtt-graphflood.cpp
@@ -145,6 +146,8 @@ lsdtt3/
 │   │   ├── lsdtt_rotation_frame_file.hpp/.cpp — <stem>_rotation_frame.txt: reading and writing the frame record
 │   │   ├── lsdtt_true_north.hpp/.cpp        — grid convergence; grid bearings to bearings from true north
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_point_attribute_output.hpp/.cpp — write a point layer back out with its original attributes plus added fields
+│   │   ├── lsdtt_river_line_fetch.hpp/.cpp  — river centrelines for an area (local line file or OS Open Rivers, cached)
 │   │   ├── lsdtt_outlet_bounds_discovery.hpp/.cpp— WGS84 outlet points to fetch bounds
 │   │   ├── lsdtt_outlet_clusters.hpp/.cpp   — grouping outlets into fetch clusters
 │   │   ├── lsdtt_dem_grouping.hpp/.cpp      — grouping bounding boxes for higher-resolution re-fetching
@@ -157,7 +160,7 @@ lsdtt3/
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   ├── lsdtt_distributed_hydrology_forcing.hpp/.cpp— per-timestep CSV forcing readers for lsdtt-distributed-hydrology
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
-│   ├── cpu/                                   — 165 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
+│   ├── cpu/                                   — 169 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
 │   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
@@ -272,6 +275,9 @@ lsdtt3/
 │   │   ├── lsdtt_chi_disorder_cpu.hpp/.cpp                   — chi disorder metric, jackknife, bootstrap, m/n sweep
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
+│   │   ├── lsdtt_chi_knickpoints_cpu.hpp/.cpp                — tributaries and knickpoints of a fitted chi network
+│   │   ├── lsdtt_channel_gradient_cpu.hpp/.cpp               — along-channel gradient: windowed least-squares slope along the D8 path
+│   │   ├── lsdtt_channel_point_attributes_cpu.hpp/.cpp       — field points snapped to the nearest channel cell, with area, distance, elevation, slope
 │   │   ├── lsdtt_channel_network_analysis_cpu.hpp/.cpp       — channel link bearings, junction angles
 │   │   ├── lsdtt_channel_network_grouping_cpu.hpp/.cpp           — grouping keys for link and junction records (Strahler, basin, region, lithology)
 │   │   ├── lsdtt_channel_bearing_statistics_cpu.hpp/.cpp         — grouped bearing and junction-angle distributions and comparisons
@@ -281,6 +287,9 @@ lsdtt3/
 │   │   ├── lsdtt_perimeter_sources_cpu.hpp/.cpp              — channel sources where big valleys enter a DEM across its edge
 │   │   ├── lsdtt_strahler_tokunaga_analysis_cpu.hpp/.cpp     — Strahler channel aggregation, Tokunaga self-similarity, junction area-ratio distribution
 │   │   ├── lsdtt_burn_streams_cpu.hpp/.cpp                   — burn polyline vector into DEM with monotone profile
+│   │   ├── lsdtt_burn_corridor_cpu.hpp/.cpp                  — stream_burn_mode burn_to_corridor: vector network is the truth, DEM drained to it
+│   │   ├── lsdtt_river_line_prepare_cpu.hpp/.cpp             — noding, downstream orientation, topology report and writing of fetched river lines
+│   │   ├── lsdtt_sea_mask_cpu.hpp/.cpp                       — sea cells of a DEM from sea/land polygons or an open coastline
 │   │   ├── lsdtt_ridgeline_cpu.hpp/.cpp                      — ridgeline extraction and analysis
 │   │   ├── lsdtt_valley_centreline_cpu.hpp/.cpp              — valley centreline extraction and tracing
 │   │   ├── lsdtt_valley_cross_sections_cpu.hpp/.cpp          — valley cross-section analysis
@@ -1268,6 +1277,17 @@ Current CLI programs are:
   lithology vocabulary, a crosswalk template and the CC BY 4.0 attribution.
   Shares the bounding-box, bounds-file and HTTP parameters with
   `lsdtt-fetch-raster` (`lsdtt_common_parameters`). Uses `lsdtt_macrostrat_fetch`.
+
+- **`lsdtt-fetch-river-lines.cpp`** *(experimental)*  
+  **River centrelines prepared for `lsdtt-stream-burning`.** Reads lines from a
+  local OGR file or OS Open Rivers (GB; the national GeoPackage is downloaded
+  once through the keyless OS Downloads API, md5-checked, cached and read through
+  `/vsizip/`) for a WGS84 box or a raster's extent plus a buffer. Makes them
+  single-part, orients them downstream, joins them at junctions, and writes the
+  lines, the nodes and a per-component topology CSV in the DEM's CRS. It reports
+  tips, outlets, loops, bifurcations and direction conflicts but does not repair
+  them. Reading is `lsdtt_river_line_fetch` (core); preparation and writing are
+  `lsdtt_river_line_prepare_cpu`.
 
 - **`lsdtt-fetch-erosion-rates.cpp`**  
   **Basin-averaged cosmogenic erosion rates from OCTOPUS for a bounding box.**

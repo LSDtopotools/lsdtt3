@@ -207,8 +207,8 @@ matplotlib = "*"
 [feature.workflows.pypi-dependencies]
 snakemake = "*"
 
-# Local packaging: building the release artefacts without spending GitHub
-# Actions minutes (tools/make_all_packages.sh). Kept out of the default
+# Local packaging: building or rehearsing the release artefacts on this machine
+# (tools/make_all_packages.sh). Kept out of the default
 # environment because only whoever is cutting a package needs it.
 #
 # `build` is the PEP 517 front end. It creates an isolated virtualenv and

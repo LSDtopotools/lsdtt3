@@ -189,8 +189,8 @@ src/cpu/lsdtt_raster_spectral_cpu.hpp/.cpp          — spectral / wavelet
 src/cpu/lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp — test surface generators
 ```
 
-To add a new group of analysis functions — say, chi analysis — you create
-`src/cpu/lsdtt_chi_analysis_cpu.hpp/.cpp`, write your free functions there, and
+To add a new group of analysis functions — say, glacial erosion — you create
+`src/cpu/lsdtt_glacial_erosion_cpu.hpp/.cpp`, write your free functions there, and
 add the `.cpp` to `LSDTT3_CPU_SOURCES` in `CMakeLists.txt`. That is the entire
 change required outside your new files.
 

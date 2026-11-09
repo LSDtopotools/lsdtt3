@@ -5,8 +5,8 @@
 # machine and run the whole python_bindings/tests suite against them.
 #
 # The full wheel matrix (python-wheels.yml: 4 platforms x 5 Pythons, every
-# wheel compiled from scratch) is run by hand and only for some releases. This
-# is the cheap check in between: one Linux build, one interpreter, CLIs off.
+# wheel compiled from scratch) runs only on release tags, after this check has
+# passed. This is the cheap check: one Linux build, one interpreter, CLIs off.
 # It catches a C++ change that breaks the bindings (a compile break, or a
 # behaviour change a binding test sees) at the commit that made it.
 #

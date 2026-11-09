@@ -60,13 +60,13 @@ If the name is taken, decide on an alternative **before** anything else: the
 distribution name is baked into `[project] name`, the install instruction in
 `docs/python/index.md`, and every downstream mention.
 
-### 2. Decide about publishing binaries from a private repository
+### 2. Check the licence obligations
 
-The repository is private; PyPI is not. Uploading publishes compiled code and
-the CLI executables to anyone who wants them. That is compatible with
-AGPL-3.0-or-later, and it is the point of shipping a wheel — but it is a
-deliberate disclosure decision, so make it deliberately. The source stays
-private; the binaries do not.
+Uploading publishes compiled code and the CLI executables to anyone who wants
+them. That is compatible with AGPL-3.0-or-later, which also requires the
+corresponding source to be available; the public repository and its release
+tags provide it. Each wheel bundles GDAL, PROJ and their dependencies, whose
+licences travel with them.
 
 ### 3. Fill in the PyPI metadata
 
@@ -136,8 +136,8 @@ release.** That is why the rehearsal happens on TestPyPI.
 
 ## Route A: publishing by hand with twine
 
-Use this when you want to control the upload yourself, or when GitHub Actions
-minutes are the thing you are trying to save.
+Use this when you want to control the upload yourself, or to rehearse on
+TestPyPI without touching CI.
 
 The catch is that **you still need manylinux wheels**, which means building
 inside the manylinux image. That needs a container engine, and this project
@@ -260,9 +260,11 @@ tag it**, build, and upload to TestPyPI (step 5 above). That catches most
 
 `.github/workflows/python-wheels.yml` builds and tests wheels for one existing
 tag (its `tag` input: `vX.Y.Z` or `vX.Y.Z.postN`), on Linux only or on all four
-platform legs (its `platforms` input, `linux` by default; see
-[A Linux-only wheel build](building_python_wheels.md#a-linux-only-wheel-build-the-cheap-one)), and
-can upload them to the `vX.Y.Z` GitHub release (its `upload` input). It never
+platform legs (its `platforms` input; see
+[A Linux-only wheel build](building_python_wheels.md#a-linux-only-wheel-build)), and
+can upload them to the `vX.Y.Z` GitHub release (its `upload` input).
+`release.yml` calls it on every `vX.Y.Z` tag with all platforms and upload on;
+it can also be run by hand. It never
 bumps a version, commits or tags. **It does not upload to PyPI** — there is no
 `twine` step and no token. Adding one is a small change.
 
@@ -271,15 +273,17 @@ bumps a version, commits or tags. **It does not upload to PyPI** — there is no
 PyPI's trusted publishing (OIDC) means **no token is stored anywhere**. GitHub
 proves the workflow's identity to PyPI directly. Configure it once at
 <https://pypi.org/manage/project/lsdtt3/settings/publishing/>, naming the
-repository, the workflow file (`python-wheels.yml`) and the environment
-(`pypi`).
+repository, the workflow file and the environment (`pypi`). PyPI matches the
+**top-level** workflow of the run, and `python-wheels.yml` runs both as a
+reusable workflow called by `release.yml` (tag releases) and on its own
+(manual `.postN` runs), so register both workflow files as trusted publishers.
 
 Then add a job after the existing release job:
 
 ```yaml
   publish-pypi:
     name: Publish to PyPI
-    needs: [build-wheels, publish-release]
+    needs: [build-wheels, upload-release]
     runs-on: ubuntu-24.04
     environment: pypi          # gate approvals here if you want them
     permissions:
@@ -313,11 +317,11 @@ can leak; OIDC is scoped to one workflow in one repository.
 
 ### Cost
 
-The wheel workflow is the expensive one — four platform legs, five Python
-versions each, every wheel compiled from scratch. The publish job itself costs
-almost nothing: it downloads artefacts already built and uploads them. So
-adding PyPI publishing does **not** meaningfully change the Actions bill;
-building the wheels does.
+The wheel workflow is the slow one — four platform legs, five Python
+versions each, every wheel compiled from scratch — and it already runs on
+every release tag. A publish job costs almost nothing on top: it downloads
+artefacts already built and uploads them. Standard GitHub-hosted runners are
+free for public repositories, macOS and Windows included.
 
 ---
 
@@ -325,19 +329,18 @@ building the wheels does.
 
 | | Route A (twine) | Route B (Actions) |
 |---|---|---|
-| Actions minutes | none | one Linux runner (`platforms: linux`), or the full matrix with macOS at 10× and Windows at 2× (`all`) |
+| CI | none | the wheels `release.yml` already built on the tag |
 | Platforms | Linux only, unless you own Macs and Windows boxes | Linux only, or Linux, macOS ARM, macOS Intel, Windows |
 | Python versions | whatever you tell cibuildwheel to build | cp310–cp314 |
 | Credentials | a token on your machine | OIDC, nothing stored |
 | Tag and GitHub release | you tag; `gh release upload` | you tag; the workflow can upload |
 | Pre-upload testing | you run it | `test-command` runs against every wheel |
 
-**Route B with `platforms: all` for releases that should reach every user**:
-with no source distribution, a Linux-only release leaves macOS and Windows
-users with nothing to install. **Route B with `platforms: linux`** is the cheap
-middle ground, with the per-wheel test suite still run on GitHub. **Route A when
-you want a Linux release without spending minutes**, or to rehearse on
-TestPyPI.
+**Route B for releases**: `release.yml` has already built and tested all
+twenty wheels on the tag, so publishing them is one more job. With no source
+distribution, publishing only Linux wheels would leave macOS and Windows users
+with nothing to install. **Route A** to rehearse on TestPyPI, or for a
+Linux-only `.postN` fix.
 
 ---
 

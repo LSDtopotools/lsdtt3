@@ -260,7 +260,8 @@ binaries:
 | Everyday Linux / WSL2 development | `build/` |
 | Linux release (made by `tools/make_release.sh`) | `build/release/` |
 | Native Windows QGIS backend | `build/windows-qgis/` |
-| Native macOS | `build/macos-core/` |
+| Native macOS development | `build/macos/` |
+| Native macOS QGIS backend (read by `tools/package_macos_backend.sh`) | `build/macos-qgis/` |
 
 ---
 

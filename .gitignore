@@ -218,3 +218,6 @@ debian/debhelper-build-stamp
 *.ddeb
 *.buildinfo
 *.changes
+
+# Help / parameter-echo files from running the param-deprecation test child by hand
+/dep_parser_*

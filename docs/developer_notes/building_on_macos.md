@@ -11,7 +11,11 @@ Linux is the reference platform and the native macOS build is less exercised
 (see [Known gaps](#known-gaps)). If the native build gives you trouble, the VM
 route always works.
 
-**WARNING** None of this has been tested as of September 2026
+> **Status (November 2026).** No maintainer builds on a Mac. The native route
+> below is what the `build-macos` job of `.github/workflows/release.yml` runs on
+> every release, so CI is where it is exercised. It was reviewed off-Mac: the
+> C++ passes a clang + libc++ syntax check (with macOS's integer types), and the
+> CMake handles Homebrew's keg-only `libomp` and pkg-config FFTW explicitly.
 
 ---
 
@@ -39,7 +43,7 @@ clang --version     # verify
 Install Homebrew from [brew.sh](https://brew.sh) if you don't have it, then:
 
 ```bash
-brew install cmake gdal fftw libomp netcdf eigen
+brew install cmake gdal fftw libomp netcdf eigen pkgconf
 ```
 
 | Package | Required? | Role |
@@ -48,6 +52,7 @@ brew install cmake gdal fftw libomp netcdf eigen
 | `gdal` | **yes** | Raster and vector I/O, CRS handling |
 | `libomp` | for multithreading | OpenMP runtime (see below) |
 | `fftw` | no | Spectral analysis, wavelet polyfit |
+| `pkgconf` | for `fftw` | CMake finds Homebrew's FFTW through pkg-config |
 | `netcdf` | no | ERA40 / palaeomagnetic corrections in cosmo tools |
 | `eigen` | no | k_sn / u\* inversion in chi analysis |
 
@@ -55,11 +60,13 @@ These are the Homebrew names for the same libraries listed in
 [Building from source](building_from_source.md#install-dependencies).
 
 **About `libomp`:** Apple Clang ships **no OpenMP runtime or headers at all**,
-so `-fopenmp` is unusable out of the box, `find_package(OpenMP)` fails, and the
-build falls back to single-threaded (CMake prints
-`OpenMP not found - CPU operations will be single-threaded`). Homebrew's
-`libomp` supplies the runtime — but see [Known gaps](#known-gaps): it is
-keg-only, and CMake probably will not find it without help.
+so `-fopenmp` is unusable out of the box. Homebrew's `libomp` supplies the
+runtime, but it is keg-only (not linked into `/opt/homebrew`), so plain
+`find_package(OpenMP)` cannot see it. `cmake/lsdtt_homebrew_openmp.cmake`
+points CMake at the keg (from `$LIBOMP_PREFIX`, `brew --prefix libomp`, or the
+standard prefixes) and prints `Apple Clang: using Homebrew libomp from ...`.
+If you see `OpenMP not found - CPU operations will be single-threaded`
+instead, install `libomp` or set `LIBOMP_PREFIX`.
 
 ### 3. Clone, configure and build
 
@@ -69,54 +76,60 @@ line](git_notes.md).
 ```bash
 git clone git@github.com:lsdtopotools/lsdtt3.git
 cd lsdtt3
-cmake -S . -B build/macos-core -DCMAKE_BUILD_TYPE=Release
-cmake --build build/macos-core -j"$(sysctl -n hw.ncpu)"
+cmake -S . -B build/macos -DCMAKE_BUILD_TYPE=Release
+cmake --build build/macos -j"$(sysctl -n hw.ncpu)"
 ```
 
-`build/macos-core` is the directory `tools/package_macos_backend.sh` reads by
-default. Read the configuration summary CMake prints: a missing optional
-library means the corresponding tool is skipped, and the build still succeeds.
+Read the configuration summary CMake prints (`OpenMP`, `FFTW3`, `Eigen3`): a
+missing optional library means the corresponding tool is skipped, and the build
+still succeeds. To make a bundle, see
+[Packaging a macOS bundle](#packaging-a-macos-bundle), which uses its own
+`build/macos-qgis` tree.
 
 ### 4. Put the tools on your PATH and test
 
 ```bash
-echo 'export PATH=/path/to/lsdtt3/build/macos-core:$PATH' >> ~/.zshrc
+echo 'export PATH=/path/to/lsdtt3/build/macos:$PATH' >> ~/.zshrc
 source ~/.zshrc
 lsdtt-raster-preprocessing --version
 
-ctest --test-dir build/macos-core --output-on-failure
+ctest --test-dir build/macos -L <domain> -LE heavy --output-on-failure
 ```
 
 (`~/.zshrc` for the default zsh; use `~/.bashrc` if you use bash.)
 
 ### Known gaps
 
-- **OpenMP discovery is unverified.** Homebrew's `libomp` is keg-only, so it is
-  not linked into the default search paths, and `CMakeLists.txt` has no
-  `APPLE` branch pointing at it. Expect to pass the libomp paths explicitly, or
-  configure with `-DLSDTT_OPENMP=OFF` for a working single-threaded build.
-- **Packaging is untested on real hardware.** `tools/package_macos_backend.sh`
-  was written by analogy with the Linux script. See [Packaging a macOS
-  bundle](#packaging-a-macos-bundle).
+- **Only the `qgis` profile is packaged.** The macOS bundle exists to back the
+  QGIS plugin. For the full CLI set on a Mac, use the
+  [Multipass Ubuntu VM](#multipass-ubuntu-vm) and the Linux bundle.
+- **Not run on a maintainer's Mac.** The build and packaging run in CI on
+  every release; a local run that fails differently from CI is worth a bug
+  report.
 
 ### Packaging a macOS bundle
 
 The command sequence is in `tools/README.md` in the repository (see
 [Making release packages](making_release_packages.md)); in short,
-`tools/package_macos_backend.sh --version <version>` produces
-`dist/lsdtt3-backend-macos-<arch>-core-v<version>.tar.gz`. Add
+`tools/package_macos_backend.sh --version <version>` packages the `qgis` profile
+from `build/macos-qgis` into
+`dist/lsdtt3-backend-macos-<arch>-qgis-v<version>.tar.gz`. Add
 `--tag v<version>` to build the release tag itself: the script exports it with
 `git archive` into a scratch folder, configures and builds it there, and
 packages that build. Bundles are
 architecture-specific: package on Apple Silicon for `arm64` users and on Intel
-for `x86_64` users.
+for `x86_64` users. A bundle runs on the macOS release it was built on and
+newer, because Homebrew's libraries target the build machine's release.
 
 The script needs `otool`, `install_name_tool` and `codesign` (Xcode CLT),
 `gdal-config` (Homebrew `gdal`) and `python3`. It rewrites library references
 to `@rpath/...` and re-signs each modified binary ad hoc.
 
-It ends with a self-containment check and **aborts** if a dependency is not
-staged:
+It deletes every rpath except `@executable_path/../lib` / `@loader_path`, so
+the bundle never prefers a Homebrew library on the user's machine, runs each
+CLI under `DYLD_PRINT_LIBRARIES=1` to prove nothing loads from outside the
+bundle, and ends with a self-containment check. It **aborts** if a dependency
+is not staged:
 
 ```
 ERROR: <binary> needs '@loader_path/...' but it is not staged in lib/
@@ -127,7 +140,7 @@ Do not work around it — this check exists because v0.2.0 shipped a bundle with
 a missing library that failed on users' machines. To inspect a bundle by hand:
 
 ```bash
-cd dist/lsdtt3-backend-macos-<arch>-core-v<version>
+cd dist/lsdtt3-backend-macos-<arch>-qgis-v<version>
 otool -L bin/lsdtt-raster-preprocessing   # non-system libs should be @rpath/...
 source setenv.sh
 lsdtt-raster-preprocessing --help
@@ -141,7 +154,7 @@ they live in the dyld shared cache.
 it with:
 
 ```bash
-xattr -dr com.apple.quarantine lsdtt3-backend-macos-<arch>-core-v<version>
+xattr -dr com.apple.quarantine lsdtt3-backend-macos-<arch>-qgis-v<version>
 ```
 
 The bundle's own README tells end users the same. To use the bundle from QGIS,

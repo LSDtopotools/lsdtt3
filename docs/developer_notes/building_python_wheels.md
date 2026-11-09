@@ -301,24 +301,28 @@ wheel can import cleanly and still be missing a symbol or a data file.
 
 ## Releasing
 
-The release is **manual by design** — the workflow is `workflow_dispatch` only
-and never fires on a push.
+**Every `vX.Y.Z` tag builds the wheels automatically.** `release.yml` calls
+`python-wheels.yml` (as a reusable workflow) once the Linux backend has passed
+and created the release: all four platform legs, five CPython versions each
+(3.10–3.14), every wheel tested as above, then attached to the release. It
+never fires on an ordinary push.
 
-1. Tag the release first (`vX.Y.Z`, or `vX.Y.Z.postN` for a wheel-only
-   rebuild). The workflow builds an existing tag; it never creates one.
+Run it by hand for a `vX.Y.Z.postN` wheel-only rebuild (which `release.yml`
+ignores), or to rebuild one tag's wheels:
+
+1. Tag first (`vX.Y.Z.postN`). The workflow builds an existing tag; it never
+   creates one.
 2. Go to Actions → *Build Python wheels* → Run workflow, give the tag, and
    choose **platforms** (see below).
 3. Tick *upload* to attach the wheels to the `vX.Y.Z` GitHub release (which
    `release.yml` created); otherwise they stay as workflow artefacts.
 
-### A Linux-only wheel build (the cheap one)
+### A Linux-only wheel build
 
-While the repository is private, Actions minutes are metered, and runners are
-billed at a multiple of the Linux rate: **macOS at 10×, Windows at 2×**. Two of
-the four legs are macOS, so a full run costs many times a Linux-only one. The
-`platforms` input therefore defaults to `linux`, which builds only the Linux
-x86_64 leg: five wheels (CPython 3.10–3.14), each tested as above, on one
-`ubuntu-24.04` runner.
+The `platforms` input of a manual run defaults to `linux`, which builds only
+the Linux x86_64 leg: five wheels, on one `ubuntu-24.04` runner, in a fraction
+of the time of the full matrix. Useful for a quick `.postN` fix that only
+Linux users need.
 
 From the Actions tab: *Build Python wheels* → **Run workflow** → tag
 `v0.7.1`, platforms **linux**, upload ticked or not. Or from a terminal with an
@@ -332,15 +336,13 @@ gh run watch                       # follow it; or: gh run list --workflow pytho
 `gh workflow run` dispatches the workflow file as it is on the default branch,
 and that version checks out and builds the tag you name.
 
-**What a Linux-only release means for users.** There is no source
+**What a Linux-only run means for users.** There is no source
 distribution, so `pip install lsdtt3` on macOS or native Windows finds no
 wheel and fails with "no matching distribution". Linux users, including WSL2
-and Google Colab, are covered. Choose `all` when a release should reach
-macOS and Windows Python users. You can start with `linux` and run `all` for
-the same tag later; with *upload* ticked, the second run replaces the Linux
-wheels the first one attached.
+and Google Colab, are covered. With *upload* ticked, a later `all` run for the
+same tag replaces the Linux wheels an earlier run attached.
 
-The local alternative costs no minutes at all: `tools/make_all_packages.sh
+The local alternative needs no CI at all: `tools/make_all_packages.sh
 --clean --tag v0.7.1 --only wheel` builds one Linux manylinux wheel, for the
 interpreter it runs under, inside `podman` (see [Building locally](#building-locally)).
 
@@ -353,10 +355,11 @@ seconds rather than after the matrix.
 
     `python_bindings/pyproject.toml` carries the same `X.Y.Z` as
     `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`
-    (`tools/set_version.py` sets both). Wheels are built only for releases
-    where the Python API is supported, so not every lsdtt3 version is on PyPI.
-    Between wheel builds, `tools/make_release.sh` builds the bindings once on
-    Linux and runs the whole `python_bindings/tests` suite at every release
+    (`tools/set_version.py` sets both). Releases after 0.8.0 build wheels on
+    every tag; before that they were built by hand for some releases only.
+    `tools/make_release.sh` also builds the bindings once on Linux and runs the
+    whole `python_bindings/tests` suite in the first release job, so a C++
+    change that breaks them stops the release before the wheel matrix starts
     (also available as the opt-in CTest test `python_bindings_smoke`).
 
 ---
@@ -364,7 +367,11 @@ seconds rather than after the matrix.
 ## When a wheel build fails
 
 **A dependency is missing on one platform only.** Check `before-all` for that
-platform in `pyproject.toml`. The three package managers do not agree on
+platform in `pyproject.toml`. On macOS, FFTW is found through pkg-config (so
+`pkgconf` must be installed) and OpenMP through
+`cmake/lsdtt_homebrew_openmp.cmake`, because Homebrew's `libomp` is keg-only;
+a mac wheel built without either is single-threaded or lacks the spectral
+routines, and the configure log says so. The three package managers do not agree on
 package names, and a dependency added for Linux is easy to forget on the other
 two.
 

@@ -3,26 +3,29 @@ name: Documentation site
 # Builds the MkDocs site and publishes it to GitHub Pages at
 # https://lsdtopotools.github.io/lsdtt3/
 #
-# Dormant while the repository is private: every job is skipped (a skipped
-# job uses no Actions minutes), because Pages from a private repository needs
-# a paid plan and CI minutes are metered. It starts deploying on its own once
-# the repository is public. One-off setup at that point:
-#   Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+# Published on releases, so the site always describes a version users can
+# install, not unreleased work on main. A documentation-only fix between
+# releases can go out with a manual run (Actions tab -> Run workflow, on main).
+#
+# One-off setup when the repository goes public:
+#   1. Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+#   2. Settings -> Environments -> github-pages -> Deployment branches and tags:
+#      add a TAG rule "v*". The environment allows only the default branch by
+#      default, and a tag-triggered deploy is otherwise rejected.
 # See docs/developer_notes/building_the_docs.md.
 #
+# Every job is skipped while the repository is private (Pages from a private
+# repository needs a paid plan), so this file needs no edit at that point.
+#
 # Triggers:
-#   - push to main that touches the site sources
+#   - push of a version tag vX.Y.Z (not the wheel-only vX.Y.Z.postN tags)
 #   - manual run from the Actions tab
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "docs/**"
-      - "mkdocs.yml"
-      - "qgis_plugin/README.md"
-      - ".github/workflows/docs.yml"
+    tags:
+      - "v*"
+      - "!v*.post*"
   workflow_dispatch:
 
 permissions:

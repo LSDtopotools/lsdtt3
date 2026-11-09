@@ -48,7 +48,7 @@ CLI before anything runs. `test_backend_health.py` fails if `REQUIRED_CLIS` diff
 |---|---|---|
 | Windows | [Native Windows](building_on_windows.md#native-windows-qgis-backend-only) in `build\windows-qgis` | `tools\package_windows_backend.ps1` (default profile `qgis`) |
 | Linux | [Linux](building_from_source.md#linux) | `tools/package_linux_backend.sh --cli-profile qgis` |
-| macOS | [Native](building_on_macos.md#native-build) in `build/macos-core` | `tools/package_macos_backend.sh --cli-profile qgis` (untested on real hardware) |
+| macOS | [Native](building_on_macos.md#native-build) in `build/macos-qgis` | `tools/package_macos_backend.sh` (default profile `qgis`; built by `release.yml` on every tag) |
 
 A WSL2 build cannot serve as the backend for a Windows QGIS: its binaries are
 Linux executables.
