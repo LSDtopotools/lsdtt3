@@ -271,6 +271,29 @@ void declare_channel_initiation_parameters(
 }
 
 // -----------------------------------------------------------------------------
+// Along-channel gradient window
+// -----------------------------------------------------------------------------
+void declare_channel_slope_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent)
+{
+    float_default_map["slope_window_half_length_metres"] = 25.0f;
+    help_map["slope_window_half_length_metres"] = {"float", "25.0",
+        "Half-length of the along-channel slope-fit window [m].",
+        "Slope is the least-squares slope of pit-filled elevation against "
+        "along-channel distance over +/- this distance (the window spans twice "
+        "it), so it has no cross-channel component; the fitted line's value at "
+        "the cell is the smoothed elevation. Upstream the window follows the "
+        "tributary with the largest drainage area. Must be at least two cell "
+        "sizes; use roughly 5-10 channel widths. Near the source or outlet a "
+        "one-sided window is accepted only if the valid cells span at least this "
+        "distance, otherwise slope_valid is 0.",
+        group, "param", parent};
+}
+
+// -----------------------------------------------------------------------------
 // Flat-ground admission and floodplain bounds
 // -----------------------------------------------------------------------------
 void declare_relief_window_parameter(

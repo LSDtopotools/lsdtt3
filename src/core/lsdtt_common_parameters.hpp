@@ -220,6 +220,18 @@ void declare_channel_initiation_parameters(
     const std::string&          prefix = "");
 
 // -----------------------------------------------------------------------------
+// slope_window_half_length_metres (float, m, 25): the half-length of the
+// along-channel window over which the channel gradient is fitted
+// (lsdtt_channel_gradient_cpu). Shared by lsdtt-bankfull-width and
+// lsdtt-channel-extraction; `group` and `parent` place it in each tool's help.
+// -----------------------------------------------------------------------------
+void declare_channel_slope_window_parameter(
+    std::map<std::string, float>& float_default_map,
+    lsdtt_help_registry&          help_map,
+    const std::string&            group,
+    const std::string&            parent = "");
+
+// -----------------------------------------------------------------------------
 // Flat-ground admission and floodplain bounds, shared by
 // lsdtt-flat-surface-finder, lsdtt-fluvial-surfaces, lsdtt-mountain-front and
 // lsdtt-hillslope-channel-coupling. One name per aim (2026-10-26); each tool

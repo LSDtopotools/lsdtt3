@@ -12,7 +12,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 850 | 191 | 130 | 123 | 18 | 171 | 372 | 237 | . | 43 | 206 | 644 |
+| CTest | 868 | 204 | 132 | 127 | 19 | 173 | 377 | 241 | . | 43 | 216 | 652 |
 | pytest | 231 | 76 | 58 | 44 | . | 9 | 27 | 60 | . | 60 | 228 | 3 |
 
 ## CTest by domain
@@ -24,10 +24,11 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `basin_stats` | 4 | . | . | 1 | . | 1 | 4 | . | . | . |
 | `basin_surface_metrics` | 5 | 1 | . | 1 | . | 2 | 4 | . | . | . |
 | `cellular` | 7 | 2 | 4 | 4 | . | . | 2 | . | . | . |
-| `chi` | 17 | 9 | 1 | 7 | 1 | 1 | 3 | . | . | . |
+| `channel` | 2 | 2 | 1 | . | . | . | . | . | . | . |
+| `chi` | 19 | 10 | 1 | 7 | 1 | 2 | 4 | . | . | . |
 | `compatibility` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `conventions` | 9 | 2 | . | . | . | . | . | 1 | . | 9 |
-| `core` | 35 | 13 | 2 | 2 | . | 4 | 1 | 7 | . | 16 |
+| `core` | 36 | 14 | 2 | 3 | . | 4 | 1 | 8 | . | 16 |
 | `cosmo` | 56 | 7 | 11 | 9 | 1 | 18 | 20 | 9 | . | 3 |
 | `cosmo_realworld` | 8 | . | . | . | . | 8 | . | . | . | . |
 | `cross_sections` | 2 | . | . | . | . | . | 2 | . | . | . |
@@ -37,7 +38,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `divide_migration` | 13 | 7 | . | 2 | . | 3 | 8 | 4 | . | . |
 | `docs` | 3 | . | . | . | . | . | . | . | . | 3 |
 | `erodibility_calibration` | 30 | 8 | 1 | 4 | 1 | 1 | 12 | 10 | . | . |
-| `fetch` | 74 | 8 | 4 | 3 | . | 3 | 16 | 45 | . | 8 |
+| `fetch` | 79 | 11 | 4 | 5 | 1 | 4 | 17 | 47 | . | 8 |
 | `flow` | 47 | 6 | 7 | 7 | 3 | 25 | 28 | 13 | . | . |
 | `fluvial_surfaces` | 94 | 20 | 19 | 18 | 1 | 28 | 53 | 18 | . | 2 |
 | `gdal` | 7 | . | 3 | . | . | 2 | . | 1 | . | 1 |
@@ -56,12 +57,12 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `marsh` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `mask` | 1 | 1 | . | . | . | . | . | 1 | . | . |
 | `mountain_front` | 1 | 1 | . | . | . | . | . | 1 | . | . |
-| `network` | 269 | 65 | 40 | 45 | 8 | 64 | 136 | 76 | . | 3 |
+| `network` | 281 | 74 | 42 | 46 | 8 | 65 | 140 | 77 | . | 3 |
 | `outlet_matching` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `packaging` | 3 | . | . | . | . | . | 1 | . | . | 2 |
 | `paired_flowpaths` | 4 | 1 | . | . | . | 3 | 3 | . | . | . |
 | `parameters` | 15 | 1 | . | . | . | . | . | . | . | 14 |
-| `point_input` | 2 | 1 | . | 1 | . | 1 | . | 1 | . | . |
+| `point_input` | 3 | 2 | . | 2 | . | 1 | . | 2 | . | . |
 | `quartz` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `raster` | 52 | 16 | 9 | 6 | 2 | 12 | 19 | 14 | . | 1 |
 | `raster_algebra` | 1 | 1 | . | . | . | . | . | . | . | . |
@@ -70,10 +71,11 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `snapping` | 3 | 2 | 1 | 1 | . | . | 2 | 1 | . | . |
 | `statistics` | 2 | . | . | . | . | 2 | . | . | . | . |
 | `step_change` | 5 | 2 | 3 | 2 | . | . | 1 | . | . | . |
-| `stream_burning` | 3 | . | . | 1 | . | 1 | 3 | . | . | . |
+| `stream_burning` | 7 | 3 | 1 | 3 | . | 2 | 3 | . | . | . |
 | `streamlines` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `surface_metrics` | 49 | 13 | 7 | 12 | . | 16 | 33 | 5 | . | 4 |
 | `synthetic_networks` | 31 | 2 | 4 | 3 | 1 | 6 | 17 | 9 | . | 4 |
+| `water` | 1 | 1 | . | . | . | . | . | . | . | . |
 
 ### Domains with no exact-solution, property, metamorphic or differential test
 
@@ -100,9 +102,9 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-basin-extraction` | 9 | . | . | 1 | . | 3 | 8 | 1 | . | . |
 | `lsdtt-basin-stats` | 5 | . | . | 1 | . | 2 | 3 | 2 | . | . |
 | `lsdtt-basin-surface-metrics` | 7 | . | . | 1 | . | 3 | 6 | 1 | . | . |
-| `lsdtt-channel-extraction` | 10 | 2 | . | 1 | . | 2 | 7 | 2 | . | 1 |
+| `lsdtt-channel-extraction` | 14 | 4 | . | 1 | . | 2 | 10 | 3 | . | 1 |
 | `lsdtt-channel-network-analysis` | 21 | 3 | . | 1 | . | 3 | 9 | 12 | . | . |
-| `lsdtt-chi-analysis` | 32 | 1 | . | 2 | . | 7 | 16 | 16 | . | . |
+| `lsdtt-chi-analysis` | 33 | 1 | . | 2 | . | 8 | 17 | 16 | . | . |
 | `lsdtt-cosmo-column-tool` | 4 | 1 | 1 | 1 | . | 2 | 1 | . | . | . |
 | `lsdtt-cosmo-landslides` | 16 | . | 1 | 2 | . | 6 | 9 | 4 | . | . |
 | `lsdtt-cosmo-prediction` | 16 | 1 | 5 | 4 | . | 2 | 7 | 2 | . | 1 |
@@ -115,6 +117,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-fetch-erosion-rates` | 12 | 2 | 1 | 1 | . | . | 7 | 5 | . | . |
 | `lsdtt-fetch-lithology` | 6 | . | . | 1 | . | 1 | 3 | 3 | . | . |
 | `lsdtt-fetch-raster` | 57 | . | 1 | . | . | 9 | 5 | 36 | . | 8 |
+| `lsdtt-fetch-river-lines` | 3 | 1 | . | 1 | . | 1 | 1 | 1 | . | . |
 | `lsdtt-flat-surface-finder` | 12 | . | 1 | 3 | . | 4 | 9 | 2 | . | . |
 | `lsdtt-fluvial-surfaces` | 53 | 4 | 9 | 10 | . | 20 | 35 | 12 | . | . |
 | `lsdtt-graphflood` | 3 | . | . | . | . | . | 1 | 2 | . | . |
@@ -132,7 +135,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-sediment-routing` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `lsdtt-slope-area` | 9 | . | . | 2 | . | 4 | 4 | 5 | . | . |
 | `lsdtt-spectral-analysis` | 7 | . | . | 1 | . | 2 | 5 | . | . | 2 |
-| `lsdtt-stream-burning` | 4 | . | . | 1 | . | 2 | 4 | . | . | . |
+| `lsdtt-stream-burning` | 5 | . | . | 2 | . | 3 | 4 | . | . | . |
 | `lsdtt-surface-metrics` | 11 | 3 | . | 1 | . | . | 7 | 2 | . | 2 |
 | `lsdtt-swath-profile` | 1 | 1 | . | 1 | . | . | 1 | . | . | . |
 | `lsdtt-synthetic-networks` | 22 | 2 | 3 | 1 | . | 4 | 12 | 9 | . | 1 |

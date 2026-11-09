@@ -1,0 +1,17 @@
+# As channel_extraction_point_attributes, written as FlatGeobuf (write_vector_format).
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinycpafgb
+n_threads: 1
+raster_is_filled: false
+threshold_contributing_pixels: 3
+source_extraction_algorithm_choice: threshold
+write_channel_network_points: false
+write_channel_network_lines: false
+write_channel_network_junctions: false
+calculate_spatial_index: false
+run_channel_point_attributes: true
+channel_points_fname: channel_points_tiny.csv
+slope_window_half_length_metres: 2
+write_vector_format: flatgeobuf

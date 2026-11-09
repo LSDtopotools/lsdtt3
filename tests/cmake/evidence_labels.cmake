@@ -290,6 +290,11 @@ lsdtt_evidence(rigorous_hillslope_channel_coupling_legacy_threshold system smoke
 
 # lsdtt-chi-analysis and lithology
 lsdtt_evidence(smoke_chi_analysis_erodibility_calibration system smoke characterisation)
+lsdtt_evidence(unit_channel_gradient unit exact_solution)  # floor gradient 0.01 exact
+lsdtt_evidence(smoke_channel_extraction_slope_points system smoke exact_solution)
+lsdtt_evidence(smoke_channel_extraction_point_attributes system smoke exact_solution)
+lsdtt_evidence(smoke_channel_extraction_point_attributes_fgb system smoke)
+lsdtt_evidence(unit_channel_nearest_point_snap unit exact_solution property)  # vs brute force
 lsdtt_evidence(unit_chi_knickpoints unit exact_solution)  # hand-built fit, known k_sn / areas
 lsdtt_evidence(smoke_chi_tributaries_knickpoints system smoke characterisation)
 lsdtt_evidence(smoke_chi_lithology_ksn system smoke exact_solution)  # 9600 px per unit, k_sn 20 / 5 bins
@@ -666,6 +671,7 @@ foreach(_t IN ITEMS cli_helper_string_utils cli_helper_formats csv_table_quoting
 endforeach()
 lsdtt_evidence(unit_csv_table_field_parsers unit exact_solution negative)
 lsdtt_evidence(unit_point_input unit exact_solution metamorphic negative)
+lsdtt_evidence(unit_point_attribute_output unit exact_solution metamorphic negative)
 # Removed and misspelt keys are refused (negative); a deprecated alias or an
 # unrelated key is accepted with a warning (conformance, rule R1 of the
 # pytest-marker plan); the exact messages and carried values are pinned by

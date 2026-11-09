@@ -49,7 +49,7 @@ list, and the same content is on this site under
 | Tool | What it does |
 |---|---|
 | `lsdtt-drainage-analysis` | Static topographic indices: drainage area, TWI, STI, and the Cavalli connectivity index. No time dimension. |
-| `lsdtt-channel-extraction` | Extract a channel network from a DEM. |
+| `lsdtt-channel-extraction` | Extract a channel network from a DEM; snap field points to it with drainage area and channel slope ([Field points](channel_points.md)). |
 | `lsdtt-channel-network-analysis` | Build a channel and junction network, then run one or more network analyses on it. |
 | `lsdtt-internal-drainage` | Detect, review, route, tag and analyse internally drained basins — moulins, playas, quarries. |
 | `lsdtt-outlet-matching` | Match reference-DEM outlets to target-DEM cells by comparing D8 contributing areas. |

@@ -1188,6 +1188,8 @@ channel_mask(threshold_contributing_pixels: int) -> Raster
     Return a 0/1 raster where contributing pixels meet the threshold.
 channel_network(scope: ChannelScope) -> ChannelNetwork
     Build a compact junction graph from a ChannelScope.
+channel_point_attributes(filled_dem: Raster, points: geopandas.GeoDataFrame, *, threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame
+    Snap points (e.g. field sites) to the nearest channel cell and add its drainage area and along-channel slope.
 channel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> ChannelScope
     Resolve threshold or supplied source paths into a ChannelScope.
 chi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster
@@ -1366,6 +1368,62 @@ ChannelNetwork
 
 ```python
 def channel_network(self, scope: lsdtt3.ChannelScope) -> lsdtt3.ChannelNetwork
+```
+
+#### `channel_point_attributes`
+
+channel_point_attributes(self, filled_dem: Raster, points: geopandas.GeoDataFrame, *, threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame
+
+Snap points (e.g. field sites) to the nearest channel cell and add its drainage area and along-channel slope.
+
+lsdtt-channel-extraction ``run_channel_point_attributes``, with the same
+C++ routine and parameter names. Each point moves to the channel cell
+(at least ``threshold_contributing_pixels`` contributing pixels) whose
+centre is nearest in straight-line distance, within
+``channel_points_snap_max_search_radius_pixels``; it does not follow the
+D8 path. The slope is the least-squares slope of ``filled_dem`` against
+distance along the channel over +/- ``slope_window_half_length_metres``;
+upstream the window follows the largest-area tributary.
+
+Parameters
+----------
+filled_dem : Raster
+    The DEM this FlowInfo was built on (pit-filled); elevations and the
+    slope are taken from it.
+points : geopandas.GeoDataFrame
+    Point geometries with a CRS (reprojected to the grid's). Every column
+    is kept.
+threshold_contributing_pixels : int, keyword-only
+    Channel cells have at least this many contributing pixels; also the
+    least a tributary must carry for the slope window to follow it.
+slope_window_half_length_metres : float, default=25.0
+    Half-length (m) of the along-channel slope window; at least two cell
+    sizes.
+channel_points_snap_max_search_radius_pixels : int, default=10
+    Furthest a point may move, in pixels (Chebyshev rings).
+
+Returns
+-------
+geopandas.GeoDataFrame
+    ``points`` in the grid CRS with the geometry moved to the snapped cell
+    centre, and the columns original_x, original_y (grid CRS),
+    snap_distance_m, snap_status, snapped_flat, contributing_pixels,
+    drainage_area_m2, flow_distance_m, elevation_m, smoothed_elevation_m,
+    slope_m_per_m, slope_valid (0/1), slope_window_length_m. A point that
+    does not snap keeps its position, with its snap_status and empty (NaN /
+    <NA>) values. An added column whose name is already in ``points`` is
+    renamed with the suffix ``_lsdtt`` (with a warning), as in the CLI.
+
+Examples
+--------
+>>> filled = lsdtt3.fill_pits(dem)
+>>> F = lsdtt3.FlowInfo(filled)
+>>> sites = geopandas.read_file("field_sites.gpkg")
+>>> out = F.channel_point_attributes(filled, sites, threshold_contributing_pixels=500,
+...                                  slope_window_half_length_metres=150.0)
+
+```python
+def channel_point_attributes(self, filled_dem: Raster, points: geopandas.GeoDataFrame, *, threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame
 ```
 
 #### `channel_scope`

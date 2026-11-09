@@ -1,0 +1,20 @@
+# run_channel_point_attributes on the tiny planar DEM (each row drains east, a
+# cell has col+1 contributing pixels). Threshold 3: channel cells are columns 2-4.
+# Site 01 at (0.5, 2.4) is in column 0 of row 2 and snaps 2 m east to (2.5, 2.5),
+# not down its D8 path. Site 02 is off the DEM.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinycpa
+n_threads: 1
+raster_is_filled: false
+threshold_contributing_pixels: 3
+source_extraction_algorithm_choice: threshold
+write_channel_network_points: false
+write_channel_network_lines: false
+write_channel_network_junctions: false
+calculate_spatial_index: false
+run_channel_point_attributes: true
+channel_points_fname: channel_points_tiny.csv
+slope_window_half_length_metres: 2
+channel_points_write_vector_format: csv

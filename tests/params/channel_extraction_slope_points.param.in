@@ -1,0 +1,17 @@
+# write_channel_slope_points on the tiny planar DEM: one point per channel cell
+# with its along-channel slope and smoothed elevation.
+read_path: __READ_PATH__
+read_fname: tiny_dem.asc
+write_path: __WRITE_PATH__
+write_fname: tinyslope
+n_threads: 1
+raster_is_filled: false
+threshold_contributing_pixels: 1
+source_extraction_algorithm_choice: threshold
+write_channel_network_points: false
+write_channel_network_lines: false
+write_channel_network_junctions: false
+calculate_spatial_index: false
+write_channel_slope_points: true
+slope_window_half_length_metres: 2
+channel_slope_points_write_vector_format: csv

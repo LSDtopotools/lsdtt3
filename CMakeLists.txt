@@ -279,6 +279,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_river_line_fetch.cpp
     src/core/lsdtt_secret.cpp
     src/core/lsdtt_point_input.cpp
+    src/core/lsdtt_point_attribute_output.cpp
     src/core/lsdtt_outlet_bounds_discovery.cpp
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
@@ -441,6 +442,8 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_extraction_cpu.cpp
     src/cpu/lsdtt_chi_network_analysis_cpu.cpp
     src/cpu/lsdtt_chi_knickpoints_cpu.cpp
+    src/cpu/lsdtt_channel_gradient_cpu.cpp
+    src/cpu/lsdtt_channel_point_attributes_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp
     src/cpu/lsdtt_chi_data_maps_cpu.cpp
     src/cpu/lsdtt_channel_network_analysis_cpu.cpp

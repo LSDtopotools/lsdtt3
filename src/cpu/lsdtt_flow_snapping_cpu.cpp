@@ -1077,4 +1077,83 @@ lsdtt_snap_result snap_pixel_to_reported_drainage_area_expanding_square(
     return result;
 }
 
+// -----------------------------------------------------------------------------
+// snap_point_to_contributing_pixels_threshold_nearest
+// -----------------------------------------------------------------------------
+lsdtt_snap_result
+snap_point_to_contributing_pixels_threshold_nearest(
+    const lsdtt_flow_base&           flow,
+    double                           x,
+    double                           y,
+    const lsdtt_square_snap_options& options)
+{
+    lsdtt_snap_result result;
+    const lsdtt_raster_meta& meta = flow.meta();
+    const double cs = flow.cell_size();
+    const int nr = flow.n_rows(), nc = flow.n_cols();
+    const double fc = std::floor((x - meta.x_min) / cs);
+    const double fr = std::floor((meta.y_max() - y) / cs);
+    if (!(fc >= 0.0 && fc < nc && fr >= 0.0 && fr < nr))
+    {
+        result.status = lsdtt_snap_status::input_out_of_bounds;
+        return result;
+    }
+    const int r0 = static_cast<int>(fr), c0 = static_cast<int>(fc);
+    result.input_row = r0;
+    result.input_col = c0;
+    result.input_flat = flow.flat_index_unchecked(r0, c0);
+    result.input_is_valid_flow_cell = flow.is_valid_cell(result.input_flat);
+    if (result.input_is_valid_flow_cell)
+        result.input_contributing_pixels = flow.s_vector_size_unchecked(result.input_flat);
+
+    // distances in cell units from the point
+    const double px = (x - meta.x_min) / cs;          // column coordinate
+    const double py = (meta.y_max() - y) / cs;        // row coordinate
+    double best_d = std::numeric_limits<double>::infinity();
+    std::int64_t best = -1;
+    std::uint64_t best_n = 0;
+    int best_ring = -1;
+    const int max_r = std::max(0, options.max_search_radius_pixels);
+    for (int k = 0; k <= max_r; ++k)
+    {
+        if (best >= 0 && static_cast<double>(k) - 0.5 > best_d) break;
+        for (int r = r0 - k; r <= r0 + k; ++r)
+        {
+            if (r < 0 || r >= nr) continue;
+            const bool edge_row = (r == r0 - k || r == r0 + k);
+            for (int c = c0 - k; c <= c0 + k; c += (edge_row || k == 0) ? 1 : 2 * k)
+            {
+                if (c < 0 || c >= nc) continue;
+                const std::int64_t f = flow.flat_index_unchecked(r, c);
+                if (!flow.is_valid_cell(f)) continue;
+                const std::uint64_t n = flow.s_vector_size_unchecked(f);
+                if (n < options.contributing_pixels_threshold) continue;
+                const double d = std::hypot((c + 0.5) - px, (r + 0.5) - py);
+                if (d < best_d || (d == best_d && (n > best_n || (n == best_n && f < best))))
+                {
+                    best_d = d;
+                    best = f;
+                    best_n = n;
+                    best_ring = k;
+                }
+                if (k == 0) break;
+            }
+        }
+    }
+    if (best < 0)
+    {
+        result.status = lsdtt_snap_status::threshold_not_found_in_search_window;
+        return result;
+    }
+    result.status = lsdtt_snap_status::success;
+    result.snapped_flat = best;
+    result.snapped_row = static_cast<int>(best / nc);
+    result.snapped_col = static_cast<int>(best % nc);
+    result.snapped_contributing_pixels = best_n;
+    result.search_radius_pixels = best_ring;
+    result.downstream_steps = -1;
+    result.snap_distance_metres = best_d * cs;
+    return result;
+}
+
 } // namespace lsdtt

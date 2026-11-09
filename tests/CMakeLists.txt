@@ -790,6 +790,50 @@ add_lsdtt_cli_smoke_test(
     tiny_channel_network_lines.fgb
 )
 
+# write_channel_slope_points: the tiny DEM falls 5 m per 1 m cell along its rows,
+# so the first channel cell's along-channel slope and smoothed elevation are exact.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_slope_points
+    lsdtt-channel-extraction
+    channel_extraction_slope_points.param.in
+    tinyslope_channel_slope_points.csv
+    --expect-file-contains "tinyslope_channel_slope_points.csv:latitude,longitude,flat,drainage_area_m2,flow_distance_m,elevation_m,smoothed_elevation_m,slope_m_per_m,slope_valid,slope_window_length_m"
+    --expect-file-contains "tinyslope_channel_slope_points.csv:,0,1,8,100,100,5,1,2"
+)
+
+# run_channel_point_attributes on the same tiny DEM (each row drains east, then
+# down the east edge; a cell has col+1 contributing pixels). Threshold 3 makes
+# columns 2-4 channel cells. Site 01 at (0.5, 2.4) is in column 0 and snaps
+# 2 m east to flat 12 (row 2, col 2), sqrt(4.01) m away, not down its D8 path:
+# 3 contributing pixels, flow distance 4 m, elevation 86, slope 5, smoothed
+# elevation 86. Its CSV tokens ("01", "39.6") are written as read. Site 02 is
+# off the DEM and keeps its position with empty added values.
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_point_attributes
+    lsdtt-channel-extraction
+    channel_extraction_point_attributes.param.in
+    tinycpa_channel_points.csv
+    --expect-file-contains "tinycpa_channel_points.csv:latitude,longitude,site_id,d50_mm,note,original_x,original_y,snap_distance_m,snap_status,snapped_flat,contributing_pixels,drainage_area_m2,flow_distance_m,elevation_m,smoothed_elevation_m,slope_m_per_m,slope_valid,slope_window_length_m"
+    --expect-file-contains "tinycpa_channel_points.csv:,01,39.6,in column 0 - nearest channel cell is column 2 of row 2,0.5,2.3999999999999999,2.0024984394500787,success,12,3,3,4,86,86,5,1,2"
+    --expect-file-contains "tinycpa_channel_points.csv:,02,,off the DEM,-50,2.3999999999999999,,input_out_of_bounds,,,,,,,,0,"
+    --stdout-contains "Snapped: 1 of 2"
+)
+add_lsdtt_cli_smoke_test(
+    smoke_channel_extraction_point_attributes_fgb
+    lsdtt-channel-extraction
+    channel_extraction_point_attributes_fgb.param.in
+    tinycpafgb_channel_points.fgb
+    --expect-vector-feature-min tinycpafgb_channel_points.fgb:2
+)
+add_lsdtt_cli_smoke_test(
+    failure_channel_extraction_point_attributes_no_file
+    lsdtt-channel-extraction
+    channel_extraction_point_attributes_no_file.param.in
+    tinycpabad_channel_points.csv
+    --expect-failure
+    --stderr-contains "FATAL: run_channel_point_attributes needs channel_points_fname."
+)
+
 add_lsdtt_cli_smoke_test(
     rigorous_channel_lines_feature_count
     lsdtt-channel-extraction
@@ -1880,7 +1924,9 @@ lsdtt_set_tests_properties(unit_stream_burning_loop_labels PROPERTIES LABELS "st
 # the fixture network, and a reversed / near-miss / multipart copy of it, each
 # prepared by lsdtt-fetch-river-lines, must give stream burning's reference
 # vector summary and the burned DEM frozen for smoke_stream_burning above.
-if(LSDTT_ENABLE_PYTHON_TESTS)
+# The script reads the prepared lines with osgeo (GDAL Python), so it is a
+# python_geo test.
+if(LSDTT_ENABLE_PYTHON_GEO_TESTS)
     add_test(NAME smoke_fetch_river_lines_to_stream_burning
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fetch_river_lines_to_stream_burning.py"
@@ -1892,7 +1938,7 @@ if(LSDTT_ENABLE_PYTHON_TESTS)
             --expect-burned-sha256 f63a442d8b42bbb6a6a4c857b0c046bda2bb889bc8c319f4cc105a8ad4b8648b)
     lsdtt_mark_test_runtime(python smoke_fetch_river_lines_to_stream_burning)
 else()
-    lsdtt_mark_test_unregistered(python smoke_fetch_river_lines_to_stream_burning)
+    lsdtt_mark_test_unregistered(python_geo smoke_fetch_river_lines_to_stream_burning)
 endif()
 lsdtt_set_tests_properties(smoke_fetch_river_lines_to_stream_burning PROPERTIES
     LABELS "cli;fetch;stream_burning"
@@ -5180,6 +5226,20 @@ lsdtt_set_tests_properties(unit_point_input PROPERTIES
     LABELS "point_input")
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_input_output)
 
+# Writing a point layer back out with its attributes and added fields
+# (lsdtt_point_attribute_output): schema typed from the values read ("01" kept
+# as text), the _lsdtt suffix on a clashing added field, csv / gpkg / fgb
+# round trips, and an OGR (gpkg) input written as fgb. Fixtures are written at
+# run time.
+add_executable(lsdtt-test-point-attribute-output cpp/test_point_attribute_output.cpp)
+target_link_libraries(lsdtt-test-point-attribute-output PRIVATE lsdtt3_cpu)
+add_test(NAME unit_point_attribute_output
+         COMMAND lsdtt-test-point-attribute-output
+                 ${CMAKE_CURRENT_BINARY_DIR}/point_attribute_output)
+lsdtt_set_tests_properties(unit_point_attribute_output PROPERTIES
+    LABELS "point_input")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/point_attribute_output)
+
 # Characterisation tests for the src/utils + src/cpu consolidation (stage 1).
 # Each embeds the private copies it replaced, verbatim, as the reference, and
 # stays after those copies are deleted.
@@ -5900,6 +5960,24 @@ add_test(NAME unit_chi_lithology_channel_stats
          COMMAND lsdtt-test-lithology-channel-stats
                  "${CMAKE_CURRENT_BINARY_DIR}/chi_lithology_channel_stats_work")
 lsdtt_set_tests_properties(unit_chi_lithology_channel_stats PROPERTIES LABELS "chi")
+
+# Along-channel gradient (lsdtt_channel_gradient_cpu): a synthetic valley of
+# known floor gradient with a steeper tributary; the window follows the main
+# valley past the junction, one-sided windows, the threshold, and the shared
+# least-squares fit used by lsdtt-bankfull-width.
+add_executable(lsdtt-test-channel-gradient cpp/test_channel_gradient.cpp)
+target_link_libraries(lsdtt-test-channel-gradient PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_gradient COMMAND lsdtt-test-channel-gradient)
+lsdtt_set_tests_properties(unit_channel_gradient PROPERTIES LABELS "channel")
+
+# Snapping a point to the NEAREST channel cell by straight-line distance, not
+# along its D8 path (snap_point_to_contributing_pixels_threshold_nearest):
+# the tributary-side point that D8 snapping takes to the junction, and 2000
+# random points against a brute-force nearest.
+add_executable(lsdtt-test-nearest-point-snap cpp/test_nearest_point_snap.cpp)
+target_link_libraries(lsdtt-test-nearest-point-snap PRIVATE lsdtt3_cpu)
+add_test(NAME unit_channel_nearest_point_snap COMMAND lsdtt-test-nearest-point-snap)
+lsdtt_set_tests_properties(unit_channel_nearest_point_snap PROPERTIES LABELS "channel")
 
 # Tributaries and knickpoints of a chi fit: a hand-built main stem and
 # tributary with known k_sn segments, areas and flow distances (boundary rows,
@@ -10950,7 +11028,7 @@ set(LSDTT_DOMAIN_RULES
     "raster|nodata|fill|tif|coastal|dem_grouping|vertical_units|multipart" "raster"
     "param|secret|cli_reference|wheel_cli_inventory|version_consistency|python_bindings_smoke|test_env|configure_contract|run_record" "core"
     "depression_hierarchy"   "network"
-    "point_input"            "core"
+    "point_input|point_attribute" "core"
     # Phase 2 of the CLI consistency remediation: the shared helper homes
     # extracted out of cli/ (to_lower_ascii, output_extension, csv_number,
     # planar_distance, quote-aware csv_split_row). They are library-level
@@ -11400,6 +11478,7 @@ set(LSDTT_PYTHON_GEO_TESTS
     rigorous_fluvial_surfaces_cross_section_levels_workflow  # osgeo
     rigorous_fluvial_surfaces_whole_mask_segmentation        # osgeo
     unit_python_binding_free_tests                  # pytest
+    smoke_fetch_river_lines_to_stream_burning       # osgeo
 )
 
 # Scripts other than run_cli_smoke.py that run GDAL's command-line programs.

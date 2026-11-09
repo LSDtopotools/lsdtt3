@@ -9,6 +9,7 @@
 
 #include "lsdtt_manning_hydraulics_cpu.hpp"
 #include "lsdtt_manning_formula_cpu.hpp"
+#include "lsdtt_channel_gradient_cpu.hpp"
 #include "../utils/lsdtt_output_file.hpp"
 #include "../utils/lsdtt_grid_neighbours.hpp"
 #include "../core/lsdtt_csv_table.hpp"
@@ -276,66 +277,6 @@ channel_path build_channel_path(
     }
 
     return path;
-}
-
-// Least-squares slope of z against along-channel distance d, over the path
-// cells within +/- half_length_m of path index `idx`. Returns false (slope
-// untouched) if the fit is not usable; see the header for the criteria.
-// Elevation decreases downstream while d increases, so the positive
-// down-channel slope is -cov(d, z) / var(d).
-bool fit_along_path_slope(
-    const std::vector<double>&       d,
-    const std::vector<double>&       z,
-    const std::vector<std::uint8_t>& ok,
-    std::size_t                      idx,
-    double                           half_length_m,
-    double&                          slope)
-{
-    const double d0 = d[idx];
-
-    const std::size_t lo = static_cast<std::size_t>(
-        std::lower_bound(d.begin(), d.end(), d0 - half_length_m) - d.begin());
-    const std::size_t hi = static_cast<std::size_t>(
-        std::upper_bound(d.begin(), d.end(), d0 + half_length_m) - d.begin());
-
-    std::size_t n = 0;
-    double sum_d = 0.0, sum_z = 0.0;
-    double d_min = std::numeric_limits<double>::max();
-    double d_max = std::numeric_limits<double>::lowest();
-
-    for (std::size_t i = lo; i < hi; ++i)
-    {
-        if (!ok[i]) continue;
-        const double di = d[i] - d0;
-        sum_d += di;
-        sum_z += z[i];
-        d_min = std::min(d_min, di);
-        d_max = std::max(d_max, di);
-        ++n;
-    }
-
-    if (n < 3) return false;
-    if ((d_max - d_min) < half_length_m) return false;
-
-    const double mean_d = sum_d / static_cast<double>(n);
-    const double mean_z = sum_z / static_cast<double>(n);
-
-    double sxx = 0.0, sxz = 0.0;
-    for (std::size_t i = lo; i < hi; ++i)
-    {
-        if (!ok[i]) continue;
-        const double dd = (d[i] - d0) - mean_d;
-        sxx += dd * dd;
-        sxz += dd * (z[i] - mean_z);
-    }
-
-    if (!(sxx > 0.0)) return false;
-
-    const double s = -sxz / sxx;
-    if (!std::isfinite(s) || s <= 0.0) return false;
-
-    slope = s;
-    return true;
 }
 
 // Bisection on a discharge function that is non-decreasing in depth.

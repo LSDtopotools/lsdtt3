@@ -119,6 +119,11 @@ REVIEWED_FORMAT_OVERRIDES = {
         "burned_stream_profiles_write_vector_format",
         "channel_network_junctions_write_vector_format",
         "channel_network_points_write_vector_format",
+        # Field points snapped by run_channel_point_attributes: a point layer
+        # that may be CSV.
+        "channel_points_write_vector_format",
+        # Per-cell smoothed slope points: a point layer that may be CSV.
+        "channel_slope_points_write_vector_format",
         "flow_lines_write_vector_format",
         "wiener_diagnostics_write_output_format",
     },
