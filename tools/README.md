@@ -277,7 +277,7 @@ builds GDAL from source and can take hours; later releases reuse the cache.
 Debian or conda packages:
 
 ```bash
-tools/make_all_packages.sh --clean --tag v0.5.1 --only deb,conda
+tools/make_all_packages.sh --clean --tag v0.5.1 --only deb --only conda
 gh release upload v0.5.1 dist/v0.5.1/*.deb dist/v0.5.1/*.conda
 ```
 
@@ -329,7 +329,7 @@ git tag -a v0.5.2 -m "lsdtt3 0.5.2"
 git push origin v0.5.2              # release.yml builds every CI artefact
 
 # 5. attach the local-only packages from that tag exactly as for any release
-tools/make_all_packages.sh --clean --tag v0.5.2 --only deb,conda
+tools/make_all_packages.sh --clean --tag v0.5.2 --only deb --only conda
 ```
 
 `main` is left alone: **no merge back.** The fix is already on `main` from

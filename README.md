@@ -463,6 +463,12 @@ lsdtt-drainage-analysis     my_params.driver
 
 ---
 
+## Contributing
+
+**Until the code base is stable, as decided by Simon M. Mudd, pull requests are
+accepted only from repository collaborators.** Bug reports and feature requests
+are welcome as [issues](../../issues). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Other Documentation
 
 The `docs/` tree is organised by audience:

@@ -4,6 +4,14 @@ This document is for developers porting analysis code from earlier versions of
 LSDTopoTools (LSDRaster, LSDFlowInfo, etc.) or writing new analyses against the
 lsdtt3 architecture.
 
+!!! note "Pull requests are from collaborators only, for now"
+
+    Until the code base is stable, as decided by Simon M. Mudd (SMM), only
+    repository collaborators can open pull requests. Anyone can open an
+    [issue](https://github.com/LSDtopotools/lsdtt3/issues) to report a bug or
+    ask for a feature, or fork the code for their own use. See `CONTRIBUTING.md`
+    in the repository.
+
 IMPORTANT NOTE: The codebase has become large, with interdependencies. 
 We have aimed to cover a reasonable amount of this code with ctest, 
 but if you try to modify the code without the assistance of a (good) LLM there is a very high chance your will break something.

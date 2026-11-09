@@ -147,6 +147,12 @@ Commit as often as you like; commit messages on a branch are cheap.
 
 ### Open a pull request
 
+Until the code base is stable, as decided by Simon M. Mudd (SMM), **only
+repository collaborators can open pull requests** on lsdtt3; GitHub refuses one
+from anyone else. If you are not a collaborator, open an
+[issue](https://github.com/LSDtopotools/lsdtt3/issues) instead (see
+`CONTRIBUTING.md` in the repository).
+
 Push the branch first, then either:
 
 - **On GitHub.** After a push, GitHub shows a "Compare & pull request" button
