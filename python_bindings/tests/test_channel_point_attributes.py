@@ -44,6 +44,8 @@ def _sites():
                             geometry=[Point(0.5, 2.4), Point(-50.0, 2.4)], crs="EPSG:32630")
 
 
+@pytest.mark.exact_solution
+@pytest.mark.conformance
 def test_same_values_as_the_cli(grid):
     filled, flow = grid
     out = flow.channel_point_attributes(filled, _sites(), threshold_contributing_pixels=3,
@@ -71,6 +73,7 @@ def pd_na():
     return pd.NA
 
 
+@pytest.mark.metamorphic
 def test_points_in_another_crs_are_reprojected(grid):
     filled, flow = grid
     ll = _sites().to_crs("EPSG:4326")
@@ -80,6 +83,7 @@ def test_points_in_another_crs_are_reprojected(grid):
     assert out.iloc[0]["original_x"] == pytest.approx(0.5, abs=1e-6)
 
 
+@pytest.mark.exact_solution
 def test_clashing_column_renamed_with_warning(grid):
     filled, flow = grid
     sites = _sites().assign(slope_m_per_m=[0.1, 0.2])
@@ -92,6 +96,7 @@ def test_clashing_column_renamed_with_warning(grid):
     assert out.iloc[0]["slope_m_per_m_lsdtt"] == pytest.approx(5.0)
 
 
+@pytest.mark.negative
 def test_refusals(grid):
     filled, flow = grid
     with pytest.raises(ValueError, match="CRS"):
