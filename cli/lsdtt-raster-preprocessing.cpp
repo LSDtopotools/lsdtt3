@@ -397,15 +397,7 @@ int main(int argc, char* argv[])
         "Vertical units", "param", ""};
 
     // --- Threshold masking ---
-    float_default_map["min_elevation"] = 0.0f;
-    help_map["min_elevation"] = {"float","0.0",
-        "Pixels at or below this elevation (metres) are set to nodata. -9999 disables.",
-        "Default of 0.0 removes ocean and below-sea-level artefacts common "
-        "in global DEMs. Negative values apply as given: for a basin below sea "
-        "level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest "
-        "land. -9999 (or lower) disables masking. Sea removed this way is "
-        "connected to the DEM edge and acts as an open boundary.",
-        "Threshold masking", "param", ""};
+    lsdtt::declare_min_elevation_parameter(float_default_map, help_map, 0.0f, "Threshold masking");
 
     float_default_map["maximum_elevation"] = 30000.0f;
     help_map["maximum_elevation"] = {"float","30000",

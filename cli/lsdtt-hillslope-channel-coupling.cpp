@@ -217,16 +217,7 @@ int main(int argc, char* argv[])
         "datum from the data provider before setting this.",
         "Input", "param", ""};   // no parent; allowed values are in the description
 
-    float_default_map["min_elevation"] = -9999.0f;
-    help_map["min_elevation"] = {"float","-9999",
-        "Pixels at or below this elevation become nodata. -9999 disables.",
-        "MANY DEMs CARRY NODATA AS ZERO regardless of what their header "
-        "declares, and a block of zeros beside real terrain is a cliff hundreds "
-        "of metres high: it corrupts the polyfit, drags every flow path into it, "
-        "and inflates hillslope relief and gradient. Check the elevation "
-        "histogram before trusting a run. Set to 0 to drop sea-level and "
-        "nodata-as-zero pixels.",
-        "Input", "param", ""};
+    lsdtt::declare_min_elevation_parameter(float_default_map, help_map, -9999.0f, "Input");
 
     lsdtt::declare_fill_before_routing_parameter(bool_default_map, help_map);
 

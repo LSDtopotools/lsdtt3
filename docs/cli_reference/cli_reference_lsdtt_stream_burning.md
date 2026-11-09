@@ -372,6 +372,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `carve_before_fill` | `bool` | `false` | `param` | - | Run depression breaching before pit filling. | Useful when the DEM has road or embankment obstructions across channels. |
 | `breach_algorithm_choice` | `string` | `lindsay2016` | `param` | - | Breaching algorithm used when carve_before_fill is true. | Allowed values: lindsay2016 (unbounded), least_cost (supports bounded breaching via breach_max_cost / breach_max_dist_pixels). |
+| `min_elevation` | `float` | `-9999` | `param` | - | Cells at or below this elevation (m) become nodata before any analysis. -9999 disables. | For removing the sea, which many DEMs store as valid cells at about 0 m, and nodata stored as 0 (a block of zeros beside real terrain is a cliff that captures flow paths). Removed cells that touch the DEM edge act as an open boundary, so a river reaching the coast drains off the DEM there. Negative values apply as given: where land lies below sea level (fens, polders, Death Valley -86 m, the Dead Sea -430 m) set it just below the lowest land, or below the sea surface of the DEM, so that flow is still routed over the sub-zero land. -9999 (or lower) disables. |
 
 ### Bounded least-cost breaching (breach_algorithm_choice = least_cost)
 

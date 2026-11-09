@@ -12,8 +12,8 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 868 | 204 | 132 | 127 | 19 | 173 | 377 | 241 | . | 43 | 216 | 652 |
-| pytest | 231 | 76 | 58 | 44 | . | 9 | 27 | 60 | . | 60 | 228 | 3 |
+| CTest | 874 | 204 | 135 | 128 | 19 | 175 | 381 | 243 | . | 43 | 216 | 658 |
+| pytest | 235 | 78 | 58 | 45 | . | 9 | 27 | 61 | . | 61 | 232 | 3 |
 
 ## CTest by domain
 
@@ -57,7 +57,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `marsh` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `mask` | 1 | 1 | . | . | . | . | . | 1 | . | . |
 | `mountain_front` | 1 | 1 | . | . | . | . | . | 1 | . | . |
-| `network` | 281 | 74 | 42 | 46 | 8 | 65 | 140 | 77 | . | 3 |
+| `network` | 287 | 74 | 45 | 47 | 8 | 67 | 144 | 79 | . | 3 |
 | `outlet_matching` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `packaging` | 3 | . | . | . | . | . | 1 | . | . | 2 |
 | `paired_flowpaths` | 4 | 1 | . | . | . | 3 | 3 | . | . | . |
@@ -71,7 +71,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `snapping` | 3 | 2 | 1 | 1 | . | . | 2 | 1 | . | . |
 | `statistics` | 2 | . | . | . | . | 2 | . | . | . | . |
 | `step_change` | 5 | 2 | 3 | 2 | . | . | 1 | . | . | . |
-| `stream_burning` | 7 | 3 | 1 | 3 | . | 2 | 3 | . | . | . |
+| `stream_burning` | 13 | 3 | 4 | 4 | . | 4 | 7 | 2 | . | . |
 | `streamlines` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `surface_metrics` | 49 | 13 | 7 | 12 | . | 16 | 33 | 5 | . | 4 |
 | `synthetic_networks` | 31 | 2 | 4 | 3 | 1 | 6 | 17 | 9 | . | 4 |
@@ -135,7 +135,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-sediment-routing` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `lsdtt-slope-area` | 9 | . | . | 2 | . | 4 | 4 | 5 | . | . |
 | `lsdtt-spectral-analysis` | 7 | . | . | 1 | . | 2 | 5 | . | . | 2 |
-| `lsdtt-stream-burning` | 5 | . | . | 2 | . | 3 | 4 | . | . | . |
+| `lsdtt-stream-burning` | 11 | . | 3 | 3 | . | 5 | 8 | 2 | . | . |
 | `lsdtt-surface-metrics` | 11 | 3 | . | 1 | . | . | 7 | 2 | . | 2 |
 | `lsdtt-swath-profile` | 1 | 1 | . | 1 | . | . | 1 | . | . | . |
 | `lsdtt-synthetic-networks` | 22 | 2 | 3 | 1 | . | 4 | 12 | 9 | . | 1 |
@@ -162,6 +162,7 @@ None.
 | `test_api_naming.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_api_reference_contract.py` | 1 | . | . | . | . | . | . | . | . | 1 | 1 | . |
 | `test_binding_source_contract.py` | 2 | . | . | . | . | . | . | . | . | 2 | 2 | . |
+| `test_channel_point_attributes.py` | 4 | 2 | . | 1 | . | . | . | 1 | . | 1 | 4 | . |
 | `test_cli_packaging.py` | 6 | 3 | . | . | . | . | . | 1 | . | 2 | 6 | . |
 | `test_contributing_threshold_migrations.py` | 2 | . | . | 2 | . | . | . | 2 | . | 2 | 2 | . |
 | `test_cosmo_basin.py` | 2 | . | 2 | . | . | . | . | . | . | . | 2 | . |

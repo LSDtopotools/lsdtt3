@@ -638,6 +638,19 @@ static void fill_serial(
 }
 
 // -----------------------------------------------------------------------------
+// apply_min_elevation
+// -----------------------------------------------------------------------------
+std::size_t apply_min_elevation(lsdtt_raster_cpu& dem, float min_elevation)
+{
+    if (!(min_elevation > -9998.0f)) return 0;
+    std::size_t before = 0, after = 0;
+    for (const auto m : dem.get_mask()) before += m;
+    dem = mask_to_nodata_using_threshold(dem, min_elevation, true);
+    for (const auto m : dem.get_mask()) after += m;
+    return before - after;
+}
+
+// -----------------------------------------------------------------------------
 // mask_to_nodata_using_threshold
 // -----------------------------------------------------------------------------
 

@@ -485,7 +485,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `min_elevation` | `float` | `0.0` | `param` | - | Pixels at or below this elevation (metres) are set to nodata. -9999 disables. | Default of 0.0 removes ocean and below-sea-level artefacts common in global DEMs. Negative values apply as given: for a basin below sea level (Death Valley -86 m, Dead Sea -430 m) set it just below the lowest land. -9999 (or lower) disables masking. Sea removed this way is connected to the DEM edge and acts as an open boundary. |
+| `min_elevation` | `float` | `0` | `param` | - | Cells at or below this elevation (m) become nodata before any analysis. -9999 disables. | For removing the sea, which many DEMs store as valid cells at about 0 m, and nodata stored as 0 (a block of zeros beside real terrain is a cliff that captures flow paths). Removed cells that touch the DEM edge act as an open boundary, so a river reaching the coast drains off the DEM there. Negative values apply as given: where land lies below sea level (fens, polders, Death Valley -86 m, the Dead Sea -430 m) set it just below the lowest land, or below the sea surface of the DEM, so that flow is still routed over the sub-zero land. -9999 (or lower) disables. |
 | `maximum_elevation` | `float` | `30000` | `param` | - | Pixels above this elevation (metres) are set to nodata. | Default covers the full range of terrestrial elevations. Reduce to remove artefacts in low-relief study areas. |
 
 ### Binary mask

@@ -839,6 +839,9 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
+    // Off by default: the burning modes predate it, and DTMs such as the OS
+    // 5 m DTM hold real land below 0 m.
+    lsdtt::declare_min_elevation_parameter(float_default_map, help_map, -9999.0f, "DEM preparation");
 
     if (cli_args.help_requested)
     {
@@ -993,6 +996,13 @@ int main(int argc, char* argv[])
     }
 
     lsdtt::lsdtt_raster_cpu dem(loader);
+    // Sea removal (min_elevation), before anything else reads the DEM.
+    if (ff["min_elevation"] > -9998.0f)
+    {
+        const std::size_t n_removed = lsdtt::apply_min_elevation(dem, ff["min_elevation"]);
+        std::cout << "min_elevation " << ff["min_elevation"] << " m: " << n_removed
+                  << " cell(s) at or below it set to nodata\n";
+    }
     // Interior nodata: kept as sinks or filled (interior_nodata_method).
     try
     {

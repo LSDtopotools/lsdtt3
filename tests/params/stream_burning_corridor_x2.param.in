@@ -1,0 +1,18 @@
+# As stream_burning_corridor, at X = 2 cells (60 m), with the final conditioning
+# carving first (carve_before_fill, least-cost breach). No name field.
+read_path: __READ_PATH__
+read_fname: sb_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: corrx2
+
+stream_vector_path: __READ_PATH__/stream_burning_network.fgb
+stream_burn_mode: burn_to_corridor
+run_stream_burn: true
+vector_corridor_half_width_metres: 60
+carve_before_fill: true
+breach_algorithm_choice: least_cost
+
+write_burned_outputs: true
+write_burned_profiles_csv: true
+write_burn_depth_raster: true
+n_threads: 1

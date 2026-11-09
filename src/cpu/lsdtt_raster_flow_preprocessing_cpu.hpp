@@ -131,6 +131,15 @@ lsdtt_raster_cpu mask_to_nodata_using_threshold(
 );
 
 // -----------------------------------------------------------------------------
+// apply_min_elevation
+//
+// The min_elevation parameter: cells at or below min_elevation become nodata.
+// min_elevation <= -9998 disables it (the documented -9999); any other value,
+// negative included, applies. Returns the number of valid cells removed.
+// -----------------------------------------------------------------------------
+std::size_t apply_min_elevation(lsdtt_raster_cpu& dem, float min_elevation);
+
+// -----------------------------------------------------------------------------
 // fill_pits
 //
 // Depression filling. Dispatches on min_slope:
