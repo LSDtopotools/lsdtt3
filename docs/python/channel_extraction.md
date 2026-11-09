@@ -62,3 +62,23 @@ match the `perimeter_*` parameters of `lsdtt-channel-extraction` without the
 prefix: `max_gradient` is `perimeter_max_gradient`, and `n_outlets` is
 `n_perimeter_outlets`. `help(lsdtt3.find_perimeter_sources)` gives each
 default.
+
+## Field points on the channel
+
+`FlowInfo.channel_point_attributes` moves points, for example field sites,
+to the nearest channel cell by straight-line distance, not along their D8
+path. It adds the cell's drainage area, flow distance, elevation, and
+along-channel slope and smoothed elevation:
+
+```python
+filled = lsdtt3.fill_pits(dem)
+flow = lsdtt3.FlowInfo(filled)
+out = flow.channel_point_attributes(filled, sites_gdf,
+                                    threshold_contributing_pixels=500,
+                                    slope_window_half_length_metres=150.0)
+```
+
+It is lsdtt-channel-extraction's `run_channel_point_attributes`, with the
+same routine and parameter names. See
+[Field points on the channel network](../what_is_lsdtt3/channel_points.md)
+for the fields and how the slope is measured.

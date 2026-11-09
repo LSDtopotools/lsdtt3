@@ -170,6 +170,7 @@ S=F.channel_scope(threshold_contributing_pixels=...), or heads=extract_channel_h
 N=F.channel_network(S); N.channel_mask->R (0/1); N.n_channel_cells; N.n_junctions
 N.lines_geodataframe()->V (one line per link, with stream_order); N.points_geodataframe()->V; N.junctions_geodataframe()->V; N.links()->D; N.junctions()->D; N.junction_angles()->D; N.link_profiles(values:R)->D
 C=N.chi(outlets?,m_over_n=0.45,reference_area=1.0,denominator?); N.chi_sweep(dem:R,m_over_n_values,...)->D
+F.channel_point_attributes(filled_dem:R,points:V,*,threshold_contributing_pixels,slope_window_half_length_metres=25.0,channel_points_snap_max_search_radius_pixels=10)->V (CLI run_channel_point_attributes: each point moved to the NEAREST channel cell by straight-line distance, not along D8; keeps every column, adds original_x,original_y,snap_distance_m,snap_status,snapped_flat,contributing_pixels,drainage_area_m2,flow_distance_m,elevation_m,smoothed_elevation_m,slope_m_per_m (along-channel least-squares slope over +/- the half-length),slope_valid,slope_window_length_m; geometry = snapped cell centre in the grid CRS; unsnapped points keep position with NaN; a clashing added name gets _lsdtt)
 find_channel_candidates(raster:R,...)->ChannelCandidatesResult; water_centrelines(areas:V,tributaries:V,...)->WaterCentrelineResult; repair_water_lines(water_lines:V,roads:V,...)->WaterLineRepairResult
 """,
     "basin": """@basin drainage basins

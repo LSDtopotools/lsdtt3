@@ -28,6 +28,11 @@
 //   - a radius too small to reach the floor gives
 //     threshold_not_found_in_search_window; a point off the grid,
 //     input_out_of_bounds.
+//   - channel_point_attributes_at (the routine shared by
+//     lsdtt-channel-extraction run_channel_point_attributes and the Python
+//     binding) returns that snap and the snapped cell's drainage area, flow
+//     distance, elevation and channel_slope_at result (slope 0.01 on the
+//     floor); NaNs and slope_valid false when nothing is found.
 //
 // Usage: lsdtt-test-nearest-point-snap
 // -----------------------------------------------------------------------------
@@ -39,6 +44,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/cpu/lsdtt_channel_point_attributes_cpu.hpp"
 #include "../../src/cpu/lsdtt_flow_snapping_cpu.hpp"
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
@@ -160,6 +166,38 @@ int main()
           nf.status == lsdtt_snap_status::threshold_not_found_in_search_window);
     const auto off = snap_point_to_contributing_pixels_threshold_nearest(*flow, cx(-3.0), cy(5.0), o);
     check("point off the grid: input_out_of_bounds", off.status == lsdtt_snap_status::input_out_of_bounds);
+
+    // ---- channel_point_attributes_at: the nearest snap plus the cell's values ----
+    {
+        const std::vector<float> fd = flow->get_distance_from_outlet_raster().data;
+        const double half = 5 * k_cs;
+        const auto pa = channel_point_attributes_at(*flow, dem, fd, cx(31.5), cy(5.5),
+                                                    o.contributing_pixels_threshold, 10, half);
+        const auto sl = channel_slope_at(*flow, dem, F(10, 31), half, o.contributing_pixels_threshold);
+        const auto idx = static_cast<std::size_t>(F(10, 31));
+        check("channel_point_attributes_at: the nearest snap, then that cell's area, distance, z and slope",
+              pa.snap.status == lsdtt_snap_status::success && pa.snap.snapped_flat == F(10, 31) &&
+                  pa.drainage_area_m2 == static_cast<double>(flow->s_vector_size(F(10, 31))) * k_cs * k_cs &&
+                  pa.flow_distance_m == static_cast<double>(fd[idx]) &&
+                  pa.elevation_m == static_cast<double>(dem.get_data()[idx]) &&
+                  pa.slope.slope_valid == sl.slope_valid && pa.slope.slope_m_per_m == sl.slope_m_per_m &&
+                  pa.slope.smoothed_elevation_m == sl.smoothed_elevation_m &&
+                  std::fabs(pa.slope.slope_m_per_m - 0.1 / k_cs) < 1e-6,
+              s(pa.slope.slope_m_per_m));
+        const auto miss = channel_point_attributes_at(*flow, dem, fd, cx(40.5), cy(2.5),
+                                                      o.contributing_pixels_threshold, 2, half);
+        check("channel_point_attributes_at: not found -> status, NaN values, slope invalid",
+              miss.snap.status == lsdtt_snap_status::threshold_not_found_in_search_window &&
+                  std::isnan(miss.drainage_area_m2) && std::isnan(miss.elevation_m) && !miss.slope.slope_valid);
+        bool threw = false;
+        try { (void)channel_point_attributes_at(*flow, dem, fd, cx(31.5), cy(5.5), 1, 10, 1.0 * k_cs); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check("channel_point_attributes_at: half-length under two cells throws", threw);
+        check("13 added field names, original_x first, slope_window_length_m last",
+              channel_point_attribute_field_names().size() == 13 &&
+                  channel_point_attribute_field_names().front() == "original_x" &&
+                  channel_point_attribute_field_names().back() == "slope_window_length_m");
+    }
 
     std::cout << "\n" << (g_n - g_fail) << " / " << g_n << " checks passed\n";
     return g_fail == 0 ? 0 : 1;

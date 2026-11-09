@@ -1,3 +1,5 @@
+#include <cmath>
+#include <limits>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -8,9 +10,11 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cpu/lsdtt_channel_point_attributes_cpu.hpp>
 #include <cpu/lsdtt_channel_sources_wiener_cpu.hpp>
 #include <cpu/lsdtt_perimeter_sources_cpu.hpp>
 
+#include <core/lsdtt_point_attribute_output.hpp>
 #include <core/lsdtt_raster_warp.hpp>
 
 #include "binding_common.hpp"
@@ -317,6 +321,113 @@ nb::dict perimeter_report(const PerimeterSources& result)
 
 } // namespace
 
+// lsdtt-channel-extraction run_channel_point_attributes: the same C++ routine
+// (channel_point_attributes_at) per point, the same added field names, and the
+// same _lsdtt rename of an added field whose name is already a column.
+nb::object channel_point_attributes(const FlowInfo& flow_owner, const Raster& filled_dem, nb::object points,
+                                    std::int64_t threshold_contributing_pixels,
+                                    double slope_window_half_length_metres,
+                                    int channel_points_snap_max_search_radius_pixels)
+{
+    require_flow_grid(filled_dem, flow_owner);
+    const auto& flow = flow_owner.native();
+    const auto& meta = flow.meta();
+    if (threshold_contributing_pixels < 1)
+        throw std::invalid_argument("channel_point_attributes: threshold_contributing_pixels must be >= 1");
+    if (channel_points_snap_max_search_radius_pixels < 0)
+        throw std::invalid_argument(
+            "channel_point_attributes: channel_points_snap_max_search_radius_pixels must be >= 0");
+    if (!(slope_window_half_length_metres >= 2.0 * meta.cell_size))
+        throw std::invalid_argument(
+            "channel_point_attributes: slope_window_half_length_metres must be at least two cell sizes (" +
+            std::to_string(2.0 * meta.cell_size) + " m)");
+
+    nb::object geopandas = nb::module_::import_("geopandas");
+    if (!nb::isinstance(points, geopandas.attr("GeoDataFrame")))
+        throw std::invalid_argument("channel_point_attributes: points must be a GeoDataFrame of Point geometries");
+    nb::object frame = points.attr("copy")();
+    if (!frame.attr("crs").is_none() && !meta.crs_wkt.empty())
+        frame = frame.attr("to_crs")(meta.crs_wkt);
+    else if (frame.attr("crs").is_none() && !meta.crs_wkt.empty())
+        throw std::invalid_argument("channel_point_attributes: points must have a CRS (points.crs is None)");
+    nb::object geometry = frame.attr("geometry");
+    nb::object bad = geometry.attr("is_empty").attr("__or__")(geometry.attr("geom_type").attr("__ne__")("Point"));
+    if (PyObject_IsTrue(bad.attr("any")().ptr()) != 0)
+        throw std::invalid_argument("channel_point_attributes: every geometry in points must be a non-empty Point");
+    const auto xs = nb::cast<std::vector<double>>(geometry.attr("x").attr("to_numpy")(nb::arg("dtype") = "float64"));
+    const auto ys = nb::cast<std::vector<double>>(geometry.attr("y").attr("to_numpy")(nb::arg("dtype") = "float64"));
+
+    // Column names, with the CLI's rename rule for a clash.
+    lsdtt::lsdtt_vector_schema schema;
+    const std::string geometry_name = nb::cast<std::string>(geometry.attr("name"));
+    for (nb::handle c : frame.attr("columns"))
+    {
+        const std::string name = nb::cast<std::string>(nb::str(c));
+        if (name == geometry_name) continue;
+        schema.field_names.push_back(name);
+        schema.field_types.push_back(lsdtt::lsdtt_vector_field_type::string_type);
+    }
+    std::vector<std::pair<std::string, lsdtt::lsdtt_vector_field_type>> added;
+    for (const auto& n : lsdtt::channel_point_attribute_field_names())
+        added.emplace_back(n, lsdtt::lsdtt_vector_field_type::double_type);
+    const std::size_t n_user = schema.size();
+    const auto renamed = lsdtt::append_point_fields(schema, added);
+    if (!renamed.empty())
+    {
+        nb::object warnings = nb::module_::import_("warnings");
+        for (const auto& r : renamed)
+            warnings.attr("warn")("channel_point_attributes: " + r.first +
+                                  " is already a column of points; the added field is " + r.second);
+    }
+
+    const std::size_t n = xs.size();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> snap_distance(n, nan), area(n, nan), distance(n, nan), elevation(n, nan),
+        smoothed(n, nan), slope(n, nan), window(n, nan), sx(xs), sy(ys);
+    std::vector<std::string> status(n);
+    nb::list snapped_flat, contributing;
+    std::vector<std::int64_t> valid(n, 0);
+    const std::vector<float> fd = flow.get_distance_from_outlet_raster().data;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const auto pa = lsdtt::channel_point_attributes_at(
+            flow, filled_dem.native(), fd, xs[i], ys[i], static_cast<std::uint64_t>(threshold_contributing_pixels),
+            channel_points_snap_max_search_radius_pixels, slope_window_half_length_metres);
+        status[i] = lsdtt::snap_status_to_string(pa.snap.status);
+        valid[i] = pa.slope.slope_valid ? 1 : 0;
+        if (pa.snap.status != lsdtt::lsdtt_snap_status::success)
+        {
+            snapped_flat.append(nb::none());
+            contributing.append(nb::none());
+            continue;
+        }
+        snap_distance[i] = pa.snap.snap_distance_metres;
+        snapped_flat.append(pa.snap.snapped_flat);
+        contributing.append(pa.snap.snapped_contributing_pixels);
+        area[i] = pa.drainage_area_m2;
+        distance[i] = pa.flow_distance_m;
+        elevation[i] = pa.elevation_m;
+        smoothed[i] = pa.slope.smoothed_elevation_m;
+        slope[i] = pa.slope.slope_m_per_m;
+        window[i] = pa.slope.window_length_m;
+        sx[i] = meta.x_min + (static_cast<double>(pa.snap.snapped_col) + 0.5) * meta.cell_size;
+        sy[i] = meta.y_max() - (static_cast<double>(pa.snap.snapped_row) + 0.5) * meta.cell_size;
+    }
+
+    nb::object pandas = nb::module_::import_("pandas");
+    auto ints = [&pandas](const nb::list& values) { return pandas.attr("array")(values, nb::arg("dtype") = "Int64"); };
+    const std::vector<nb::object> columns = {
+        nb::cast(xs), nb::cast(ys), nb::cast(snap_distance), nb::cast(status), ints(snapped_flat),
+        ints(contributing), nb::cast(area), nb::cast(distance), nb::cast(elevation), nb::cast(smoothed),
+        nb::cast(slope), nb::cast(valid), nb::cast(window)};
+    nb::object index = frame.attr("index");
+    for (std::size_t k = 0; k < columns.size(); ++k)
+        frame.attr("__setitem__")(schema.field_names[n_user + k],
+                                  pandas.attr("Series")(columns[k], nb::arg("index") = index));
+    nb::object new_geometry = geopandas.attr("points_from_xy")(nb::cast(sx), nb::cast(sy));
+    return frame.attr("set_geometry")(new_geometry, nb::arg("crs") = frame.attr("crs"));
+}
+
 void bind_channel_heads(nb::module_& module, nb::class_<FlowInfo>& flow)
 {
     nb::class_<PerimeterSources>(module, "PerimeterSources", R"doc(
@@ -400,6 +511,62 @@ trim_pixels : int, default=0
 Returns
 -------
 PerimeterSources
+)doc");
+
+    flow.def("channel_point_attributes", &channel_point_attributes, nb::arg("filled_dem"), nb::arg("points"),
+        nb::kw_only(), nb::arg("threshold_contributing_pixels"),
+        nb::arg("slope_window_half_length_metres") = 25.0,
+        nb::arg("channel_points_snap_max_search_radius_pixels") = 10,
+        nb::sig("def channel_point_attributes(self, filled_dem: Raster, points: geopandas.GeoDataFrame, *, "
+                "threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, "
+                "channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame"), R"doc(
+Snap points (e.g. field sites) to the nearest channel cell and add its drainage area and along-channel slope.
+
+lsdtt-channel-extraction ``run_channel_point_attributes``, with the same
+C++ routine and parameter names. Each point moves to the channel cell
+(at least ``threshold_contributing_pixels`` contributing pixels) whose
+centre is nearest in straight-line distance, within
+``channel_points_snap_max_search_radius_pixels``; it does not follow the
+D8 path. The slope is the least-squares slope of ``filled_dem`` against
+distance along the channel over +/- ``slope_window_half_length_metres``;
+upstream the window follows the largest-area tributary.
+
+Parameters
+----------
+filled_dem : Raster
+    The DEM this FlowInfo was built on (pit-filled); elevations and the
+    slope are taken from it.
+points : geopandas.GeoDataFrame
+    Point geometries with a CRS (reprojected to the grid's). Every column
+    is kept.
+threshold_contributing_pixels : int, keyword-only
+    Channel cells have at least this many contributing pixels; also the
+    least a tributary must carry for the slope window to follow it.
+slope_window_half_length_metres : float, default=25.0
+    Half-length (m) of the along-channel slope window; at least two cell
+    sizes.
+channel_points_snap_max_search_radius_pixels : int, default=10
+    Furthest a point may move, in pixels (Chebyshev rings).
+
+Returns
+-------
+geopandas.GeoDataFrame
+    ``points`` in the grid CRS with the geometry moved to the snapped cell
+    centre, and the columns original_x, original_y (grid CRS),
+    snap_distance_m, snap_status, snapped_flat, contributing_pixels,
+    drainage_area_m2, flow_distance_m, elevation_m, smoothed_elevation_m,
+    slope_m_per_m, slope_valid (0/1), slope_window_length_m. A point that
+    does not snap keeps its position, with its snap_status and empty (NaN /
+    <NA>) values. An added column whose name is already in ``points`` is
+    renamed with the suffix ``_lsdtt`` (with a warning), as in the CLI.
+
+Examples
+--------
+>>> filled = lsdtt3.fill_pits(dem)
+>>> F = lsdtt3.FlowInfo(filled)
+>>> sites = geopandas.read_file("field_sites.gpkg")
+>>> out = F.channel_point_attributes(filled, sites, threshold_contributing_pixels=500,
+...                                  slope_window_half_length_metres=150.0)
 )doc");
 
     nb::class_<ChannelHeads>(module, "ChannelHeads", R"doc(

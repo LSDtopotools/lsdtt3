@@ -12,7 +12,7 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 864 | 202 | 132 | 126 | 19 | 173 | 375 | 239 | . | 43 | 215 | 649 |
+| CTest | 868 | 204 | 132 | 127 | 19 | 173 | 377 | 241 | . | 43 | 216 | 652 |
 | pytest | 231 | 76 | 58 | 44 | . | 9 | 27 | 60 | . | 60 | 228 | 3 |
 
 ## CTest by domain
@@ -28,7 +28,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `chi` | 19 | 10 | 1 | 7 | 1 | 2 | 4 | . | . | . |
 | `compatibility` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `conventions` | 9 | 2 | . | . | . | . | . | 1 | . | 9 |
-| `core` | 35 | 13 | 2 | 2 | . | 4 | 1 | 7 | . | 16 |
+| `core` | 36 | 14 | 2 | 3 | . | 4 | 1 | 8 | . | 16 |
 | `cosmo` | 56 | 7 | 11 | 9 | 1 | 18 | 20 | 9 | . | 3 |
 | `cosmo_realworld` | 8 | . | . | . | . | 8 | . | . | . | . |
 | `cross_sections` | 2 | . | . | . | . | . | 2 | . | . | . |
@@ -57,12 +57,12 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `marsh` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `mask` | 1 | 1 | . | . | . | . | . | 1 | . | . |
 | `mountain_front` | 1 | 1 | . | . | . | . | . | 1 | . | . |
-| `network` | 278 | 73 | 42 | 46 | 8 | 65 | 138 | 76 | . | 3 |
+| `network` | 281 | 74 | 42 | 46 | 8 | 65 | 140 | 77 | . | 3 |
 | `outlet_matching` | 1 | . | . | . | . | . | 1 | . | . | . |
 | `packaging` | 3 | . | . | . | . | . | 1 | . | . | 2 |
 | `paired_flowpaths` | 4 | 1 | . | . | . | 3 | 3 | . | . | . |
 | `parameters` | 15 | 1 | . | . | . | . | . | . | . | 14 |
-| `point_input` | 2 | 1 | . | 1 | . | 1 | . | 1 | . | . |
+| `point_input` | 3 | 2 | . | 2 | . | 1 | . | 2 | . | . |
 | `quartz` | 1 | 1 | . | . | . | . | . | . | . | . |
 | `raster` | 52 | 16 | 9 | 6 | 2 | 12 | 19 | 14 | . | 1 |
 | `raster_algebra` | 1 | 1 | . | . | . | . | . | . | . | . |
@@ -102,7 +102,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-basin-extraction` | 9 | . | . | 1 | . | 3 | 8 | 1 | . | . |
 | `lsdtt-basin-stats` | 5 | . | . | 1 | . | 2 | 3 | 2 | . | . |
 | `lsdtt-basin-surface-metrics` | 7 | . | . | 1 | . | 3 | 6 | 1 | . | . |
-| `lsdtt-channel-extraction` | 11 | 3 | . | 1 | . | 2 | 8 | 2 | . | 1 |
+| `lsdtt-channel-extraction` | 14 | 4 | . | 1 | . | 2 | 10 | 3 | . | 1 |
 | `lsdtt-channel-network-analysis` | 21 | 3 | . | 1 | . | 3 | 9 | 12 | . | . |
 | `lsdtt-chi-analysis` | 33 | 1 | . | 2 | . | 8 | 17 | 16 | . | . |
 | `lsdtt-cosmo-column-tool` | 4 | 1 | 1 | 1 | . | 2 | 1 | . | . | . |
