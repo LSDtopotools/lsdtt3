@@ -276,7 +276,7 @@ R\* 0.427, and 0.2 % breaching `R* < 1` at `S_c = 0.8`.
 
 ### Figures
 
-`lsdviztools3` renders the output set:
+[`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/hillslopes_and_ridgelines/) renders the output set:
 
 ```bash
 pixi run python -m lsdviztools3.cli.plot_hilltop_coupling \

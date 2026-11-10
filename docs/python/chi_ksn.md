@@ -95,7 +95,7 @@ t = thresholds.query("measure == 'abs_delta_ksn' and method == 'otsu'").threshol
 major = knickpoints[(knickpoints.at_junction == 0) & (knickpoints.delta_ksn.abs() > t)]
 ```
 
-lsdviztools3 draws these tables (`select_tributaries`, `lsdviz3-knickpoints`)
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/chi_analysis/) draws these tables (`select_tributaries`, `lsdviz3-knickpoints`)
 after the same `basin_id` to `basin_index` rename as above.
 
 See [Chi and ksn API](../python_api/chi.md).

@@ -549,7 +549,7 @@ Snapping mirrors `lsdtt-cosmo-tool` so both tools resolve the same node.
 ## lsdviztools3 interface notes
 
 `lsdtt-cosmo-prediction` is the forward side used by lsdtt3 comparison
-workflows (including point sweeps) that are then plotted by `lsdviztools3`.
+workflows (including point sweeps) that are then plotted by [`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/cosmogenic_nuclides/).
 
 - For point/sweep workflows, sampled concentrations are emitted as
   `<write_fname>_sampled_crn_conc.csv` and paired with inverse runs from

@@ -134,7 +134,7 @@ The command line is the primary interface, but not the only one:
 
 lsdtt3 is not a GIS — it has no interactive GUI. Inputs and outputs are files. However we have provided a lightweight QGIS plugin (which is under development). The QGIS plugin has a reduced feature set to the full `lsdtt3` command line interface collection. But for many users, the "core" analyses tools that are in the QGIS plugin should be sufficient for everyday use. 
 
-The visualisation environment for the developers is the sister package `lsdviztools3`, but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R. `lsdviztools3` is for **visualisation**: computation belongs in lsdtt3 itself.
+The visualisation environment for the developers is the sister package [`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/), but files can be read and visualised in any platform that takes geospatial data, for example QGIS, ArcMap, Python, or R. `lsdviztools3` is for **visualisation**: computation belongs in lsdtt3 itself.
 
 ---
 

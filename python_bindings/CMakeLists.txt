@@ -14,7 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # sources, so they need it too (without it the Windows wheel fails on M_PI).
 # The two warning settings match the top-level ones, for the same reasons.
 if(MSVC)
-    add_compile_definitions(_USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+    add_compile_definitions(_USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS NOMINMAX)
     add_compile_options(/wd4244)
 endif()
 

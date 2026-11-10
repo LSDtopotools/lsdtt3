@@ -3579,7 +3579,7 @@ the forcing at the start of each step, and records what it applied in the
 restoring them, which drops base level away from the domain and sends a wave of
 incision up the channel network. Together with `write_erosion_rate_raster` and
 `write_channel_mask_raster` (both written per frame at every
-`frequency_of_output_writing`), this is what `lsdviztools3`'s
+`frequency_of_output_writing`), this is what [`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/landscape_evolution/)'s
 `render/lem_pulse.py` animates: the pulse is essentially invisible in elevation
 but obvious in the erosion-rate field.
 

@@ -130,18 +130,24 @@ jobs:
           # scikit-build-core) and paths are made relative to the project root
           # (CCACHE_BASEDIR). python_bindings/tools/ci_ccache.sh installs it.
           # Not Windows: its Visual Studio generator ignores compiler launchers.
+          # The launcher goes in CMAKE_ARGS, which only scikit-build-core reads,
+          # NOT in the CMAKE_<LANG>_COMPILER_LAUNCHER environment variables:
+          # CIBW_ENVIRONMENT also applies to before-all, whose dependency build
+          # (PROJ/GDAL/GEOS on Linux) runs before ci_ccache.sh installs ccache,
+          # and every CMake project there picked the launcher up and failed with
+          # "ccache: Command not found" (v0.9.2).
+          launch = " -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
           def ccache(root):
-              return (" CMAKE_C_COMPILER_LAUNCHER=ccache CMAKE_CXX_COMPILER_LAUNCHER=ccache"
-                      f" CCACHE_BASEDIR={root} CCACHE_NOHASHDIR=true CCACHE_MAXSIZE=5G"
+              return (f" CCACHE_BASEDIR={root} CCACHE_NOHASHDIR=true CCACHE_MAXSIZE=5G"
                       f" SKBUILD_BUILD_DIR={root}/python_bindings/build/cibw-{{wheel_tag}}")
           legs = [
               {"name": "Linux x86_64", "os": "ubuntu-24.04", "arch": "x86_64",
-               "environment": release + '"' + ccache("/project")},
+               "environment": release + launch + '"' + ccache("/project")},
               {"name": "macOS ARM64", "os": "macos-15", "arch": "arm64",
-               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + launch + '"'
                               + ccache("$GITHUB_WORKSPACE")},
               {"name": "macOS Intel", "os": "macos-15-intel", "arch": "x86_64",
-               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + launch + '"'
                               + ccache("$GITHUB_WORKSPACE")},
               {"name": "Windows x86_64", "os": "windows-2025", "arch": "AMD64",
                "environment": release + ' -DLSDTT_PYTHON_OPENMP=OFF '

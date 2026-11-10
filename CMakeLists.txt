@@ -48,6 +48,7 @@ if(MSVC)
     add_compile_definitions(
         _USE_MATH_DEFINES
         _CRT_SECURE_NO_WARNINGS  # getenv etc.: portable C, not the _s variants
+        NOMINMAX                 # stop <windows.h> defining min/max macros
     )
     add_compile_options(
         /W4

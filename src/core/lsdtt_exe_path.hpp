@@ -24,6 +24,12 @@
 #include <system_error>
 
 #if defined(_WIN32)
+// <windows.h> defines min and max as macros unless NOMINMAX is set, which
+// breaks std::max(...) and std::numeric_limits<T>::max() in every file that
+// includes this header (seen in lsdtt-cosmo-prediction in the Windows wheel).
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>

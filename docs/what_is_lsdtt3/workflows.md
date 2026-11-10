@@ -58,7 +58,7 @@ environment without activating anything.
 
 **4. lsdviztools3, for figures (optional).** The Snakemake environment holds no
 plotting software. Every figure is drawn by a command from
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3)
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/cli_reference/)
 (`lsdviz3-valley-widths`, `lsdviz3-drape`, `lsdviz3-lithology-map`, ...), which
 lives in its own pixi environment with GMT, PyGMT and geopandas, roughly 2 GB.
 Install it next to lsdtt3:
@@ -195,7 +195,7 @@ The package must include every tool the module uses.
 
 `valley_widths`, `chi_region` and `lithology_channels` can also draw figures,
 using the `lsdviz3-*` commands of
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3). **The figures
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/). **The figures
 need lsdviztools3 installed** (see [Setting up](#setting-up), step 4); it is a
 separate install with a much larger environment (GMT, PyGMT, geopandas), so
 the workflows do not depend on it for anything else. They look for it once per run, and the

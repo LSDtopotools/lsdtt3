@@ -18,7 +18,7 @@ The methods themselves are described in
 
 !!! warning "Figures need lsdviztools3"
     The figures listed on this page are drawn only if
-    [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) is installed
+    [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/getting_started/) is installed
     and the workflow can find it ([how to set it up](workflows.md#setting-up),
     step 4). Without it the run says the figures were skipped and writes
     everything else.
@@ -111,7 +111,7 @@ mask, which takes in terraces.
 | `network_centreline_algorithm_choice` | `medial_path` | `medial_path` follows the middle of the valley floor; `smoothed_channel` smooths the channel itself, kept inside the mask |
 | `write_relative_elevation_raster` | `false` | Elevation above the centreline's baseline, within the mask |
 
-**Figures.** When [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3)
+**Figures.** When [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/valleys_and_cross_sections/)
 is found, each DEM also gets a map of the sections coloured by
 `excluded_reason`, a width profile down the largest trunk, a map of the
 channels and centrelines, the floodplain over a hillshade, and the HAND QQ

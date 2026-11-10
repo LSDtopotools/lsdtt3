@@ -218,7 +218,7 @@ Note that reading and writing across `/mnt/c` is noticeably slower than
 working inside the Linux filesystem (`~/`). For large DEMs, copy the data into
 your Linux home directory first.
 
-(The developers of `lsdtt3` try to avoid using a GIS since it takes forever to start, so they use `lsdviztools3` instead).
+(The developers of `lsdtt3` try to avoid using a GIS since it takes forever to start, so they use [`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/) instead).
 
 ### WSL2 troubleshooting
 

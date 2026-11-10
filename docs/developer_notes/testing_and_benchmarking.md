@@ -3169,7 +3169,7 @@ results) or `--riversand-cmd` (external invocation template).
 Every cosmo test family writes tidy long-format CSVs into the test output
 directory, with consistent column names (`nuclide, scheme, lat, pressure_hPa,
 erate_gcm2yr, conc_atoms_g, source, pct_diff, t_yr` as applicable) so they plot
-directly with lsdviztools3. The driver prints `PASS`/`FAIL` per test and a final
+directly with [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/). The driver prints `PASS`/`FAIL` per test and a final
 `RESULT:` line regardless; the CSVs are a side product for inspection and for
 documentation figures.
 

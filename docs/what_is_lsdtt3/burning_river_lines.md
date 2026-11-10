@@ -223,7 +223,7 @@ All vector outputs use `write_vector_format`.
 
 ## Plotting the profiles
 
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) draws the
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/channel_networks/) draws the
 burned long profiles from the CSV. It shows:
 
 - the input DEM and the burned channel;

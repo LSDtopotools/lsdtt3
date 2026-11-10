@@ -369,7 +369,7 @@ such as OCTOPUS `BEPROD`/`ELEV_AVE`. Columns: `sample_name`,
 
 ## lsdviztools3 interface notes
 
-`lsdviztools3` can plot comparison figures from the standard cosmogenic CSV
+[`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/cosmogenic_nuclides/) can plot comparison figures from the standard cosmogenic CSV
 workflows that include `lsdtt-cosmo-tool` outputs.
 
 - Basin/sample comparison tiers (`run_cosmo_validation.py`,

@@ -797,7 +797,7 @@ export OT_API_KEY_FILE="$HOME/.ot_api_key"
 ```
 
 `OT_API_KEY` is the same variable the `python_helpers/` scripts and
-lsdviztools3 use, so an existing setup already works.
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/) use, so an existing setup already works.
 
 ### The key is never a parameter — on purpose
 

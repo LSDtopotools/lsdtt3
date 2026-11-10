@@ -562,7 +562,7 @@ Python dependency. For downloading DEMs in particular, `lsdtt-fetch-raster`
 does the common case (a bounding box from Copernicus GLO-30) with no Python at
 all; `download_dem_tiles.py` remains for the other providers. If you do want the helpers or the test tooling, we use
 [pixi](https://pixi.sh) so you don't have to hand-maintain a geospatial Python
-environment. [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3), our
+environment. [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/), our
 visualisation package, uses pixi on the same conda-forge channel, so the two
 environments compose the same way.
 

@@ -31,7 +31,7 @@ Set up the Snakemake environment first: see [Workflows](workflows.md#setting-up)
 
 !!! warning "Figures need lsdviztools3"
     The figures listed on this page are drawn only if
-    [lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) is installed
+    [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/getting_started/) is installed
     and the workflow can find it ([how to set it up](workflows.md#setting-up),
     step 4). Without it the run says the figures were skipped and writes
     everything else.

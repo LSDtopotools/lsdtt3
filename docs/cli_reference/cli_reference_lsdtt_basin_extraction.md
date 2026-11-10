@@ -103,7 +103,7 @@ fault orientation):
 | `deflection_from_fault_orthogonal_deg` | Outlet→COM bearing minus the line-orthogonal pointing into the basin, in (−180, 180]. ~0 means the basin extends straight across the line; a systematic sign by side indicates shear-related bending. |
 
 The polygons (`write_basin_outlines_as_polygon`) and this CSV are consumed by the
-`lsdviztools3` `fault_basin_deformation.py` example for plotting (rose diagrams of
+[`lsdviztools3`](https://lsdtopotools.github.io/lsdviztools3/channel_networks/) `fault_basin_deformation.py` example for plotting (rose diagrams of
 basin bearings, deflection-by-side distributions, etc.).
 
 Example parameter file:

@@ -657,7 +657,7 @@ row and column counts differ, which happens whenever the input's rows and
 columns round up to different powers of two (for example 200 × 500 pads to
 256 × 512, so `dfy = 2 dfx`), even though the input pixels are square. The
 rasters are then written with non-square pixels, so both axes read in true
-cycles/m in a GIS or in lsdviztools3. These are the only lsdtt3 outputs with
+cycles/m in a GIS or in [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/spectral_analysis/). These are the only lsdtt3 outputs with
 non-square pixels; lsdtt3 itself refuses non-square pixels on input, so they
 cannot be fed back into another lsdtt3 tool.
 

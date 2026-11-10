@@ -129,7 +129,7 @@ cluster of slopes at exactly that value marks such reaches.
 
 ## Plotting
 
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) draws both
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/channel_networks/) draws both
 outputs together:
 
 ```bash

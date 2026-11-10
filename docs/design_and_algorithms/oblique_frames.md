@@ -175,7 +175,7 @@ Channel extraction on the frame peaked at 143 MB resident memory, against
 
 ## Figures
 
-lsdviztools3 draws a frame raster in the Cartesian `X` projection in frame km,
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/) draws a frame raster in the Cartesian `X` projection in frame km,
 so the strip is a rectangle. GMT's own oblique Mercator (`-JO`) is not used: it
 is spherical. `mapproject -Joa` gives the same coordinates whatever ellipsoid
 GMT is told to use, and matches PROJ's `omerc` on a sphere to the centimetre;

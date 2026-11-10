@@ -265,7 +265,7 @@ plotting with `lsdviztools3` chart helpers.
   - `tests/scripts/run_cosmo_single_point_scaling_scan.py` (sweeps)
   - `tests/scripts/run_cosmo_validation.py` /
     `tests/scripts/run_cosmo_riversand_comparison.py` (sample summaries)
-- lsdviztools3 plotting entry points:
+- [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/cosmogenic_nuclides/) plotting entry points:
   - `lsdviz3-cosmo-compare` (sweep CSVs)
   - `lsdviz3-cosmo-published` (published summary CSVs)
 

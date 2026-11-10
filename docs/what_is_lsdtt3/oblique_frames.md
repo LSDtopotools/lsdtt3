@@ -176,7 +176,7 @@ anything that needs elevations on the UTM grid.
 
 ### 4. Figures
 
-[lsdviztools3](https://github.com/LSDtopotools/lsdviztools3) draws a frame DEM
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/) draws a frame DEM
 as a rectangle in frame km, with axes labelled along and across the feature, a
 title giving the frame azimuth, the UTM grid drawn over it as dashed lines with
 their eastings and northings, and a north arrow that points to true north at
