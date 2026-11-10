@@ -6,13 +6,9 @@
 # CMakeLists.txt (tools/set_version.py), and a copy here would go stale; Zenodo
 # takes the version and date from the release tag.
 #
-# Once Zenodo has archived the first release, add its CONCEPT DOI (the one that
-# always resolves to the latest version) under identifiers:, e.g.
-#
-#   identifiers:
-#     - type: doi
-#       value: 10.5281/zenodo.XXXXXXX
-#       description: Concept DOI, all versions of lsdtt3
+# The DOI below is Zenodo's CONCEPT DOI: it represents all versions and always
+# resolves to the latest. Do not replace it with a single version's DOI (v0.9.2
+# is 10.5281/zenodo.24110424); those go stale at the next release.
 cff-version: 1.2.0
 message: "If you use lsdtt3 in your research, please cite it as below."
 type: software
@@ -62,6 +58,11 @@ authors:
     given-names: Martin D.
     orcid: "https://orcid.org/0000-0002-9822-076X"
     affiliation: "School of Geographical and Earth Sciences, University of Glasgow, Glasgow, UK"
+doi: 10.5281/zenodo.24110423
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24110423
+    description: Concept DOI, all versions of lsdtt3
 repository-code: "https://github.com/LSDtopotools/lsdtt3"
 url: "https://lsdtopotools.github.io/lsdtt3/"
 license: AGPL-3.0-or-later
