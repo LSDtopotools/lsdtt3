@@ -1,14 +1,20 @@
 # lsdtt3
 
+
+[![Release](https://img.shields.io/github/v/release/LSDtopotools/lsdtt3)](https://github.com/LSDtopotools/lsdtt3/releases/latest)
+[![Release build](https://img.shields.io/github/actions/workflow/status/LSDtopotools/lsdtt3/release.yml?label=release%20build)](https://github.com/LSDtopotools/lsdtt3/actions/workflows/release.yml)
+[![Docs](https://img.shields.io/badge/docs-lsdtopotools.github.io-blue)](https://lsdtopotools.github.io/lsdtt3/)
+[![Licence: AGPL-3.0-or-later](https://img.shields.io/github/license/LSDtopotools/lsdtt3)](LICENSE)
+
 ![LSDTopoTools3 logo](docs/LSD-logo.png)
 
-A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) with a modern C++ architecture.
+A ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2). Like LSDTopoTools2 but better in almost every way. lsdtt3 was built with LLM assistance so you will no longer get amazing lsdtt2 messages like "This index is impossible, how did I get here?". We apologise if the bizarre messages were the primary reason you used lsdtt2. If your goal is topographic analysis, or geomorphic research, you will find lsdtt3 is better. 
 
 **Copyright:** Simon M. Mudd  
 **Licence:** AGPL-3.0-or-later  
-**Additional developers:** Rutger Vervoordeldonk, Boris Gailleton
+**Additional developers:** Rutger Vervoordeldonk, Boris Gailleton, Martha Hawksworth
 
-**Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
+**Additional authors of ported lsdtt2 code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
 
 **Documentation: <https://lsdtopotools.github.io/lsdtt3/>** — installation,
 guides, the design and algorithms, and a reference page for every
@@ -19,7 +25,7 @@ parameter it accepts, and `<tool> -h <parameter_name>` explains one.
 
 ## Overview
 
-lsdtt3 is a C++ library, a set of command-line tools and a Python package for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support, and easier incremental development.
+lsdtt3 is a C++ library, a set of command-line tools and a Python package for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support (well it will when we write it).
 
 If you use this software for research, please also cite the original LSDTopoTools2:
 
@@ -33,7 +39,7 @@ If you use this software for research, please also cite the original LSDTopoTool
 Key improvements over LSDTopoTools2:
 
 - Reads any GDAL-supported format (GeoTIFF, COG, VRT, BIL, ASC, …). VRT is especially useful for large tiled datasets.
-- A command line interface for downloading data from OpenTopography.org. No additional sofware is needed to get datasets for analysis. 
+- A command line interface for downloading data from OpenTopography.org. No additional sofware is needed to get datasets for analysis. Theer are also a number of additional download tools for lithology, erosion rates, and various vector files. 
 - Writes vector outputs (GeoPackage, FlatGeobuf, CSV) with correct georeferencing via GDAL/OGR.
 - Automatic projection handling: If input data is not projected, converts to UTM below ±75°, polar stereographic at high latitude, optional Lambert LAEA for wide-extent rasters spanning more than two UTM zones.
 - If input raster is projected, keeps the projection. So regional projections (e.g., British National Grid) can be retained for both input and output. Can also ingest projected coordinates from other planets (e.g., Mars or Titan)
@@ -44,18 +50,20 @@ Key improvements over LSDTopoTools2:
 - Analysis routines as stateless free functions as opposed to objects. The reason this was done was to reduce the amount of spaghetti code in the package, and in addition reduce the chances of needing a full rebuild any time a small modification is made, problems both present in LSDTopoTools2. Analyses are also clustered by task so (hopefully) it is easier to find the functions you want (although a side effect of this is that there are many more command line interfaces than previously). In other words, we have not thrown the kitchen sink at something called lsdtt-basic-metrics this time (it no longer exists). The names of the CLI tools should give users a reasonable idea of what they are meant to do. 
 - OpenMP multithreading for selected routines; many operations are substantially faster than the equivalent LSDTopoTools2 code. We have a testing and benchmarking document that has some concrete numbers attached to this statement, see it in the `/docs` directory. 
 - A Python package (`import lsdtt3`) that wraps the same C++ routines and keeps rasters and results in memory, so a script or notebook can chain analyses without parameter files. Where a Python function and a CLI share an option, they call the same C++ code and give the same result.
-- Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows). 
+- Many algorithms made more robust and/or faster (e.g., Spectral analysis, proximity tools, metrics based on moving windows, landscape evolution models). 
 - Overall, users should have more flexibility/ease for file I/O, should see less memory consumption (and as a result be able to process bigger datasets and have fewer segmentation faults), and should see speedup of a number of key algorithms.
 
 ## LLM Usage:
 
-Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra and Luna, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. 
+Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra and Luna, Claude Haiku, Sonnet, and Opus) and to port legacy code and write new routines, with testing against baselines (e.g., lsdtt2 outputs, previous iterations of algorithms) and regular code review. If you have taken the position that all LLM use is evil and all software should be hand crafted, we recommend the previous version, LSDTopoTools2. We also recommend this version if you like unexplained segmentation faults and/or waiting a long time for things to finish. 
 
 ---
 
 ## Installation
 
-Everything below installs a pre-built release package: no compiler, no GDAL
+Before you read this section, if you don't like installing software, just go to [our notebooks repositories](https://github.com/LSDtopotools/lsdtt3_notebooks) to see examples where you can just run some cells in google colab and everything should just work. 
+
+Still here? Great. Everything below installs a pre-built release package: no compiler, no GDAL
 install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
 and troubleshooting, are in [the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
 
