@@ -765,21 +765,28 @@ void write_octopus_basin_polygons(const std::string& path, const std::string& dr
     std::unique_ptr<GDALDataset, void (*)(GDALDataset*)> guard(ds, [](GDALDataset* d) { GDALClose(d); });
     OGRLayer* layer = ds->CreateLayer("octopus_basins", &out_srs, wkbMultiPolygon, nullptr);
     if (!layer) throw std::runtime_error("could not create layer 'octopus_basins' in " + path);
+    // A field that fails to be created would otherwise be silently missing
+    // from every feature, so fail the same way the layer does.
+    auto add_field = [&](OGRFieldDefn& d) {
+        if (layer->CreateField(&d) != OGRERR_NONE)
+            throw std::runtime_error(std::string("could not create field '") +
+                                     d.GetNameRef() + "' in " + path);
+    };
     for (const auto& fd : r.fields)
     {
         const OGRFieldType t = fd.type == lsdtt_octopus_value::kind::integer ? OFTInteger64
                                : fd.type == lsdtt_octopus_value::kind::real  ? OFTReal
                                                                              : OFTString;
         OGRFieldDefn d(fd.name.c_str(), t);
-        layer->CreateField(&d);
+        add_field(d);
     }
     {
         OGRFieldDefn a("outlet_in_bbox", OFTInteger);
-        layer->CreateField(&a);
+        add_field(a);
         OGRFieldDefn b("outlet_longitude", OFTReal);
-        layer->CreateField(&b);
+        add_field(b);
         OGRFieldDefn c("outlet_latitude", OFTReal);
-        layer->CreateField(&c);
+        add_field(c);
     }
     for (const auto& b : r.basins)
     {
@@ -862,7 +869,8 @@ void write_octopus_dem_bounds(const std::string& path, const lsdtt_octopus_dem_b
     OGRLayer* layer = ds->CreateLayer("dem_bounds", &wgs84, wkbPolygon, nullptr);
     if (!layer) throw std::runtime_error("could not create layer 'dem_bounds' in " + path);
     OGRFieldDefn n("n_basins", OFTInteger);
-    layer->CreateField(&n);
+    if (layer->CreateField(&n) != OGRERR_NONE)
+        throw std::runtime_error("could not create field 'n_basins' in " + path);
     OGRLinearRing ring;
     ring.addPoint(bnd.west, bnd.south);
     ring.addPoint(bnd.east, bnd.south);

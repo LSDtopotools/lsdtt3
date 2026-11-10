@@ -49,6 +49,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <variant>
 #include <vector>
@@ -343,6 +344,35 @@ int main(int argc, char** argv)
         check(n_line == 3,
               "every record carries usable line geometry -- pre-fix only the "
               "single-part one did, and the output still looked plausible");
+    }
+
+    // -------------------------------------------------------------------------
+    std::cout << "\nM9: features with no geometry are kept AND reported\n";
+    {
+        // A feature with a null geometry is kept as a record (so the feature
+        // count and attributes survive) and must be reported, like the
+        // multipart and unsupported cases: before, it was counted (n_empty)
+        // but the count was never printed, so it vanished from every consumer
+        // without a word.
+        const std::string f = path_for("empty_geom.gpkg");
+        write_wkt_layer(f, "empty_geom", wkbLineString,
+                        {"LINESTRING(0 0,5 5)", ""},   // "" -> null geometry
+                        {1, 2}, "GPKG");
+
+        std::ostringstream captured;
+        std::streambuf* old = std::cout.rdbuf(captured.rdbuf());
+        const auto layer = read_back(f, "empty_geom");
+        std::cout.rdbuf(old);
+        const std::string out = captured.str();
+
+        check(layer.records.size() == 2,
+              "both features kept as records (got " +
+              std::to_string(layer.records.size()) + ")");
+        check(out.find("WARNING - 1 feature(s) in layer 'empty_geom' have no geometry")
+                  != std::string::npos,
+              "the empty feature is reported (loader printed: [" + out + "])");
+        check(out.find("geometry type this reader does not support") == std::string::npos,
+              "and is not mis-reported as an unsupported geometry type");
     }
 
     std::cout << "\n=====================================================\n"

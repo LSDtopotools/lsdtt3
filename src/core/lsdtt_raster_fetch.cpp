@@ -329,11 +329,11 @@ bool download_to_vsimem(const std::string& url,
         content_type.find("json") != std::string::npos ||
         content_type.find("xml")  != std::string::npos)
     {
-        std::string body(reinterpret_cast<const char*>(response->pabyData),
-                         static_cast<std::size_t>(response->nDataLen));
-        if (body.size() > 400) body = body.substr(0, 400) + "...";
+        std::string snippet(reinterpret_cast<const char*>(response->pabyData),
+                            static_cast<std::size_t>(response->nDataLen));
+        if (snippet.size() > 400) snippet = snippet.substr(0, 400) + "...";
         error = "the OpenTopography API returned an error: " +
-                mask_secret(body, secret);
+                mask_secret(snippet, secret);
         destroy_detached(response);
         return false;
     }
@@ -3714,7 +3714,7 @@ lsdtt_fetch_result fetch_catalogue_source(const lsdtt_fetch_options& options,
         std::string url  = info.stac_search_url;
         const std::string first_body = fetch_detail::catalogue_stac_search_body(options);
         std::string body = first_body;
-        for (int page = 0; ; ++page)
+        for (;;)    // one STAC page per pass, until there is no "next" link
         {
             std::string response, error, next_href, next_body;
             if (!http_request_body(url, body, options.http_timeout_seconds,

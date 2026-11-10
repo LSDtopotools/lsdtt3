@@ -287,6 +287,9 @@ def test_off_grid_and_nodata_points_raise_naming_each_point(flow):
 @pytest.mark.exact_solution
 @pytest.mark.metamorphic
 @pytest.mark.negative
+# Raised inside pyproj's Transformer.transform (older pyproj with newer
+# numpy), not by lsdtt3: the test passes plain floats.
+@pytest.mark.filterwarnings("ignore:Conversion of an array with ndim > 0 to a scalar:DeprecationWarning")
 def test_input_forms_and_argument_errors(flow):
     x, y = _centre_xy(12, CENTRE)
     to_lonlat = Transformer.from_crs(EPSG, 4326, always_xy=True)

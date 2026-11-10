@@ -114,6 +114,11 @@ class LandscapeModelTest(unittest.TestCase):
 
 
 
+# These tests pass K fields without stating their m exponent, area convention
+# or CRS, so the library warns that it is assuming them. The assumptions are
+# what the tests rely on, so the expected warnings are silenced here rather
+# than cluttering every run's summary.
+@pytest.mark.filterwarnings("ignore:erodibility_field:UserWarning")
 class LandscapeModelErodibilityTest(unittest.TestCase):
     """Per-pixel erodibility (K) fields on LandscapeModel."""
 
@@ -202,6 +207,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
             )
 
     @pytest.mark.negative
+    # Deliberately also passes the deprecated name, to prove the old spelling
+    # still reaches the same check; its DeprecationWarning is expected.
+    @pytest.mark.filterwarnings("ignore:'incision_threshold_area' is deprecated:DeprecationWarning")
     def test_scalar_erodibility_must_be_positive(self):
         for value in (0.0, -1.0e-3):
             for key in ("incision_threshold_specific_area", "incision_threshold_area"):

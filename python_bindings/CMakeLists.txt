@@ -12,8 +12,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # MSVC's <cmath> defines M_PI and friends only with _USE_MATH_DEFINES. The
 # top-level CMakeLists.txt sets it for the CLIs; the bindings compile the same
 # sources, so they need it too (without it the Windows wheel fails on M_PI).
+# The two warning settings match the top-level ones, for the same reasons.
 if(MSVC)
-    add_compile_definitions(_USE_MATH_DEFINES)
+    add_compile_definitions(_USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+    add_compile_options(/wd4244)
+endif()
+
+# GCC 12-14 report -Wmaybe-uninitialized, -Wstringop-overflow and
+# -Wfree-nonheap-object from inside libstdc++'s own <variant>/<string> headers
+# when a std::variant holding a std::string is moved at -O2/-O3 (seen in the
+# manylinux_2_28 wheel build, GCC 14, via write_chi_network_fit_segments_vector).
+# They are known GCC false positives, not lsdtt3 bugs. Diagnostics only: this
+# changes no generated code, and GCC 11 (the Linux backend's compiler) is
+# unaffected.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12)
+    add_compile_options(-Wno-maybe-uninitialized -Wno-stringop-overflow -Wno-free-nonheap-object)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE)

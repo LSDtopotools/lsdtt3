@@ -323,16 +323,20 @@ jobs:
     timeout-minutes: 120
     env:
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
-      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
 
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # Same list as docs/developer_notes/building_on_macos.md.
+      # Same list as docs/developer_notes/building_on_macos.md. Only what is
+      # missing: the runner image already has cmake and pkgconf, and brew
+      # prints a warning for every formula that is already installed.
       - name: Install dependencies
-        run: brew install cmake gdal fftw libomp netcdf eigen pkgconf
+        run: |
+          for formula in cmake gdal fftw libomp netcdf eigen pkgconf; do
+            brew list --formula "$formula" >/dev/null 2>&1 || brew install "$formula"
+          done
 
       - name: Configure
         run: |

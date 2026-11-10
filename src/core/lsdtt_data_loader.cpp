@@ -1325,6 +1325,13 @@ lsdtt_vector_layer lsdtt_data_loader::read_vector_layer(
                   << " and carry NO geometry. They are counted in the record "
                      "total but every consumer will skip them.\n";
 
+    if (n_empty > 0)
+        std::cout << "lsdtt_data_loader: WARNING - " << n_empty
+                  << " feature(s) in layer '" << layer_name
+                  << "' have no geometry. They are kept as records (so feature "
+                     "counts and attributes are preserved) but every consumer "
+                     "will skip them.\n";
+
     return result;
 }
  

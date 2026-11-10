@@ -85,4 +85,4 @@ before-all = "bash {project}/python_bindings/tools/build_manylinux_native_deps.s
 [tool.cibuildwheel.macos]
 # pkgconf: pkg-config is the FFTW route on Homebrew (fftw is built with autotools,
 # so a CMake package is not relied on). libomp is keg-only; cmake/lsdtt_homebrew_openmp.cmake finds it.
-before-all = "brew install gdal fftw netcdf eigen libomp pkgconf"
+before-all = "for f in gdal fftw netcdf eigen libomp pkgconf; do brew list --formula $f >/dev/null 2>&1 || brew install $f; done"

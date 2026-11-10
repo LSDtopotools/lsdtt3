@@ -45,11 +45,17 @@ endif()
 # Compiler warnings - all targets inherit these
 # =============================================================================
 if(MSVC)
-    add_compile_definitions(_USE_MATH_DEFINES)
+    add_compile_definitions(
+        _USE_MATH_DEFINES
+        _CRT_SECURE_NO_WARNINGS  # getenv etc.: portable C, not the _s variants
+    )
     add_compile_options(
         /W4
         /wd4100              # unreferenced formal parameter
         /wd4189              # local variable initialized but not referenced
+        /wd4244              # double -> float / int narrowing: deliberate in
+                             # this code (float rasters); GCC and Clang do not
+                             # warn on it at -Wall -Wextra either
     )
 else()
     add_compile_options(

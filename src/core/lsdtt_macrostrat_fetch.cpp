@@ -461,7 +461,9 @@ lsdtt_macrostrat_fetch_result fetch_macrostrat_units(const lsdtt_macrostrat_fetc
     if (!layer) throw std::runtime_error("could not create layer 'units' in " + o.out_path);
     auto field = [&](const char* n, OGRFieldType t) {
         OGRFieldDefn fd(n, t);
-        layer->CreateField(&fd);
+        if (layer->CreateField(&fd) != OGRERR_NONE)
+            throw std::runtime_error(std::string("could not create field '") + n +
+                                     "' in " + o.out_path);
     };
     field("map_id", OFTInteger64);
     field("source_id", OFTInteger);
