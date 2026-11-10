@@ -37,11 +37,12 @@ on:
         required: true
         type: string
       platforms:
-        description: Which wheels to build (linux = Linux x86_64 only; all = Linux, macOS ARM64 and Intel, Windows)
+        description: Which wheels to build (linux = Linux x86_64 only; windows = Windows x64 only; all = Linux, macOS ARM64 and Intel, Windows)
         required: true
         type: choice
         options:
           - linux
+          - windows
           - all
         default: linux
       upload:
@@ -155,6 +156,8 @@ jobs:
           ]
           if os.environ["PLATFORMS"] == "linux":
               legs = legs[:1]
+          elif os.environ["PLATFORMS"] == "windows":
+              legs = [leg for leg in legs if leg["os"].startswith("windows")]
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("matrix=" + json.dumps({"include": legs}) + "\n")
           print("Building:", ", ".join(leg["name"] for leg in legs))

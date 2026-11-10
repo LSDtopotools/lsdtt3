@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "lsdtt3"
-version = "0.9.3"
+version = "0.9.3.post1"
 description = "Python bindings for LSDTopoTools3"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -81,6 +81,13 @@ archs = ["x86_64"]
 # PROJ, GDAL, GEOS, SQLite and curl are built from source: EPEL 8's GDAL 3.0 / PROJ 6.3
 # cannot handle datum-ensemble CRSs. See the script's header.
 before-all = "bash {project}/python_bindings/tools/build_manylinux_native_deps.sh"
+
+[tool.cibuildwheel.windows]
+# Same as test-command above, but `cd /d`: cibuildwheel runs the test command in
+# cmd.exe from a temp folder on C:, and plain `cd D:\...` changes the D: drive's
+# folder without switching drives, so pytest could not find python_bindings/tests
+# (v0.9.3 Windows wheel).
+test-command = "cd /d {project} && python -m pytest -q python_bindings/tests && python python_bindings/tools/check_api_examples.py --run && python python_bindings/tools/check_installed_wheel.py --manifest python_bindings/api/public_api.json --smoke-console-scripts"
 
 [tool.cibuildwheel.macos]
 # pkgconf: pkg-config is the FFTW route on Homebrew (fftw is built with autotools,
