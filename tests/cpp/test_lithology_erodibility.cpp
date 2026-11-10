@@ -143,7 +143,10 @@ std::string write_polygons(const std::string& path, int epsg, const std::vector<
             poly.addRing(&hr);
         }
         f->SetGeometry(&poly);
-        layer->CreateFeature(f);
+        // Checked, not ignored: a fixture feature that silently fails to
+        // write would make every assertion on this layer vacuous.
+        if (layer->CreateFeature(f) != OGRERR_NONE)
+            check("wrote fixture feature to " + path, false);
         OGRFeature::DestroyFeature(f);
     }
     GDALClose(ds);
@@ -349,7 +352,8 @@ void test_rasteriser(const std::string& dir)
             OGRFeature* f = OGRFeature::CreateFeature(layer->GetLayerDefn());
             f->SetField("lith_primary", bx.value.c_str());
             f->SetGeometry(&poly);
-            layer->CreateFeature(f);
+            if (layer->CreateFeature(f) != OGRERR_NONE)
+                check("wrote fixture feature to " + gp, false);
             OGRFeature::DestroyFeature(f);
         }
         GDALClose(ds);
