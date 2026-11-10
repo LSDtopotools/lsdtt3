@@ -446,7 +446,7 @@ void test_gap_bridging()
     check_int("bridging, with roads: 1 gap bridge", r1.n_bridges_gap, 1);
     const auto ab = bridges_between(f1, 0.0);
     check("bridging: A-B joined by a 10 m bridge_gap", ab.size() == 1 && ab[0]->repair_type == "bridge_gap" &&
-          near(lsdtt::polyline_length(ab[0]->parts[0]), 10.0));
+          near(lsdtt::river_line_length(ab[0]->parts[0]), 10.0));
     check("bridging: parallel C / D not joined", bridges_between(f1, 50.0).empty() &&
                                                  bridges_between(f1, 60.0).empty());
     check("bridging: 40 m E-F gap not joined", bridges_between(f1, 200.0).empty());

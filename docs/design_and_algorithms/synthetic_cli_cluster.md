@@ -1,8 +1,7 @@
 # Choosing a Synthetic Landscape Tool
 
-lsdtt3 has three command-line tools that can create topography. They are not
-three interfaces to the same operation. Choose between them according to what
-should determine the resulting landscape.
+lsdtt3 has three command-line tools that can create topography. They do completely different stuff so choose between them according to what
+should determine the resulting landscape. Choose wisely, friends. 
 
 ## Quick Decision Guide
 

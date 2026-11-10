@@ -116,9 +116,15 @@ the script fails hard, naming the library, if the bundle is not
 self-contained. A missing optional dependency (OpenMP, FFTW, Eigen, netCDF)
 is reported as a warning annotation on the run, not a failure.
 
-**The Windows vcpkg cache.** A cold cache builds GDAL from source: hours, once
-per `VCPKG_TAG`. Both workflows pin the same `VCPKG_TAG` and package list
-(`.github/vcpkg-packages.txt`); change them together.
+**The Windows vcpkg cache.** A cold cache builds GDAL from source: about 95
+minutes. A GitHub Actions cache is visible only to the branch or tag that saved
+it, plus the default branch, so a cache saved by one release tag cannot be used
+by the next: every release would start cold. `vcpkg-cache.yml` therefore keeps
+the cache on `main`, where every tag can restore it. It runs when the package
+list changes, every five days (GitHub deletes caches unused for 7 days), and
+by hand. All three workflows pin the same `VCPKG_TAG` and package list
+(`.github/vcpkg-packages.txt`); change them together, and run *Windows vcpkg
+cache* by hand on `main` before tagging a release that uses a new `VCPKG_TAG`.
 
 ---
 

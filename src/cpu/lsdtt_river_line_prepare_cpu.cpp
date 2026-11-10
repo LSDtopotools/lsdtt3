@@ -198,7 +198,7 @@ std::vector<bool> find_bridges(int n_nodes, const std::vector<std::pair<int, int
 
 } // namespace
 
-double polyline_length(const std::vector<lsdtt_xy>& line)
+double river_line_length(const std::vector<lsdtt_xy>& line)
 {
     double s = 0.0;
     for (size_t i = 1; i < line.size(); ++i) s += dist(line[i - 1], line[i]);
@@ -223,7 +223,7 @@ std::vector<std::vector<lsdtt_xy>> clip_polyline_to_box(const std::vector<lsdtt_
     };
     auto close_piece = [&](bool was_cut)
     {
-        if (current.size() >= 2 && polyline_length(current) > k_coincident)
+        if (current.size() >= 2 && river_line_length(current) > k_coincident)
         {
             pieces.push_back(current);
             cut_start.push_back(current_cut_start);
@@ -304,7 +304,7 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
                 wp.start_id = f.start_node_id;
                 wp.end_id = f.end_node_id;
             }
-            if (wp.v.size() < 2 || polyline_length(wp.v) <= k_coincident)
+            if (wp.v.size() < 2 || river_line_length(wp.v) <= k_coincident)
             {
                 ++net.n_parts_dropped_degenerate;
                 continue;
@@ -480,7 +480,7 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
             {
                 piece.to_node = to_node;
                 piece.cut_end = cut_end;
-                if (piece.v.size() >= 2 && polyline_length(piece.v) > k_coincident)
+                if (piece.v.size() >= 2 && river_line_length(piece.v) > k_coincident)
                 {
                     split_parts.push_back(piece);
                     ++n_made;
@@ -538,7 +538,7 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         for (size_t k = 0; k < split_parts.size(); ++k)
         {
             const work_part& p = split_parts[k];
-            if (lines_in[cu.find(p.from_node)] == 1 && polyline_length(p.v) < opts.min_line_length_metres)
+            if (lines_in[cu.find(p.from_node)] == 1 && river_line_length(p.v) < opts.min_line_length_metres)
             {
                 keep[k] = false;
                 ++net.n_fragments_dropped;
@@ -582,7 +582,7 @@ river_line_network prepare_river_lines(const std::vector<river_line_feature>& fe
         rl.strahler_order = f.strahler_order;
         rl.repair_type = f.repair_type;
         rl.n_splits = p.n_splits;
-        rl.length_m = polyline_length(p.v);
+        rl.length_m = river_line_length(p.v);
         net.lines.push_back(std::move(rl));
     }
 

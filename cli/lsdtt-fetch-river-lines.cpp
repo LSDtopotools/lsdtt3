@@ -57,6 +57,7 @@ static void print_banner()
         << "=========================================================\n"
         << "|| Welcome to lsdtt-fetch-river-lines                  ||\n"
         << "|| I prepare river centrelines for stream burning      ||\n"
+        << "|| You have various options for river datasets         ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"

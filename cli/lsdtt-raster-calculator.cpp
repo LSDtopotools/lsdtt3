@@ -74,6 +74,9 @@ static void print_banner()
         << "|| Two-raster algebra and overlap masking               ||\n"
         << "|| Part of lsdtt3 by S. M. Mudd and R.Vervoordeldonk    ||\n"
         << "|| Most users will be using this for DEMs of difference ||\n"
+        << "|| it is slightly clever in that it tries to account    ||\n"
+        << "|| for the fact that different rasters might have       ||\n"
+        << "|| different grid spacing or pixel centre alignment     ||\n"
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"
         << "|| Status         : " << k_status

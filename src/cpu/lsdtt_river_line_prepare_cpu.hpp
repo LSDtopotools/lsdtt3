@@ -165,8 +165,13 @@ std::vector<std::vector<lsdtt_xy>> clip_polyline_to_box(const std::vector<lsdtt_
                                                         std::vector<bool>& cut_start,
                                                         std::vector<bool>& cut_end);
 
-// Length of a polyline in its own units.
-double polyline_length(const std::vector<lsdtt_xy>& line);
+// Length of a polyline in its own units (sum of std::hypot segment lengths).
+// Not called polyline_length: that name is the inline utility in
+// src/utils/lsdtt_polygon_geometry.hpp, and a second, out-of-line definition
+// with the same signature is an ODR violation that MSVC refuses to link
+// (LNK2005 in the Python wheel's _core). Kept separate rather than merged so
+// river-line lengths stay bit-identical (hypot vs sqrt can differ in the last bit).
+double river_line_length(const std::vector<lsdtt_xy>& line);
 
 // ---------------------------------------------------------------------------
 // The whole tool: read (core) -> prepare -> write

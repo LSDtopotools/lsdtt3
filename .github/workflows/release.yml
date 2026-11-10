@@ -49,8 +49,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-# Kept identical to python-wheels.yml so the Windows backend and the Windows
-# wheel share one vcpkg binary cache. Change them together.
+# Kept identical to python-wheels.yml and vcpkg-cache.yml so the Windows
+# backend and the Windows wheel share one vcpkg binary cache. Change all three
+# together. The cache a tag run restores is the one vcpkg-cache.yml keeps on
+# main: caches saved by a tag run are visible only to that same tag.
 env:
   VCPKG_TAG: "2026.10.16"
   VCPKG_PINNED_ROOT: 'C:\vcpkg-pinned'
@@ -222,6 +224,18 @@ jobs:
           "VCPKG_DEFAULT_TRIPLET=$env:VCPKG_TRIPLET" >> $env:GITHUB_ENV
 
       # Same paths and key as python-wheels.yml: one cache serves both.
+      # vcpkg's archives are tied to the exact MSVC toolset, and the runner image
+      # updates it every few weeks. Without it in the key, an update keeps
+      # "hitting" a cache vcpkg can no longer use, rebuilds GDAL, and never
+      # saves the result. Same step in all three workflows.
+      - name: Read the MSVC toolset version
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          Write-Host "MSVC toolset $ver"
+          "MSVC_TOOLS_VERSION=$ver" >> $env:GITHUB_ENV
+
       - name: Restore vcpkg cache
         id: vcpkg-cache
         uses: actions/cache/restore@v4
@@ -229,8 +243,9 @@ jobs:
           path: |
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
-          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
           restore-keys: |
+            windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-
             windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-
             windows-vcpkg-
 
@@ -247,7 +262,7 @@ jobs:
           path: |
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
-          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
 
       # The packaging script needs dumpbin and VCToolsRedistDir, i.e. an x64
       # Visual Studio developer environment, exactly as for a local build.

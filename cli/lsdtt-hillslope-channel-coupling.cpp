@@ -3,6 +3,7 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
+// Ported from code by Martin Hurst, Stuart Grieve and Simon Mudd
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
@@ -113,6 +114,13 @@ void print_banner()
         << "\n=========================================================\n"
         << "|| Welcome to the lsdtt3 hillslope-channel coupling tool ||\n"
         << "|| I link hilltop curvature to the channels below it.    ||\n"
+        << "|| These routines were originally developed by           ||\n"
+        << "|| Martin Hurst, Stuart Grieve and Simon Mudd            ||\n"
+        << "|| relevant citations:                                   ||\n"
+        << "|| if you use this code please cite                      ||\n"  
+        << "|| https://doi.org/10.1002/esp.3884                      ||\n"
+        << "|| https://doi.org/10.1126/science.1241791               ||\n"
+        << "|| https://doi.org/10.1016/j.epsl.2019.06.018            ||\n"  
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"
         << "|| Status         : " << k_status

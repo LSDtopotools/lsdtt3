@@ -34,6 +34,9 @@ The same procedure applies to any quasi-periodic pattern on a raster:
 - vegetation density or cover rasters derived from imagery;
 - any other field with a repeating spacing and orientation.
 
+We have tested the code on all of these examples, and most of the development has been around pattered ground, 
+driven by some research around heather stripes. However, we have also tested this against landscape scaling. 
+
 ### What the input can be
 
 The input does not need to be elevation. The code accepts any scalar raster

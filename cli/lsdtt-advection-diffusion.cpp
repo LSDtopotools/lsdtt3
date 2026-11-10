@@ -70,9 +70,11 @@ void print_banner()
 {
     std::cout
         << "============================================================\n"
-        << "|| Welcome to lsdtt-advection-diffusion                  ||\n"
+        << "|| Welcome to lsdtt-advection-diffusion                   ||\n"
         << "|| A minimal transient landscape-evolution model          ||\n"
         << "|| Part of lsdtt3                                         ||\n"
+        << "|| If you want a full blown lem try lsdtt-lem             ||\n"   
+        << "|| This one is designed to look at landscape scaling      ||\n"      
         << "============================================================\n"
         << "|| -v or --version    : full lsdtt3 release version       ||\n"
         << "|| -h                  : help explaining the parameters    ||\n"

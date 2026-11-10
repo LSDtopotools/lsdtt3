@@ -82,7 +82,7 @@ static void print_banner()
         << "|| Welcome to lsdtt-bankfull-width                     ||\n"
         << "|| Manning's-equation bankfull channel width from a    ||\n"
         << "|| high-resolution DEM, solved per cross section and   ||\n"
-        << "|| per reach. Part of lsdtt3 by Simon M. Mudd          ||\n"
+        << "|| per reach.                                          ||\n"
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"
         << "|| Status         : " << k_status

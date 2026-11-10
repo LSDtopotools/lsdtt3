@@ -4,6 +4,9 @@ This directory contains utility scripts for building and packaging
 redistributable backend bundles. This readme also contains a cheat sheet for
 spinning up a new `lsdtt3` release.
 
+Note that github CI takes care of most of the builds, but when you want to bump the version number
+as a developer you need to run a script to get the right bersion number across six instances in the codebase. 
+
 ## Finding the latest version number
 
 **`CMakeLists.txt` line 2 is the single source of truth.** lsdtt3 has one
@@ -270,8 +273,10 @@ gh run watch                            # follow the newest run
 gh release view v0.5.1                  # what is attached so far
 ```
 
-A cold Windows vcpkg cache (the first release, or after a `VCPKG_TAG` bump)
-builds GDAL from source and can take hours; later releases reuse the cache.
+The Windows jobs restore GDAL and its dependencies from a vcpkg cache that
+`vcpkg-cache.yml` keeps on `main`. If that cache is cold (after a `VCPKG_TAG`
+bump, or never built), the release builds GDAL from source, which takes about
+95 minutes: run *Windows vcpkg cache* from the Actions tab on `main` first.
 
 **5. Attach the local-only packages and publish.** CI does not build the
 Debian or conda packages:

@@ -84,6 +84,7 @@ static void print_banner()
         << "|| migration such as chi coordinate offsets and         ||\n"
         << "|| gilbert metrics and as such is similar to the Forte  ||\n"
         << "|| et al TopoToolbox package                            ||\n"
+        << "|| it is not a direct port but should do the same stuff ||\n"
         << "|| We have tried to automate plotting across divides    ||\n"
         << "|| since we know this is a massive pain                 ||\n"
         << "=========================================================\n"

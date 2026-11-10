@@ -3,6 +3,7 @@
 // Part of lsdtt3 -- https://github.com/LSDtopotools/lsdtt3
 //
 // Copyright (C) 2026 Simon M. Mudd
+// ported from lsdtt2 code by David T Milodowski and Simon Mudd
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
@@ -57,6 +58,11 @@ static void print_banner()
         << "=========================================================\n"
         << "|| Welcome to lsdtt-spectral-analysis                  ||\n"
         << "|| I am going to run spectral analysis on your DEM     ||\n"
+        << "|| Replicates the original Perron et al papers but has ||\n"  
+        << "|| been adjusted a few times to support research on    ||\n"  
+        << "|| patterned ground, with a lot of feedback from       ||\n"
+        << "|| real mathematicians: Toyo Vignal, Liu' Pagani       ||\n"
+        << "|| and Nadia Al-Kiyumi                                 ||\n"    
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"

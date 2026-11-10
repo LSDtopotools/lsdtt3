@@ -14,6 +14,8 @@ instead we use the elevation values in a window and fit a differentiable surface
 a polynomial fit or wavelets. Hurst at al. 2012 and the Roering et al. papers referenced therein give
 the rationale for this approach. Also see comments in this document below.
 
+There are also a few other metrics which we descibe below, mostly to do with surface texture. 
+
 Surface metrics include:
 - Local derivatives/curvatures from a quadratic surface fit.
 - Hillshade and moving-window statistics.

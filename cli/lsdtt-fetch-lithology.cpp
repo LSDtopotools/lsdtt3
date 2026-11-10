@@ -47,6 +47,7 @@ static void print_banner()
         << "=========================================================\n"
         << "|| Welcome to lsdtt-fetch-lithology                    ||\n"
         << "|| I download geological map units from Macrostrat     ||\n"
+        << "|| https://macrostrat.org/                             ||\n"
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "=========================================================\n"
         << "|| lsdtt3 version : " << lsdtt::lsdtt3_package_version() << "\n"

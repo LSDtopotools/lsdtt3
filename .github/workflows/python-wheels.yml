@@ -61,7 +61,9 @@ concurrency:
 # copy preinstalled on the runner image (C:\vcpkg). The preinstalled copy moves
 # whenever GitHub updates the image, which changes every port's ABI hash, so the
 # binary cache misses and GDAL rebuilds from source: hours on a cold cache
-# (docs/developer_notes/making_release_packages.md). The cache key is the
+# (docs/developer_notes/making_release_packages.md). The cache release runs
+# restore lives on main (vcpkg-cache.yml): a cache saved by a tag run is
+# visible only to that tag. Keep VCPKG_TAG identical in all three workflows. The cache key is the
 # release tag + triplet + .github/vcpkg-packages.txt, so it changes only when one
 # of those is edited. A runner MSVC update can still change the ABI hash and force one
 # slow rebuild; restore-keys then reuse every archive that still matches.
@@ -121,13 +123,26 @@ jobs:
           python3 - <<'PY'
           import json, os
           release = 'CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON'
+          # ccache (Linux and macOS): the lsdtt3 runtime compiles identically
+          # for every Python version, so wheels 2-5 reuse its objects. ccache
+          # only matches identical commands, so each wheel builds in a fixed
+          # same-depth folder (SKBUILD_BUILD_DIR, {wheel_tag} filled in by
+          # scikit-build-core) and paths are made relative to the project root
+          # (CCACHE_BASEDIR). python_bindings/tools/ci_ccache.sh installs it.
+          # Not Windows: its Visual Studio generator ignores compiler launchers.
+          def ccache(root):
+              return (" CMAKE_C_COMPILER_LAUNCHER=ccache CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+                      f" CCACHE_BASEDIR={root} CCACHE_NOHASHDIR=true CCACHE_MAXSIZE=5G"
+                      f" SKBUILD_BUILD_DIR={root}/python_bindings/build/cibw-{{wheel_tag}}")
           legs = [
               {"name": "Linux x86_64", "os": "ubuntu-24.04", "arch": "x86_64",
-               "environment": release + '"'},
+               "environment": release + '"' + ccache("/project")},
               {"name": "macOS ARM64", "os": "macos-15", "arch": "arm64",
-               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'},
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'
+                              + ccache("$GITHUB_WORKSPACE")},
               {"name": "macOS Intel", "os": "macos-15-intel", "arch": "x86_64",
-               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'},
+               "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + '"'
+                              + ccache("$GITHUB_WORKSPACE")},
               {"name": "Windows x86_64", "os": "windows-2025", "arch": "AMD64",
                "environment": release + ' -DLSDTT_PYTHON_OPENMP=OFF '
                               '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg-pinned/scripts/buildsystems/vcpkg.cmake"'},
@@ -177,6 +192,19 @@ jobs:
           "VCPKG_ROOT=$env:VCPKG_PINNED_ROOT" >> $env:GITHUB_ENV
           "VCPKG_DEFAULT_TRIPLET=$env:VCPKG_TRIPLET" >> $env:GITHUB_ENV
 
+      # vcpkg's archives are tied to the exact MSVC toolset, and the runner image
+      # updates it every few weeks. Without it in the key, an update keeps
+      # "hitting" a cache vcpkg can no longer use, rebuilds GDAL, and never
+      # saves the result. Same step in all three workflows.
+      - name: Read the MSVC toolset version
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          Write-Host "MSVC toolset $ver"
+          "MSVC_TOOLS_VERSION=$ver" >> $env:GITHUB_ENV
+
       - name: Restore Windows vcpkg cache
         if: runner.os == 'Windows'
         id: windows-vcpkg-cache
@@ -185,8 +213,9 @@ jobs:
           path: |
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
-          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
           restore-keys: |
+            windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-
             windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-
             windows-vcpkg-
 
@@ -202,6 +231,8 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_ENVIRONMENT: ${{ matrix.environment }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_BUILD_LINUX: bash {project}/python_bindings/tools/ci_ccache.sh
+          CIBW_BEFORE_BUILD_MACOS: bash {project}/python_bindings/tools/ci_ccache.sh
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: python -m delvewheel repair --add-path C:\\vcpkg-pinned\\installed\\x64-windows\\bin --wheel-dir {dest_dir} {wheel}
         run: |
           python -m pip install --upgrade pip cibuildwheel delvewheel
@@ -214,7 +245,7 @@ jobs:
           path: |
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
-          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
 
       - uses: actions/upload-artifact@v5
         with:

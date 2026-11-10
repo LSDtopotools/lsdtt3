@@ -1,0 +1,106 @@
+name: Windows vcpkg cache
+
+# Keeps the Windows vcpkg binary cache (GDAL, PROJ, FFTW, netCDF, Eigen and
+# their dependencies) on the default branch, where release runs can use it.
+#
+# Why this exists: a GitHub Actions cache is scoped to the ref that saved it.
+# A run can restore caches from its own branch or tag, or from the default
+# branch, but not from another tag. Release runs are triggered by tags, so a
+# cache saved by the v0.9.0 run is invisible to v0.9.1, and every release
+# rebuilt GDAL from source: about 95 minutes of the Windows backend job. Saved
+# here, on main, the cache is visible to every tag.
+#
+# Unused caches are evicted after 7 days, so a scheduled run restores it every
+# five days to keep it alive. A hit downloads the archives and stops.
+#
+# The cache key MUST stay identical to release.yml and python-wheels.yml:
+# same VCPKG_TAG, triplet and .github/vcpkg-packages.txt.
+#
+# Triggers:
+#   - push to main that changes the package list or this file
+#   - every five days (keep-alive)
+#   - manual run from the Actions tab (run it once after changing VCPKG_TAG,
+#     before the next release tag)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/vcpkg-packages.txt"
+      - ".github/workflows/vcpkg-cache.yml"
+  schedule:
+    - cron: "17 3 */5 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vcpkg-cache
+  cancel-in-progress: false
+
+env:
+  VCPKG_TAG: "2026.10.16"
+  VCPKG_PINNED_ROOT: 'C:\vcpkg-pinned'
+  VCPKG_TRIPLET: x64-windows
+
+jobs:
+  warm:
+    name: Build or refresh the vcpkg cache
+    runs-on: windows-2025
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # vcpkg's archives are tied to the exact MSVC toolset, and the runner image
+      # updates it every few weeks. Without it in the key, an update keeps
+      # "hitting" a cache vcpkg can no longer use, rebuilds GDAL, and never
+      # saves the result. Same step in all three workflows.
+      - name: Read the MSVC toolset version
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          Write-Host "MSVC toolset $ver"
+          "MSVC_TOOLS_VERSION=$ver" >> $env:GITHUB_ENV
+
+      # Exact key only: a partial (restore-keys) match must not count as warm.
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~\AppData\Local\vcpkg\archives
+            C:\vcpkg-pinned\downloads
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+
+      - name: Cache is warm
+        if: steps.vcpkg-cache.outputs.cache-hit == 'true'
+        run: Write-Host "vcpkg cache hit; nothing to build."
+
+      - name: Set up pinned vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg $env:VCPKG_PINNED_ROOT
+          & "$env:VCPKG_PINNED_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Build the native dependencies
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        run: |
+          $packages = Get-Content .github/vcpkg-packages.txt | Where-Object { $_ -and -not $_.StartsWith('#') }
+          & "$env:VCPKG_PINNED_ROOT\vcpkg.exe" install --triplet $env:VCPKG_TRIPLET @packages
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~\AppData\Local\vcpkg\archives
+            C:\vcpkg-pinned\downloads
+          key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}

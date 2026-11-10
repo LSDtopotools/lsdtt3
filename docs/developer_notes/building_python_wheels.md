@@ -317,6 +317,30 @@ ignores), or to rebuild one tag's wheels:
 3. Tick *upload* to attach the wheels to the `vX.Y.Z` GitHub release (which
    `release.yml` created); otherwise they stay as workflow artefacts.
 
+### Compiler cache (ccache) in CI
+
+Each platform builds five wheels, one per CPython version, and about 250 of the
+roughly 300 C++ files (the lsdtt3 runtime and the bundled CLIs) compile
+identically for every Python version. On Linux and macOS, `python-wheels.yml`
+therefore runs the compiler through ccache, so wheels 2 to 5 reuse those
+objects and recompile only the nanobind and binding sources. Three settings
+make that work, all in the workflow, not in `pyproject.toml`:
+
+- `CMAKE_C_COMPILER_LAUNCHER` / `CMAKE_CXX_COMPILER_LAUNCHER=ccache`, which
+  CMake reads from the environment;
+- `SKBUILD_BUILD_DIR=<project>/python_bindings/build/cibw-{wheel_tag}`, a fixed
+  per-wheel build folder instead of scikit-build-core's random temporary one;
+- `CCACHE_BASEDIR=<project>`, so ccache compares paths relative to the project
+  and the five folders look identical to it.
+
+`python_bindings/tools/ci_ccache.sh` installs ccache before each build (EPEL in
+the manylinux container, Homebrew on macOS) and prints its hit statistics, so
+the log shows whether it is working. If ccache cannot be installed it puts a
+pass-through stand-in on `PATH`, so the build never fails because of it.
+Windows is not covered: cibuildwheel uses the Visual Studio generator there,
+which ignores compiler launchers. Local builds and the Apptainer route do not
+use ccache.
+
 ### A Linux-only wheel build
 
 The `platforms` input of a manual run defaults to `linux`, which builds only

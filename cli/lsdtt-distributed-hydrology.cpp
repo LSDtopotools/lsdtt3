@@ -117,7 +117,12 @@ static void print_banner()
     std::cout
         << "=========================================================\n"
         << "|| Welcome to lsdtt-distributed-hydrology              ||\n"
-        << "|| I am going to run a raster TOPMODEL for you         ||\n"
+        << "|| This contains a reconstruction of D-TOPMODEL        ||\n"
+        << "|| and S-HYPE                                          ||\n"
+        << "|| the D-TOPMODEL code is not open source so this has  ||\n"     
+        << "|| been reconstructed from governing equations         ||\n"     
+        << "|| S-HYPE ported from original fortran but mapped onto ||\n"   
+        << "|| lsdtt3 flow routing and network objects             ||\n"      
         << "|| Part of lsdtt3 by Simon M. Mudd                     ||\n"
         << "|| Rainfall and PET drive stores on every pixel and    ||\n"
         << "|| the runoff is routed down the flow network          ||\n"
