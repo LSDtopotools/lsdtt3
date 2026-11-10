@@ -1,5 +1,6 @@
 # lsdtt3
 
+![Drainage divides of third- and fourth-order basins over shaded relief, drawn with lsdviztools3 from lsdtt3 output](docs/images/readme_banner.png)
 
 [![Release](https://img.shields.io/github/v/release/LSDtopotools/lsdtt3)](https://github.com/LSDtopotools/lsdtt3/releases/latest)
 [![Release build](https://img.shields.io/github/actions/workflow/status/LSDtopotools/lsdtt3/release.yml?label=release%20build)](https://github.com/LSDtopotools/lsdtt3/actions/workflows/release.yml)
@@ -7,8 +8,6 @@
 [![Licence: AGPL-3.0-or-later](https://img.shields.io/github/license/LSDtopotools/lsdtt3)](LICENSE)
 [![Docs build](https://img.shields.io/github/actions/workflow/status/LSDtopotools/lsdtt3/docs.yml?label=docs%20build)](https://github.com/LSDtopotools/lsdtt3/actions/workflows/docs.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24110423.svg)](https://doi.org/10.5281/zenodo.24110423)
-
-![LSDTopoTools3 logo](docs/LSD-logo.png)
 
 A ground-up redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2). Like LSDTopoTools2 but better in almost every way. lsdtt3 was built with LLM assistance so you will no longer get amazing lsdtt2 messages like "This index is impossible, how did I get here?". We apologise if the bizarre messages were the primary reason you used lsdtt2. If your goal is topographic analysis, or geomorphic research, you will find lsdtt3 is better. 
 
