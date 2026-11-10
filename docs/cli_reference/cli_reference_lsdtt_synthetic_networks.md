@@ -99,7 +99,7 @@ Note that with `domain_type: polygon` and `polygon_sizing: true_area`, `n_rows` 
 | `temperature_scale` | float | `1.0` | Multiplier on the auto initial temperature. Continuous knob for sweeping branching statistics: raise toward random, lower toward 0 for the optimised low-temperature limit (greedy descent at 0). `temperature_scale = 1` reproduces OCNet's native `T0 = E0`. |
 | `random_seed` | int | `33` | Seed for the annealing RNG **and** for the random island generators. Fixing it makes a run reproducible. |
 
-> **`n_iter` matters more than `temperature_scale` for routing fidelity.** Truncating the anneal costs more graph fidelity than the whole temperature range does at fixed `n_iter`, and a short, hot run may never cool at all. If you are sweeping `temperature_scale`, hold `n_iter` at the default or scale it with the grid. See `verify_routing` below and the measured table in `docs/developer_notes/testing_and_benchmarking.md` §8b.1.
+> **`n_iter` matters more than `temperature_scale` for routing fidelity.** Truncating the anneal costs more graph fidelity than the whole temperature range does at fixed `n_iter`, and a short, hot run may never cool at all. If you are sweeping `temperature_scale`, hold `n_iter` at the default or scale it with the grid. See `verify_routing` below and the measured table in [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md) §8b.1.
 
 ---
 
@@ -179,7 +179,7 @@ The `true_area` case is a genuine conflict rather than an oversight: `true_area`
 
 `verify_routing` computes the fraction of interior, non-outlet land pixels whose D8 receiver on the synthesised DEM equals their OCN receiver, prints it as `D8 round-trip fidelity (interior)` and records it as `routing_fidelity` in the summary CSV. A failure inside the verification step warns and leaves `routing_fidelity` at `-1`; it does not stop the run.
 
-This number is a **gate, not a diagnostic**. Fidelity is high for relaxed (low-temperature) networks and falls for random (high-temperature) ones, but it does not reach 1 at any temperature or anneal length: it plateaus near 0.935 even at more than four times the default `n_iter`, so several per cent of interior pixels always re-route. If your workflow re-routes the DEM — and every lsdtt3 tool downstream of this one does — then the network you analyse is not exactly the network you generated. The measured fidelity-versus-temperature-versus-`n_iter` table, and what to do about it, are in `docs/developer_notes/testing_and_benchmarking.md` §8b.1.
+This number is a **gate, not a diagnostic**. Fidelity is high for relaxed (low-temperature) networks and falls for random (high-temperature) ones, but it does not reach 1 at any temperature or anneal length: it plateaus near 0.935 even at more than four times the default `n_iter`, so several per cent of interior pixels always re-route. If your workflow re-routes the DEM — and every lsdtt3 tool downstream of this one does — then the network you analyse is not exactly the network you generated. The measured fidelity-versus-temperature-versus-`n_iter` table, and what to do about it, are in [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md) §8b.1.
 
 ---
 
@@ -404,7 +404,7 @@ Two practical notes:
   on the 48x48 reference). That is expected: the default drives the graph toward
   straight cardinal trunks while the chi surface is re-routed by D8 steepest
   descent, which still favours diagonals, so the two disagree more. See
-  *Routing fidelity* above and `docs/developer_notes/testing_and_benchmarking.md` 8b.1b.
+  *Routing fidelity* above and [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md) 8b.1b.
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters

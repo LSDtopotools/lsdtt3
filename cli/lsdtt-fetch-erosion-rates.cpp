@@ -59,6 +59,7 @@ static void print_banner()
         << "|| studies listed in <write_fname>_ATTRIBUTION.txt\n"
         << "=========================================================\n"
         << "|| Citation : " << k_citation << "\n"
+        << "|| Docs     : " << lsdtt::lsdtt3_cli_documentation_url(k_tool_name) << "\n"
         << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n\n";
 }

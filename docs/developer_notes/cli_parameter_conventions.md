@@ -480,9 +480,9 @@ table.
 
 ## See also
 
-- Architecture document: `docs/developer_notes/lsdtt3_architecture.md` — parameter
+- Architecture document: [lsdtt3 Architecture Document](lsdtt3_architecture.md) — parameter
   declaration in CLIs
-- Developer onboarding: `docs/developer_notes/developer_onboarding.md` — checklist
+- Developer onboarding: [lsdtt3 Developer Onboarding](developer_onboarding.md) — checklist
   for adding a parameter
 - Parameter parser: `src/core/lsdtt_param_parser.hpp` — the engine that enforces
   these rules and applies aliases

@@ -52,6 +52,19 @@ std::string lsdtt3_package_version()
     return LSDTT3_VERSION;
 }
 
+std::string lsdtt3_documentation_url()
+{
+    return "https://lsdtopotools.github.io/lsdtt3/";
+}
+
+std::string lsdtt3_cli_documentation_url(const std::string& tool_name)
+{
+    std::string page = tool_name;
+    for (char& c : page)
+        if (c == '-') c = '_';
+    return lsdtt3_documentation_url() + "cli_reference/cli_reference_" + page + ".html";
+}
+
 // -----------------------------------------------------------------------------
 // Construction
 // -----------------------------------------------------------------------------
@@ -1217,6 +1230,10 @@ void write_parameter_file_guide(std::ostream& os,
        << "  " << tool_name << " <path> <parameter_file>   "
           "same, with the parameter file in directory <path>\n"
        << "\n"
+       << "Documentation for this tool:\n"
+       << "  " << lsdtt3_cli_documentation_url(tool_name) << "\n"
+       << "All lsdtt3 documentation: " << lsdtt3_documentation_url() << "\n"
+       << "\n"
        << "All analysis options are set in a plain-text parameter file, not with\n"
        << "command-line flags. The parameter names, types and defaults are\n"
        << "listed by \"" << tool_name << " -h\".\n"
@@ -1554,6 +1571,8 @@ void write_json_help(std::ostream& os,
     os << "  \"version\": \"" << json_escape(LSDTT3_VERSION) << "\",\n";
     os << "  \"status\": \"" << json_escape(status) << "\",\n";
     os << "  \"citation\": \"" << json_escape(citation) << "\",\n";
+    os << "  \"documentation\": \""
+       << json_escape(lsdtt3_cli_documentation_url(tool_name)) << "\",\n";
 
     os << "  \"features\": [";
     for (std::size_t i = 0; i < features.size(); ++i)
@@ -1835,6 +1854,11 @@ void lsdtt_param_parser::write_reference_files(
     html << "<p>Version: lsdtt3 " << html_escape(LSDTT3_VERSION) << "</p>\n";
     html << "<p>Status: " << html_escape(status) << "</p>\n";
     html << "<p>Citation: " << html_escape(citation) << "</p>\n";
+    {
+        const std::string doc = lsdtt3_cli_documentation_url(tool_name);
+        html << "<p>Documentation: <a href=\"" << html_escape(doc) << "\">"
+             << html_escape(doc) << "</a></p>\n";
+    }
     html << "<h2>Usage</h2>\n"
          << "<p><code>" << html_escape(tool_name)
          << " my_params.driver</code> or <code>" << html_escape(tool_name)
@@ -2117,6 +2141,10 @@ void lsdtt_param_parser::print_help(
         html << "<p>Status: " << status << "</p>\n";
         html << "<p>Citation: <a href=\"" << citation << "\">"
              << citation << "</a></p>\n";
+        // Only the file prefix is known here, not the tool, so this links the
+        // documentation site rather than the tool's own page.
+        html << "<p>Documentation: <a href=\"" << lsdtt3_documentation_url() << "\">"
+             << lsdtt3_documentation_url() << "</a></p>\n";
 
         html << "<h2>Usage</h2>\n"
              << "<p>Call with a parameter file: "

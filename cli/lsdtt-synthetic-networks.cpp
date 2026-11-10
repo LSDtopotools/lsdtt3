@@ -69,6 +69,7 @@ static void print_banner()
         << (k_status == "stable" ? "" : " -- not yet fully tested") << "\n"
         << "=========================================================\n"
         << "|| Citation : " << k_citation << "\n"
+        << "|| Docs     : " << lsdtt::lsdtt3_cli_documentation_url(k_tool_name) << "\n"
         << "|| -h       : help explaining the parameters\n"
         << "=========================================================\n"
         << "Creates optimised drainage networks and chi-based topography.\n"

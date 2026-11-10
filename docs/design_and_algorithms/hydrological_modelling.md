@@ -168,7 +168,7 @@ Two caveats. These are implementation checks: they do not replace calibration
 and evaluation against observed catchment data, and **the tool has not been
 calibrated against any observed catchment**. And unlike the flow-routing and
 cosmogenic work, these suites are not yet written up in
-`docs/developer_notes/testing_and_benchmarking.md`, so there is no durable
+[Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md), so there is no durable
 record of what they measured beyond the test sources themselves.
 
 The distributed form is informed by:

@@ -21,7 +21,7 @@
 # A checked copy of project(lsdtt3 VERSION ...) in CMakeLists.txt, the single
 # source of truth. Change it with tools/set_version.py; the CTest test
 # unit_version_consistency fails if the two differ.
-{% set version = "0.9.0" %}
+{% set version = "0.9.1" %}
 
 package:
   name: lsdtt3
@@ -87,6 +87,8 @@ test:
 
 about:
   home: https://github.com/LSDtopotools/lsdtt3
+  doc_url: https://lsdtopotools.github.io/lsdtt3/
+  dev_url: https://github.com/LSDtopotools/lsdtt3
   license: AGPL-3.0-or-later
   license_file: LICENSE
   summary: LSDTopoTools3 - topographic analysis for geomorphology

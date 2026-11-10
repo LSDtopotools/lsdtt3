@@ -14,7 +14,7 @@ every library they depend on.
 > **Want the very latest code instead of a release?**
 > Then you need to compile it yourself. If you are not a developer you really do not want to do this. That activity is
 > documented separately in
-> [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md).
+> [Building lsdtt3 from source](../developer_notes/building_from_source.md).
 
 ---
 
@@ -391,7 +391,7 @@ python -c "import lsdtt3; print(lsdtt3.__version__, lsdtt3._core.lsdtt3_version(
 ```
 
 To use the Python package from unreleased code, build it from a clone; see
-[`docs/developer_notes/building_python_wheels.md`](../developer_notes/building_python_wheels.md).
+[Building the Python wheels](../developer_notes/building_python_wheels.md).
 The [Python guide](../python/index.md) shows what to do once it is installed.
 Every function is documented in the package itself (`help(lsdtt3.FlowInfo)`),
 and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for
@@ -517,9 +517,9 @@ developers.
 
 ## See also
 
-- [`docs/developer_notes/building_from_source.md`](../developer_notes/building_from_source.md)
+- [Building lsdtt3 from source](../developer_notes/building_from_source.md)
   — compiling lsdtt3 yourself, on Linux, Windows or macOS
-- [`docs/developer_notes/making_release_packages.md`](../developer_notes/making_release_packages.md)
+- [Making release packages](../developer_notes/making_release_packages.md)
   — how these packages are built and published
 - [Command-line reference](../cli_reference/cli_reference_lsdtt_raster_preprocessing.md)
   — what to do once it is installed

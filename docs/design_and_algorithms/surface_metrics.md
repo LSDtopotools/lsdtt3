@@ -303,7 +303,7 @@ Below is the code-derived ordering comparison you requested.
 |---|---|---|
 | LSDTopoTools2 legacy polyfit | Not currently benchmarked in this repo | Not currently benchmarked in this repo |
 | lsdtt3 wavelet polyfit | Not currently a maintained timing table in docs | Not currently a maintained memory table in docs |
-| lsdtt3 direct polyfit | Yes (`docs/developer_notes/testing_and_benchmarking.md`) | Yes (`docs/developer_notes/testing_and_benchmarking.md`) |
+| lsdtt3 direct polyfit | Yes ([Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md)) | Yes ([Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md)) |
 
 So: we now have the operation-order comparison for all three methods from code,
 and measured speed/memory numbers for direct polyfit from the current benchmark

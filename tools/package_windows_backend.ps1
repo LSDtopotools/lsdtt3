@@ -573,6 +573,13 @@ send outputs elsewhere, add a `write_path:` line naming an existing folder. For 
 analyses, run the relevant tool with `-h` to find its parameters, and add
 them to the parameter file.
 
+## Documentation
+
+Full documentation, including a reference page for every tool, is at
+<https://lsdtopotools.github.io/lsdtt3/>. Each tool also prints the address of
+its own page in its start-up banner and with `-h`, and `-h` itself lists every
+parameter the tool accepts, so the bundle works without the website.
+
 ## What is in this bundle
 
 - `bin\` -- the lsdtt command-line tools and their DLLs:

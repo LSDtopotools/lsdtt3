@@ -77,6 +77,8 @@ void print_banner()
         << "|| -v or --version    : full lsdtt3 release version       ||\n"
         << "|| -h                  : help explaining the parameters    ||\n"
         << "|| -c                  : citation                         ||\n"
+        << "============================================================\n"
+        << "|| Docs : " << lsdtt::lsdtt3_cli_documentation_url(k_tool_name) << "\n"
         << "============================================================\n\n";
 }
 

@@ -175,7 +175,7 @@ Used when `stream_burn_mode: snap_to_accumulation`. This is the recommended work
 
 Recommended sequence for a new user:
 
-1. Repair the raw VML water layer with `lsdtt-water-line-repair` (see `docs/cli_reference/cli_reference_lsdtt_water_line_repair.md`).
+1. Repair the raw VML water layer with `lsdtt-water-line-repair` (see [CLI reference: lsdtt-water-line-repair](cli_reference_lsdtt_water_line_repair.md)).
 2. Use `<repair_write_fname>_water_line_repaired.<ext>` as `stream_vector_path` in this CLI.
 3. Run with:
    - `stream_burn_mode: snap_to_accumulation`

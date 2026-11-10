@@ -1269,7 +1269,7 @@ order gives the identical raster (0 differing cells of 1,000,000) for
 **This is deliberately NOT changed**, and the CLI keeps building the S-vector.
 It is what makes `is_upslope_of` an O(1) interval test, and chi analysis, basin
 summaries, source finding and the cosmogenic routines all depend on it. See
-`docs/design_and_algorithms/flow_routing.md`.
+[Flow Routing in lsdtt3](../design_and_algorithms/flow_routing.md).
 
 **Fix:** the `accum_d8` case note now states that lsdtt3 performs work the
 references do not, and quantifies it. The asymmetry is recorded rather than
@@ -2426,7 +2426,7 @@ Two consequences, both acted on:
   `SUMMARY.md`. **This campaign predates that change**, so its manifest carries
   no `usable_cores` field; the evidence that it had real cores is in the data
   below rather than in the manifest.
-- `docs/what_is_lsdtt3/running_benchmarks.md` documents the check and the
+- [Running benchmarks on your own system](../what_is_lsdtt3/running_benchmarks.md) documents the check and the
   `srun --cpus-per-task=8` route.
 
 #### Thread scaling (lsdtt3, alpine; lakeland within 0.03× throughout)
@@ -2566,7 +2566,7 @@ report-only), seconds:
 The timings of every lsdtt3 conditioning option on the same campaign, and the
 decomposition of the TopoToolbox / lsdtt3 difference on alpine terrain (fill
 family about 1.7 s, S-vector about 0.5 s at 4000²), are in
-`docs/design_and_algorithms/flow_routing.md`, "From a raw DEM to a fully routed
+[Flow Routing in lsdtt3](../design_and_algorithms/flow_routing.md), "From a raw DEM to a fully routed
 DEM".
 
 #### Least-cost breaching
@@ -7886,7 +7886,7 @@ this section imply otherwise when it is written.
 
 ## 10q. The S-HYPE column (`column_model: hype`, 2026-10-04)
 
-`lsdtt-distributed-hydrology` with `column_model: hype` reimplements the land and river processes of HYPE 5.36.0 (SMHI; Lindström et al. 2010), with HYPE's default options. Unlike the TOPMODEL stack in §10p, it has an **external oracle**: HYPE itself. The equations are in `docs/design_and_algorithms/hydrological_modelling.md`. As with TOPMODEL, nothing here is evidence of predictive skill: **the model has not been calibrated against any observed catchment**.
+`lsdtt-distributed-hydrology` with `column_model: hype` reimplements the land and river processes of HYPE 5.36.0 (SMHI; Lindström et al. 2010), with HYPE's default options. Unlike the TOPMODEL stack in §10p, it has an **external oracle**: HYPE itself. The equations are in [Hydrological Modelling in lsdtt3](../design_and_algorithms/hydrological_modelling.md). As with TOPMODEL, nothing here is evidence of predictive skill: **the model has not been calibrated against any observed catchment**.
 
 ### 10q.1 The oracle, and why CTest never touches Fortran
 
@@ -7975,7 +7975,7 @@ Scaling stops at about 4 threads, and cost per unit-step rises with unit count (
 
 ## 10r. Flat resolution: the Barnes et al. (2014b) options
 
-The method is described in `docs/design_and_algorithms/flow_routing.md`
+The method is described in [Flow Routing in lsdtt3](../design_and_algorithms/flow_routing.md)
 (section "Flat resolution: Barnes et al. (2014b)"). This section records how it
 was tested, what each oracle asserts now, and what the tests found. The option
 is `fill_flat_resolution_choice`: `inline_gradient` (the default, unchanged),

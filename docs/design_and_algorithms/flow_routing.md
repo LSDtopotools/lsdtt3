@@ -500,8 +500,8 @@ The implementation notes are in `src/cpu/lsdtt_raster_breach_least_cost_cpu.cpp`
     itself (no file I/O). Treat ratios as indicative of this machine and these
     DEMs. A campaign the day before on the same node had every engine taking
     about 15% longer; compare ratios between campaigns, not seconds. Raw data
-    and method: `docs/what_is_lsdtt3/running_benchmarks.md` and
-    `docs/developer_notes/testing_and_benchmarking.md`.
+    and method: [Running benchmarks on your own system](../what_is_lsdtt3/running_benchmarks.md) and
+    [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md).
 
 The DEMs are Copernicus 30 m crops: an alpine region (steep, few depressions)
 and a lakeland region (low relief, many lakes), at 1000², 2000² and 4000²
@@ -551,7 +551,7 @@ Each package's **default** route from a raw DEM to D8 flow accumulation:
 | Whitebox (whitebox_workflows 2.0.6) | pit-centric fill (`fill_depressions`), one pit at a time | raised in 1e-4 m steps by a rank that leads towards lower terrain | small but real | steepest descent |
 
 Where the same algorithm exists in more than one package, the test suite
-compares the outputs value for value (`docs/developer_notes/testing_and_benchmarking.md`):
+compares the outputs value for value ([Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md)):
 
 - Priority-Flood fill (no gradient): lsdtt3, RichDEM, Whitebox
   (`fill_depressions_wang_and_liu`, Wang and Liu 2006).
@@ -659,7 +659,7 @@ two implementations are close. **Comparing across families is the mistake to
 avoid** — an early version of the benchmark suite ran lsdtt3's default (heap)
 against TopoToolbox's default (reconstruction) and reported lsdtt3 2.9× slower,
 which measured the choice of algorithm rather than the quality of either
-implementation. See `docs/developer_notes/testing_and_benchmarking.md`.
+implementation. See [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md).
 
 ---
 
@@ -1412,6 +1412,6 @@ for D8 accumulation checks.
 
 For implementation specifics, also see:
 
-- `docs/developer_notes/using_lsdtt_flowinfo.md`
-- `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md`
-- `docs/developer_notes/testing_and_benchmarking.md`
+- [Using lsdtt_flowinfo](../developer_notes/using_lsdtt_flowinfo.md)
+- [CLI reference: lsdtt-drainage-analysis](../cli_reference/cli_reference_lsdtt_drainage_analysis.md)
+- [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md)

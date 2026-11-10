@@ -9,7 +9,7 @@ and national lidar models for Norway, the Netherlands, Spain, Poland, Canada,
 Switzerland, New Zealand, Scotland and Japan (0.5–10 m). See
 [High-resolution national and polar sources](#high-resolution-national-and-polar-sources).
 
-Design notes and rationale: `docs/developer_notes/testing_and_benchmarking.md`.
+Design notes and rationale: [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md).
 
 ```sh
 lsdtt-fetch-raster <path> <parameter_file>
@@ -1084,8 +1084,8 @@ Set `target_epsg: 3413` (Arctic) or `3031` (Antarctic).
 
 ## See also
 
-- `docs/developer_notes/testing_and_benchmarking.md` — design rationale, credential rules, findings
-- `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` — the usual next step
+- [Benchmarking and testing in lsdtt3](../developer_notes/testing_and_benchmarking.md) — design rationale, credential rules, findings
+- [CLI reference: lsdtt-raster-preprocessing](cli_reference_lsdtt_raster_preprocessing.md) — the usual next step
 - `python_helpers/download_dem_tiles.py` — Python helper covering other providers
 - <https://portal.opentopography.org/apidocs/#/Public/getGlobalDem> — the
   upstream `demtype` list this tool's catalogue mirrors

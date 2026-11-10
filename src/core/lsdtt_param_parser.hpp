@@ -96,6 +96,25 @@ struct lsdtt_cli_args
 std::string lsdtt3_package_version();
 
 // -----------------------------------------------------------------------------
+// Documentation links
+//
+// lsdtt3_documentation_url()        the documentation site's front page,
+//                                   https://lsdtopotools.github.io/lsdtt3/
+// lsdtt3_cli_documentation_url(t)   tool t's reference page on that site, e.g.
+//   lsdtt-chi-analysis -> .../cli_reference/cli_reference_lsdtt_chi_analysis.html
+//
+// The page name follows the docs/cli_reference/ file convention (dashes to
+// underscores), and the site is built with use_directory_urls: false, so pages
+// end in .html. Every lsdtt_cli() target has such a page: the CTest test
+// unit_cli_reference_is_current fails without one. The CLIs print the tool's
+// page in their banner, in the guide shown by -h and by a run with no
+// arguments, in the -h html reference file, and as "documentation" in -h json.
+// The repository address stays the citation (-c).
+// -----------------------------------------------------------------------------
+std::string lsdtt3_documentation_url();
+std::string lsdtt3_cli_documentation_url(const std::string& tool_name);
+
+// -----------------------------------------------------------------------------
 // lsdtt_compiled_features
 //
 // Returns the optional-dependency features compiled into the CALLING

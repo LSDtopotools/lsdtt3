@@ -10,6 +10,11 @@ A redesign of [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) wit
 
 **Additional authors of ported code:** Fiona Clubb, Stuart Grieve, David Milodowski, Martin Hurst, Declan Valters 
 
+**Documentation: <https://lsdtopotools.github.io/lsdtt3/>** — installation,
+guides, the design and algorithms, and a reference page for every
+command-line tool. Each tool also documents itself: `<tool> -h` lists every
+parameter it accepts, and `<tool> -h <parameter_name>` explains one.
+
 ---
 
 ## Overview
@@ -52,7 +57,7 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra
 
 Everything below installs a pre-built release package: no compiler, no GDAL
 install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
-and troubleshooting, are in [the installation guide](docs/what_is_lsdtt3/install_lsdtt3.md).**
+and troubleshooting, are in [the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
 
 Packages are on the [Releases page](../../releases/latest) and at
 <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>.
@@ -112,14 +117,14 @@ Google Colab runs Python 3.13, so it needs the `cp313` wheel. The wheel bundles
 GDAL and PROJ. Every function is documented in the package (`help(lsdtt3.FlowInfo)`),
 and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for you
 or an AI assistant such as Gemini in Colab. Worked examples are in the
-[Python guide](docs/python/index.md) and the
-[API reference](docs/python_api/index.md); building the wheels yourself is in
-[`docs/developer_notes/building_python_wheels.md`](docs/developer_notes/building_python_wheels.md).
+[Python guide](https://lsdtopotools.github.io/lsdtt3/python/index.html) and the
+[API reference](https://lsdtopotools.github.io/lsdtt3/python_api/index.html); building the wheels yourself is in
+[Building the Python wheels](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_python_wheels.html).
 
 ### Want the latest code rather than a release?
 
 Then you need to compile it:
-[`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
+[Building lsdtt3 from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html).
 
 ### Reporting bugs
 
@@ -171,12 +176,12 @@ OpenMP is included with GCC and needs no separate install.
 Build inside a WSL2 Ubuntu environment and use the Ubuntu instructions above.
 A native Windows build is possible with Visual Studio and vcpkg but is a
 deliberately reduced profile (no Eigen, no OpenMP) intended as the
-QGIS plugin backend. Both are in `docs/developer_notes/building_on_windows.md`.
+QGIS plugin backend. Both are in [Building on Windows](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_on_windows.html).
 
 ### macOS
 
 Build natively with Homebrew and the Xcode Command Line Tools, or inside an
-Ubuntu VM managed by Multipass — see `docs/developer_notes/building_on_macos.md`.
+Ubuntu VM managed by Multipass — see [Building on macOS](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_on_macos.html).
 
 ### Apptainer container
 
@@ -184,7 +189,7 @@ A pre-configured Apptainer definition is provided that includes all dependencies
 
 ### Debian packaging
 
-See `docs/developer_notes/debian_packaging.md` for building a `.deb` package for distribution on Debian-based systems.
+See [Building a Debian package for lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/debian_packaging.html) for building a `.deb` package for distribution on Debian-based systems.
 
 ---
 
@@ -204,7 +209,7 @@ export PATH=/path/to/lsdtt3/build:$PATH
 ```
 
 Full instructions for every platform, including the CMake option reference:
-[`docs/developer_notes/building_from_source.md`](docs/developer_notes/building_from_source.md).
+[Building lsdtt3 from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html).
 
 ### Gotcha: more than one GDAL or PROJ on your machine
 
@@ -289,7 +294,7 @@ ctest --test-dir build --output-on-failure
 Configure prints which tiers it registered and what each OFF option left out.
 If tests fail, `cmake --build build --target test_report` writes one file to
 attach to a bug report. See
-[Building from source](docs/developer_notes/building_from_source.md#run-the-tests)
+[Building from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html#run-the-tests)
 and `tests/README.md` for the details, including running the Python tests
 from Pixi.
 
@@ -299,7 +304,7 @@ Tests are grouped by label, so you can run just the part you care about:
 |---|---|
 | `smoke` | The program runs to completion and writes its expected outputs |
 | `negative` | Invalid input or configuration is refused with the expected message |
-| `exact_solution`, `property`, `metamorphic`, `differential`, `characterisation`, `conformance` | How the test knows the right answer; see [Testing and benchmarking](docs/developer_notes/testing_and_benchmarking.md#evidence-and-level-labels) |
+| `exact_solution`, `property`, `metamorphic`, `differential`, `characterisation`, `conformance` | How the test knows the right answer; see [Testing and benchmarking](https://lsdtopotools.github.io/lsdtt3/developer_notes/testing_and_benchmarking.html#evidence-and-level-labels) |
 | `unit` | Calls lsdtt3 routines in process (C++ drivers), or checks repository files |
 | `system` | Judges outputs written by a shipped program run end to end (a CLI, the configure, the Python package) |
 | `cosmo` | Cosmogenic-nuclide physics against CRONUS and pinned numerics sentinels |
@@ -348,14 +353,14 @@ in-process timing measure each other). These tests are reported, never asserted,
 so a loaded machine cannot turn the suite red.
 
 Full methodology, the reference numbers to compare against, and the
-thread-scaling caveats are in `docs/developer_notes/testing_and_benchmarking.md` §6.
+thread-scaling caveats are in [Benchmarking and testing in lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/testing_and_benchmarking.html) §6.
 
 **No DEM is committed to this repository.** Tests that need real topography fetch
 it on demand from public keyless sources and cache it under
 `tests/data/dem_cache/` (gitignored), using `lsdtt-fetch-raster` itself.
 
 See `tests/README.md` for what each test does, and
-`docs/developer_notes/testing_and_benchmarking.md` for methodology, benchmark results, and the
+[Benchmarking and testing in lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/testing_and_benchmarking.html) for methodology, benchmark results, and the
 places where lsdtt3 and RichDEM deliberately differ.
 
 ---
@@ -380,86 +385,86 @@ lsdtt-drainage-analysis     my_params.driver
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | `docs/cli_reference/cli_reference_lsdtt_fetch_raster.md` |
-| `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | `docs/cli_reference/cli_reference_lsdtt_raster_preprocessing.md` |
-| `lsdtt-synthetic-surfaces` | Generates one-shot analytical, stochastic, and ground-truth fixture surfaces for algorithm validation. | [reference](docs/cli_reference/cli_reference_lsdtt_synthetic_surfaces.md) |
-| `lsdtt-synthetic-networks` | Optimal channel networks with tunable branching, for testing network metrics against known structure. | [reference](docs/cli_reference/cli_reference_lsdtt_synthetic_networks.md) |
-| `lsdtt-fetch-lithology` | Downloads geological map units for a bounding box from Macrostrat. | [reference](docs/cli_reference/cli_reference_lsdtt_fetch_lithology.md) |
-| `lsdtt-fetch-erosion-rates` | Downloads basin-averaged cosmogenic erosion rates for a bounding box from OCTOPUS. | [reference](docs/cli_reference/cli_reference_lsdtt_fetch_erosion_rates.md) |
-| `lsdtt-lithology-erodibility` | Turns a lithology map and a property table into an erodibility (K) raster. | [reference](docs/cli_reference/cli_reference_lsdtt_lithology_erodibility.md) |
+| `lsdtt-fetch-raster` | Downloads a DEM for a WGS84 bounding box and writes it reprojected to UTM, ready to analyse. The default source is Copernicus GLO-30 on AWS Open Data — public and keyless, so no account or API key is needed. The area can be given as `west`/`south`/`east`/`north`, or as a vector file (`.fgb`, `.gpkg`) containing a polygon or two corner points — reprojected from UTM automatically, so a box drawn in a GIS works directly. Bounding boxes spanning several source tiles are mosaicked automatically. OpenTopography is also supported for its other datasets; that needs a free API key, supplied via the `OT_API_KEY` environment variable (or `OT_API_KEY_FILE`) — **never** in a parameter file, since parameter files are commonly committed and every parameter is echoed at the end of a run. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_raster.html) |
+| `lsdtt-raster-preprocessing` | Reprojects geographic/Web Mercator DEMs to UTM/polar, applies elevation threshold masking, fills interior nodata voids, clips to maximum valid rectangle, breaches depressions (Lindsay 2016/2020), fills pits (Barnes 2014), writes hillshade. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_raster_preprocessing.html) |
+| `lsdtt-synthetic-surfaces` | Generates one-shot analytical, stochastic, and ground-truth fixture surfaces for algorithm validation. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_synthetic_surfaces.html) |
+| `lsdtt-synthetic-networks` | Optimal channel networks with tunable branching, for testing network metrics against known structure. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_synthetic_networks.html) |
+| `lsdtt-fetch-lithology` | Downloads geological map units for a bounding box from Macrostrat. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_lithology.html) |
+| `lsdtt-fetch-erosion-rates` | Downloads basin-averaged cosmogenic erosion rates for a bounding box from OCTOPUS. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_erosion_rates.html) |
+| `lsdtt-lithology-erodibility` | Turns a lithology map and a property table into an erodibility (K) raster. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_lithology_erodibility.html) |
 
 ### Surface analysis
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-surface-metrics` | Hillshade, local relief, polynomial surface fit (direct and wavelet), curvature metrics, MADk2 roughness, Frangi filter, Otsu segmentation, Hough line extraction, curvature skeletons, cloth-drape upper envelope and incision depth. | `docs/cli_reference/cli_reference_lsdtt_surface_metrics.md` |
-| `lsdtt-flat-surface-finder` | Identifies low-texture surfaces (alluvial fans, terraces, piedmonts) using MADk2, residual IQR, and normal-vector dispersion (NVD). | [reference](docs/cli_reference/cli_reference_lsdtt_flat_surface_finder.md) |
-| `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | `docs/cli_reference/cli_reference_lsdtt_mountain_front.md` |
-| `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | [reference](docs/cli_reference/cli_reference_lsdtt_feature_finder.md) |
-| `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](docs/cli_reference/cli_reference_lsdtt_spectral_analysis.md) |
-| `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](docs/cli_reference/cli_reference_lsdtt_basin_surface_metrics.md) |
-| `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](docs/cli_reference/cli_reference_lsdtt_slope_area.md) |
-| `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](docs/cli_reference/cli_reference_lsdtt_swath_profile.md) |
-| `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](docs/cli_reference/cli_reference_lsdtt_ridgeline_analysis.md) |
-| `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](docs/cli_reference/cli_reference_lsdtt_fluvial_surfaces.md) |
+| `lsdtt-surface-metrics` | Hillshade, local relief, polynomial surface fit (direct and wavelet), curvature metrics, MADk2 roughness, Frangi filter, Otsu segmentation, Hough line extraction, curvature skeletons, cloth-drape upper envelope and incision depth. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_surface_metrics.html) |
+| `lsdtt-flat-surface-finder` | Identifies low-texture surfaces (alluvial fans, terraces, piedmonts) using MADk2, residual IQR, and normal-vector dispersion (NVD). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_flat_surface_finder.html) |
+| `lsdtt-mountain-front` | Identifies mountain fronts from multi-scale relief, piedmont surface fitting, and residual thresholding. Supports synthetic DEM validation mode. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_mountain_front.html) |
+| `lsdtt-feature-finder` | Feature-detection workflows (terraces, piedmonts, hillslope morphology). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_feature_finder.html) |
+| `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_spectral_analysis.html) |
+| `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_surface_metrics.html) |
+| `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_area.html) |
+| `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_swath_profile.html) |
+| `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_ridgeline_analysis.html) |
+| `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fluvial_surfaces.html) |
 
 ### Flow routing and drainage
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | `docs/cli_reference/cli_reference_lsdtt_drainage_analysis.md` |
-| `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | `docs/cli_reference/cli_reference_lsdtt_channel_extraction.md` |
-| `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | `docs/cli_reference/cli_reference_lsdtt_basin_extraction.md` |
-| `lsdtt-outlet-matching` | Matches outlet coordinates from a reference DEM to a target/resampled DEM using spatial overlap of complete D8 upstream masks; independent of channelisation thresholds. | `docs/cli_reference/cli_reference_lsdtt_outlet_matching.md` |
-| `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | `docs/cli_reference/cli_reference_lsdtt_basin_stats.md` |
-| `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | [reference](docs/cli_reference/cli_reference_lsdtt_graphflood.md) |
-| `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | [reference](docs/cli_reference/cli_reference_lsdtt_stream_burning.md) |
-| `lsdtt-internal-drainage` | Detects and routes closed (internally drained) basins. | [reference](docs/cli_reference/cli_reference_lsdtt_internal_drainage.md) |
-| `lsdtt-distributed-hydrology` | A raster TOPMODEL: rainfall and PET drive stores on every pixel, and runoff is routed down the flow network. | [reference](docs/cli_reference/cli_reference_lsdtt_distributed_hydrology.md) |
-| `lsdtt-water-centreline` | Centrelines for water-area polygons and their tributaries. | [reference](docs/cli_reference/cli_reference_lsdtt_water_centreline.md) |
-| `lsdtt-water-line-repair` | Reconnects water lines truncated by roads. | [reference](docs/cli_reference/cli_reference_lsdtt_water_line_repair.md) |
+| `lsdtt-drainage-analysis` | Drainage area via D8, D-infinity, or MFD routing. Topographic Wetness Index (TWI). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_drainage_analysis.html) |
+| `lsdtt-channel-extraction` | D8 flow routing, contributing-pixel threshold source extraction, junction/channel network construction, network export to CSV / GeoPackage / FlatGeobuf. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_channel_extraction.html) |
+| `lsdtt-basin-extraction` | D8 flow routing, channel/junction network, junction-aware basin extraction. Writes basin outlines, raster labels, and statistics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_extraction.html) |
+| `lsdtt-outlet-matching` | Matches outlet coordinates from a reference DEM to a target/resampled DEM using spatial overlap of complete D8 upstream masks; independent of channelisation thresholds. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_outlet_matching.html) |
+| `lsdtt-basin-stats` | Hydromorphic statistics for outlet-point-defined basins: elevation, slope, flow-distance percentiles; centroid; drainage area; channel length by Strahler order. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_stats.html) |
+| `lsdtt-graphflood` | Graph-based hydraulic routing (Gailleton et al. 2024) on a fixed D-infinity or MFD flow graph. Writes water depth, water surface, and flux rasters. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_graphflood.html) |
+| `lsdtt-stream-burning` | Loads a polyline channel network, seeds D8 routing from its source tips, and writes the DEM-extracted network for comparison before burning. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_stream_burning.html) |
+| `lsdtt-internal-drainage` | Detects and routes closed (internally drained) basins. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_internal_drainage.html) |
+| `lsdtt-distributed-hydrology` | A raster TOPMODEL: rainfall and PET drive stores on every pixel, and runoff is routed down the flow network. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_distributed_hydrology.html) |
+| `lsdtt-water-centreline` | Centrelines for water-area polygons and their tributaries. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_water_centreline.html) |
+| `lsdtt-water-line-repair` | Reconnects water lines truncated by roads. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_water_line_repair.html) |
 
 ### Channel network analysis
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-channel-network-analysis` | Channel-link bearing fitting, junction-angle calculation (donor opening, bending angle), Strahler/Tokunaga self-similarity analysis. | `docs/cli_reference/cli_reference_lsdtt_channel_network_analysis.md` |
-| `lsdtt-chi-analysis` *(requires Eigen3)* | End-to-end chi workflow: chi extraction, piecewise-linear network fitting, disorder metrics with jackknife/bootstrap uncertainty, spatial k_sn / u* inversion with m/n model selection. | `docs/cli_reference/cli_reference_lsdtt_chi_analysis.md` |
-| `lsdtt-cross-sections` | Cross-section extraction along channel networks or user-defined transects. | `docs/cli_reference/cli_reference_lsdtt_cross_sections.md` |
-| `lsdtt-valley-centreline` | Each channel's valley and its centreline. | [reference](docs/cli_reference/cli_reference_lsdtt_valley_centreline.md) |
-| `lsdtt-bankfull-width` | Manning's-equation bankfull channel width, solved per cross section from a high-resolution DEM. | [reference](docs/cli_reference/cli_reference_lsdtt_bankfull_width.md) |
-| `lsdtt-divide-migration` | Drainage-divide migration metrics, such as chi-coordinate offsets across divides. | [reference](docs/cli_reference/cli_reference_lsdtt_divide_migration.md) |
-| `lsdtt-hillslope-channel-coupling` | Links hilltop curvature to the channels below it. | [reference](docs/cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.md) |
+| `lsdtt-channel-network-analysis` | Channel-link bearing fitting, junction-angle calculation (donor opening, bending angle), Strahler/Tokunaga self-similarity analysis. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_channel_network_analysis.html) |
+| `lsdtt-chi-analysis` *(requires Eigen3)* | End-to-end chi workflow: chi extraction, piecewise-linear network fitting, disorder metrics with jackknife/bootstrap uncertainty, spatial k_sn / u* inversion with m/n model selection. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_chi_analysis.html) |
+| `lsdtt-cross-sections` | Cross-section extraction along channel networks or user-defined transects. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_cross_sections.html) |
+| `lsdtt-valley-centreline` | Each channel's valley and its centreline. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_valley_centreline.html) |
+| `lsdtt-bankfull-width` | Manning's-equation bankfull channel width, solved per cross section from a high-resolution DEM. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_bankfull_width.html) |
+| `lsdtt-divide-migration` | Drainage-divide migration metrics, such as chi-coordinate offsets across divides. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_divide_migration.html) |
+| `lsdtt-hillslope-channel-coupling` | Links hilltop curvature to the channels below it. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.html) |
 
 ### Tidal / marsh
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-marsh-topography` | Marsh platform identification, tidal channel extraction, skeleton-based channel metrics. | `docs/cli_reference/cli_reference_lsdtt_marsh_topography.md` |
+| `lsdtt-marsh-topography` | Marsh platform identification, tidal channel extraction, skeleton-based channel metrics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_marsh_topography.html) |
 
 ### Cosmogenic nuclides
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | `docs/cli_reference/cli_reference_lsdtt_cosmo_tool.md` |
-| `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | `docs/cli_reference/cli_reference_lsdtt_cosmo_prediction.md` |
-| `lsdtt-cosmo-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | `docs/cli_reference/cli_reference_lsdtt_cosmo_column_tool.md` |
-| `lsdtt-cosmo-landslides` | Cosmogenic concentrations under triggered landslides with an imposed size distribution. | [reference](docs/cli_reference/cli_reference_lsdtt_cosmo_landslides.md) |
+| `lsdtt-cosmo-tool` | Basin-averaged CRN erosion-rate inversion. Reads measured nuclide concentrations, computes Stone 2000 production, snaps points to D8 network, inverts via Newton-Raphson + bisection. Optional ERA40 / palaeomagnetic correction (requires NetCDF). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_cosmo_tool.html) |
+| `lsdtt-cosmo-prediction` | Predicts CRN concentrations across a DEM: steady-state, step-change transient, and erosion-weighted accumulated concentration. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_cosmo_prediction.html) |
+| `lsdtt-cosmo-column-tool` | 1-D transient cosmogenic nuclide column simulation. Steady-state, step-change, and full-transient (user-supplied erosion history) modes. No DEM required. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_cosmo_column_tool.html) |
+| `lsdtt-cosmo-landslides` | Cosmogenic concentrations under triggered landslides with an imposed size distribution. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_cosmo_landslides.html) |
 
 ### Landscape evolution
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-lem` | Landscape evolution model: D-infinity flow routing, implicit stream-power fluvial incision (Anand et al. 2020 / Braun & Willett 2013), Cidre linear/nonlinear hillslope transport (Carretier et al. 2016), uniform uplift. Runs from a synthetic flat or noise surface, or an input DEM. | [reference](docs/cli_reference/cli_reference_lsdtt_lem.md) |
-| `lsdtt-advection-diffusion` | A minimal transient landscape-evolution model. | [reference](docs/cli_reference/cli_reference_lsdtt_advection_diffusion.md) |
-| `lsdtt-sediment-routing` | 1-D reach-scale bedload sediment routing, built from a port of d-CASCADE (Battista et al. 2022). | [reference](docs/cli_reference/cli_reference_lsdtt_sediment_routing.md) |
+| `lsdtt-lem` | Landscape evolution model: D-infinity flow routing, implicit stream-power fluvial incision (Anand et al. 2020 / Braun & Willett 2013), Cidre linear/nonlinear hillslope transport (Carretier et al. 2016), uniform uplift. Runs from a synthetic flat or noise surface, or an input DEM. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_lem.html) |
+| `lsdtt-advection-diffusion` | A minimal transient landscape-evolution model. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_advection_diffusion.html) |
+| `lsdtt-sediment-routing` | 1-D reach-scale bedload sediment routing, built from a port of d-CASCADE (Battista et al. 2022). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_sediment_routing.html) |
 
 ### Utilities
 
 | Program | Description | Reference |
 |---|---|---|
-| `lsdtt-linear-stats` | Statistical summaries for linear (directional/bearing) data. | [reference](docs/cli_reference/cli_reference_lsdtt_linear_stats.md) |
-| `lsdtt-raster-calculator` | Two-raster algebra and overlap masking, for example DEMs of difference. | [reference](docs/cli_reference/cli_reference_lsdtt_raster_calculator.md) |
+| `lsdtt-linear-stats` | Statistical summaries for linear (directional/bearing) data. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_linear_stats.html) |
+| `lsdtt-raster-calculator` | Two-raster algebra and overlap masking, for example DEMs of difference. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_raster_calculator.html) |
 
 ---
 
@@ -471,7 +476,8 @@ are welcome as [issues](../../issues). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Other Documentation
 
-The `docs/` tree is organised by audience:
+The documentation is published at <https://lsdtopotools.github.io/lsdtt3/>.
+Its source is the `docs/` tree in this repository, organised by audience:
 
 | Directory | Audience |
 |---|---|
@@ -487,14 +493,14 @@ The `docs/` tree is organised by audience:
 
 | Document | Contents |
 |---|---|
-| `docs/what_is_lsdtt3/install_lsdtt3.md` | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
-| `docs/what_is_lsdtt3/overview.md` | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
-| `docs/what_is_lsdtt3/first_analysis.md` | From a DEM on disk to a hillshade and a channel network. |
-| `docs/what_is_lsdtt3/lsdtt3_clis.md` | All the command-line tools, grouped by what they are for, and how their parameter files work. |
-| `docs/what_is_lsdtt3/workflows.md` | Multi-stage, reproducible analysis chains run with Snakemake (`workflows/`). |
-| `docs/what_is_lsdtt3/raster_data.md`, `vector_data.md` | Input and output data formats. |
-| `docs/what_is_lsdtt3/running_benchmarks.md` | Timing lsdtt3 against other tools on your own machine. |
-| `docs/python/index.md` | The Python package: getting started and worked guides. |
+| [Installing lsdtt3](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html) | **Start here.** Installing a release package on Linux, Windows (WSL2 or native), macOS, or Google Colab. |
+| [Overview](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/overview.html) | What lsdtt3 is, what it does, and how it differs from LSDTopoTools2. |
+| [Your first analysis](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/first_analysis.html) | From a DEM on disk to a hillshade and a channel network. |
+| [The lsdtt3 command-line tools](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/lsdtt3_clis.html) | All the command-line tools, grouped by what they are for, and how their parameter files work. |
+| [Workflows](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/workflows.html) | Multi-stage, reproducible analysis chains run with Snakemake (`workflows/`). |
+| [Raster Data](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/raster_data.html), `vector_data.md` | Input and output data formats. |
+| [Running benchmarks on your own system](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/running_benchmarks.html) | Timing lsdtt3 against other tools on your own machine. |
+| [Python bindings](https://lsdtopotools.github.io/lsdtt3/python/index.html) | The Python package: getting started and worked guides. |
 | `docs/design_and_algorithms/` | Scientific design and algorithm documentation. |
 | `docs/cli_reference/` | Parameter reference for every tool — see the table above for which file. |
 
@@ -502,27 +508,27 @@ The `docs/` tree is organised by audience:
 
 | Document | Contents |
 |---|---|
-| `docs/developer_notes/lsdtt3_architecture.md` | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
-| `docs/developer_notes/developer_onboarding.md` | Getting-started guide for new contributors. |
-| `docs/developer_notes/git_notes.md` | Setting up an SSH key and cloning, for people new to git. |
-| `docs/developer_notes/building_from_source.md` | Start here for compiling: the reference Linux build, CMake options, and which page covers your platform. |
-| `docs/developer_notes/building_on_windows.md` | Windows: WSL2 (full build) and native Visual Studio + vcpkg (QGIS backend). |
-| `docs/developer_notes/building_on_macos.md` | macOS: native Homebrew build, and a Multipass Ubuntu VM. |
-| `docs/developer_notes/qgis_plugin_development.md` | The QGIS plugin and its backend bundle: version checks and the development loop. |
-| `docs/developer_notes/making_release_packages.md` | How the release packages are built and published. |
-| `docs/developer_notes/building_the_docs.md` | Building the documentation site with MkDocs, and publishing it. |
-| `docs/developer_notes/cli_parameter_conventions.md` | Naming rules for CLI parameters. |
-| `docs/developer_notes/basin_object_architecture.md` | Design boundaries of the basin object hierarchy. |
-| `docs/developer_notes/python_bindings_architecture.md` | The Python bindings: architecture and the public-API contracts (manifest, generated reference). |
-| `docs/developer_notes/building_python_wheels.md` | Building the manylinux and other Python wheels. |
-| `docs/developer_notes/publishing_to_pypi.md` | Publishing the wheels to PyPI, by hand or from GitHub Actions (not yet done). |
-| `docs/developer_notes/backend_abstraction_rules.md` | When to use abstract bases + factories vs. concrete CPU free functions. |
-| `docs/developer_notes/using_lsdtt_flowinfo.md` | How to use the D8 flow routing object in analysis code. |
-| `docs/developer_notes/lsdtt_utils_guide.md` | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
-| `docs/developer_notes/gpu_compute.md` | GPU backend design and the compute-dispatch mechanism. |
-| `docs/developer_notes/beta_testing_notes.md` | Getting bundles to beta testers, the release pipeline, and the future conda-forge plan. |
-| `docs/developer_notes/debian_packaging.md` | Building a Debian package. |
-| `docs/developer_notes/testing_and_benchmarking.md` | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
+| [lsdtt3 Architecture Document](https://lsdtopotools.github.io/lsdtt3/developer_notes/lsdtt3_architecture.html) | Full architecture reference: layer design, naming conventions, all module APIs. Start here for development. |
+| [lsdtt3 Developer Onboarding](https://lsdtopotools.github.io/lsdtt3/developer_notes/developer_onboarding.html) | Getting-started guide for new contributors. |
+| [Notes on git from the command line for new users](https://lsdtopotools.github.io/lsdtt3/developer_notes/git_notes.html) | Setting up an SSH key and cloning, for people new to git. |
+| [Building lsdtt3 from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html) | Start here for compiling: the reference Linux build, CMake options, and which page covers your platform. |
+| [Building on Windows](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_on_windows.html) | Windows: WSL2 (full build) and native Visual Studio + vcpkg (QGIS backend). |
+| [Building on macOS](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_on_macos.html) | macOS: native Homebrew build, and a Multipass Ubuntu VM. |
+| [QGIS plugin development](https://lsdtopotools.github.io/lsdtt3/developer_notes/qgis_plugin_development.html) | The QGIS plugin and its backend bundle: version checks and the development loop. |
+| [Making release packages](https://lsdtopotools.github.io/lsdtt3/developer_notes/making_release_packages.html) | How the release packages are built and published. |
+| [Building and publishing the documentation site](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_the_docs.html) | Building the documentation site with MkDocs, and publishing it. |
+| [CLI Parameter Naming Conventions](https://lsdtopotools.github.io/lsdtt3/developer_notes/cli_parameter_conventions.html) | Naming rules for CLI parameters. |
+| [Basin Object Architecture](https://lsdtopotools.github.io/lsdtt3/developer_notes/basin_object_architecture.html) | Design boundaries of the basin object hierarchy. |
+| [Python Bindings Architecture And API Contracts](https://lsdtopotools.github.io/lsdtt3/developer_notes/python_bindings_architecture.html) | The Python bindings: architecture and the public-API contracts (manifest, generated reference). |
+| [Building the Python wheels](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_python_wheels.html) | Building the manylinux and other Python wheels. |
+| [Publishing lsdtt3 to PyPI](https://lsdtopotools.github.io/lsdtt3/developer_notes/publishing_to_pypi.html) | Publishing the wheels to PyPI, by hand or from GitHub Actions (not yet done). |
+| [Backend Abstraction Rules for lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/backend_abstraction_rules.html) | When to use abstract bases + factories vs. concrete CPU free functions. |
+| [Using lsdtt_flowinfo](https://lsdtopotools.github.io/lsdtt3/developer_notes/using_lsdtt_flowinfo.html) | How to use the D8 flow routing object in analysis code. |
+| [lsdtt3 utils contents](https://lsdtopotools.github.io/lsdtt3/developer_notes/lsdtt_utils_guide.html) | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |
+| [GPU compute backend](https://lsdtopotools.github.io/lsdtt3/developer_notes/gpu_compute.html) | GPU backend design and the compute-dispatch mechanism. |
+| [Beta testing and distribution notes](https://lsdtopotools.github.io/lsdtt3/developer_notes/beta_testing_notes.html) | Getting bundles to beta testers, the release pipeline, and the future conda-forge plan. |
+| [Building a Debian package for lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/debian_packaging.html) | Building a Debian package. |
+| [Benchmarking and testing in lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/testing_and_benchmarking.html) | How lsdtt3 is tested and benchmarked, and where it deliberately differs from RichDEM. Read before comparing lsdtt3 output against another tool. |
 | `tools/README.md` | Building redistributable bundles, and the git/gh commands for cutting a tagged release. |
 | `apptainer_def/apptainer_setup.md` | Apptainer container setup. |
 

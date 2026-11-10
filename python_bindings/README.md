@@ -2,10 +2,16 @@
 
 `lsdtt3` is a nanobind-based Python interface to LSDTopoTools3.
 
+**Documentation:** guides at
+<https://lsdtopotools.github.io/lsdtt3/python/index.html> and the reference
+for every function at
+<https://lsdtopotools.github.io/lsdtt3/python_api/index.html>. In Python,
+`help(lsdtt3.<function>)` shows its docstring.
+
 ## Install
 
-`lsdtt3` is **not on PyPI yet**. When a release has wheels they are attached
-to its GitHub release; each wheel is for one Python version and platform
+`lsdtt3` is **not on PyPI yet**. Wheels are attached to every GitHub release
+after 0.8.0; each wheel is for one Python version and platform
 (`cp312` is Python 3.12, `cp313` Python 3.13). Download the one that matches
 your Python, keep its original file name (pip reads the version and platform
 from it), and install it from the file or directly from its URL:
@@ -79,7 +85,7 @@ grid metadata, values, and nodata masks. Analysis is deliberately functional:
 operations accept rasters and return new rasters rather than wrapping CLI
 parameter files or mutating inputs.
 
-See [Python bindings architecture and API contracts](https://github.com/LSDtopotools/lsdtt3/blob/main/docs/developer_notes/python_bindings_architecture.md)
+See [Python bindings architecture and API contracts](https://lsdtopotools.github.io/lsdtt3/developer_notes/python_bindings_architecture.html)
 for the backend/API distinction, contract manifests, extension workflow, and
 verification commands.
 

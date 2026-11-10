@@ -58,7 +58,7 @@ python -m pip index versions lsdtt3     # or just open https://pypi.org/project/
 
 If the name is taken, decide on an alternative **before** anything else: the
 distribution name is baked into `[project] name`, the install instruction in
-`docs/python/index.md`, and every downstream mention.
+[Python bindings](../python/index.md), and every downstream mention.
 
 ### 2. Check the licence obligations
 
@@ -92,9 +92,12 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://lsdtopotools.github.io/lsdtt3/"
-Documentation = "https://lsdtopotools.github.io/lsdtt3/python/"
+Documentation = "https://lsdtopotools.github.io/lsdtt3/python/index.html"
 Repository = "https://github.com/LSDtopotools/lsdtt3"
+Issues = "https://github.com/LSDtopotools/lsdtt3/issues"
 ```
+
+(`python_bindings/pyproject.toml` now carries these.)
 
 Without `readme` the project page is empty, which for a scientific package is
 a real cost: it is the page people judge it from.
@@ -360,7 +363,7 @@ Linux-only `.postN` fix.
 
 2. **Check the project page** renders the README.
 
-3. **Update `docs/python/index.md`** if the install instruction changed.
+3. **Update [Python bindings](../python/index.md)** if the install instruction changed.
 
 ---
 

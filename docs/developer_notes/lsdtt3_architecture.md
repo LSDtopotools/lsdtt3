@@ -483,13 +483,13 @@ link to `lsdtt3_cpu`.
 Compile definition: `LSDTT_HAS_FFTW=1`. Stub in `lsdtt_raster_spectral_cpu.cpp`
 throws at runtime if FFTW not available.
 
-**`docs/developer_notes/lsdtt_utils_guide.md`**  
+**[lsdtt3 utils contents](lsdtt_utils_guide.md)**  
 Developer guide to the `src/utils/` layer. Explains what belongs in utils,
 what should remain in `core` / `cpu` / `gpu`, the valid-data contract for
 utility functions, and when to use the main statistical tests and distance
 measures.
 
-**`docs/developer_notes/python_bindings_architecture.md`**
+**[Python Bindings Architecture And API Contracts](python_bindings_architecture.md)**
 explains the in-memory Python backend, public API contract, nanobind adapters,
 manifest/check tooling, bundled CLI drivers, and the safe binding change
 workflow. Any change to a binding's signature or default also changes
@@ -643,7 +643,7 @@ GPU flow backend is added — only the factory changes.
 ### Backend abstraction rules
 
 `lsdtt3` uses **two backend-abstraction patterns**. See
-`docs/developer_notes/backend_abstraction_rules.md` for the full design notes, rationale, and examples.
+[Backend Abstraction Rules for lsdtt3](backend_abstraction_rules.md) for the full design notes, rationale, and examples.
 
 1. **Selective dispatch for broad compute substrates**  
    `lsdtt_raster_cpu` is a special case and remains a concrete CPU-side working
@@ -670,7 +670,7 @@ use narrow abstract bases and factories.**
 The selective-dispatch pattern (#1 above) is realised for GPU offload of heavy
 per-pixel free functions. The first ported kernel is `direct_polyfit`; more
 surface-fitting / roughness kernels follow the same template. Full design notes
-are in `docs/developer_notes/gpu_compute.md`; the essentials:
+are in [GPU compute backend](gpu_compute.md); the essentials:
 
 **Two independent GPU axes — do not conflate them:**
 
@@ -1662,7 +1662,7 @@ that predate the shared layer still hand-declare their parameters, and are migra
 one at a time.
 
 **Naming standard:** Every shared parameter follows the conventions in
-`docs/developer_notes/cli_parameter_conventions.md`. That document is the durable record of what
+[CLI Parameter Naming Conventions](cli_parameter_conventions.md). That document is the durable record of what
 names are canonical, what units they use, and when to use `min_` vs `minimum_`,
 `threshold_` vs `min_`, and so on.
 
@@ -2535,7 +2535,7 @@ For spectral (long-wavelength) surface fitting see `lsdtt_raster_spectral_cpu`.
   `flat_resolution_result` — up to four refill-and-resolve rounds and a final
   strict-rise Priority-Flood pass; never lowers a cell; output independent of
   thread count.
-- Algorithm and guarantees: `docs/design_and_algorithms/flow_routing.md`.
+- Algorithm and guarantees: [Flow Routing in lsdtt3](../design_and_algorithms/flow_routing.md).
 
 **`lsdtt_raster_nodata_filling_cpu`:**
 - `identify_interior_nodata(raster)` → `lsdtt_array2d<uint8_t>`
@@ -2750,7 +2750,7 @@ Computes drainage-related rasters. Uses `make_flow_base()` for D8 or
 On a raw DEM (`raster_is_filled: false`) it runs `fill_pits` first and prints a
 `Compute time:` line for the fill, the D8 build and each accumulation; this is
 the default route from a raw DEM to a routed DEM described in
-`docs/design_and_algorithms/flow_routing.md`.
+[Flow Routing in lsdtt3](../design_and_algorithms/flow_routing.md).
 
 **Key parameters:**
 ```
@@ -3971,7 +3971,7 @@ This matters for packaging: the whole tree is single-licence, which is why
     the dispatch decision and the `lsdtt3_cpu → lsdtt3_gpu` link live in `src/cpu`,
     so `src/core` stays CUDA-free. GPU kernels take POD pointers only (no
     `lsdtt_raster_cpu`/GDAL), accumulate in double for CPU parity, and always have
-    a CPU fallback. See `docs/developer_notes/gpu_compute.md`.
+    a CPU fallback. See [GPU compute backend](gpu_compute.md).
 27. Parameter parsing is strict: an unknown key stops the run, a renamed key
     runs with a deprecation warning naming its successor, and `-h json` prints
     the machine-readable parameter list. Every run ends with

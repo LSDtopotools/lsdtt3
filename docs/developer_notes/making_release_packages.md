@@ -56,7 +56,7 @@ and `make_release.sh` and `make_all_packages.sh` refuse to build. Only the
 ecosystem rebuild suffixes may differ: `.postN` in `pyproject.toml` (a
 rebuilt wheel) and `+pkgN` in the Debian changelog. The version numbers quoted
 in the install documentation (`README.md`,
-`docs/what_is_lsdtt3/install_lsdtt3.md`) are examples and have no authority.
+[Installing lsdtt3](../what_is_lsdtt3/install_lsdtt3.md)) are examples and have no authority.
 
 CLIs have no version of their own. Each carries a stability label, `k_status`
 (`experimental` or `stable`), shown in its banner, its `-v` output and its
@@ -107,7 +107,10 @@ built on `macos-15` needs macOS 15 or later.
 **macOS is the least exercised path.** No maintainer builds on a Mac, so the
 first real run of `package_macos_backend.sh` is in CI. It was reviewed and
 partly tested off-Mac for that reason: the whole tree passes a clang + libc++
-syntax check (including with macOS's `int64_t` = `long long`), the dependency
+syntax check (including with macOS's `int64_t` = `long long`, and against the
+GDAL headers of the version Homebrew ships, which is newer than Ubuntu's or
+vcpkg's: GDAL 3.13 changed `GDALGetMetadata` to return `CSLConstList`, and
+that broke the first macOS release build), the dependency
 resolver and the dyld load-log parser are tested against a fake `otool`, and
 the script fails hard, naming the library, if the bundle is not
 self-contained. A missing optional dependency (OpenMP, FFTW, Eigen, netCDF)

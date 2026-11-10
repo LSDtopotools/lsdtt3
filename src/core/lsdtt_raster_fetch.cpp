@@ -4028,7 +4028,9 @@ lsdtt_fetch_result fetch_dem_impl(const lsdtt_fetch_options& options,
                 result.n_rows = GDALGetRasterYSize(cached.get());
                 // The cached raster carries the provenance stamped when it
                 // was fetched.
-                char** md = GDALGetMetadata(cached.get(), nullptr);
+                // CSLConstList, not char**: GDAL >= 3.13 returns a const list
+                // here (older GDAL's char** converts to it implicitly).
+                CSLConstList md = GDALGetMetadata(cached.get(), nullptr);
                 for (int i = 0; md != nullptr && md[i] != nullptr; ++i)
                 {
                     const std::string entry = md[i];

@@ -24,4 +24,5 @@ Description: Topographic analysis tools for digital elevation models
  channel extraction, chi analysis, cosmogenic nuclide analysis and a
  landscape evolution model.
  .
- See https://github.com/LSDtopotools/lsdtt3 for documentation.
+ Documentation: https://lsdtopotools.github.io/lsdtt3/
+ Each tool also lists its parameters with <tool> -h.

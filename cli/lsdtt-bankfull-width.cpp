@@ -89,6 +89,7 @@ static void print_banner()
         << (k_status == "stable" ? "" : " -- not yet fully tested") << "\n"
         << "=========================================================\n"
         << "|| Citation: " << k_citation << "\n"
+        << "|| Docs    : " << lsdtt::lsdtt3_cli_documentation_url(k_tool_name) << "\n"
         << "|| Run with -h for parameter help.\n"
         << "=========================================================\n\n";
 }
