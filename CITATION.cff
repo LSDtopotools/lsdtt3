@@ -1,0 +1,111 @@
+# Citation metadata for lsdtt3 (Citation File Format, https://citation-file-format.github.io/).
+# GitHub shows it as "Cite this repository"; Zenodo reads it when it archives a
+# release.
+#
+# Deliberately no `version:` or `date-released:`. lsdtt3's version lives in
+# CMakeLists.txt (tools/set_version.py), and a copy here would go stale; Zenodo
+# takes the version and date from the release tag.
+#
+# Once Zenodo has archived the first release, add its CONCEPT DOI (the one that
+# always resolves to the latest version) under identifiers:, e.g.
+#
+#   identifiers:
+#     - type: doi
+#       value: 10.5281/zenodo.XXXXXXX
+#       description: Concept DOI, all versions of lsdtt3
+cff-version: 1.2.0
+message: "If you use lsdtt3 in your research, please cite it as below."
+type: software
+title: "LSDTopoTools3 (lsdtt3): topographic analysis for geomorphology"
+abstract: >-
+  lsdtt3 is a C++17 library and set of command-line tools, with Python
+  bindings and a QGIS plugin, for topographic analysis in geomorphology:
+  DEM preprocessing, flow routing, channel and basin extraction, chi and
+  channel-steepness analysis, hillslope and surface metrics, cosmogenic
+  nuclide analysis, hydrological and landscape evolution modelling. It is a
+  redesign of LSDTopoTools2.
+authors:
+  - family-names: Mudd
+    given-names: Simon M.
+    orcid: "https://orcid.org/0000-0002-1357-8501"
+    affiliation: "School of GeoSciences, University of Edinburgh, Edinburgh, United Kingdom"
+    email: simon.m.mudd@ed.ac.uk
+  - family-names: Vervoordeldonk
+    given-names: Rutger
+    orcid: "https://orcid.org/0000-0001-9680-4094"
+    affiliation: "School of GeoSciences, University of Edinburgh, Edinburgh, United Kingdom"
+  - family-names: Gailleton
+    given-names: Boris
+    orcid: "https://orcid.org/0000-0001-6518-4304"
+    affiliation: "CNRS, Rennes, France"
+  - family-names: Hawksworth
+    given-names: Martha E.
+    orcid: "https://orcid.org/0009-0003-5182-1466"
+    affiliation: "School of GeoSciences, University of Edinburgh, Edinburgh, United Kingdom"
+  - family-names: Clubb
+    given-names: Fiona J.
+    orcid: "https://orcid.org/0000-0003-1135-1765"
+    affiliation: "Department of Geography, Durham University, Durham, DH1 3LE, United Kingdom"
+  - family-names: Grieve
+    given-names: Stuart W. D.
+    orcid: "https://orcid.org/0000-0003-1893-7363"
+    affiliation: "School of Geography, Queen Mary University of London, London, United Kingdom, E1 4NS"
+  - family-names: Milodowski
+    given-names: David T.
+    orcid: "https://orcid.org/0000-0002-8419-8506"
+    affiliation: "School of GeoSciences, University of Edinburgh, Edinburgh, United Kingdom"
+  - family-names: Valters
+    given-names: Declan
+    orcid: "https://orcid.org/0000-0002-4562-3944"
+    affiliation: "British Geological Survey, Edinburgh, United Kingdom"
+  - family-names: Hurst
+    given-names: Martin D.
+    orcid: "https://orcid.org/0000-0002-9822-076X"
+    affiliation: "School of Geographical and Earth Sciences, University of Glasgow, Glasgow, UK"
+repository-code: "https://github.com/LSDtopotools/lsdtt3"
+url: "https://lsdtopotools.github.io/lsdtt3/"
+license: AGPL-3.0-or-later
+keywords:
+  - geomorphology
+  - topographic analysis
+  - digital elevation models
+  - flow routing
+  - channel networks
+  - chi analysis
+  - cosmogenic nuclides
+  - landscape evolution
+references:
+  - type: software
+    title: "LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9"
+    version: v0.9
+    year: 2023
+    publisher:
+      name: Zenodo
+    doi: 10.5281/zenodo.8076231
+    repository-code: "https://github.com/LSDtopotools/LSDTopoTools2"
+    authors:
+      - family-names: Mudd
+        given-names: Simon M.
+        orcid: "https://orcid.org/0000-0002-1357-8501"
+      - family-names: Clubb
+        given-names: Fiona J.
+        orcid: "https://orcid.org/0000-0003-1135-1765"
+      - family-names: Grieve
+        given-names: Stuart W. D.
+        orcid: "https://orcid.org/0000-0003-1893-7363"
+      - family-names: Milodowski
+        given-names: David T.
+        orcid: "https://orcid.org/0000-0002-8419-8506"
+      - family-names: Gailleton
+        given-names: Boris
+        orcid: "https://orcid.org/0000-0001-6518-4304"
+      - family-names: Hurst
+        given-names: Martin D.
+        orcid: "https://orcid.org/0000-0002-9822-076X"
+      - family-names: Valters
+        given-names: Declan V.
+        orcid: "https://orcid.org/0000-0002-4562-3944"
+      - family-names: Wickert
+        given-names: A. D.
+      - family-names: Hutton
+        given-names: E. W. H.

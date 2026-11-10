@@ -5,6 +5,7 @@
 [![Release build](https://img.shields.io/github/actions/workflow/status/LSDtopotools/lsdtt3/release.yml?label=release%20build)](https://github.com/LSDtopotools/lsdtt3/actions/workflows/release.yml)
 [![Docs](https://img.shields.io/badge/docs-lsdtopotools.github.io-blue)](https://lsdtopotools.github.io/lsdtt3/)
 [![Licence: AGPL-3.0-or-later](https://img.shields.io/github/license/LSDtopotools/lsdtt3)](LICENSE)
+[![Docs build](https://img.shields.io/github/actions/workflow/status/LSDtopotools/lsdtt3/docs.yml?label=docs%20build)](https://github.com/LSDtopotools/lsdtt3/actions/workflows/docs.yml)
 
 ![LSDTopoTools3 logo](docs/LSD-logo.png)
 
