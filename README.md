@@ -59,22 +59,18 @@ Everything below installs a pre-built release package: no compiler, no GDAL
 install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
 and troubleshooting, are in [the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
 
-Packages are on the [Releases page](../../releases/latest) and at
-<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>.
-
-> **Check the version number before you copy the commands below.** The version
-> in these examples is whatever was current when the page was last edited, and
-> it goes stale. The authoritative current version is line 2 of
-> [`CMakeLists.txt`](CMakeLists.txt) — `project(lsdtt3 VERSION ...)` — which is
-> what release tags and package filenames are built from. Substitute that
-> number wherever you see one here.
+**Get the packages from [GitHub Releases](../../releases/latest).** The
+commands below always fetch the latest release, so there is no version number
+to look up. (A copy of some packages on Simon Mudd's university web space is
+for when GitHub is unreachable only: it is updated by hand and usually well out
+of date.)
 
 ### Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
-source lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh
+wget https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core.tar.gz
+source lsdtt3-backend-linux-x86_64-core-v*/setenv.sh    # the folder carries the version
 lsdtt-channel-extraction --help
 ```
 
@@ -96,8 +92,9 @@ QGIS tool set, as the backend for the QGIS plugin.
 On **Google Colab**, `!source setenv.sh` does not work — set the environment
 from Python instead. The install guide has the cell to paste.
 
-The **QGIS plugin** (a zip installed with *Install from ZIP*, plus a backend
-package) is covered in the install guide too. The backend packages, the QGIS
+The **QGIS plugin** is [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip)
+from the same release, installed with *Install from ZIP*, plus a backend
+package; the install guide has the steps. The backend packages, the QGIS
 plugin and the Python package share one version number: files from the same
 release go together.
 

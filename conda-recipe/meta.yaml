@@ -2,11 +2,11 @@
 #
 # Conda-forge build recipe for lsdtt3.
 #
-# Status: PLACEHOLDER - not yet submitted to conda-forge.
-#         The repository must be public before a conda-forge submission.
+# Status: not yet submitted to conda-forge. The repository is public, so it
+#         can be; the steps are in docs/developer_notes/beta_testing_notes.md.
 #
-# When the repo goes public:
-#   1. Fill in the sha256 checksum for the source tarball.
+# To submit:
+#   1. Switch source: to the tagged tarball below and fill in its sha256.
 #   2. Open a PR against https://github.com/conda-forge/staged-recipes
 #      adding this recipe under recipes/lsdtt3/meta.yaml.
 #   3. The conda-forge bot will run the build, and on merge the package
@@ -40,7 +40,9 @@ source:
 
 build:
   number: 0
-  # Windows is not yet supported (the build system targets Linux/macOS).
+  # Windows is not built here: conda-build runs bld.bat on Windows, and this
+  # recipe has only build.sh. The CMake build itself works with MSVC (it is
+  # how the Windows backend bundle is made), so adding bld.bat is the route.
   skip: true  # [win]
 
 requirements:
@@ -53,7 +55,9 @@ requirements:
   host:
     # libgdal-core is the GDAL C/C++ library. The "gdal" package is the
     # Python bindings, and would make this package depend on Python.
-    - libgdal-core >=3.0
+    # 3.4 (Ubuntu 22.04) is the oldest GDAL lsdtt3 is built and tested with;
+    # conda-forge's global pin chooses the actual version.
+    - libgdal-core >=3.4
     - fftw
     - eigen
     - libnetcdf
@@ -97,7 +101,6 @@ about:
     tools for topographic analysis in geomorphology. It provides routines for
     channel extraction, basin delineation, chi analysis, cosmogenic nuclide
     analysis, hillslope metrics, spectral analysis, and more.
-  doc_url: https://lsdtopotools.github.io/lsdtt3/
 
 extra:
   recipe-maintainers:

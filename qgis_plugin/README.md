@@ -115,8 +115,22 @@ where `<version>` is read from `qgis_plugin/lsdtt_qgis/metadata.txt`.
 
 ## Install in QGIS
 
+Users: download the plugin and a backend from the latest GitHub release. These
+links always fetch the newest version:
+
+- plugin: [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip)
+- backend: [Windows](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-win64-qgis.zip),
+  [macOS Apple Silicon](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz),
+  [macOS Intel](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz) or
+  [Linux](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz)
+
+Use the GitHub release, not an older copy from elsewhere: the plugin and the
+backend must share a major.minor version (see above). Older releases are on
+the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases).
+
 In QGIS: `Plugins -> Manage and Install Plugins... -> Install from ZIP` and
-select the generated zip.
+select the plugin zip (the downloaded one, or the one you built above).
+Then point `lsdtt3 -> LSDTT Backend Settings` at the unpacked backend folder.
 
 ## Basin extraction: select all basins of one stream order
 
@@ -200,8 +214,9 @@ parameter file next to the input DEM never count as outputs.
 
 You usually do **not** need to manually uninstall first.
 
-- **Plugin update:** build a new plugin zip and install it again via
-  `Install from ZIP`. QGIS replaces the existing plugin files.
+- **Plugin update:** download the new plugin zip from the latest release (or
+  build one) and install it again via `Install from ZIP`. QGIS replaces the
+  existing plugin files.
 - **Backend update:** unzip the new backend bundle to a new folder (recommended
   to keep versioned folder names), then point the plugin to that folder in
   `lsdtt3 -> LSDTT Backend Settings`.

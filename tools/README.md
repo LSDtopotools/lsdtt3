@@ -289,8 +289,8 @@ gh release upload v0.5.1 dist/v0.5.1/*.deb dist/v0.5.1/*.conda
 If a CI job failed, rerun it from the Actions page, or build that artefact by
 hand (see [Building the Windows and macOS bundles by hand](#building-the-windows-and-macos-bundles-by-hand))
 and attach it with `gh release upload --clobber`. Publish the wheels to PyPI if
-wanted (`docs/developer_notes/publishing_to_pypi.md`), copy the files to the
-personal download directory, and check the release notes: the workflow writes a
+wanted (`docs/developer_notes/publishing_to_pypi.md`), and check the release
+notes: the workflow writes a
 "Components" list (what changed since the previous release) and an "Artefacts"
 list; correct the latter if a job did not attach its file.
 
@@ -787,7 +787,7 @@ own throwaway shell. Set the environment from Python once per session
 instead:
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
+!wget https://github.com/LSDtopotools/lsdtt3/releases/download/v<version>/lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
 !tar -xzf lsdtt3-backend-linux-x86_64-<profile>-v<version>.tar.gz
 ```
 

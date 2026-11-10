@@ -500,7 +500,7 @@ In Colab, download and unpack in a code cell (the leading `!` runs a shell
 command):
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/@BUNDLE_NAME@.tar.gz
+!wget https://github.com/LSDtopotools/lsdtt3/releases/download/v@VERSION@/@BUNDLE_NAME@.tar.gz
 !tar -xzf @BUNDLE_NAME@.tar.gz
 ```
 

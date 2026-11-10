@@ -20,14 +20,31 @@ every library they depend on.
 
 ## Where the packages live
 
-Both of these hold the same files. Use whichever you can reach.
+**Download everything from [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest).**
+Every package is built and attached automatically when a release is made, and
+no account is needed. These links always fetch the newest release:
 
-| Source | Notes |
+| Package | Permanent link to the latest version |
 |---|---|
-| [GitHub Releases](https://github.com/LSDtopotools/lsdtt3/releases/latest) | The canonical location. Every package is built and attached automatically when a release is made. |
-| <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/> | A plain download directory, no account needed. It is annoying for Simon to upload these so they are more likeley to be out of date.  |
+| Linux | [`lsdtt3-backend-linux-x86_64-core.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz) |
+| Windows (QGIS tool set) | [`lsdtt3-backend-win64-qgis.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-win64-qgis.zip) |
+| macOS, Apple Silicon (QGIS tool set) | [`lsdtt3-backend-macos-arm64-qgis.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz) |
+| macOS, Intel (QGIS tool set) | [`lsdtt3-backend-macos-x86_64-qgis.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz) |
+| QGIS plugin | [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip) |
+| Python wheels | see [Python package](#python-package) |
 
-File names look like this:
+These unversioned names exist from release 0.9.2 on. Each release also carries
+the same files with the version in the name, which is what to download for a
+particular older release (open it from the
+[list of releases](https://github.com/LSDtopotools/lsdtt3/releases)). The
+folder inside each archive is always named with its version.
+
+> A copy of some packages is also kept at
+> <https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>. Use it **only as a last
+> resort**, if GitHub is unreachable from your network: it is updated by hand
+> and is usually several releases out of date.
+
+Versioned file names look like this:
 
 ```
 lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
@@ -47,14 +64,11 @@ only: for the full tool set on those systems, run the Linux package under
 > the backend packages, the QGIS plugin and the Python package. Files from the
 > same release go together.
 
-> **The version numbers on this page are examples and will go stale.** Every
-> command below spells out a version because a bare filename would not work,
-> but don't assume it is the current one. The authoritative version is line 2
-> of `CMakeLists.txt` in the repository — `project(lsdtt3 VERSION ...)` (we do not recommend reading beyond this line or you will get a headache) and
-> release tags and package filenames are derived from it directly (`VERSION
-> 0.7.1` → tag `v0.7.1` → `...-v0.7.1.tar.gz`). If you cannot see the
-> repository, take the newest file from one of the two download locations
-> above instead. Substitute that number throughout.
+> **You do not need to know the version number to install.** The links and
+> commands on this page fetch the latest release and match the versioned
+> folder inside it with `*`. A version number that appears below is an example
+> of a versioned name. To see which version you have, look at the folder name,
+> or run any tool with `-v`.
 
 ---
 
@@ -87,15 +101,19 @@ This is the main way to install, and in other operating systems you just end up 
 ### 1. Download and unpack
 
 ```bash
-wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
-tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+wget https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz
+tar -xzf lsdtt3-backend-linux-x86_64-core.tar.gz
+ls -d lsdtt3-backend-linux-x86_64-core-v*      # the folder name shows the version
 ```
 
 ### 2. Activate it
 
 ```bash
-source lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh
+source lsdtt3-backend-linux-x86_64-core-v*/setenv.sh
 ```
+
+(If you have unpacked more than one version in the same place, give the full
+folder name instead of the `*`.)
 
 `setenv.sh` must be **`source`d**, not run with `bash`. All it does is export
 environment variables (`PATH`, `LD_LIBRARY_PATH`, `GDAL_DATA`, `PROJ_DATA`),
@@ -116,8 +134,12 @@ in every new terminal, append the same line, with the **full** path, to the
 end of your `~/.bashrc`:
 
 ```bash
-echo "source $HOME/lsdtt3-backend-linux-x86_64-core-v0.7.1/setenv.sh" >> ~/.bashrc
+# run this in the folder where you unpacked it; it writes the full path
+echo "source $(cd lsdtt3-backend-linux-x86_64-core-v* && pwd)/setenv.sh" >> ~/.bashrc
 ```
+
+After installing a newer release, edit that line in `~/.bashrc` to point at
+the new folder.
 
 ### What you need
 
@@ -175,10 +197,10 @@ Follow [Linux package](#linux-package) inside the Ubuntu terminal.
 
 If you downloaded the tarball with a Windows browser it is on your Windows
 disk, which WSL2 mounts under `/mnt/`. A file at
-`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz` is:
+`C:\Users\Alice\Downloads\lsdtt3-backend-linux-x86_64-core.tar.gz` is:
 
 ```
-/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+/mnt/c/Users/Alice/Downloads/lsdtt3-backend-linux-x86_64-core.tar.gz
 ```
 
 You will need to update this path unless your username is Alice.
@@ -237,10 +259,12 @@ build** and exists mainly as the backend for the QGIS plugin:
 Unless you specifically need `.exe` files — for the QGIS plugin, or because
 WSL2 is unavailable on a managed machine — use [WSL2](#windows-via-wsl2).
 
-Unzip it, then in PowerShell:
+Download [`lsdtt3-backend-win64-qgis.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-win64-qgis.zip)
+(always the latest release) and unzip it (right-click, **Extract All…**). Then
+in PowerShell, in the folder you extracted to:
 
 ```powershell
-cd lsdtt3-backend-win64-qgis-v0.7.1
+cd lsdtt3-backend-win64-qgis-v*
 . .\setenv.ps1
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
@@ -287,23 +311,23 @@ Stop and restart the VM later with `multipass stop lsdtt` /
 Colab already runs Linux, so the Linux package works there with nothing
 installed on your own machine at all. Two things differ from a normal terminal.
 
-Download and unpack in a code cell (`!` runs a shell command):
+Download and unpack the latest release in a code cell (`!` runs a shell
+command):
 
 ```python
-!wget https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
-!tar -xzf lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz
+!wget -q https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz
+!tar -xzf lsdtt3-backend-linux-x86_64-core.tar.gz
 ```
-
-**Or get the URL from https://www.geos.ed.ac.uk/~smudd/lsdtt_packages** 
 
 **Do not use `!source setenv.sh`.** Every `!` line runs in its own throwaway
 shell, so nothing it sets survives to the next cell. Set the environment from
 Python instead, once per session:
 
 ```python
-import os
+import glob, os
 
-root = "/content/lsdtt3-backend-linux-x86_64-core-v0.7.1"
+root = sorted(glob.glob("/content/lsdtt3-backend-linux-x86_64-core-v*"))[-1]
+print("Using", root)
 os.environ["PATH"] = f"{root}/bin:" + os.environ["PATH"]
 os.environ["LD_LIBRARY_PATH"] = f"{root}/lib:" + os.environ.get("LD_LIBRARY_PATH", "")
 os.environ["GDAL_DATA"] = f"{root}/share/gdal"
@@ -330,10 +354,14 @@ command-line tools, so it needs a backend package as well:
 1. Install a backend package for your system: the
    [Windows native package](#windows-native-package) on Windows, the
    [Linux package](#linux-package) on Linux, or the macOS `qgis` package
-   (`lsdtt3-backend-macos-<arch>-qgis-v<version>.tar.gz`, releases after
-   0.8.0) on macOS. The macOS package's `README.md` covers unpacking it and
-   clearing the browser's quarantine flag.
-2. Download `lsdtt3-qgis-plugin-<version>.zip` from the same release.
+   ([Apple Silicon](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz) or
+   [Intel](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz)) on macOS. The macOS
+   package's `README.md` covers unpacking it and clearing the browser's
+   quarantine flag.
+2. Download the plugin from the same release:
+   [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip) is always the
+   latest. Download it from GitHub, not from any other copy you come across:
+   an older plugin may refuse a newer backend.
 3. In QGIS: **Plugins → Manage and Install Plugins… → Install from ZIP**, and
    choose the zip.
 4. Open **lsdtt3 → LSDTT Backend Settings** and select the backend package's
@@ -360,22 +388,50 @@ Linux, macOS and Windows are built for every release and attached to its
 GitHub release; earlier releases have wheels only where the Python API was
 supported.
 
-**It is not on PyPI yet.** Wheels are attached to the GitHub release and put in the
-[download directory](https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/). Each
+**It is not on PyPI yet.** Wheels are attached to each
+[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest). Each
 wheel is for one Python version (`cp312` is Python 3.12, `cp313` is Python
-3.13) and platform. Keep its original file name, since pip reads the version
-and platform from it, and install it from the file or straight from its URL:
+3.13) and one platform, and pip reads both from the file name, so the name
+cannot be shortened the way the backend packages are. This command, run with
+the Python you will use, finds the matching wheel in the latest release and
+prints its address:
 
 ```bash
-python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
-python -m pip install https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
+python - <<'EOF'
+import json, platform, sys, urllib.request
+rel = json.load(urllib.request.urlopen(
+    "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
+py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
+plat = {"linux": "manylinux", "darwin": "macosx", "win32": "win_"}[sys.platform]
+arch = platform.machine().lower()      # x86_64, arm64 or amd64
+for a in rel["assets"]:
+    n = a["name"]
+    if n.endswith(".whl") and py in n and plat in n and arch in n.lower():
+        print(a["browser_download_url"])
+EOF
 ```
 
-**In Google Colab**, which runs Python 3.13, use the `cp313` wheel in a code
-cell:
+Then install from the address it printed, for example:
+
+```bash
+python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/v0.9.2/lsdtt3-0.9.2-cp313-cp313-manylinux_2_28_x86_64.whl
+```
+
+If it prints nothing, that release has no wheel for your Python version or
+platform; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
+shows which wheels each one has.
+
+**In Google Colab** the same lookup and install go in one code cell:
 
 ```python
-!pip install https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
+import json, sys, urllib.request
+rel = json.load(urllib.request.urlopen(
+    "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
+py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
+url = next(a["browser_download_url"] for a in rel["assets"]
+           if a["name"].endswith(".whl") and py in a["name"] and "manylinux" in a["name"])
+print(url)
+!pip install {url}
 ```
 
 You do not need the backend tarball or the `os.environ` cell from

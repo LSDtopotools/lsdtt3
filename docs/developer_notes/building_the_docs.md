@@ -139,8 +139,7 @@ rsync -avz --delete site/ smudd@<host>:~/public_html/lsdtt3_docs/
 or deleted pages do not linger as stale URLs. Check the target path before the
 first run — `--delete` against the wrong directory is destructive.
 
-The site is then at roughly `https://www.geos.ed.ac.uk/~smudd/lsdtt3_docs/`,
-alongside `~smudd/lsdtt_packages/`, which serves the tarballs.
+The site is then at roughly `https://www.geos.ed.ac.uk/~smudd/lsdtt3_docs/`.
 
 ---
 

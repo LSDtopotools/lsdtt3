@@ -124,6 +124,16 @@ jobs:
       - name: Package the QGIS plugin
         run: python3 qgis_plugin/package_plugin.py --out-dir dist
 
+      # Unversioned copies, so the documentation can give one permanent link
+      # per artefact: https://github.com/<repo>/releases/latest/download/<name>
+      # always serves the newest release. The archives' top-level folders keep
+      # their versioned names. The Windows and macOS jobs do the same.
+      - name: Make unversioned copies for the latest-release links
+        run: |
+          cp dist/lsdtt3-backend-linux-x86_64-core-v*.tar.gz dist/lsdtt3-backend-linux-x86_64-core.tar.gz
+          cp dist/lsdtt3-qgis-plugin-[0-9]*.zip dist/lsdtt3-qgis-plugin.zip
+          ls -l dist
+
       # Auto-generated notes only credit pull requests, so direct commits to
       # main are invisible. Prepend a commit-author roll-call so everyone who
       # committed since the previous tag appears in the notes.
@@ -186,7 +196,7 @@ jobs:
         with:
           files: |
             dist/lsdtt3-backend-linux-*.tar.gz
-            dist/lsdtt3-qgis-plugin-*.zip
+            dist/lsdtt3-qgis-plugin*.zip
           body_path: release_rollcall.md
           generate_release_notes: true
 
@@ -308,7 +318,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload --clobber "${{ github.ref_name }}" (Get-ChildItem dist/lsdtt3-backend-win64-*.zip).FullName
+          # Plus an unversioned copy for the permanent latest-release link.
+          $zip = (Get-ChildItem dist/lsdtt3-backend-win64-qgis-v*.zip).FullName
+          Copy-Item $zip dist/lsdtt3-backend-win64-qgis.zip
+          gh release upload --clobber "${{ github.ref_name }}" $zip dist/lsdtt3-backend-win64-qgis.zip
           if ($LASTEXITCODE -ne 0) { throw "upload failed" }
 
       - name: Upload as workflow artefact (manual run)
@@ -393,7 +406,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload --clobber "${GITHUB_REF_NAME}" dist/lsdtt3-backend-macos-*.tar.gz
+        run: |
+          # Plus an unversioned copy for the permanent latest-release link.
+          cp dist/lsdtt3-backend-macos-${{ matrix.arch }}-qgis-v*.tar.gz \
+             dist/lsdtt3-backend-macos-${{ matrix.arch }}-qgis.tar.gz
+          gh release upload --clobber "${GITHUB_REF_NAME}" dist/lsdtt3-backend-macos-*.tar.gz
 
       - name: Upload as workflow artefact (manual run)
         if: "!startsWith(github.ref, 'refs/tags/')"

@@ -73,6 +73,18 @@ From: ubuntu:22.04
         vim-tiny
 
     # -------------------------------------------------------------------------
+    # Release tooling: what .github/workflows/release.yml installs beyond the
+    # build dependencies, so tools/make_release.sh runs inside this container.
+    #   python3-venv, python3-dev  the Python bindings smoke check builds the
+    #                              bindings in a venv against Python headers
+    #   patchelf                   package_linux_backend.sh sets the bundle rpath
+    # -------------------------------------------------------------------------
+    apt-get install -y \
+        python3-venv \
+        python3-dev \
+        patchelf
+
+    # -------------------------------------------------------------------------
     # Clean up apt cache to reduce image size
     # -------------------------------------------------------------------------
     apt-get clean
@@ -119,5 +131,10 @@ From: ubuntu:22.04
 
     echo "--- Checking NetCDF ---"
     pkg-config --modversion netcdf
+
+    echo "--- Checking release tooling ---"
+    python3 -m venv --help >/dev/null && echo "python3 venv: ok"
+    python3-config --includes
+    patchelf --version
 
     echo "--- All checks passed ---"

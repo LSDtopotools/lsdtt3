@@ -130,18 +130,26 @@ cache* by hand on `main` before tagging a release that uses a new `VCPKG_TAG`.
 
 ## Publishing
 
-Two destinations, same files:
+**GitHub Releases is the one place users are sent.** The first job of the tag
+build creates the release and every other CI artefact attaches itself to it.
+The Debian and conda packages are built locally and attached with
+`gh release upload v<version> <file>`.
 
-1. **GitHub Releases** — created by the first job of the tag build; every
-   other CI artefact attaches itself to it. The Debian and conda packages are
-   built locally and attached with `gh release upload v<version> <file>`.
-2. **<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>** — a plain directory
-   on the personal web space, copied up by hand. It needs no GitHub account,
-   and it is the URL baked
-   into the bundle README's Colab instructions. **Keep it in step with the
-   GitHub release**: a user following the Colab instructions downloads from
-   here, so a missing or stale file there is a broken install path even when
-   GitHub is fine.
+Each backend bundle and the plugin zip is attached twice: under its versioned
+name, and under an unversioned one (`lsdtt3-backend-linux-x86_64-core.tar.gz`,
+`lsdtt3-qgis-plugin.zip`, ...). The unversioned names make permanent links,
+`https://github.com/LSDtopotools/lsdtt3/releases/latest/download/<name>`,
+which always serve the newest release; the install documentation uses them, so
+it never needs a version number. Wheels cannot be renamed (pip reads the
+version and Python tag from the file name), so the documentation looks up the
+latest release's wheels through the GitHub API instead. Each bundle's own
+README links its exact versioned release.
+
+A copy of some packages on the personal web space
+(<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>) is mentioned in the
+install documentation as a last resort only, for networks that cannot reach
+GitHub, with a warning that it is usually out of date. It is not part of the
+release procedure and nothing links to it as the primary route.
 
 ---
 

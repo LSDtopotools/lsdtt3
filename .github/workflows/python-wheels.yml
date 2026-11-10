@@ -255,7 +255,10 @@ jobs:
 
   upload-release:
     name: Upload wheels to the GitHub release
-    if: inputs.upload
+    # Upload whatever built: one failed platform must not withhold the other
+    # platforms' wheels from the release (v0.9.1 shipped none because the
+    # Windows leg failed). The failed leg still marks the run as failed.
+    if: always() && inputs.upload && needs.prepare-release.result == 'success'
     needs:
       - prepare-release
       - build-wheels
@@ -276,6 +279,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          shopt -s nullglob
+          wheels=(release-assets/*.whl)
+          if (( ${#wheels[@]} == 0 )); then
+            echo "::error::no wheel built on any platform; nothing to upload"
+            exit 1
+          fi
+          echo "Uploading ${#wheels[@]} wheel(s)"
           gh release view "${RELEASE}" >/dev/null
           # --clobber: a later "all" run for the same tag replaces the Linux
           # wheels a "linux" run already attached (same tag, same source).
