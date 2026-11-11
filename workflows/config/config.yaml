@@ -264,7 +264,8 @@ cosmo_transient_landslides:
 #            false -> never draw them, and do not look for lsdviztools3
 # lsdviz3_command_prefix goes before every lsdviz3-* command, for an
 # lsdviztools3 that is not on your PATH, e.g.
-#   "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+#   "conda run -n lsdviz"          (lsdviztools3 pip-installed into a conda env)
+#   "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"   (a clone, with pixi)
 figures:
   enabled: "auto"
   lsdviz3_command_prefix: ""

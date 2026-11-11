@@ -60,8 +60,29 @@ environment without activating anything.
 plotting software. Every figure is drawn by a command from
 [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/cli_reference/)
 (`lsdviz3-valley-widths`, `lsdviz3-drape`, `lsdviz3-lithology-map`, ...), which
-lives in its own pixi environment with GMT, PyGMT and geopandas, roughly 2 GB.
-Install it next to lsdtt3:
+lives in its own environment with GMT, PyGMT and geopandas, roughly 2 GB.
+There are two ways to install it.
+
+*With pip, from PyPI.* pip installs lsdviztools3 and every Python package it
+needs except GMT, which PyGMT wraps and pip cannot install. Make an
+environment that has GMT first, here from conda-forge:
+
+```bash
+conda create -n lsdviz -c conda-forge python=3.12 gmt pygmt
+conda activate lsdviz
+python -m pip install lsdviztools3
+lsdviz3-drape --help               # prints the help: lsdviztools3 is ready
+```
+
+Then tell the workflow how to run it, in the `figures` block of your config:
+
+```yaml
+figures:
+  lsdviz3_command_prefix: "conda run -n lsdviz"
+```
+
+*From a clone, with pixi.* This is the developers' route, and gives you the
+lsdviztools3 tests and examples too. Install it next to lsdtt3:
 
 ```bash
 cd ..        # the folder that holds lsdtt3
@@ -72,14 +93,17 @@ pixi run install
 pixi run lsdviz3-drape --help      # prints the help: lsdviztools3 is ready
 ```
 
-Then tell the workflow how to run it, in the `figures` block of your config:
+and set the prefix to run it through pixi:
 
 ```yaml
 figures:
   lsdviz3_command_prefix: "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
 ```
 
-If lsdviztools3's commands are already on your `PATH`, leave the prefix empty.
+Either way, if lsdviztools3's commands are already on your `PATH` when the
+workflow runs, leave the prefix empty. The
+[lsdviztools3 README](https://github.com/LSDtopotools/lsdviztools3#install) has
+the other ways to get GMT (Homebrew, your system's package manager).
 See [Figures](#figures) for what happens when lsdviztools3 is not found.
 
 ---
@@ -214,13 +238,15 @@ figures:
 | `false` | not looked for; no figures | not looked for; no figures |
 
 "Found" means `lsdviz3-drape --help` runs. If lsdviztools3 is installed in an
-environment whose commands are on your `PATH`, nothing needs setting. If it
-lives in its own pixi project (a checkout of lsdviztools3 with its
-`pixi.toml`), give the command that runs it:
+environment whose commands are on your `PATH`, nothing needs setting.
+Otherwise give the command that runs a command inside its environment: for a
+conda environment made for the pip install, `conda run -n <name>`; for a
+checkout of lsdviztools3 with its `pixi.toml`, the pixi form:
 
 ```yaml
 figures:
-  lsdviz3_command_prefix: "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+  lsdviz3_command_prefix: "conda run -n lsdviz"
+  # or: "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
 ```
 
 The figure commands run without the workflows environment's GDAL/PROJ

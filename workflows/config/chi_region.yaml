@@ -104,7 +104,7 @@ chi_region:
 # See config/config.yaml.
 figures:
   enabled: "auto"
-  lsdviz3_command_prefix: ""        # e.g. "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+  lsdviz3_command_prefix: ""        # e.g. "conda run -n lsdviz", or "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
 
 executables:
   fetch_raster: "../build/lsdtt-fetch-raster"

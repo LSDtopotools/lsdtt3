@@ -168,6 +168,7 @@ CLI_SHELL = ("mkdir -p {params.run_dir} && "
 #                            # true: lsdviztools3 is required; stop if it is missing
 #                            # false: never draw them, and do not look
 #     lsdviz3_command_prefix: ""   # put before every lsdviz3-* command, e.g.
+#                                  # "conda run -n lsdviz" (a pip install into a conda env)
 #                                  # "pixi run --manifest-path ../../lsdviztools3/pixi.toml"
 #
 # lsdviztools3 is looked for by running `lsdviz3-drape --help` (behind the
@@ -233,8 +234,9 @@ def figures_enabled():
     if not found:
         detail = f"`{' '.join(argv)}` failed: {' '.join(reason) or 'no output'}"
         hint = ("Install lsdviztools3 so its lsdviz3-* commands are on your PATH, or set "
-                "figures.lsdviz3_command_prefix (e.g. \"pixi run --manifest-path "
-                "/path/to/lsdviztools3/pixi.toml\"), or set figures.enabled: false.")
+                "figures.lsdviz3_command_prefix (e.g. \"conda run -n lsdviz\" or "
+                "\"pixi run --manifest-path /path/to/lsdviztools3/pixi.toml\"), or set "
+                "figures.enabled: false.")
         if mode == "true":
             raise ValueError(f"figures.enabled is true but lsdviztools3 was not found: {detail}. {hint}")
         print(f"Figures skipped: lsdviztools3 not found ({detail}). {hint}", file=_sys.stderr)

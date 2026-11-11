@@ -100,7 +100,7 @@ valley_widths:
 # is not; true requires it; false never looks. See config/config.yaml.
 figures:
   enabled: "auto"
-  lsdviz3_command_prefix: ""        # e.g. "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
+  lsdviz3_command_prefix: ""        # e.g. "conda run -n lsdviz", or "pixi run --manifest-path /path/to/lsdviztools3/pixi.toml"
 
 # Paths to the CLIs. ../build/ is a source build; for an installed release
 # whose CLIs are on your PATH give the bare names (lsdtt-fluvial-surfaces).
