@@ -220,7 +220,13 @@ set_target_properties(lsdtt3_runtime PROPERTIES
     BUILD_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
     INSTALL_RPATH "${LSDTT_PYTHON_RUNTIME_PATH}"
 )
-install(TARGETS lsdtt3_runtime LIBRARY DESTINATION lsdtt3)
+# Installed only when it is a shared library (Linux, macOS), beside _core.
+# On Windows it is STATIC and already linked into _core and every bundled .exe;
+# installing it would put the whole static library into site-packages/lib (the
+# ARCHIVE default destination), with a stray top-level `lib` package.
+if(NOT LSDTT_PYTHON_RUNTIME_LIBRARY_TYPE STREQUAL "STATIC")
+    install(TARGETS lsdtt3_runtime LIBRARY DESTINATION lsdtt3)
+endif()
 
 # A wheel can carry native command-line programs just like it carries _core.
 # The drivers are compiled unchanged from ../cli and link the same runtime as
