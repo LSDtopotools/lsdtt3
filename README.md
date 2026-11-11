@@ -111,18 +111,15 @@ release go together.
 
 ### Python package
 
-`lsdtt3` is not on PyPI yet. Wheels for Linux, macOS and Windows are attached
-to every GitHub release from 0.9.2 (earlier releases have them only where the
-Python API was supported); each platform has one wheel, for Python 3.12 and
-later (`cp312-abi3` in its name; releases up to 0.9.3 had one wheel per Python
-version). Keep the wheel's original file name and install it into a virtual,
-conda or pixi environment:
+Install it from PyPI into a virtual, conda or pixi environment (Python 3.12
+or later; Linux, macOS and Windows):
 
 ```bash
-python -m pip install lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3
 ```
 
-Google Colab runs Python 3.12 or later, so the Linux (`manylinux`) wheel works there. The wheel bundles
+In Google Colab, `!pip install lsdtt3` in a cell. The same wheels, and those of
+older versions that are not on PyPI, are attached to each GitHub release. The wheel bundles
 GDAL and PROJ. Every function is documented in the package (`help(lsdtt3.FlowInfo)`),
 and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for you
 or an AI assistant such as Gemini in Colab. Worked examples are in the
@@ -530,7 +527,7 @@ Its source is the `docs/` tree in this repository, organised by audience:
 | [Basin Object Architecture](https://lsdtopotools.github.io/lsdtt3/developer_notes/basin_object_architecture.html) | Design boundaries of the basin object hierarchy. |
 | [Python Bindings Architecture And API Contracts](https://lsdtopotools.github.io/lsdtt3/developer_notes/python_bindings_architecture.html) | The Python bindings: architecture and the public-API contracts (manifest, generated reference). |
 | [Building the Python wheels](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_python_wheels.html) | Building the manylinux and other Python wheels. |
-| [Publishing lsdtt3 to PyPI](https://lsdtopotools.github.io/lsdtt3/developer_notes/publishing_to_pypi.html) | Publishing the wheels to PyPI, by hand or from GitHub Actions (not yet done). |
+| [Publishing lsdtt3 to PyPI](https://lsdtopotools.github.io/lsdtt3/developer_notes/publishing_to_pypi.html) | How the release workflow publishes the wheels to TestPyPI and PyPI, and how to publish by hand. |
 | [Backend Abstraction Rules for lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/backend_abstraction_rules.html) | When to use abstract bases + factories vs. concrete CPU free functions. |
 | [Using lsdtt_flowinfo](https://lsdtopotools.github.io/lsdtt3/developer_notes/using_lsdtt_flowinfo.html) | How to use the D8 flow routing object in analysis code. |
 | [lsdtt3 utils contents](https://lsdtopotools.github.io/lsdtt3/developer_notes/lsdtt_utils_guide.html) | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |

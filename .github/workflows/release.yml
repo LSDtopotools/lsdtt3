@@ -18,6 +18,9 @@ name: Build and release
 #    plugin zip,  │   arm64 + x86_64)        │    arm64 + x86_64, Windows)
 #    draft        │                          │
 #    release)     └──────────────────────────┴── publish-release
+#                                                     │
+#                          publish-testpypi ──── publish-pypi
+#                          (only if every wheel built and the release published)
 #
 # publish-release runs last, once every job has finished: it removes the
 # previous releases' unversioned copies and publishes the draft as Latest. So
@@ -33,6 +36,16 @@ name: Build and release
 # Windows and macOS ship the qgis CLI profile only (tools/cli_profiles.txt):
 # the backend the QGIS plugin drives. Full CLI use on those platforms is
 # through WSL2 (Windows) or a Linux VM (macOS) with the Linux bundle.
+#
+# PyPI: publish-testpypi uploads the four wheels to TestPyPI, then
+# publish-pypi uploads the same files to PyPI, through trusted publishing
+# (no token stored; the publishers name this workflow and the environments
+# testpypi and pypi). Both run only when every wheel built: a version reaches
+# PyPI with all its platforms or not at all, and the missing upload is done by
+# a manual python-wheels.yml run (publish_to) instead. A required reviewer on
+# the pypi environment (repository settings) makes the PyPI upload wait for
+# approval, so the TestPyPI files can be tried first. See
+# docs/developer_notes/publishing_to_pypi.md.
 #
 # vX.Y.Z.postN tags are wheel-only rebuilds of the same source: they run only
 # python-wheels.yml (by hand), never this workflow.
@@ -448,8 +461,13 @@ jobs:
       tag: ${{ github.ref_name }}
       platforms: all
       upload: true
+    # id-token: python-wheels.yml's own publish-pypi job (manual runs only)
+    # asks for it, and GitHub checks a called workflow's permissions when the
+    # run starts, even for a job that will be skipped. Without it every tag
+    # run fails before starting. That job never runs from here.
     permissions:
       contents: write
+      id-token: write
 
   # ---------------------------------------------------------------------------
   # Last: tidy the old releases and publish this one.
@@ -504,3 +522,84 @@ jobs:
           gh release edit "${GITHUB_REF_NAME}" --draft=false --latest
           gh release view "${GITHUB_REF_NAME}" --json url,isDraft,assets \
             --jq '"\(.url) draft=\(.isDraft) assets=\(.assets | length)"'
+
+  # ---------------------------------------------------------------------------
+  # Last of all: the wheels to TestPyPI, then the same files to PyPI.
+  #
+  # python-wheels succeeds only if every platform leg built and its wheels were
+  # attached to the release, so these never upload a partial set. They wait for
+  # publish-release so the GitHub release is public before the PyPI one.
+  # An index accepts each version once (skip-existing makes a re-run of a job
+  # harmless); check_dist_wheels.py refuses a wrong set before anything is sent.
+  publish-testpypi:
+    name: Upload the wheels to TestPyPI
+    needs:
+      - python-wheels
+      - publish-release
+    if: >-
+      always()
+      && needs.python-wheels.result == 'success'
+      && needs.publish-release.result == 'success'
+      && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/lsdtt3/
+    permissions:
+      contents: read
+      id-token: write   # trusted publishing (OIDC); no token is stored
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: source
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Check the wheels
+        run: |
+          python3 source/python_bindings/tools/check_dist_wheels.py --dir dist --tag "${GITHUB_REF_NAME}"
+          python3 -m pip install --quiet twine
+          python3 -m twine check --strict dist/*.whl
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    name: Upload the wheels to PyPI
+    needs:
+      - python-wheels
+      - publish-release
+      - publish-testpypi
+    if: >-
+      always()
+      && needs.python-wheels.result == 'success'
+      && needs.publish-release.result == 'success'
+      && needs.publish-testpypi.result == 'success'
+      && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/lsdtt3/
+    permissions:
+      contents: read
+      id-token: write   # trusted publishing (OIDC); no token is stored
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: source
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Check the wheels
+        run: |
+          python3 source/python_bindings/tools/check_dist_wheels.py --dir dist --tag "${GITHUB_REF_NAME}"
+          python3 -m pip install --quiet twine
+          python3 -m twine check --strict dist/*.whl
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

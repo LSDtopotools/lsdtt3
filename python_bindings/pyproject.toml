@@ -5,20 +5,52 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "lsdtt3"
 version = "0.9.3.post3"
-description = "Python bindings for LSDTopoTools3"
+description = "Topographic analysis for geomorphology: flow routing, channel networks, chi, hillslopes, cosmogenic nuclides and landscape evolution (LSDTopoTools3)"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
 # 3.12+: the wheel is built once per platform against the stable ABI
 # (cp312-abi3, [tool.scikit-build] wheel.py-api) and installs on every later
 # CPython. lsdviztools3 also needs 3.12.
 requires-python = ">=3.12"
-dependencies = ["numpy>=1.24", "geopandas>=1.0"]
+# numpy 1.26 is the first release with Python 3.12 wheels.
+dependencies = ["numpy>=1.26", "geopandas>=1.0"]
+# The authors in CITATION.cff, in its order.
+authors = [
+    { name = "Simon M. Mudd" },
+    { name = "Rutger Vervoordeldonk" },
+    { name = "Boris Gailleton" },
+    { name = "Martha E. Hawksworth" },
+    { name = "Fiona J. Clubb" },
+    { name = "Stuart W. D. Grieve" },
+    { name = "David T. Milodowski" },
+    { name = "Declan Valters" },
+    { name = "Martin D. Hurst" },
+]
+keywords = ["geomorphology", "topography", "DEM", "lidar", "terrain analysis",
+            "channel networks", "chi analysis", "cosmogenic nuclides"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Hydrology",
+]
 
 [project.urls]
 Homepage = "https://lsdtopotools.github.io/lsdtt3/"
 Documentation = "https://lsdtopotools.github.io/lsdtt3/python/index.html"
 Repository = "https://github.com/LSDtopotools/lsdtt3"
 Issues = "https://github.com/LSDtopotools/lsdtt3/issues"
+Changelog = "https://github.com/LSDtopotools/lsdtt3/releases"
 
 [project.scripts]
 lsdtt-raster-preprocessing = "lsdtt3._cli:main"

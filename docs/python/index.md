@@ -7,56 +7,24 @@ files.
 
 ## Installation
 
-The package is a wheel attached to each
-[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest), for
-Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x64). Each
-platform has one wheel, for Python 3.12 and later (`cp312-abi3` in its name).
-It is **not on PyPI yet**, so `pip install lsdtt3` does not work.
-Install it into a virtual, conda or pixi environment, not your system Python.
-
-**1. Find the wheel for your system.** Run this with the Python you will use;
-it prints the address of the matching wheel in the latest release:
+Install it from PyPI into a virtual, conda or pixi environment, not your
+system Python:
 
 ```bash
-python - <<'EOF'
-import json, platform, sys, urllib.request
-if sys.version_info < (3, 12):
-    sys.exit("lsdtt3 needs Python 3.12 or later")
-rel = json.load(urllib.request.urlopen(
-    "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
-plat = {"linux": "manylinux", "darwin": "macosx", "win32": "win_"}[sys.platform]
-arch = platform.machine().lower()      # x86_64, arm64 or amd64
-for a in rel["assets"]:
-    n = a["name"]
-    if n.endswith(".whl") and "-abi3-" in n and plat in n and arch in n.lower():
-        print(a["browser_download_url"])
-EOF
-```
-
-(On Windows, save the lines between `<<'EOF'` and `EOF` as `find_wheel.py`
-and run `python find_wheel.py`.)
-
-**2. Install it** from the address it printed, which looks like this
-(`X.Y.Z` is the release's version):
-
-```bash
-python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/vX.Y.Z/lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
-```
-
-**3. Check it works:**
-
-```bash
+python -m pip install lsdtt3
 python -c "import lsdtt3; print(lsdtt3.__version__)"
 ```
 
-If step 1 prints nothing, the latest release has no wheel for your system; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
-shows what each release has.
+It needs Python 3.12 or later, on Linux (x86_64), macOS (Apple Silicon and
+Intel) or Windows (x64). In Google Colab, run `!pip install lsdtt3` in a cell.
+The same wheels, and those of older versions that are not on PyPI, are
+attached to each [GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest);
+the [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)
+shows how to install one of those.
 
 The wheel is self-contained: it bundles GDAL and PROJ and also installs the
-command-line tools as commands, so you do not need a backend package. **In
-Google Colab** the lookup and the install fit in one cell; it is in the
-[installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package), and
-the `python_binding_examples` notebook in the lsdtt3_notebooks repository
+command-line tools as commands, so you do not need a backend package. The
+`python_binding_examples` notebook in the lsdtt3_notebooks repository
 installs the package and runs a complete basin, slope-area and chi workflow.
 For development from a clone, see
 [Building the Python wheels](../developer_notes/building_python_wheels.md).

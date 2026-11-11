@@ -1,9 +1,9 @@
 # Publishing lsdtt3 to PyPI
 
-How `pip install lsdtt3` gets to be true. Two routes are described: publishing
-by hand with `twine` from your own machine, and publishing from GitHub Actions.
-Both upload the same artefacts; they differ only in who holds the token and
-where the wheels are built.
+How the wheels get to PyPI, so that `pip install lsdtt3` works. Every
+`vX.Y.Z` tag publishes them from GitHub Actions; this page covers the one-time
+setup, what the release workflow does, how to redo or add an upload by hand,
+and the by-hand route with `twine`.
 
 For how the wheels themselves are built, see
 [`building_python_wheels.md`](building_python_wheels.md). For the local
@@ -19,7 +19,7 @@ contains:
 | Component | Path in the wheel |
 |---|---|
 | The C++ runtime | `lsdtt3/liblsdtt3_runtime.so` |
-| The bindings extension | `lsdtt3/_core.cpython-*.so` |
+| The bindings extension | `lsdtt3/_core.abi3.so` (`_core.pyd` on Windows) |
 | Every command-line tool (FFTW-dependent `lsdtt-spectral-analysis` only when FFTW is found) | `lsdtt3/bin/lsdtt-*` |
 | GDAL and PROJ support data | `lsdtt3/share/gdal`, `lsdtt3/share/proj` |
 | Cosmogenic parameters | `lsdtt3/share/lsdtt3/crn_parameters.nc` |
@@ -44,103 +44,114 @@ rewrite the library names to match.
 
 ---
 
-## Before the first upload
+## One-time setup
 
-These are one-time, and the first three are genuinely blocking.
+PyPI and TestPyPI are separate sites with separate accounts. On each, the
+uploads use **trusted publishing** (OpenID Connect): GitHub proves to the index
+which repository, workflow and environment a job is running in, and no token
+is stored anywhere.
 
-### 1. Claim the name
+1. **Trusted publishers.** On <https://pypi.org> (account → *Publishing*, or
+   the project's *Manage → Publishing* once it exists) add, for owner
+   `LSDtopotools`, repository `lsdtt3`, project `lsdtt3`:
 
-Check whether `lsdtt3` is free:
+    | Workflow | Environment | Used by |
+    |---|---|---|
+    | `release.yml` | `pypi` | every `vX.Y.Z` tag |
+    | `python-wheels.yml` | `pypi` | manual runs (`.postN` rebuilds, a redone upload) |
 
-```bash
-python -m pip index versions lsdtt3     # or just open https://pypi.org/project/lsdtt3/
-```
+    Do the same on <https://test.pypi.org> with environment `testpypi`. Before
+    the first upload the project does not exist, so add them as *pending*
+    publishers. A publisher with the environment left blank accepts any
+    environment; that works too.
 
-If the name is taken, decide on an alternative **before** anything else: the
-distribution name is baked into `[project] name`, the install instruction in
-[Python bindings](../python/index.md), and every downstream mention.
+    PyPI checks the workflow that **started** the run. `release.yml` calls
+    `python-wheels.yml` as a reusable workflow, and an upload from inside a
+    called workflow is not accepted, so the tag uploads are jobs of
+    `release.yml` itself, and `python-wheels.yml` uploads only on a manual
+    run. That is why both files are registered.
 
-### 2. Check the licence obligations
+2. **GitHub environments** `testpypi` and `pypi` (repository *Settings →
+   Environments*). GitHub creates an environment the first time a job uses
+   it, but without rules. A **required reviewer** on `pypi` makes every PyPI
+   upload wait for approval, so the TestPyPI files can be installed and tried
+   first. Recommended at least for the first releases.
 
-Uploading publishes compiled code and the CLI executables to anyone who wants
-them. That is compatible with AGPL-3.0-or-later, which also requires the
-corresponding source to be available; the public repository and its release
-tags provide it. Each wheel bundles GDAL, PROJ and their dependencies, whose
-licences travel with them.
+3. **Storage.** A PyPI project may hold 10 GB by default. A release is four
+   wheels of about 35–65 MB, about 200 MB, so the default holds roughly fifty
+   releases. A higher limit can be requested at
+   <https://github.com/pypi/support> (*project limit request*).
 
-### 3. Fill in the PyPI metadata
+The metadata on the project page comes from `python_bindings/pyproject.toml`
+(`[project]`: description, authors, keywords, classifiers, URLs) and
+`python_bindings/README.md`, which is the page's text, so its links must be
+absolute.
 
-`python_bindings/pyproject.toml` currently carries only `name`, `version`,
-`description`, `license`, `requires-python` and `dependencies`. That is enough
-to build, but it produces a bare PyPI page. Add at least:
+---
 
-```toml
-[project]
-readme = "README.md"                      # python_bindings/README.md exists already
-authors = [{ name = "Simon M. Mudd" }]
-keywords = ["geomorphology", "topography", "DEM", "LiDAR", "terrain analysis"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
-    "Programming Language :: Python :: 3",
-    "Topic :: Scientific/Engineering :: GIS",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
-    "Operating System :: Microsoft :: Windows",
-]
+## What a tag does
 
-[project.urls]
-Homepage = "https://lsdtopotools.github.io/lsdtt3/"
-Documentation = "https://lsdtopotools.github.io/lsdtt3/python/index.html"
-Repository = "https://github.com/LSDtopotools/lsdtt3"
-Issues = "https://github.com/LSDtopotools/lsdtt3/issues"
-```
+`release.yml`, on a `vX.Y.Z` tag, after the backends, the wheels and the
+GitHub release:
 
-(`python_bindings/pyproject.toml` now carries these.)
+1. `python-wheels` builds the four wheels (Linux x86_64, macOS ARM64 and
+   Intel, Windows x64), tests each one on Python 3.12, 3.13 and 3.14, and
+   attaches them to the release;
+2. `publish-release` publishes the GitHub release as Latest;
+3. `publish-testpypi` downloads the wheels from the run, checks them, and
+   uploads them to TestPyPI;
+4. `publish-pypi` checks and uploads the same files to PyPI (after approval,
+   if the `pypi` environment requires a reviewer).
 
-Without `readme` the project page is empty, which for a scientific package is
-a real cost: it is the page people judge it from.
+Steps 3 and 4 run **only if every wheel built**: a version reaches PyPI with
+all four platforms or not at all, because a version cannot be added to
+cleanly afterwards. If a platform failed, fix it and publish with a manual run
+(below).
 
-### 4. Get an API token
+Before uploading, each job runs
+`python_bindings/tools/check_dist_wheels.py`, which refuses anything but
+exactly one `cp312-abi3` wheel per platform, all carrying the tag's version
+and a repaired platform tag, each under PyPI's 100 MB file limit, and then
+`twine check --strict`. Uploads use `skip-existing`, so re-running a job that
+uploaded part-way is harmless.
 
-Create a **project-scoped** token at <https://pypi.org/manage/account/token/>
-once the project exists, or an account-scoped token for the very first upload
-and replace it with a project-scoped one afterwards. The username is literally
-`__token__` and the password is the whole `pypi-...` string.
-
-### 5. Practise on TestPyPI first
-
-Do this for the first release of a new project. TestPyPI is a separate
-instance with separate accounts and tokens.
-
-```bash
-python -m twine upload --repository testpypi wheelhouse/*.whl
-```
-
-then check the result installs cleanly, in a throwaway environment:
+To check a release from TestPyPI before approving PyPI:
 
 ```bash
 python -m venv /tmp/tp && /tmp/tp/bin/pip install \
     --index-url https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple/ \
-    lsdtt3
+    lsdtt3==X.Y.Z
 /tmp/tp/bin/python -c "import lsdtt3; print(lsdtt3.__version__)"
 /tmp/tp/bin/lsdtt-raster-preprocessing -v
 ```
 
-The `--extra-index-url` matters: numpy and geopandas are not on TestPyPI, so
-without it the install fails for reasons that have nothing to do with lsdtt3.
+The `--extra-index-url` matters: numpy and geopandas are not on TestPyPI.
 
-**A version number can never be reused on PyPI, even after deleting a
-release.** That is why the rehearsal happens on TestPyPI.
+### Uploading by hand from Actions
+
+*Actions → Build Python wheels → Run workflow*, with the tag, platforms
+**all**, and `publish_to` **testpypi** or **pypi**. It rebuilds and retests
+the wheels from the tag and, if all four built, uploads them (job
+`publish-pypi`). Use it:
+
+- to publish a `vX.Y.Z.postN` wheel-only rebuild (the `.postN` section
+  below). A `.postN` is always rebuilt for **all** platforms, even if only
+  one was broken, because a manual upload needs the full set;
+- to upload a tag whose tag run did not reach PyPI, for example because one
+  platform failed and was fixed.
+
+A failed upload job of a tag run can also simply be re-run from that run's
+page: the wheels are still the run's artefacts (kept for the repository's
+artefact retention period).
 
 ---
 
-## Route A: publishing by hand with twine
+## Publishing by hand with twine
 
-Use this when you want to control the upload yourself, or to rehearse on
-TestPyPI without touching CI.
+For experiments on TestPyPI without touching CI. **Do not publish a release
+to PyPI this way**: it builds Linux wheels only, and a version should reach
+PyPI with all four platforms at once (see [What a tag does](#what-a-tag-does)).
 
 The catch is that **you still need manylinux wheels**, which means building
 inside the manylinux image. That needs a container engine, and this project
@@ -164,7 +175,7 @@ CIBW_ENVIRONMENT='CMAKE_ARGS="-DLSDTT_PYTHON_RELEASE_WHEEL=ON"' \
 present, and collects the result into `dist/`.
 
 This produces **Linux wheels only**. macOS and Windows wheels cannot be
-cross-built; if you want those you need the machines, or route B.
+cross-built; if you want those you need the machines, or the release workflow.
 
 ### Check before uploading
 
@@ -206,22 +217,9 @@ rights to the project.
 lsdtt3 has one version number. `python_bindings/pyproject.toml` carries the
 same `X.Y.Z` as `project(lsdtt3 VERSION ...)` in `CMakeLists.txt` (checked by
 `unit_version_consistency`; set both with `tools/set_version.py`), and a wheel
-is built from the release tag `vX.Y.Z`, never from an untagged commit:
-
-```bash
-tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel   # needs podman for manylinux
-gh release upload v0.7.1 dist/v0.7.1/*.whl                     # attach to the lsdtt3 release
-```
-
-There is no separate Python tag series. Before the version numbers were
-unified the wheel workflow would have tagged `python-vX.Y.Z`; none was ever
-pushed, and the workflow no longer creates tags.
-
-**Not every release gets a wheel.** Wheels are built only for releases where
-the Python API is supported; a version missing from PyPI is expected, and
-`python_bindings/README.md` (the PyPI project page) says so in its
-"Versioning" section. When a release has no wheel, its GitHub release notes say
-"Python wheel: not built for this release".
+is built from the release tag `vX.Y.Z`, never from an untagged commit.
+Versions up to 0.9.3 are on GitHub releases only, with one wheel per Python
+version; PyPI starts at the first release with the single `cp312-abi3` wheel.
 
 ### A rebuilt wheel of the same source: `.postN`
 
@@ -249,101 +247,13 @@ If the broken wheel is actively harmful, also **yank** `0.7.1` on PyPI (the
 project's release page → Options → Yank). pip then skips it unless a user pins
 it exactly.
 
-### Release candidates: TestPyPI only
+### Release candidates
 
-No pre-release versions are published to PyPI or in backend bundles (the QGIS
-plugin cannot parse a suffixed `backend_version`). To try a wheel before the
-real upload, edit `pyproject.toml` to `0.7.1rc1` locally, **do not commit or
-tag it**, build, and upload to TestPyPI (step 5 above). That catches most
-"uploaded a broken wheel, now need `.post1`" mistakes.
-
----
-
-## Route B: publishing from GitHub Actions
-
-`.github/workflows/python-wheels.yml` builds and tests wheels for one existing
-tag (its `tag` input: `vX.Y.Z` or `vX.Y.Z.postN`), on Linux only or on all four
-platform legs (its `platforms` input; see
-[A Linux-only wheel build](building_python_wheels.md#a-linux-only-wheel-build)), and
-can upload them to the `vX.Y.Z` GitHub release (its `upload` input).
-`release.yml` calls it on every `vX.Y.Z` tag with all platforms and upload on;
-it can also be run by hand. It never
-bumps a version, commits or tags. **It does not upload to PyPI** — there is no
-`twine` step and no token. Adding one is a small change.
-
-### The preferred mechanism: trusted publishing
-
-PyPI's trusted publishing (OIDC) means **no token is stored anywhere**. GitHub
-proves the workflow's identity to PyPI directly. Configure it once at
-<https://pypi.org/manage/project/lsdtt3/settings/publishing/>, naming the
-repository, the workflow file and the environment (`pypi`). PyPI matches the
-**top-level** workflow of the run, and `python-wheels.yml` runs both as a
-reusable workflow called by `release.yml` (tag releases) and on its own
-(manual `.postN` runs), so register both workflow files as trusted publishers.
-
-Then add a job after the existing release job:
-
-```yaml
-  publish-pypi:
-    name: Publish to PyPI
-    needs: [build-wheels, upload-release]
-    runs-on: ubuntu-24.04
-    environment: pypi          # gate approvals here if you want them
-    permissions:
-      id-token: write          # required for trusted publishing
-    steps:
-      - uses: actions/download-artifact@v5
-        with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
-```
-
-The `environment: pypi` line is worth keeping: a GitHub environment can
-require manual approval, which makes the upload a deliberate act rather than a
-consequence of pressing "Run workflow".
-
-### The alternative: an API token in a secret
-
-If trusted publishing is not an option, store the token as the repository
-secret `PYPI_API_TOKEN` and pass it:
-
-```yaml
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-```
-
-Prefer trusted publishing. A long-lived token in a secret is a credential that
-can leak; OIDC is scoped to one workflow in one repository.
-
-### Cost
-
-The wheel workflow is the slow one — four platform legs, each compiling one
-abi3 wheel from scratch and testing it on three Python versions — and it already runs on
-every release tag. A publish job costs almost nothing on top: it downloads
-artefacts already built and uploads them. Standard GitHub-hosted runners are
-free for public repositories, macOS and Windows included.
-
----
-
-## Choosing between the two
-
-| | Route A (twine) | Route B (Actions) |
-|---|---|---|
-| CI | none | the wheels `release.yml` already built on the tag |
-| Platforms | Linux only, unless you own Macs and Windows boxes | Linux only, or Linux, macOS ARM, macOS Intel, Windows |
-| Python versions | whatever you tell cibuildwheel to build | one cp312-abi3 wheel per platform (3.12 and later) |
-| Credentials | a token on your machine | OIDC, nothing stored |
-| Tag and GitHub release | you tag; `gh release upload` | you tag; the workflow can upload |
-| Pre-upload testing | you run it | `test-command` runs against every wheel |
-
-**Route B for releases**: `release.yml` has already built and tested all
-four wheels on the tag, so publishing them is one more job. With no source
-distribution, publishing only Linux wheels would leave macOS and Windows users
-with nothing to install. **Route A** to rehearse on TestPyPI, or for a
-Linux-only `.postN` fix.
+No pre-release versions are published, to PyPI or in backend bundles (the QGIS
+plugin cannot parse a suffixed `backend_version`). Every release goes to
+TestPyPI first, and a required reviewer on the `pypi` environment gives the
+chance to try it there before PyPI. A version can also be uploaded to TestPyPI
+alone with a manual run (`publish_to: testpypi`).
 
 ---
 
@@ -357,13 +267,11 @@ Linux-only `.postN` fix.
    /tmp/verify/bin/lsdtt-channel-extraction -v
    ```
 
-   The second and third lines matter separately: the first proves the bindings
-   and their vendored libraries load, the second proves the console scripts and
-   the bundled CLI binaries work.
+   The second and third lines matter separately: the first proves the
+   bindings and their vendored libraries load, the second proves the console
+   scripts and the bundled CLI binaries work.
 
 2. **Check the project page** renders the README.
-
-3. **Update [Python bindings](../python/index.md)** if the install instruction changed.
 
 ---
 
