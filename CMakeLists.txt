@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(lsdtt3 VERSION 0.9.3 LANGUAGES CXX)
+project(lsdtt3 VERSION 0.9.4 LANGUAGES CXX)
 
 include(CTest)
 

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "lsdtt3"
-version = "0.9.3.post3"
+version = "0.9.4"
 description = "Topographic analysis for geomorphology: flow routing, channel networks, chi, hillslopes, cosmogenic nuclides and landscape evolution (LSDTopoTools3)"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
