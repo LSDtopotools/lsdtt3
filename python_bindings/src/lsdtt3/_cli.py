@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Mapping, Optional
 
 
 _DRIVERS = frozenset(
@@ -80,6 +81,44 @@ def _driver_path(name: str) -> Path:
     return path
 
 
+def _child_environment(base: Optional[Mapping[str, str]] = None) -> Optional[dict]:
+    """Return the environment a bundled driver must be started with.
+
+    On Windows a driver is a separate ``.exe``. delvewheel stages the wheel's
+    DLLs beside ``lsdtt3`` or in a sibling ``lsdtt3.libs`` directory, and a child
+    executable does not inherit Python's extension loader hooks, so those
+    directories are put at the front of ``PATH``; without them the driver dies
+    at start-up with STATUS_DLL_NOT_FOUND (0xC0000135). Elsewhere the drivers
+    find their libraries through their rpath and need nothing added.
+
+    Parameters
+    ----------
+    base : mapping, optional
+        Environment to extend; ``os.environ`` when omitted.
+
+    Returns
+    -------
+    dict or None
+        The environment to pass to ``subprocess``; ``None`` (inherit the
+        current one) off Windows when no ``base`` is given.
+
+    Authors
+    -------
+    B. Gailleton
+    """
+    if os.name != "nt":
+        return None if base is None else dict(base)
+    package_dir = Path(__file__).resolve().parent
+    library_dirs = (package_dir, package_dir.with_name(f"{package_dir.name}.libs"),
+                    package_dir / ".libs")
+    environment = dict(os.environ if base is None else base)
+    environment["PATH"] = os.pathsep.join(
+        [*(str(path) for path in library_dirs if path.is_dir()),
+         environment.get("PATH", "")]
+    )
+    return environment
+
+
 def _run(name: str) -> int:
     """Run a bundled native driver and return its exit status.
 
@@ -98,21 +137,8 @@ def _run(name: str) -> int:
     B. Gailleton
     """
     executable = _driver_path(name)
-    environment = None
-    if os.name == "nt":
-        # delvewheel can stage DLLs beside lsdtt3 or in a sibling lsdtt3.libs
-        # directory.  A child executable does not inherit Python's extension
-        # loader hooks, so make both wheel-local locations explicit.
-        package_dir = Path(__file__).resolve().parent
-        library_dirs = (package_dir, package_dir.with_name(f"{package_dir.name}.libs"),
-                        package_dir / ".libs")
-        environment = os.environ.copy()
-        environment["PATH"] = os.pathsep.join(
-            [*(str(path) for path in library_dirs if path.is_dir()),
-             environment.get("PATH", "")]
-        )
     return subprocess.run(
-        [os.fspath(executable), *sys.argv[1:]], check=False, env=environment
+        [os.fspath(executable), *sys.argv[1:]], check=False, env=_child_environment()
     ).returncode
 
 

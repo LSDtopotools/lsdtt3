@@ -114,6 +114,11 @@ def test_same_dem_and_profiles_as_the_cli(run, tmp_path):
         "run_stream_burn: true\nvector_name_field: name\nwrite_burned_outputs: true\n"
         "write_burned_profiles_csv: true\nn_threads: 1\n")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GDAL_", "PROJ_"))}
+    try:   # the environment the wheel's own console scripts use (DLL dirs on Windows)
+        from lsdtt3._cli import _child_environment
+        env = _child_environment(env)
+    except ImportError:
+        pass
     subprocess.run([str(exe), str(tmp_path / "burn.param")], check=True, capture_output=True, env=env)
     cli_dem = lsdtt3.Raster.read(str(tmp_path / "cli_burned.tif")).to_numpy()
     assert np.array_equal(cli_dem, run.dem.to_numpy())
