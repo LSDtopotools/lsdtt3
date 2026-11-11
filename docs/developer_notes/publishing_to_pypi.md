@@ -320,8 +320,8 @@ can leak; OIDC is scoped to one workflow in one repository.
 
 ### Cost
 
-The wheel workflow is the slow one — four platform legs, five Python
-versions each, every wheel compiled from scratch — and it already runs on
+The wheel workflow is the slow one — four platform legs, each compiling one
+abi3 wheel from scratch and testing it on three Python versions — and it already runs on
 every release tag. A publish job costs almost nothing on top: it downloads
 artefacts already built and uploads them. Standard GitHub-hosted runners are
 free for public repositories, macOS and Windows included.
@@ -334,13 +334,13 @@ free for public repositories, macOS and Windows included.
 |---|---|---|
 | CI | none | the wheels `release.yml` already built on the tag |
 | Platforms | Linux only, unless you own Macs and Windows boxes | Linux only, or Linux, macOS ARM, macOS Intel, Windows |
-| Python versions | whatever you tell cibuildwheel to build | cp310–cp314 |
+| Python versions | whatever you tell cibuildwheel to build | one cp312-abi3 wheel per platform (3.12 and later) |
 | Credentials | a token on your machine | OIDC, nothing stored |
 | Tag and GitHub release | you tag; `gh release upload` | you tag; the workflow can upload |
 | Pre-upload testing | you run it | `test-command` runs against every wheel |
 
 **Route B for releases**: `release.yml` has already built and tested all
-twenty wheels on the tag, so publishing them is one more job. With no source
+four wheels on the tag, so publishing them is one more job. With no source
 distribution, publishing only Linux wheels would leave macOS and Windows users
 with nothing to install. **Route A** to rehearse on TestPyPI, or for a
 Linux-only `.postN` fix.

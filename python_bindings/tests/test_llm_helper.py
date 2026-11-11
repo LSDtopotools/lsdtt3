@@ -92,7 +92,7 @@ def test_workflow_and_gotchas_topics():
                  '.write("'):
         assert step in code, step
     gotchas = lsdtt3.helper_for_llm("gotchas")
-    for text in ("mask_to_nodata(R,0.0)", "cp313", "R.write(path)", "R.metadata.crs_wkt",
+    for text in ("mask_to_nodata(R,0.0)", "cp312-abi3", "R.write(path)", "R.metadata.crs_wkt",
                  "basin_id+1", "silently drops duplicate", "F.row_col(flat_index)",
                  "m^2", "pixel count", "NORTH edge", "basin_index", "k_sn",
                  "PROJ_DATA", "lsdtt-*", "F.snap_points(", "M.xy_to_row_col(x,y)",

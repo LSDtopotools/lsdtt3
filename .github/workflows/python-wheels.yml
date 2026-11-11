@@ -1,7 +1,9 @@
 name: Build Python wheels
 
-# Builds wheels for ONE existing lsdtt3 tag: Linux only (5 wheels) or every
-# platform (20 wheels: Linux x86_64, macOS arm64 and x86_64, Windows x64).
+# Builds wheels for ONE existing lsdtt3 tag: Linux only (1 wheel) or every
+# platform (4 wheels: Linux x86_64, macOS arm64 and x86_64, Windows x64).
+# Each is a cp312-abi3 wheel (Python 3.12 and later), built once on CPython
+# 3.12 and then installed and tested on 3.12, 3.13 and 3.14.
 #
 # Two ways in:
 #   - called by release.yml on every vX.Y.Z tag, after the Linux backend has

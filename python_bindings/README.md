@@ -12,20 +12,22 @@ for every function at
 
 `lsdtt3` is **not on PyPI yet**. Wheels are attached to every
 [GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest) after
-0.8.0; each wheel is for one Python version and platform (`cp312` is Python
-3.12, `cp313` Python 3.13). Take the one that matches your Python from the
-latest release, keep its original file name (pip reads the version and
-platform from it), and install it from the file or directly from its URL:
+0.8.0. There is one wheel per platform, for Python 3.12 and later
+(`cp312-abi3` in its name: it is built against Python's stable ABI, so it
+installs on 3.12, 3.13, 3.14 and later); releases up to 0.9.3 had a separate
+wheel for each Python version. Take the one for your platform from the latest
+release, keep its original file name (pip reads the Python and platform from
+it), and install it from the file or directly from its URL:
 
 ```bash
 python -m pip install "<URL of the wheel on the release page>"
-python -m pip install lsdtt3-0.9.2-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
 ```
 
 The [installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html#python-package)
 has a short command that finds the right wheel in the latest release for you.
 
-Google Colab runs Python 3.13 on Linux, so it needs the `cp313` manylinux
+Google Colab runs Python 3.12 or later on Linux, so it needs the manylinux
 wheel. Wheels bundle GDAL and PROJ, and also install the lsdtt3 command-line
 tools as commands. Install into a virtual, conda or pixi environment rather
 than your system Python. See "Versioning" below for why some lsdtt3 versions

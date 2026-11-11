@@ -225,9 +225,9 @@ snakemake = "*"
 # Python directly plus an LD_PRELOAD of its libstdc++; the exact commands are in
 # docs/developer_notes/python_bindings_architecture.md. Never publish it.
 #
-# Python is pinned below 3.14 because that is what the wheel targets
-# (cp310-cp314 in pyproject.toml) and because the build backend chain is better
-# tested there. The two build pins follow python_bindings/pyproject.toml.
+# Python is pinned below 3.14 because the build backend chain is better tested
+# there. The bindings need 3.12 or later (requires-python in pyproject.toml);
+# a 3.11 here cannot build them. The two build pins follow python_bindings/pyproject.toml.
 [feature.packaging.dependencies]
 python = ">=3.11,<3.14"
 scikit-build-core = ">=0.10"

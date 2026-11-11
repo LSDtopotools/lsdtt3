@@ -8,8 +8,11 @@ version = "0.9.3.post3"
 description = "Python bindings for LSDTopoTools3"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
-requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "geopandas>=1.0", "tomli>=2.0; python_version<'3.11'"]
+# 3.12+: the wheel is built once per platform against the stable ABI
+# (cp312-abi3, [tool.scikit-build] wheel.py-api) and installs on every later
+# CPython. lsdviztools3 also needs 3.12.
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.24", "geopandas>=1.0"]
 
 [project.urls]
 Homepage = "https://lsdtopotools.github.io/lsdtt3/"
@@ -67,10 +70,16 @@ lsdtt-chi-analysis = "lsdtt3._cli:main"
 
 [tool.scikit-build]
 wheel.packages = ["src/lsdtt3"]
+# One cp312-abi3 wheel per platform (the extension is built with nanobind
+# STABLE_ABI). Built with an older Python this setting is ignored.
+wheel.py-api = "cp312"
 cmake.build-type = "Release"
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+# cibuildwheel builds the abi3 wheel once, on cp312, and for cp313 and cp314
+# installs and tests that same wheel instead of building another. Free-threaded
+# CPython (cp313t/cp314t) cannot load abi3 wheels and is not built.
+build = "cp312-* cp313-* cp314-*"
 skip = "*-musllinux_*"   # PyPy is off by default in cibuildwheel >= 3
 test-requires = ["pytest"]
 test-command = "cd {project} && python -m pytest -q python_bindings/tests && python python_bindings/tools/check_api_examples.py --run && python python_bindings/tools/check_installed_wheel.py --manifest python_bindings/api/public_api.json --smoke-console-scripts"

@@ -58,7 +58,10 @@ set(LSDTT_PYTHON_PROJ_DATA_DIR "" CACHE PATH
 # A direct CMake invocation does not automatically add a pip-installed
 # nanobind package to CMAKE_PREFIX_PATH. Ask the active Python interpreter
 # for it; scikit-build-core already supplies the same package in wheel builds.
-find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+# SKBUILD_SABI_COMPONENT is Development.SABIModule when scikit-build-core
+# builds the abi3 wheel (wheel.py-api in pyproject.toml); it links the stable
+# python3 library on Windows. Empty in a direct CMake build.
+find_package(Python 3.12 COMPONENTS Interpreter Development.Module ${SKBUILD_SABI_COMPONENT} REQUIRED)
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     RESULT_VARIABLE NANOBIND_CMAKE_DIR_RESULT

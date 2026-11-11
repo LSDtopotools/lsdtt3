@@ -113,15 +113,16 @@ release go together.
 
 `lsdtt3` is not on PyPI yet. Wheels for Linux, macOS and Windows are attached
 to every GitHub release from 0.9.2 (earlier releases have them only where the
-Python API was supported); each one is for one Python version (`cp312` is
-Python 3.12, `cp313` is Python 3.13). Keep the wheel's original file name and
-install it into a virtual, conda or pixi environment:
+Python API was supported); each platform has one wheel, for Python 3.12 and
+later (`cp312-abi3` in its name; releases up to 0.9.3 had one wheel per Python
+version). Keep the wheel's original file name and install it into a virtual,
+conda or pixi environment:
 
 ```bash
-python -m pip install lsdtt3-0.7.1-cp313-cp313-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
 ```
 
-Google Colab runs Python 3.13, so it needs the `cp313` wheel. The wheel bundles
+Google Colab runs Python 3.12 or later, so the Linux (`manylinux`) wheel works there. The wheel bundles
 GDAL and PROJ. Every function is documented in the package (`help(lsdtt3.FlowInfo)`),
 and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for you
 or an AI assistant such as Gemini in Colab. Worked examples are in the

@@ -4,8 +4,8 @@
 # check_python_bindings_smoke.sh - build the Python bindings once on this
 # machine and run the whole python_bindings/tests suite against them.
 #
-# The full wheel matrix (python-wheels.yml: 4 platforms x 5 Pythons, every
-# wheel compiled from scratch) runs only on release tags, after this check has
+# The full wheel matrix (python-wheels.yml: 4 platforms, one abi3 wheel each,
+# tested on 3 Pythons) runs only on release tags, after this check has
 # passed. This is the cheap check: one Linux build, one interpreter, CLIs off.
 # It catches a C++ change that breaks the bindings (a compile break, or a
 # behaviour change a binding test sees) at the commit that made it.
@@ -23,7 +23,7 @@
 # The private keyword-compatibility probe is built and required, so
 # test_keyword_compatibility.py does not skip its probe test.
 #
-# Needs: a Python >= 3.10 with the venv module, a C++ toolchain, GDAL
+# Needs: a Python >= 3.12 with the venv module, a C++ toolchain, GDAL
 # development files, and network access (or a pip cache) for nanobind,
 # scikit-build-core, numpy, geopandas, shapely, pyproj and pytest.
 #

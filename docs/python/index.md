@@ -9,24 +9,26 @@ files.
 
 The package is a wheel attached to each
 [GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest), for
-Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x64), and Python
-3.10 to 3.14. It is **not on PyPI yet**, so `pip install lsdtt3` does not work.
+Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x64). Each
+platform has one wheel, for Python 3.12 and later (`cp312-abi3` in its name).
+It is **not on PyPI yet**, so `pip install lsdtt3` does not work.
 Install it into a virtual, conda or pixi environment, not your system Python.
 
-**1. Find the wheel for your Python and system.** Run this with the Python you
-will use; it prints the address of the matching wheel in the latest release:
+**1. Find the wheel for your system.** Run this with the Python you will use;
+it prints the address of the matching wheel in the latest release:
 
 ```bash
 python - <<'EOF'
 import json, platform, sys, urllib.request
+if sys.version_info < (3, 12):
+    sys.exit("lsdtt3 needs Python 3.12 or later")
 rel = json.load(urllib.request.urlopen(
     "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
-py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
 plat = {"linux": "manylinux", "darwin": "macosx", "win32": "win_"}[sys.platform]
 arch = platform.machine().lower()      # x86_64, arm64 or amd64
 for a in rel["assets"]:
     n = a["name"]
-    if n.endswith(".whl") and py in n and plat in n and arch in n.lower():
+    if n.endswith(".whl") and "-abi3-" in n and plat in n and arch in n.lower():
         print(a["browser_download_url"])
 EOF
 ```
@@ -34,10 +36,11 @@ EOF
 (On Windows, save the lines between `<<'EOF'` and `EOF` as `find_wheel.py`
 and run `python find_wheel.py`.)
 
-**2. Install it** from the address it printed, for example:
+**2. Install it** from the address it printed, which looks like this
+(`X.Y.Z` is the release's version):
 
 ```bash
-python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/v0.9.3/lsdtt3-0.9.3-cp313-cp313-manylinux_2_28_x86_64.whl
+python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/vX.Y.Z/lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
 ```
 
 **3. Check it works:**
@@ -46,8 +49,7 @@ python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/v
 python -c "import lsdtt3; print(lsdtt3.__version__)"
 ```
 
-If step 1 prints nothing, the latest release has no wheel for your Python
-version or system; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
+If step 1 prints nothing, the latest release has no wheel for your system; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
 shows what each release has.
 
 The wheel is self-contained: it bundles GDAL and PROJ and also installs the
