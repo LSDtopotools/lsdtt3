@@ -94,6 +94,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The Python bindings need Python 3.12 or later (requires-python in
+      # python_bindings/pyproject.toml), and make_release.sh's bindings check
+      # builds them with python3. Ubuntu 22.04's own python3 is 3.10, so put
+      # 3.12 first on PATH. The runner stays on 22.04 for the backend bundle's
+      # glibc baseline; only the Python changes.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Resolve the release version
         id: version
         run: |
