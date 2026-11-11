@@ -2,6 +2,8 @@
 
 End-to-end chi (χ) analysis of river networks. Extracts chi coordinates, fits piecewise-linear chi-elevation networks, computes disorder metrics with optional jackknife/bootstrap uncertainty, and performs spatial k_sn / u* inversion with m/n model selection.
 
+How chi is computed, how the profiles are segmented, how incomplete basins are rejected, and how knickpoints and the disorder metric for m/n are found are explained, with their references, in [Chi analysis](../design_and_algorithms/chi_analysis.md).
+
 **Requires Eigen3** for the k_sn inversion (`run_inversion`). Chi extraction and disorder sweep run without Eigen3.
 
 ## Usage

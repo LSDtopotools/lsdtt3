@@ -38,7 +38,7 @@
 #include "../src/core/lsdtt_raster_fetch.hpp"
 
 static const std::string k_status    = "experimental";
-static const std::string k_citation  = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_citation  = lsdtt::lsdtt3_citation_url();
 static const std::string k_tool_name = "lsdtt-fetch-lithology";
 
 static void print_banner()

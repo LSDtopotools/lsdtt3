@@ -13,9 +13,11 @@ route always works.
 
 > **Status (November 2026).** No maintainer builds on a Mac. The native route
 > below is what the `build-macos` job of `.github/workflows/release.yml` runs on
-> every release, so CI is where it is exercised. It was reviewed off-Mac: the
-> C++ passes a clang + libc++ syntax check (with macOS's integer types), and the
-> CMake handles Homebrew's keg-only `libomp` and pkg-config FFTW explicitly.
+> every release (on `macos-15` for Apple Silicon and `macos-15-intel`), so CI
+> is where it is exercised: it has built and packaged the `qgis` bundles for
+> both architectures since v0.9.1, and the macOS Python wheels since v0.9.2.
+> The CMake handles Homebrew's keg-only `libomp` and pkg-config FFTW
+> explicitly.
 
 ---
 

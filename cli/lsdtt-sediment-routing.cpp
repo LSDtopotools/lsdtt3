@@ -52,7 +52,7 @@
 static const std::string k_status   = "experimental";
 static const std::string k_citation =
     "d-CASCADE: Battista G. et al. (2022) GMD 15:4227-4267\n"
-    "lsdtt3:    https://github.com/LSDtopotools/lsdtt3";
+    "lsdtt3:    " + lsdtt::lsdtt3_citation_url();
 static const std::string k_tool_name = "lsdtt-sediment-routing";
 
 // -----------------------------------------------------------------------------

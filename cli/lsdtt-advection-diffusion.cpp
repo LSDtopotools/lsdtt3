@@ -63,7 +63,7 @@ namespace
 // Helper functions
 // -----------------------------------------------------------------------------
 const std::string k_status  = "experimental";
-const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+const std::string k_citation = lsdtt::lsdtt3_citation_url();
 const std::string k_tool_name = "lsdtt-advection-diffusion";
 
 void print_banner()

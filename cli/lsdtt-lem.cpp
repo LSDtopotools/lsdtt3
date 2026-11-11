@@ -75,7 +75,8 @@ static const std::string k_status   = "experimental";
 static const std::string k_citation =
     "Mudd et al. (2023) LSDTopoTools2. "
     "Anand et al. (2020) Env. Modell. Softw. 134:104803. "
-    "Carretier et al. (2016) Earth Surf. Dyn. 4:37-55.";
+    "Carretier et al. (2016) Earth Surf. Dyn. 4:37-55. "
+    "lsdtt3: " + lsdtt::lsdtt3_citation_url();
 static const std::string k_tool_name = "lsdtt-lem";
 
 // -----------------------------------------------------------------------------

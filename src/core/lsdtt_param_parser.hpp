@@ -109,10 +109,19 @@ std::string lsdtt3_package_version();
 // unit_cli_reference_is_current fails without one. The CLIs print the tool's
 // page in their banner, in the guide shown by -h and by a run with no
 // arguments, in the -h html reference file, and as "documentation" in -h json.
-// The repository address stays the citation (-c).
 // -----------------------------------------------------------------------------
 std::string lsdtt3_documentation_url();
 std::string lsdtt3_cli_documentation_url(const std::string& tool_name);
+
+// -----------------------------------------------------------------------------
+// lsdtt3_citation_url()
+//
+// The DOI to cite lsdtt3 by: Zenodo's CONCEPT DOI, which covers every version
+// and always resolves to the latest (the same DOI as CITATION.cff; never a
+// single release's DOI, which goes stale at the next release). Every CLI's
+// citation (-c, the banner, -h, -h json) is or includes this.
+// -----------------------------------------------------------------------------
+std::string lsdtt3_citation_url();
 
 // -----------------------------------------------------------------------------
 // lsdtt_compiled_features

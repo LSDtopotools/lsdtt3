@@ -57,6 +57,11 @@ std::string lsdtt3_documentation_url()
     return "https://lsdtopotools.github.io/lsdtt3/";
 }
 
+std::string lsdtt3_citation_url()
+{
+    return "https://doi.org/10.5281/zenodo.24110423";
+}
+
 std::string lsdtt3_cli_documentation_url(const std::string& tool_name)
 {
     std::string page = tool_name;

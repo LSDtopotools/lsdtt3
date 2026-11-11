@@ -43,7 +43,11 @@
 
 ## Citing lsdtt3
 
-If you use lsdtt3 in research, please also cite the original LSDTopoTools2:
+If you use lsdtt3 in research, please cite it:
+
+> Mudd, S. M., Vervoordeldonk, R., Gailleton, B., Hawksworth, M. E., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Valters, D., & Hurst, M. D. (2026). LSDTopoTools3 (lsdtt3): topographic analysis for geomorphology. Zenodo. [https://doi.org/10.5281/zenodo.24110423](https://doi.org/10.5281/zenodo.24110423)
+
+Please also cite the original LSDTopoTools2:
 
 > Mudd, S. M., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Gailleton, B., Hurst, M. D., Valters, D. V., Wickert, A. D., & Hutton, E. W. H. (2023). LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9. Zenodo. [https://doi.org/10.5281/zenodo.8076231](https://doi.org/10.5281/zenodo.8076231)
 

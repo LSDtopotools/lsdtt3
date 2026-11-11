@@ -49,8 +49,8 @@ Versioned file names look like this:
 ```
 lsdtt3-backend-linux-x86_64-core-v0.7.1.tar.gz     Linux
 lsdtt3-backend-win64-qgis-v0.7.1.zip               Windows (native, limited to the QGIS tool set)
-lsdtt3-backend-macos-arm64-qgis-v0.7.1.tar.gz      macOS, Apple Silicon (QGIS tool set; releases after 0.8.0)
-lsdtt3-backend-macos-x86_64-qgis-v0.7.1.tar.gz     macOS, Intel (QGIS tool set; releases after 0.8.0)
+lsdtt3-backend-macos-arm64-qgis-v0.7.1.tar.gz      macOS, Apple Silicon (QGIS tool set; from 0.9.1)
+lsdtt3-backend-macos-x86_64-qgis-v0.7.1.tar.gz     macOS, Intel (QGIS tool set; from 0.9.1)
 lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the number from 0.7.0)
 ```
 
@@ -276,15 +276,61 @@ Note the leading `. ` (dot, space) — like `source` on Linux, it runs
 
 ## macOS
 
-**For the full tool set, run the Linux package in a virtual machine.** A
-native macOS package exists only as the backend for the
-[QGIS plugin](#qgis-plugin): it ships the `qgis` profile, for Apple Silicon
-(`arm64`) and Intel (`x86_64`), and needs macOS 15 or later. It is built for
-every release after 0.8.0 and is new, so report any problem with it.
+There are three ways to run lsdtt3 on a Mac. Choose by what you need:
 
-For everything else, run the Linux package inside a lightweight Ubuntu virtual
-machine using [Multipass](https://multipass.run), which Canonical maintain for
-exactly this.
+| You want | Use |
+|---|---|
+| The QGIS plugin | The [native macOS package](#native-macos-package-qgis-tool-set) |
+| lsdtt3 from Python | The [Python package](#python-package), which runs natively |
+| Every command-line tool | The [Linux package in a virtual machine](#the-full-tool-set-in-a-linux-vm) |
+
+### Native macOS package (QGIS tool set)
+
+A native package is built for every release from 0.9.1, for Apple Silicon
+(M1 and later) and Intel Macs, and needs macOS 15 or later. **It is a reduced
+build:** it ships the `qgis` profile, the tools the
+[QGIS plugin](#qgis-plugin) drives, not the full tool set. It is new, so please
+report any problem with it.
+
+1. Download the package for your Mac (these links always fetch the latest
+   release): [Apple Silicon](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz) or
+   [Intel](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz). **Apple menu → About
+   This Mac** shows which you have: an "Apple M…" chip is Apple Silicon.
+2. Open Terminal in the folder you downloaded it to (in Finder, right-click
+   the folder, then **New Terminal at Folder**) and unpack it:
+
+   ```bash
+   tar -xzf lsdtt3-backend-macos-arm64-qgis.tar.gz
+   ```
+
+3. Clear the quarantine flag the browser put on the download. Without this,
+   macOS blocks the tools because they are not from the App Store:
+
+   ```bash
+   xattr -dr com.apple.quarantine lsdtt3-backend-macos-arm64-qgis-v*
+   ```
+
+4. Activate the tools for this Terminal window, and check they run:
+
+   ```bash
+   source lsdtt3-backend-macos-arm64-qgis-v*/setenv.sh
+   lsdtt-raster-preprocessing --version
+   ```
+
+   Use `source`, not `bash`: running the script in a new shell does not set up
+   the current one. Repeat it in each new Terminal window, or add the `source`
+   line, with the full path, to your `~/.zshrc`.
+
+For Intel Macs, use `x86_64` in place of `arm64` in these names. The
+package's own `README.md` repeats these steps. To use it with QGIS, select the
+unpacked folder in the plugin's settings; see [QGIS plugin](#qgis-plugin). For
+the tools the package does not include, use the VM below.
+
+### The full tool set in a Linux VM
+
+For every command-line tool, run the Linux package inside a lightweight Ubuntu
+virtual machine using [Multipass](https://multipass.run), which Canonical
+maintain for exactly this.
 
 ```bash
 brew install --cask multipass
@@ -383,7 +429,7 @@ in the settings.
 
 The `lsdtt3` Python package wraps the same C++ code for use from scripts and
 notebooks, keeping rasters and results in memory instead of files. It shares
-the lsdtt3 version number. From the first release after 0.8.0, wheels for
+the lsdtt3 version number. From 0.9.2, wheels for
 Linux, macOS and Windows are built for every release and attached to its
 GitHub release; earlier releases have wheels only where the Python API was
 supported.

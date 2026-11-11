@@ -94,9 +94,11 @@ Your Windows drives are visible under `/mnt/c/`. A native Windows `.zip` also
 exists but ships a reduced tool set — see the install guide.
 
 On **macOS**, run the Linux package inside a Multipass Ubuntu VM
-(`brew install --cask multipass`) for the full tool set. Releases after 0.8.0
-also include native macOS packages (Apple Silicon and Intel) with the reduced
-QGIS tool set, as the backend for the QGIS plugin.
+(`brew install --cask multipass`) for the full tool set. Releases from 0.9.1
+also include native macOS packages (Apple Silicon and Intel, macOS 15 or later)
+with the reduced QGIS tool set, as the backend for the QGIS plugin, and the
+Python package runs natively on macOS. The install guide has the steps for
+each, including clearing macOS's quarantine flag on the native package.
 
 On **Google Colab**, `!source setenv.sh` does not work — set the environment
 from Python instead. The install guide has the cell to paste.
@@ -110,7 +112,7 @@ release go together.
 ### Python package
 
 `lsdtt3` is not on PyPI yet. Wheels for Linux, macOS and Windows are attached
-to every GitHub release after 0.8.0 (earlier releases have them only where the
+to every GitHub release from 0.9.2 (earlier releases have them only where the
 Python API was supported); each one is for one Python version (`cp312` is
 Python 3.12, `cp313` is Python 3.13). Keep the wheel's original file name and
 install it into a virtual, conda or pixi environment:

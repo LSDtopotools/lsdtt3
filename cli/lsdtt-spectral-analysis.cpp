@@ -46,7 +46,7 @@
 #include "../src/cpu/lsdtt_valley_spacing_cpu.hpp"
 
 static const std::string k_status   = "stable";
-static const std::string k_citation = "https://github.com/LSDtopotools/lsdtt3";
+static const std::string k_citation = lsdtt::lsdtt3_citation_url();
 static const std::string k_tool_name = "lsdtt-spectral-analysis";
 
 // -----------------------------------------------------------------------------
