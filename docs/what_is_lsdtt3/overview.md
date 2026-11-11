@@ -178,6 +178,6 @@ install it. They are self-contained: no compiler, no library installation, no
   are a reduced build, the backend for the QGIS plugin. The Python package
   runs natively on macOS.
 - **Google Colab** — the Linux package works there with nothing installed
-  locally at all, and so does the Python package (the `cp313` wheel).
+  locally at all, and so does the Python package (the Linux wheel).
 
 See [Installation](install_lsdtt3.md) for all of these.

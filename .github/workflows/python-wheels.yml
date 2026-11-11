@@ -1,7 +1,9 @@
 name: Build Python wheels
 
-# Builds wheels for ONE existing lsdtt3 tag: Linux only (5 wheels) or every
-# platform (20 wheels: Linux x86_64, macOS arm64 and x86_64, Windows x64).
+# Builds wheels for ONE existing lsdtt3 tag: Linux only (1 wheel) or every
+# platform (4 wheels: Linux x86_64, macOS arm64 and x86_64, Windows x64).
+# Each is a cp312-abi3 wheel (Python 3.12 and later), built once on CPython
+# 3.12 and then installed and tested on 3.12, 3.13 and 3.14.
 #
 # Two ways in:
 #   - called by release.yml on every vX.Y.Z tag, after the Linux backend has
@@ -9,9 +11,14 @@ name: Build Python wheels
 #   - by hand from the Actions tab, for a vX.Y.Z.postN wheel-only rebuild of
 #     the same source, or to rebuild one tag's wheels.
 #
-# Publishing to PyPI stays a separate, manual step
-# (docs/developer_notes/publishing_to_pypi.md). This workflow never bumps a
-# version, commits or tags.
+# PyPI: on a tag, release.yml uploads these wheels (TestPyPI, then PyPI) after
+# this workflow returns. A manual run uploads them itself when publish_to is
+# testpypi or pypi (the publish-pypi job below), for a .postN rebuild or to
+# redo a failed upload. PyPI's trusted publishing names the workflow that
+# STARTED the run, and does not accept an upload from a called workflow, so
+# that job never runs when release.yml calls this one.
+# docs/developer_notes/publishing_to_pypi.md has the setup. This workflow
+# never bumps a version, commits or tags.
 
 on:
   workflow_call:
@@ -50,6 +57,15 @@ on:
         required: true
         type: boolean
         default: false
+      publish_to:
+        description: Also upload the wheels to a package index (only if every platform built; "all" platforms only)
+        required: true
+        type: choice
+        options:
+          - none
+          - testpypi
+          - pypi
+        default: none
 
 permissions:
   contents: write
@@ -352,3 +368,49 @@ jobs:
           # --clobber: a later "all" run for the same tag replaces the Linux
           # wheels a "linux" run already attached (same tag, same source).
           gh release upload --clobber "${RELEASE}" release-assets/*.whl
+
+  # Manual runs only (see the header): upload to TestPyPI or PyPI. Only when
+  # every leg built, so a version never reaches the index with platforms
+  # missing; and only for an "all" run, so a Linux-only run cannot publish a
+  # version whose other wheels would then have to follow as .postN.
+  publish-pypi:
+    name: Upload to ${{ inputs.publish_to }}
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.publish_to != 'none'
+      && inputs.platforms == 'all'
+      && needs.build-wheels.result == 'success'
+    needs:
+      - prepare-release
+      - build-wheels
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.publish_to }}
+      url: https://${{ inputs.publish_to == 'pypi' && 'pypi.org' || 'test.pypi.org' }}/project/lsdtt3/
+    permissions:
+      contents: read
+      id-token: write   # trusted publishing (OIDC); no token is stored
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-release.outputs.sha }}
+          path: source
+
+      - name: Check the wheels
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          python3 source/python_bindings/tools/check_dist_wheels.py --dir dist --tag "${TAG}"
+          python3 -m pip install --quiet twine
+          python3 -m twine check --strict dist/*.whl
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ inputs.publish_to == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+          skip-existing: true

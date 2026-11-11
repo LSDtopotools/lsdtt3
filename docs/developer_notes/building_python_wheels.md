@@ -142,14 +142,14 @@ tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
 tools/build_manylinux_wheel_apptainer.sh --image-only
 apptainer cache clean                      # reclaim the cache once the .sif exists
 
-# 3. Build, repair and test one wheel per Python version, from the tag.
+# 3. Build and repair the abi3 wheel, and test it with every Python, from the tag.
 tools/make_all_packages.sh --clean --tag v0.7.1 --only wheel \
     --wheel-engine apptainer --wheel-python all
 ```
 
-The wheels land in `dist/v0.7.1/`, five of them for CPython 3.10 to 3.14,
-each with a `manylinux` platform tag in its name (`auditwheel` picks the
-exact tag). Upload them as
+The wheel lands in `dist/v0.7.1/`: one `cp312-abi3` wheel, with a
+`manylinux` platform tag in its name (`auditwheel` picks the exact tag). The
+first Python builds it; the others install and test the same file. Upload them as
 described in [`publishing_to_pypi.md`](publishing_to_pypi.md).
 
 `--clean --tag` builds exactly what the tag contains, but the wheel script
@@ -204,7 +204,14 @@ tools/build_manylinux_wheel_apptainer.sh --help
 
 Configured in `python_bindings/pyproject.toml` under `[tool.cibuildwheel]`:
 
-- **Python versions:** CPython 3.10 through 3.14 (`cp310-*` … `cp314-*`).
+- **Python versions:** one wheel per platform, `cp312-abi3`, for CPython 3.12
+  and later. The extension is built against Python's stable ABI (nanobind
+  `STABLE_ABI` in `python_bindings/bindings/CMakeLists.txt`, and
+  `wheel.py-api = "cp312"` under `[tool.scikit-build]`). cibuildwheel builds it
+  once, on 3.12, then installs and tests that same wheel on 3.13 and 3.14
+  (`build = "cp312-* cp313-* cp314-*"`). Binding code may call only
+  limited-API C functions; anything else fails to compile. Free-threaded
+  CPython (`cp313t`, `cp314t`) cannot load abi3 wheels and is not built.
 - **Skipped:** PyPy, and musllinux.
 
 The four platform legs, from `.github/workflows/python-wheels.yml`. A run builds
@@ -303,8 +310,8 @@ wheel can import cleanly and still be missing a symbol or a data file.
 
 **Every `vX.Y.Z` tag builds the wheels automatically.** `release.yml` calls
 `python-wheels.yml` (as a reusable workflow) once the Linux backend has passed
-and created the release: all four platform legs, five CPython versions each
-(3.10–3.14), every wheel tested as above, then attached to the release. It
+and created the release: all four platform legs, one abi3 wheel each,
+tested as above on CPython 3.12, 3.13 and 3.14, then attached to the release. It
 never fires on an ordinary push.
 
 Run it by hand for a `vX.Y.Z.postN` wheel-only rebuild (which `release.yml`
@@ -319,11 +326,12 @@ ignores), or to rebuild one tag's wheels:
 
 ### Compiler cache (ccache) in CI
 
-Each platform builds five wheels, one per CPython version, and about 250 of the
-roughly 300 C++ files (the lsdtt3 runtime and the bundled CLIs) compile
-identically for every Python version. On Linux and macOS, `python-wheels.yml`
-therefore runs the compiler through ccache, so wheels 2 to 5 reuse those
-objects and recompile only the nanobind and binding sources. Three settings
+When each platform built five wheels, one per CPython version, about 250 of
+the roughly 300 C++ files (the lsdtt3 runtime and the bundled CLIs) compiled
+identically for every Python version, so `python-wheels.yml` runs the compiler
+through ccache and wheels 2 to 5 reused those objects. Each platform now
+builds a single abi3 wheel, so within a run there is nothing to reuse and
+ccache saves little; it stays until CI timings show whether to remove it. Three settings
 make that work, all in the workflow, not in `pyproject.toml`:
 
 - `-DCMAKE_C_COMPILER_LAUNCHER` / `-DCMAKE_CXX_COMPILER_LAUNCHER`, passed in
@@ -333,7 +341,7 @@ make that work, all in the workflow, not in `pyproject.toml`:
 - `SKBUILD_BUILD_DIR=<project>/python_bindings/build/cibw-{wheel_tag}`, a fixed
   per-wheel build folder instead of scikit-build-core's random temporary one;
 - `CCACHE_BASEDIR=<project>`, so ccache compares paths relative to the project
-  and the five folders look identical to it.
+  and the per-wheel folders look identical to it.
 
 `python_bindings/tools/ci_ccache.sh` installs ccache before each build (EPEL in
 the manylinux container, Homebrew on macOS) and prints its hit statistics, so
@@ -357,7 +365,7 @@ Actions cache. Local builds and the Apptainer route do not use ccache.
 ### A Linux-only wheel build
 
 The `platforms` input of a manual run defaults to `linux`, which builds only
-the Linux x86_64 leg: five wheels, on one `ubuntu-24.04` runner, in a fraction
+the Linux x86_64 leg: one wheel, on one `ubuntu-24.04` runner, in a fraction
 of the time of the full matrix. Useful for a quick `.postN` fix that only
 Linux users need.
 

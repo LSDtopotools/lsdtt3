@@ -429,56 +429,60 @@ in the settings.
 
 The `lsdtt3` Python package wraps the same C++ code for use from scripts and
 notebooks, keeping rasters and results in memory instead of files. It shares
-the lsdtt3 version number. From 0.9.2, wheels for
-Linux, macOS and Windows are built for every release and attached to its
-GitHub release; earlier releases have wheels only where the Python API was
-supported.
+the lsdtt3 version number, and is built for Linux, macOS and Windows on every
+release.
 
-**It is not on PyPI yet.** Wheels are attached to each
-[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest). Each
-wheel is for one Python version (`cp312` is Python 3.12, `cp313` is Python
-3.13) and one platform, and pip reads both from the file name, so the name
-cannot be shortened the way the backend packages are. This command, run with
-the Python you will use, finds the matching wheel in the latest release and
-prints its address:
+Install it from PyPI, into a virtual, conda or pixi environment rather than
+your system Python:
+
+```bash
+python -m pip install lsdtt3
+```
+
+It needs Python 3.12 or later, on Linux (x86_64), macOS (Apple Silicon and
+Intel, macOS 15 or later) or Windows (x64). There is one wheel per platform,
+`cp312-abi3`: built against Python's stable ABI, the same file installs on
+3.12, 3.13, 3.14 and later.
+
+**In Google Colab**, run this in a code cell:
+
+```python
+!pip install lsdtt3
+```
+
+**From a GitHub release.** The same wheels are attached to each
+[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest), as
+are the wheels of versions up to 0.9.3, which are not on PyPI (those have a
+separate wheel for each Python version, `cp310` to `cp314`). pip reads the
+Python and platform from the file name, so keep the name as it is. This
+command, run with the Python you will use, prints the address of the matching
+wheel in the latest release:
 
 ```bash
 python - <<'EOF'
 import json, platform, sys, urllib.request
+if sys.version_info < (3, 12):
+    sys.exit("lsdtt3 needs Python 3.12 or later")
 rel = json.load(urllib.request.urlopen(
     "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
-py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
 plat = {"linux": "manylinux", "darwin": "macosx", "win32": "win_"}[sys.platform]
 arch = platform.machine().lower()      # x86_64, arm64 or amd64
 for a in rel["assets"]:
     n = a["name"]
-    if n.endswith(".whl") and py in n and plat in n and arch in n.lower():
+    if n.endswith(".whl") and "-abi3-" in n and plat in n and arch in n.lower():
         print(a["browser_download_url"])
 EOF
 ```
 
-Then install from the address it printed, for example:
+Then install from that address:
 
 ```bash
-python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/v0.9.2/lsdtt3-0.9.2-cp313-cp313-manylinux_2_28_x86_64.whl
+python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/vX.Y.Z/lsdtt3-X.Y.Z-cp312-abi3-manylinux_2_28_x86_64.whl
 ```
 
-If it prints nothing, that release has no wheel for your Python version or
-platform; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
+If it prints nothing, that release has no wheel for your platform, or your
+Python is older than 3.12; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
 shows which wheels each one has.
-
-**In Google Colab** the same lookup and install go in one code cell:
-
-```python
-import json, sys, urllib.request
-rel = json.load(urllib.request.urlopen(
-    "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
-py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
-url = next(a["browser_download_url"] for a in rel["assets"]
-           if a["name"].endswith(".whl") and py in a["name"] and "manylinux" in a["name"])
-print(url)
-!pip install {url}
-```
 
 You do not need the backend tarball or the `os.environ` cell from
 [Google Colab](#google-colab) for the Python package; the wheel finds its own

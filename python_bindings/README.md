@@ -10,26 +10,24 @@ for every function at
 
 ## Install
 
-`lsdtt3` is **not on PyPI yet**. Wheels are attached to every
-[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest) after
-0.8.0; each wheel is for one Python version and platform (`cp312` is Python
-3.12, `cp313` Python 3.13). Take the one that matches your Python from the
-latest release, keep its original file name (pip reads the version and
-platform from it), and install it from the file or directly from its URL:
-
 ```bash
-python -m pip install "<URL of the wheel on the release page>"
-python -m pip install lsdtt3-0.9.2-cp312-cp312-manylinux_2_28_x86_64.whl
+python -m pip install lsdtt3
 ```
 
-The [installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html#python-package)
-has a short command that finds the right wheel in the latest release for you.
+Python 3.12 or later, on Linux (x86_64), macOS (Apple Silicon and Intel,
+macOS 15 or later) and Windows (x64). Install into a virtual, conda or pixi
+environment rather than your system Python. The wheels bundle GDAL and PROJ,
+so nothing else needs installing, and they also install the lsdtt3
+command-line tools (`lsdtt-*`) as commands. In Google Colab, run
+`!pip install lsdtt3` in a cell.
 
-Google Colab runs Python 3.13 on Linux, so it needs the `cp313` manylinux
-wheel. Wheels bundle GDAL and PROJ, and also install the lsdtt3 command-line
-tools as commands. Install into a virtual, conda or pixi environment rather
-than your system Python. See "Versioning" below for why some lsdtt3 versions
-have no wheel.
+There is one wheel per platform, `cp312-abi3`: it is built against Python's
+stable ABI, so the same file installs on 3.12, 3.13, 3.14 and later. The
+same wheels are attached to every
+[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest),
+together with wheels for older lsdtt3 versions that are not on PyPI; the
+[installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html#python-package)
+explains how to install one of those.
 
 To install from a clone of the repository instead (needs a C++17 compiler,
 CMake and the GDAL development files), from the repository root:
@@ -99,9 +97,10 @@ The Python package shares its version number with lsdtt3: the `lsdtt3` 0.7.1
 wheels are built from the lsdtt3 `v0.7.1` release, the same source as the 0.7.1
 command-line tools and backend bundles.
 
-Wheels are not published for every lsdtt3 release, because the Python API is
-not supported for every version of the C++ core. A version without wheels is
-expected; it is not a withdrawn release.
+Versions up to 0.9.3 are not on PyPI; their wheels (one per Python version)
+are attached to their GitHub releases. Some early releases have no wheels at
+all, because the Python API was not supported for every version of the C++
+core; that is expected, not a withdrawn release.
 
 A version ending in `.postN` (for example `0.7.1.post1`) is the same source as
 `0.7.1`, rebuilt or repackaged.

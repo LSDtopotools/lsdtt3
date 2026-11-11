@@ -1,4 +1,8 @@
+# STABLE_ABI: build against Python's limited API (3.12+), so one cp312-abi3
+# wheel per platform installs on every later CPython (pyproject.toml
+# wheel.py-api). The bindings must call only limited-API C functions.
 nanobind_add_module(_core
+    STABLE_ABI
     module.cpp
     geospatial_runtime.cpp
     raster_types.cpp

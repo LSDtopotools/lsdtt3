@@ -9,11 +9,12 @@
 # CIBW_BEFORE_BUILD_MACOS in .github/workflows/python-wheels.yml). Not used by
 # local builds or the Apptainer route.
 #
-# Why: each platform builds five wheels (CPython 3.10-3.14), and all of the
-# lsdtt3 runtime library -- about 250 of the ~300 C++ files -- compiles
-# identically for every Python version. With ccache as the compiler launcher,
-# wheels 2-5 reuse those objects and recompile only the nanobind and binding
-# sources. The workflow sets the launcher and the path settings that make the
+# Why: when each platform built five wheels (CPython 3.10-3.14), all of the
+# lsdtt3 runtime library -- about 250 of the ~300 C++ files -- compiled
+# identically for every Python version, and with ccache as the compiler
+# launcher wheels 2-5 reused those objects. Since the wheel became a single
+# cp312-abi3 build per platform there is nothing to reuse within a run, so this
+# now saves little; it is kept until CI timings show whether to drop it. The workflow sets the launcher and the path settings that make the
 # commands identical between builds (CCACHE_BASEDIR, a fixed per-wheel
 # SKBUILD_BUILD_DIR).
 #

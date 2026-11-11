@@ -63,8 +63,9 @@ Options:
   --source <dir>     Source tree to build (must contain python_bindings/).
                      Default: this repository.
   --out-dir <dir>    Where the repaired wheels go. Default: <source>/wheelhouse
-  --python <list>    Comma-separated Python versions, e.g. 3.12 or 3.11,3.12,
+  --python <list>    Comma-separated Python versions, e.g. 3.12 or 3.12,3.13,
                      or "all" for every version in [tool.cibuildwheel] build.
+                     The first builds the abi3 wheel; the others test it.
                      Default: all.
   --sif <path>       The image to use, built there if missing.
                      Default: $LSDTT_WHEEL_SIF, else
@@ -253,11 +254,13 @@ fi
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
-# Runs inside the image as the calling user. $1 = cpXY tag, $2 = 1 to test.
-# /project is the source tree and /wheelhouse the output directory.
+# Runs inside the image as the calling user. $1 = cpXY tag, $2 = 1 to test,
+# $3 = the file name of an abi3 wheel already in /wheelhouse to test with this
+# Python instead of building one (empty: build). /project is the source tree
+# and /wheelhouse the output directory.
 read -r -d '' INNER <<'INNER_EOF' || true
 set -euo pipefail
-tag="$1"; run_tests="$2"
+tag="$1"; run_tests="$2"; reuse="${3:-}"
 py="/opt/python/${tag}-${tag}/bin/python"
 [[ -x "$py" ]] || { echo "this image has no ${tag} (/opt/python: $(ls /opt/python | tr '\n' ' '))" >&2; exit 3; }
 
@@ -277,12 +280,17 @@ EOF
 work="$(mktemp -d /tmp/lsdtt3-wheel-${tag}-XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
-echo "-- build (${tag}, CMAKE_ARGS=${CMAKE_ARGS:-})"
-"$py" -m pip wheel --no-deps --wheel-dir "${work}/raw" /project/python_bindings
+if [[ -n "$reuse" ]]; then
+    wheel="/wheelhouse/${reuse}"
+    echo "-- reuse ${reuse} (abi3: built once, tested with ${tag})"
+else
+    echo "-- build (${tag}, CMAKE_ARGS=${CMAKE_ARGS:-})"
+    "$py" -m pip wheel --no-deps --wheel-dir "${work}/raw" /project/python_bindings
 
-echo "-- repair"
-auditwheel repair --wheel-dir "${work}/repaired" "${work}"/raw/*.whl
-wheel="$(ls "${work}"/repaired/*.whl)"
+    echo "-- repair"
+    auditwheel repair --wheel-dir "${work}/repaired" "${work}"/raw/*.whl
+    wheel="$(ls "${work}"/repaired/*.whl)"
+fi
 
 if [[ "$run_tests" == 1 ]]; then
     echo "-- test $(basename "$wheel")"
@@ -294,7 +302,7 @@ if [[ "$run_tests" == 1 ]]; then
     ( export PATH="${work}/venv/bin:${PATH}"; cd /tmp && bash -c "$cmd" )
 fi
 
-cp "$wheel" /wheelhouse/
+[[ -n "$reuse" ]] || cp "$wheel" /wheelhouse/
 echo "-- done: $(basename "$wheel")"
 INNER_EOF
 
@@ -309,6 +317,10 @@ for v in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY \
 done
 
 BUILT=()
+# The wheel is abi3 (cp312-abi3, pyproject.toml wheel.py-api), so the first
+# Python builds it and every later one installs and tests that same wheel, as
+# cibuildwheel does. ABI3_WHEEL holds its file name once built.
+ABI3_WHEEL=""
 for tag in "${TAGS[@]}"; do
     step "Wheel for ${tag}"
     t0=$SECONDS
@@ -326,9 +338,13 @@ for tag in "${TAGS[@]}"; do
         ${pass_env[@]+"${pass_env[@]}"} \
         --bind "${SOURCE}:/project" \
         --bind "${OUT_DIR}:/wheelhouse" \
-        "$SIF" bash -c "$INNER" inner "$tag" "$RUN_TESTS" \
+        "$SIF" bash -c "$INNER" inner "$tag" "$RUN_TESTS" "$ABI3_WHEEL" \
         || fail "wheel build for ${tag} failed"
     BUILT+=("${tag} ($((SECONDS - t0))s)")
+    if [[ -z "$ABI3_WHEEL" ]]; then
+        newest="$(ls -t "$OUT_DIR"/*.whl 2>/dev/null | head -n 1)"
+        [[ "$newest" == *-abi3-* ]] && ABI3_WHEEL="$(basename "$newest")"
+    fi
 done
 
 step "Summary"
