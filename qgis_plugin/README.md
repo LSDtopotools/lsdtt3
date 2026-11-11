@@ -1,6 +1,55 @@
-# qgis_plugin
+# lsdtt3 QGIS plugin
 
-Utilities and source for the `lsdtt_qgis` QGIS plugin.
+The plugin adds an **lsdtt3** group to the QGIS Processing Toolbox. Each
+algorithm runs one of the lsdtt3 command-line tools, so you install two
+things: the **plugin** and a **backend** (the command-line tools for your
+system).
+
+## Installation
+
+**1. Download the plugin and the backend for your system.** These links always
+fetch the latest release:
+
+| What | Download |
+|---|---|
+| Plugin (all systems) | [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip) |
+| Backend, Windows | [`lsdtt3-backend-win64-qgis.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-win64-qgis.zip) |
+| Backend, macOS Apple Silicon (M1 and later) | [`lsdtt3-backend-macos-arm64-qgis.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz) |
+| Backend, macOS Intel | [`lsdtt3-backend-macos-x86_64-qgis.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz) |
+| Backend, Linux | [`lsdtt3-backend-linux-x86_64-core.tar.gz`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz) |
+
+Download both from GitHub, not from another copy you come across: the plugin
+and the backend must come from the same `X.Y` series (plugin 0.9.x works with
+any 0.9.x backend; see [Versioning](#versioning-plugin-and-backend)). Older
+releases are on the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases).
+
+**2. Unpack the backend** into a folder of its own, for example in your
+Documents folder. Do not unpack the plugin zip.
+
+- Windows: right-click the zip, **Extract All…**
+- macOS: double-click the `.tar.gz`, then, in Terminal, clear the quarantine
+  flag the browser set, or macOS blocks the tools:
+  `xattr -dr com.apple.quarantine <unpacked folder>`. The backend's own
+  `README.md` has the details.
+- Linux: `tar -xzf lsdtt3-backend-linux-x86_64-core.tar.gz`
+
+**3. Install the plugin in QGIS:** **Plugins → Manage and Install Plugins… →
+Install from ZIP**, choose `lsdtt3-qgis-plugin.zip`, and click **Install
+Plugin**.
+
+**4. Point the plugin at the backend:** open **lsdtt3 → LSDTT Backend
+Settings** and select the unpacked backend's root folder, the one containing
+`bin/`, `share/` and `manifest.json` (not `bin/` itself). Saving checks the
+folder for every tool the plugin uses.
+
+**5. Check it works:** run **Raster Preprocessing** from the **lsdtt3** group
+of the Processing Toolbox on a small DEM, with hillshade switched on.
+
+To update later, repeat steps 1–4: **Install from ZIP** replaces the plugin in
+place, and the new backend goes in a new folder, which you then select in the
+settings. More on that, and on fixing errors, is in
+[Updating to a new version](#updating-to-a-new-version) and
+[Backend command-line tools](#backend-command-line-tools-required) below.
 
 Developers: how the plugin, its backend bundle and their version checks fit
 together, and the loop for changing them, is in
@@ -113,24 +162,11 @@ This writes an installable zip to:
 
 where `<version>` is read from `qgis_plugin/lsdtt_qgis/metadata.txt`.
 
-## Install in QGIS
+## Installing a plugin zip you built
 
-Users: download the plugin and a backend from the latest GitHub release. These
-links always fetch the newest version:
-
-- plugin: [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip)
-- backend: [Windows](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-win64-qgis.zip),
-  [macOS Apple Silicon](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-arm64-qgis.tar.gz),
-  [macOS Intel](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-macos-x86_64-qgis.tar.gz) or
-  [Linux](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz)
-
-Use the GitHub release, not an older copy from elsewhere: the plugin and the
-backend must share a major.minor version (see above). Older releases are on
-the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases).
-
-In QGIS: `Plugins -> Manage and Install Plugins... -> Install from ZIP` and
-select the plugin zip (the downloaded one, or the one you built above).
-Then point `lsdtt3 -> LSDTT Backend Settings` at the unpacked backend folder.
+Install a zip from `qgis_plugin/dist/` exactly as the downloaded one
+([Installation](#installation), step 3). It must match the backend's `X.Y`
+series like any other plugin.
 
 ## Basin extraction: select all basins of one stream order
 
@@ -235,18 +271,16 @@ the plugin and reinstall from the new zip.
 
 ## Backend command-line tools (required)
 
-The plugin calls external `lsdtt-*` executables. Install or unpack a backend
-bundle before running algorithms.
+The plugin calls external `lsdtt-*` executables, so a backend must be
+unpacked and selected before any algorithm runs
+([Installation](#installation), steps 1, 2 and 4).
 
-### Recommended (Windows): use packaged backend zip
+### Checking a Windows backend outside QGIS
 
-1. Download `lsdtt3-backend-win64-qgis-v<version>.zip` from the same release
-   as the plugin (the plugin and backend must share major.minor; see
-   [Versioning](#versioning-plugin-and-backend)). Developers build it with
-   `.\tools\package_windows_backend.ps1 -Version <version>` (see
-   `tools/README.md`).
-2. Unzip it.
-3. In a PowerShell session, load runtime env vars:
+Developers build the Windows backend with
+`.\tools\package_windows_backend.ps1 -Version <version>` (see
+`tools/README.md`). To check an unpacked one works on its own, load its
+runtime environment in PowerShell and ask a tool for its version:
 
 ```powershell
 cd C:\path\to\lsdtt3-backend-win64-qgis-v<version>
@@ -254,16 +288,8 @@ cd C:\path\to\lsdtt3-backend-win64-qgis-v<version>
 .\bin\lsdtt-raster-preprocessing.exe --version
 ```
 
-If `--version` works, the backend is ready.
-
-On Linux, use the Linux backend package
-(`lsdtt3-backend-linux-x86_64-core-v<version>.tar.gz`) instead: unpack it and
-point the plugin at the unpacked folder.
-
-### Point plugin to backend folder
-
-In QGIS, open `lsdtt3 -> LSDTT Backend Settings` and select the unzipped
-backend root folder (the one containing `bin/`, `share/`, and `manifest.json`).
+If `--version` works, the backend is ready. On Linux and macOS, run
+`bin/lsdtt-raster-preprocessing --version` from the unpacked folder.
 
 ### Troubleshooting PROJ / `proj.db` errors
 

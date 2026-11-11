@@ -29,7 +29,7 @@ list, and the same content is on this site under
 | `lsdtt-fetch-river-lines` | Fetch (OS Open Rivers for Great Britain, keyless) or read river centrelines for an area, and prepare them for stream burning: clipped, noded, oriented downstream, with a topology table and attribution. |
 | `lsdtt-raster-preprocessing` | The preparation pipeline: projection enforcement and reprojection, masking, nodata filling, breaching, pit filling, hillshade. |
 | `lsdtt-raster-calculator` | Two-raster algebra. |
-| `lsdtt-stream-burning` | Conditions a DEM using a supplied vector channel network ([Burning mapped rivers into a DEM](burning_river_lines.md)). |
+| `lsdtt-stream-burning` | Conditions a DEM using a supplied vector channel network ([Burning mapped rivers into a DEM](../design_and_algorithms/burning_river_lines.md)). |
 
 ## Surfaces, slopes and curvature
 
@@ -50,7 +50,7 @@ list, and the same content is on this site under
 | Tool | What it does |
 |---|---|
 | `lsdtt-drainage-analysis` | Static topographic indices: drainage area, TWI, STI, and the Cavalli connectivity index. No time dimension. |
-| `lsdtt-channel-extraction` | Extract a channel network from a DEM; snap field points to it with drainage area and channel slope ([Field points](channel_points.md)). |
+| `lsdtt-channel-extraction` | Extract a channel network from a DEM; snap field points to it with drainage area and channel slope ([Field points](../design_and_algorithms/channel_points.md)). |
 | `lsdtt-channel-network-analysis` | Build a channel and junction network, then run one or more network analyses on it. |
 | `lsdtt-internal-drainage` | Detect, review, route, tag and analyse internally drained basins — moulins, playas, quarries. |
 | `lsdtt-outlet-matching` | Match reference-DEM outlets to target-DEM cells by comparing D8 contributing areas. |

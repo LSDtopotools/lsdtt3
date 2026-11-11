@@ -5,6 +5,60 @@ analysis results in memory, so a script can compose terrain, flow, channel,
 basin, chi, cosmogenic, and hydraulic operations without temporary parameter
 files.
 
+## Installation
+
+The package is a wheel attached to each
+[GitHub release](https://github.com/LSDtopotools/lsdtt3/releases/latest), for
+Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x64), and Python
+3.10 to 3.14. It is **not on PyPI yet**, so `pip install lsdtt3` does not work.
+Install it into a virtual, conda or pixi environment, not your system Python.
+
+**1. Find the wheel for your Python and system.** Run this with the Python you
+will use; it prints the address of the matching wheel in the latest release:
+
+```bash
+python - <<'EOF'
+import json, platform, sys, urllib.request
+rel = json.load(urllib.request.urlopen(
+    "https://api.github.com/repos/LSDtopotools/lsdtt3/releases/latest"))
+py = f"-cp{sys.version_info.major}{sys.version_info.minor}-"
+plat = {"linux": "manylinux", "darwin": "macosx", "win32": "win_"}[sys.platform]
+arch = platform.machine().lower()      # x86_64, arm64 or amd64
+for a in rel["assets"]:
+    n = a["name"]
+    if n.endswith(".whl") and py in n and plat in n and arch in n.lower():
+        print(a["browser_download_url"])
+EOF
+```
+
+(On Windows, save the lines between `<<'EOF'` and `EOF` as `find_wheel.py`
+and run `python find_wheel.py`.)
+
+**2. Install it** from the address it printed, for example:
+
+```bash
+python -m pip install https://github.com/LSDtopotools/lsdtt3/releases/download/v0.9.3/lsdtt3-0.9.3-cp313-cp313-manylinux_2_28_x86_64.whl
+```
+
+**3. Check it works:**
+
+```bash
+python -c "import lsdtt3; print(lsdtt3.__version__)"
+```
+
+If step 1 prints nothing, the latest release has no wheel for your Python
+version or system; the [list of releases](https://github.com/LSDtopotools/lsdtt3/releases)
+shows what each release has.
+
+The wheel is self-contained: it bundles GDAL and PROJ and also installs the
+command-line tools as commands, so you do not need a backend package. **In
+Google Colab** the lookup and the install fit in one cell; it is in the
+[installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package), and
+the `python_binding_examples` notebook in the lsdtt3_notebooks repository
+installs the package and runs a complete basin, slope-area and chi workflow.
+For development from a clone, see
+[Building the Python wheels](../developer_notes/building_python_wheels.md).
+
 ## Start here
 
 1. [Load, inspect, and save a DEM](getting_started.md).
@@ -31,26 +85,3 @@ files.
 
 The [API reference](../python_api/index.md) is generated from the installed
 Python API. Guides explain a workflow; API pages specify the exact callable.
-
-## Installation
-
-`lsdtt3` shares its version number with the lsdtt3 command-line tools, but
-wheels are built only for releases where the Python API is supported, so not
-every version has one. It is **not on PyPI yet** while the repository is in
-private beta: when a release has wheels they are attached to its GitHub
-release, and you install the file for your Python and platform into a virtual,
-conda or pixi environment:
-
-```bash
-python -m pip install lsdtt3-0.7.1-cp312-cp312-manylinux_2_28_x86_64.whl
-```
-
-Each wheel is for one Python version (`cp312` is Python 3.12) and keeps its
-original file name, which pip reads. In Google Colab, which runs Python 3.13 on
-Linux, the `python_binding_examples` notebook in the lsdtt3_notebooks
-repository installs the `cp313` wheel and runs a complete basin, slope-area and
-chi workflow.
-
-The [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)
-has the details. For development from this checkout, see
-[Building the Python wheels](../developer_notes/building_python_wheels.md).

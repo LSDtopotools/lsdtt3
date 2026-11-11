@@ -4,8 +4,8 @@ An oblique frame is a grid whose x axis runs along a feature (a fault, a river,
 a range), so a long diagonal strip is analysed on a grid that holds the strip
 and not its bounding box. The concepts, and the same work with the
 command-line tools, are in
-[Analysing along a feature](../what_is_lsdtt3/oblique_frames.md); the method is
-in [Oblique analysis frames](../design_and_algorithms/oblique_frames.md). The
+[Analysing along a feature](../design_and_algorithms/oblique_frames.md), and
+the method at the end of that page. The
 Python calls run the same C++ routines as the command-line tools, so the same
 frame and settings give the same rasters.
 

@@ -68,15 +68,12 @@ nav:
     - Data:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md
-      - Field points on the channel network: what_is_lsdtt3/channel_points.md
-      - Burning mapped rivers into a DEM: what_is_lsdtt3/burning_river_lines.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows:
       - Running workflows: what_is_lsdtt3/workflows.md
       - Valley-floor widths: what_is_lsdtt3/workflow_valley_widths.md
       - Chi analysis of a region: what_is_lsdtt3/workflow_chi_region.md
       - Lithology and channels: what_is_lsdtt3/workflow_lithology_channels.md
-    - Analysing along a feature (oblique frames): what_is_lsdtt3/oblique_frames.md
   - Design and algorithms:
     - Flow routing: design_and_algorithms/flow_routing.md
     - Choosing a synthetic landscape tool: design_and_algorithms/synthetic_cli_cluster.md
@@ -88,7 +85,9 @@ nav:
     - Lithology and channel steepness statistics: design_and_algorithms/lithology_channel_statistics.md
     - Channel-link bearing statistics: design_and_algorithms/channel_bearing_statistics.md
     - Spectral analysis: design_and_algorithms/spectral_analysis.md
-    - Oblique analysis frames: design_and_algorithms/oblique_frames.md
+    - Analysing along a feature (oblique frames): design_and_algorithms/oblique_frames.md
+    - Field points on the channel network: design_and_algorithms/channel_points.md
+    - Burning mapped rivers into a DEM: design_and_algorithms/burning_river_lines.md
   - Command-line reference:
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
