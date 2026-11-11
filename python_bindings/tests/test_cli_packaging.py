@@ -30,7 +30,8 @@ def test_driver_path_reports_missing_driver(monkeypatch: pytest.MonkeyPatch, tmp
 def test_driver_path_uses_platform_layout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Drivers are discovered underneath the installed package directory."""
     monkeypatch.setattr(_cli, "__file__", str(tmp_path / "_cli.py"))
-    executable = tmp_path / "bin" / "lsdtt-chi-analysis"
+    suffix = ".exe" if _cli.os.name == "nt" else ""
+    executable = tmp_path / "bin" / f"lsdtt-chi-analysis{suffix}"
     executable.parent.mkdir()
     executable.touch()
     assert _cli._driver_path("lsdtt-chi-analysis") == executable
@@ -54,7 +55,14 @@ def test_run_forwards_arguments_and_exit_code(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(_cli.subprocess, "run", run)
     assert _cli._run("lsdtt-chi-analysis") == 7
-    assert calls == [([str(executable), "params.txt"], False, None)]
+    assert len(calls) == 1
+    command, check, env = calls[0]
+    assert command == [str(executable), "params.txt"] and check is False
+    if _cli.os.name == "nt":
+        # the wheel's DLL directories are added to PATH for the child .exe
+        assert isinstance(env, dict) and "PATH" in env
+    else:
+        assert env is None
 
 
 @pytest.mark.exact_solution
