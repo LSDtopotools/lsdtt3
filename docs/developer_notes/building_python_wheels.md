@@ -392,8 +392,8 @@ seconds rather than after the matrix.
 
     `python_bindings/pyproject.toml` carries the same `X.Y.Z` as
     `project(lsdtt3 VERSION ...)` in the top-level `CMakeLists.txt`
-    (`tools/set_version.py` sets both). Releases after 0.8.0 build wheels on
-    every tag; before that they were built by hand for some releases only.
+    (`tools/set_version.py` sets both). Release tags build wheels in CI
+    (the first to attach them was v0.9.2); before that they were built by hand for some releases only.
     `tools/make_release.sh` also builds the bindings once on Linux and runs the
     whole `python_bindings/tests` suite in the first release job, so a C++
     change that breaks them stops the release before the wheel matrix starts

@@ -138,6 +138,27 @@ The visualisation environment for the developers is the sister package [`lsdvizt
 
 ---
 
+## Citing lsdtt3
+
+If you use lsdtt3 in research, please cite it:
+
+> Mudd, S. M., Vervoordeldonk, R., Gailleton, B., Hawksworth, M. E., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Valters, D., & Hurst, M. D. (2026). LSDTopoTools3 (lsdtt3): topographic analysis for geomorphology. Zenodo. [https://doi.org/10.5281/zenodo.24110423](https://doi.org/10.5281/zenodo.24110423)
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24110423.svg)](https://doi.org/10.5281/zenodo.24110423)
+
+This DOI covers every version of lsdtt3 and always leads to the latest; the
+Zenodo page also lists a DOI for each release, if you need to cite the exact
+version you used. The repository's `CITATION.cff` has the citation in
+machine-readable form. Please also cite the original LSDTopoTools2:
+
+> Mudd, S. M., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Gailleton, B., Hurst, M. D., Valters, D. V., Wickert, A. D., & Hutton, E. W. H. (2023). LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9. Zenodo. [https://doi.org/10.5281/zenodo.8076231](https://doi.org/10.5281/zenodo.8076231)
+
+The methods each tool uses have their own references, given in the
+[design and algorithms](../design_and_algorithms/index.md) pages and in each
+tool's command-line reference page.
+
+---
+
 ## Compatibility
 
 lsdtt3 is **not backward-compatible** with LSDTopoTools2. Parameter files, output file names, and some algorithm defaults differ. If you have existing LSDTopoTools2 workflows, consult the [command-line reference](../cli_reference/cli_reference_lsdtt_channel_extraction.md) for the updated parameter names.
@@ -151,8 +172,11 @@ install it. They are self-contained: no compiler, no library installation, no
   native Windows build on the same machine. A native Windows package is
   provided as well, but it is a reduced build intended as the QGIS plugin
   backend. 
-- **macOS** — no macOS package yet. Run the Linux package inside a Multipass
-  Ubuntu VM.
+- **macOS** — for the full tool set, run the Linux package inside a
+  Multipass Ubuntu VM. Native macOS packages (Apple Silicon and Intel, macOS 15
+  or later) are provided from 0.9.1, but like the native Windows package they
+  are a reduced build, the backend for the QGIS plugin. The Python package
+  runs natively on macOS.
 - **Google Colab** — the Linux package works there with nothing installed
   locally at all, and so does the Python package (the `cp313` wheel).
 

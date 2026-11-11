@@ -2,7 +2,9 @@
 
 Chi analysis builds on the D8 channel network. The normal sequence is DEM,
 `FlowInfo`, a channel scope/network, chi coordinates, and a piecewise-linear
-fit.
+fit. How chi is computed, how the profiles are segmented, and how knickpoints
+and the disorder metric for m/n are found are explained in
+[Chi analysis](../design_and_algorithms/chi_analysis.md).
 
 ```python
 import lsdtt3
@@ -98,4 +100,5 @@ major = knickpoints[(knickpoints.at_junction == 0) & (knickpoints.delta_ksn.abs(
 [lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/chi_analysis/) draws these tables (`select_tributaries`, `lsdviz3-knickpoints`)
 after the same `basin_id` to `basin_index` rename as above.
 
-See [Chi and ksn API](../python_api/chi.md).
+See [Chi and ksn API](../python_api/chi.md) for every function, and
+[Chi analysis](../design_and_algorithms/chi_analysis.md) for the methods and their references.

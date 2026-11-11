@@ -80,5 +80,5 @@ out = flow.channel_point_attributes(filled, sites_gdf,
 
 It is lsdtt-channel-extraction's `run_channel_point_attributes`, with the
 same routine and parameter names. See
-[Field points on the channel network](../what_is_lsdtt3/channel_points.md)
+[Field points on the channel network](../design_and_algorithms/channel_points.md)
 for the fields and how the slope is measured.

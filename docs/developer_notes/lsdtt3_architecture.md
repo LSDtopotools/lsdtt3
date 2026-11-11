@@ -1378,7 +1378,10 @@ CLI source files follow this layout, in order:
 1. file-header comment block (copyright, brief description, outputs, usage)
 2. `#include` block
 3. `static const` status, citation, and tool-name strings (`k_status`,
-   `k_citation`, `k_tool_name`)
+   `k_citation`, `k_tool_name`). `k_citation` is
+   `lsdtt::lsdtt3_citation_url()` (the lsdtt3 Zenodo concept DOI, from
+   `lsdtt_param_parser`), or a string of method references ending in it;
+   never a hard-coded URL
 4. `print_banner()` — fixed-width box to stdout. Required content: a
    brief summary of what the CLI does; then a versioning box, directly
    below the summary, containing `|| lsdtt3 version : ` followed by
@@ -3824,7 +3827,7 @@ directions use `dx_eff = dx·√2`.
 
 File: `src/cpu/lsdtt_steady_state_cpu.hpp/.cpp`
 
-Chi-based analytical solution of `U = K·A^m·S^n` (Mudd et al. 2014). `z[i] =
+Chi-based analytical solution of `U = K·A^m·S^n` (Perron & Royden 2013). `z[i] =
 baselevel + f·chi[i]`, where chi is integrated up-network and is independent of
 `f` (so it is computed once from geometry).
 
