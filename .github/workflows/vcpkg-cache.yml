@@ -13,6 +13,13 @@ name: Windows vcpkg cache
 # Unused caches are evicted after 7 days, so a scheduled run restores it every
 # five days to keep it alive. A hit downloads the archives and stops.
 #
+# Each vcpkg cache is about 1.4 GB, against a 10 GB limit per repository. The
+# tidy job then deletes every other windows-vcpkg-* cache: the ones a release
+# tag saved for its own run (no later tag can see them) and the ones on main
+# under an old key (an earlier MSVC toolset, VCPKG_TAG or package list). Only
+# the current key on main is kept. It runs only when warm succeeded, so the
+# repository is never left without a usable cache.
+#
 # The cache key MUST stay identical to release.yml and python-wheels.yml:
 # same VCPKG_TAG, triplet and .github/vcpkg-packages.txt.
 #
@@ -50,6 +57,8 @@ jobs:
     name: Build or refresh the vcpkg cache
     runs-on: windows-2025
     timeout-minutes: 360
+    outputs:
+      key: ${{ steps.key.outputs.key }}
     defaults:
       run:
         shell: pwsh
@@ -68,6 +77,11 @@ jobs:
           $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
           Write-Host "MSVC toolset $ver"
           "MSVC_TOOLS_VERSION=$ver" >> $env:GITHUB_ENV
+
+      - name: Record the cache key
+        id: key
+        run: |
+          "key=windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}" >> $env:GITHUB_OUTPUT
 
       # Exact key only: a partial (restore-keys) match must not count as warm.
       - name: Restore vcpkg cache
@@ -104,3 +118,29 @@ jobs:
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
           key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
+
+  tidy:
+    name: Delete obsolete vcpkg caches
+    needs: warm
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      KEEP_KEY: ${{ needs.warm.outputs.key }}
+    steps:
+      - name: Delete every windows-vcpkg cache except the current one on main
+        run: |
+          echo "Keeping ${KEEP_KEY} on refs/heads/main"
+          gh api --paginate "repos/${GH_REPO}/actions/caches?key=windows-vcpkg-&per_page=100" \
+            --jq '.actions_caches[] | "\(.id) \(.ref) \(.size_in_bytes) \(.key)"' |
+          while read -r id ref size key; do
+            if [[ "${ref}" == "refs/heads/main" && "${key}" == "${KEEP_KEY}" ]]; then
+              continue
+            fi
+            echo "Deleting ${key} on ${ref} ($(( size / 1048576 )) MB)"
+            gh api -X DELETE "repos/${GH_REPO}/actions/caches/${id}"
+          done
+          gh api "repos/${GH_REPO}/actions/cache/usage" \
+            --jq '"Actions cache now \(.active_caches_size_in_bytes / 1048576 | floor) MB in \(.active_caches_count) caches"'

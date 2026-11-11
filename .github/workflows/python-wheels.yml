@@ -130,7 +130,12 @@ jobs:
           # same-depth folder (SKBUILD_BUILD_DIR, {wheel_tag} filled in by
           # scikit-build-core) and paths are made relative to the project root
           # (CCACHE_BASEDIR). python_bindings/tools/ci_ccache.sh installs it.
-          # Not Windows: its Visual Studio generator ignores compiler launchers.
+          # Windows uses ccache too, but needs Ninja (the default Visual Studio
+          # generator ignores compiler launchers, and builds the ~250 runtime
+          # files of one project one at a time). The Windows launcher comes from
+          # LSDTT_WINDOWS_LAUNCHER, which the "Install ccache (Windows)" step
+          # sets only if ccache installed, so a failed download never fails the
+          # build.
           # The launcher goes in CMAKE_ARGS, which only scikit-build-core reads,
           # NOT in the CMAKE_<LANG>_COMPILER_LAUNCHER environment variables:
           # CIBW_ENVIRONMENT also applies to before-all, whose dependency build
@@ -151,8 +156,10 @@ jobs:
                "environment": "MACOSX_DEPLOYMENT_TARGET=15.0 " + release + launch + '"'
                               + ccache("$GITHUB_WORKSPACE")},
               {"name": "Windows x86_64", "os": "windows-2025", "arch": "AMD64",
-               "environment": release + ' -DLSDTT_PYTHON_OPENMP=OFF '
-                              '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg-pinned/scripts/buildsystems/vcpkg.cmake"'},
+               "environment": "CMAKE_GENERATOR=Ninja " + release + ' -DLSDTT_PYTHON_OPENMP=OFF '
+                              '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg-pinned/scripts/buildsystems/vcpkg.cmake '
+                              '-DVCPKG_TARGET_TRIPLET=x64-windows $LSDTT_WINDOWS_LAUNCHER"'
+                              + ccache("$GITHUB_WORKSPACE")},
           ]
           if os.environ["PLATFORMS"] == "linux":
               legs = legs[:1]
@@ -235,6 +242,42 @@ jobs:
           $packages = Get-Content .github/vcpkg-packages.txt | Where-Object { $_ -and -not $_.StartsWith('#') }
           & "$env:VCPKG_PINNED_ROOT\vcpkg.exe" install --triplet $env:VCPKG_TRIPLET @packages
 
+      # Ninja (below) needs the compiler on PATH: an x64 Visual Studio
+      # developer environment, as for the Windows backend in release.yml.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+
+      # ccache from its own pinned release. Sets LSDTT_WINDOWS_LAUNCHER (the
+      # CMake launcher flags) only if ccache runs; otherwise it is empty and
+      # the wheels build without a cache, exactly as before.
+      - name: Install ccache (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CCACHE_VERSION: "4.10.2"
+        run: |
+          $launcher = ""
+          try {
+            $name = "ccache-$env:CCACHE_VERSION-windows-x86_64"
+            $zip = "$env:RUNNER_TEMP\$name.zip"
+            Invoke-WebRequest "https://github.com/ccache/ccache/releases/download/v$env:CCACHE_VERSION/$name.zip" -OutFile $zip
+            Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP -Force
+            $exe = "$env:RUNNER_TEMP\$name\ccache.exe"
+            $version = & $exe --version
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host $version[0]
+              $exe = $exe -replace '\\', '/'
+              $launcher = "-DCMAKE_C_COMPILER_LAUNCHER=$exe -DCMAKE_CXX_COMPILER_LAUNCHER=$exe"
+              "LSDTT_CCACHE_EXE=$exe" >> $env:GITHUB_ENV
+            }
+          } catch {
+            Write-Host "::warning::ccache could not be installed; Windows wheels build without it: $_"
+          }
+          "LSDTT_WINDOWS_LAUNCHER=$launcher" >> $env:GITHUB_ENV
+          Write-Host "launcher: '$launcher'"
+
       - name: Build and test wheels
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
@@ -251,6 +294,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip cibuildwheel delvewheel
           python -m cibuildwheel python_bindings --output-dir wheelhouse
+
+      - name: ccache statistics (Windows)
+        if: always() && runner.os == 'Windows' && env.LSDTT_CCACHE_EXE != ''
+        shell: pwsh
+        run: '& $env:LSDTT_CCACHE_EXE --show-stats'
 
       - name: Save Windows vcpkg cache
         if: always() && runner.os == 'Windows' && steps.windows-vcpkg-cache.outputs.cache-hit != 'true'

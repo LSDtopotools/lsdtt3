@@ -10,13 +10,20 @@ name: Build and release
 #     -> builds the backends and the plugin zip as 14-day workflow artefacts;
 #        creates no release and builds no wheels (those need a tag)
 #
-# Order: the Linux job runs first and creates the release. Nothing else starts
-# unless it succeeds, so a broken tag fails once, cheaply, on Linux:
+# Order: the Linux job runs first and creates the release as a DRAFT. Nothing
+# else starts unless it succeeds, so a broken tag fails once, cheaply, on Linux:
 #
 #   build-linux ──┬── build-windows (qgis) ──┐
 #   (core bundle, ├── build-macos (qgis,     ├── python-wheels (Linux, macOS
 #    plugin zip,  │   arm64 + x86_64)        │    arm64 + x86_64, Windows)
-#    release)     └──────────────────────────┘
+#    draft        │                          │
+#    release)     └──────────────────────────┴── publish-release
+#
+# publish-release runs last, once every job has finished: it removes the
+# previous releases' unversioned copies and publishes the draft as Latest. So
+# the releases/latest/download/<name> links, and anything that installs "the
+# latest release" (notebooks, the install docs), switch to the new version
+# only when all its files are attached, never to a half-filled release.
 #
 # The wheels wait for the Windows backend because both use the same pinned
 # vcpkg binary cache: when that cache is cold (first release, or after a
@@ -169,7 +176,7 @@ jobs:
             echo ""
             echo "## Artefacts"
             echo ""
-            echo "Attached by the release workflow (each appears when its job finishes):"
+            echo "Attached by the release workflow:"
             echo ""
             echo "- Linux x86_64 backend bundle, \`core\` profile"
             echo "- Windows x64 and macOS (arm64, x86_64) backend bundles, \`qgis\` profile:"
@@ -199,6 +206,10 @@ jobs:
             dist/lsdtt3-qgis-plugin*.zip
           body_path: release_rollcall.md
           generate_release_notes: true
+          # Published by the publish-release job at the end, once every
+          # artefact is attached. Until then "latest" stays on the previous
+          # release.
+          draft: true
 
       - name: Upload as workflow artefact (manual run)
         if: "!startsWith(github.ref, 'refs/tags/')"
@@ -439,3 +450,57 @@ jobs:
       upload: true
     permissions:
       contents: write
+
+  # ---------------------------------------------------------------------------
+  # Last: tidy the old releases and publish this one.
+  #
+  # Each release carries an unversioned copy of every backend bundle and the
+  # plugin zip (about 260 MB) for the permanent releases/latest/download/<name>
+  # links. Those links only ever resolve to the Latest release, so the copies on
+  # older releases are never served; this deletes them. The versioned files on
+  # old releases are kept. The list is explicit, so nothing else (wheels, or the
+  # unversioned-looking files of very early releases) is ever touched.
+  #
+  # It publishes even if a Windows or macOS job failed, as long as Linux built:
+  # a missing platform is then fixed by re-running that job or, for wheels, a
+  # vX.Y.Z.postN wheel-only rebuild, which uploads to this (published) release.
+  publish-release:
+    name: Publish the release
+    needs:
+      - build-linux
+      - build-windows
+      - build-macos
+      - python-wheels
+    if: >-
+      always()
+      && needs.build-linux.result == 'success'
+      && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LATEST_COPIES: >-
+        lsdtt3-backend-linux-x86_64-core.tar.gz
+        lsdtt3-backend-win64-qgis.zip
+        lsdtt3-backend-macos-arm64-qgis.tar.gz
+        lsdtt3-backend-macos-x86_64-qgis.tar.gz
+        lsdtt3-qgis-plugin.zip
+    steps:
+      - name: Remove unversioned copies from older releases
+        run: |
+          gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name != \"${GITHUB_REF_NAME}\") | .tag_name as \$t | .assets[] | \"\(.id) \(\$t) \(.name)\"" |
+          while read -r id tag name; do
+            for copy in ${LATEST_COPIES}; do
+              if [[ "${name}" == "${copy}" ]]; then
+                echo "Deleting ${tag}/${name}"
+                gh api -X DELETE "repos/${GH_REPO}/releases/assets/${id}"
+              fi
+            done
+          done
+
+      - name: Publish the draft as the latest release
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest
+          gh release view "${GITHUB_REF_NAME}" --json url,isDraft,assets \
+            --jq '"\(.url) draft=\(.isDraft) assets=\(.assets | length)"'

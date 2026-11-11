@@ -326,8 +326,10 @@ therefore runs the compiler through ccache, so wheels 2 to 5 reuse those
 objects and recompile only the nanobind and binding sources. Three settings
 make that work, all in the workflow, not in `pyproject.toml`:
 
-- `CMAKE_C_COMPILER_LAUNCHER` / `CMAKE_CXX_COMPILER_LAUNCHER=ccache`, which
-  CMake reads from the environment;
+- `-DCMAKE_C_COMPILER_LAUNCHER` / `-DCMAKE_CXX_COMPILER_LAUNCHER`, passed in
+  `CMAKE_ARGS` (only scikit-build-core reads it). Not the `CMAKE_<LANG>_COMPILER_LAUNCHER`
+  environment variables: `CIBW_ENVIRONMENT` also reaches the Linux dependency
+  build in before-all, which runs before ccache is installed;
 - `SKBUILD_BUILD_DIR=<project>/python_bindings/build/cibw-{wheel_tag}`, a fixed
   per-wheel build folder instead of scikit-build-core's random temporary one;
 - `CCACHE_BASEDIR=<project>`, so ccache compares paths relative to the project
@@ -337,9 +339,20 @@ make that work, all in the workflow, not in `pyproject.toml`:
 the manylinux container, Homebrew on macOS) and prints its hit statistics, so
 the log shows whether it is working. If ccache cannot be installed it puts a
 pass-through stand-in on `PATH`, so the build never fails because of it.
-Windows is not covered: cibuildwheel uses the Visual Studio generator there,
-which ignores compiler launchers. Local builds and the Apptainer route do not
-use ccache.
+
+**Windows** builds with Ninja instead of cibuildwheel's default Visual Studio
+generator, which ignores compiler launchers and compiles the files of one
+project one at a time. Ninja needs the compiler on `PATH`, so the job first
+sets up an x64 Visual Studio developer environment (`ilammy/msvc-dev-cmd`,
+as the Windows backend build does). The "Install ccache (Windows)" step
+downloads a pinned ccache release and sets `LSDTT_WINDOWS_LAUNCHER` to the
+launcher flags, which the Windows `CMAKE_ARGS` expands; if the download fails
+the variable is empty and the wheels build uncached. ccache handles MSVC only
+without `/Zi` debug information, which a Release build does not use. The
+statistics are printed in a step of their own after the build.
+
+The cache lives only for the length of the job; nothing is saved to the
+Actions cache. Local builds and the Apptainer route do not use ccache.
 
 ### A Linux-only wheel build
 

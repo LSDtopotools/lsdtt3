@@ -145,6 +145,17 @@ version and Python tag from the file name), so the documentation looks up the
 latest release's wheels through the GitHub API instead. Each bundle's own
 README links its exact versioned release.
 
+The release is created as a **draft** and published only by the last job,
+`publish-release`, once every build has finished (whether or not the Windows
+and macOS jobs succeeded, as long as Linux did). Until then the `latest` links
+and the API's latest release stay on the previous version, so notebooks and
+the install documentation never pick up a half-filled release. The same job
+deletes the unversioned copies from every older release: `latest` never
+resolves to them, so they would only be about 260 MB of dead weight per
+release. Their versioned files are kept. The names it deletes are listed
+explicitly in the job (`LATEST_COPIES`); add any new unversioned artefact
+there.
+
 A copy of some packages on the personal web space
 (<https://www.geos.ed.ac.uk/~smudd/lsdtt_packages/>) is mentioned in the
 install documentation as a last resort only, for networks that cannot reach
