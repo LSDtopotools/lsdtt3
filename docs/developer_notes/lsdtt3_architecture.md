@@ -3824,7 +3824,7 @@ directions use `dx_eff = dx·√2`.
 
 File: `src/cpu/lsdtt_steady_state_cpu.hpp/.cpp`
 
-Chi-based analytical solution of `U = K·A^m·S^n` (Mudd et al. 2014). `z[i] =
+Chi-based analytical solution of `U = K·A^m·S^n` (Perron & Royden 2013). `z[i] =
 baselevel + f·chi[i]`, where chi is integrated up-network and is independent of
 `f` (so it is computed once from geometry).
 

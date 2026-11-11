@@ -783,7 +783,11 @@ bootstrap_replicates: 500
 
 ## References
 
-Mudd, S.M., et al. (2018). A statistical framework to quantify spatial variation in channel gradients using the integral method of channel profile analysis. *Journal of Geophysical Research: Earth Surface*, 123(2), 344–364.
+Perron, J. T., and Royden, L. (2013). An integral approach to bedrock river profile analysis. *Earth Surface Processes and Landforms*, 38(6), 570–576. <https://doi.org/10.1002/esp.3302> (the chi coordinate)
+
+Mudd, S. M., Clubb, F. J., Gailleton, B., and Hurst, M. D. (2018). How concave are river channels? *Earth Surface Dynamics*, 6, 505–523. <https://doi.org/10.5194/esurf-6-505-2018> (the disorder method for m/n, which follows Hergarten et al., 2016)
+
+How chi is computed, how the profiles are segmented, and how knickpoints and the disorder metric are found are described in [Chi analysis](../design_and_algorithms/chi_analysis.md).
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
 ## Parameters
