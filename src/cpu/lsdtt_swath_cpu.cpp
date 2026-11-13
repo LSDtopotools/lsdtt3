@@ -73,6 +73,63 @@ swath_profile_result compute_swath_profile(
     const float ndv = static_cast<float>(meta.no_data_value);
 
     // -------------------------------------------------------------------------
+    // Baseline ends.
+    // compute_swath_distances measures each pixel to the nearest point on the
+    // baseline, end points included, so a pixel beyond either end (in the
+    // half-disc behind the start or past the end) has its foot clamped to that
+    // end point: along = 0 or along = total arc. Binned, those pixels piled
+    // into the first and last bins (a 30 m wide straight section in 2 m bins
+    // had ~350 extra pixels in each end bin against 60 in the others). They
+    // are not alongside the baseline, so they are left out of the swath.
+    // A pixel is beyond an end when its foot is that end point AND it lies
+    // ahead of / behind the end along the direction of the end segment.
+    // -------------------------------------------------------------------------
+    double total_arc = 0.0;
+    for (std::size_t s = 0; s + 1 < axis_points.size(); ++s)
+    {
+        const double dx = axis_points[s + 1].x - axis_points[s].x;
+        const double dy = axis_points[s + 1].y - axis_points[s].y;
+        total_arc += std::sqrt(dx * dx + dy * dy);
+    }
+
+    // Direction of the first and last segments of non-zero length
+    // (repeated vertices give zero-length segments).
+    double start_dx = 0.0, start_dy = 0.0, end_dx = 0.0, end_dy = 0.0;
+    for (std::size_t s = 0; s + 1 < axis_points.size(); ++s)
+    {
+        start_dx = axis_points[s + 1].x - axis_points[s].x;
+        start_dy = axis_points[s + 1].y - axis_points[s].y;
+        if (start_dx != 0.0 || start_dy != 0.0) break;
+    }
+    for (std::size_t s = axis_points.size() - 1; s > 0; --s)
+    {
+        end_dx = axis_points[s].x - axis_points[s - 1].x;
+        end_dy = axis_points[s].y - axis_points[s - 1].y;
+        if (end_dx != 0.0 || end_dy != 0.0) break;
+    }
+    const lsdtt_xy& start_pt = axis_points.front();
+    const lsdtt_xy& end_pt   = axis_points.back();
+    // along_axis is stored as float: allow for its rounding at the far end.
+    const double end_tol = std::max(1e-3, 1e-6 * total_arc);
+
+    auto beyond_an_end = [&](std::size_t i, float along) -> bool
+    {
+        const double a = static_cast<double>(along);
+        const bool at_start = (a <= end_tol);
+        const bool at_end   = (a >= total_arc - end_tol);
+        if (!at_start && !at_end) return false;
+        const std::size_t r = i / static_cast<std::size_t>(nc);
+        const std::size_t c = i % static_cast<std::size_t>(nc);
+        const double px = meta.x_min + (static_cast<double>(c) + 0.5) * meta.cell_size;
+        const double py = meta.y_max() - (static_cast<double>(r) + 0.5) * meta.cell_size;
+        if (at_start && ((px - start_pt.x) * start_dx + (py - start_pt.y) * start_dy) < 0.0)
+            return true;
+        if (at_end && ((px - end_pt.x) * end_dx + (py - end_pt.y) * end_dy) > 0.0)
+            return true;
+        return false;
+    };
+
+    // -------------------------------------------------------------------------
     // Apply half-width clipping.
     // Build output distance rasters that carry nodata for pixels outside the
     // half-width constraint.  Also collect (along_axis, value) pairs for
@@ -98,6 +155,7 @@ swath_profile_result compute_swath_profile(
 
         const float perp = perp_data[i];
         if (do_clip && perp > hw_f) continue;  // outside half-width
+        if (beyond_an_end(i, along_data[i])) continue;  // not alongside the baseline
 
         const float v = val_data[i];
         if (!std::isfinite(v) || meta.is_nodata(v)) continue;
@@ -111,17 +169,14 @@ swath_profile_result compute_swath_profile(
     }
 
     // -------------------------------------------------------------------------
-    // Determine total baseline arc-length and bin layout.
+    // Bin layout (total_arc was computed above, with the baseline ends).
     // -------------------------------------------------------------------------
-    double total_arc = 0.0;
-    for (std::size_t s = 0; s + 1 < axis_points.size(); ++s)
-    {
-        const double dx = axis_points[s + 1].x - axis_points[s].x;
-        const double dy = axis_points[s + 1].y - axis_points[s].y;
-        total_arc += std::sqrt(dx * dx + dy * dy);
-    }
-
-    const int n_bins = static_cast<int>(std::ceil(total_arc / bin_width_metres));
+    // The tolerance stops rounding in the baseline length from adding an empty
+    // bin: a 960 m line built from coordinates measures 960.0000000001 m, and
+    // ceil(480.00000000005) = 481 would add a bin past its end. Pixels at the
+    // very end still land in the last bin (bin_idx is clamped below).
+    const int n_bins = std::max(1, static_cast<int>(
+        std::ceil(total_arc / bin_width_metres - 1e-6)));
 
     // -------------------------------------------------------------------------
     // Bucket samples into bins.

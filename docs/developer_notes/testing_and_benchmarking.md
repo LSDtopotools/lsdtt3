@@ -194,6 +194,39 @@ Other labels:
 Downloading tests carry `needs_network`; `network` is the flow-routing
 **domain** below, not network access.
 
+### Counting and listing the tests (for a paper or a report)
+
+The number of tests changes with every commit, so count them when you need the
+numbers, from a configured build directory:
+
+```bash
+python3 tools/summarise_tests.py --build-dir build                    # counts by category, Markdown
+python3 tools/summarise_tests.py --build-dir build --format tex        # the same as a LaTeX table
+python3 tools/summarise_tests.py --build-dir build --table list --format csv -o tests.csv
+```
+
+`--table counts` (the default) gives, for each evidence label and each level
+label, the number of CTest and pytest tests that carry it, with the label's
+definition and the total. A test with several evidence labels is counted under
+each. `--table list` gives every test: its suite, level, evidence labels,
+domains, the programs it runs, what the CLI harness checks (from its assertion
+flags: outputs written, file contents, checksums, the expected failure message)
+and a description. The description is the test's own comment in
+`tests/CMakeLists.txt`, the header of its parameter file, its docstring
+(pytest), or, failing those, the nearest comment above it (`section`, which
+often describes a group of tests) or its name as words (`name`); the `source`
+column says which. Formats are `md`, `csv` and `tex`; `--suite ctest` or
+`--suite pytest` restricts to one suite. Writing more specific comments above a
+test's registration, or docstrings on Python tests, improves the list.
+
+The counts are for the configuration of the build directory, which the output
+states: `LSDTT_ENABLE_PYTHON_TESTS`, `_PYTHON_GEO_TESTS`, `_NETWORK_TESTS`,
+`_BENCHMARKS` and `_PERF_TESTS` change which CTest tests are registered. The
+committed `docs/developer_notes/test_inventory.md` (from
+`tools/generate_test_inventory.py`) is for one fixed configuration, and breaks
+the counts down by domain, CLI and Python file. The CTest test
+`unit_summarise_tests_runs` checks that the tool still runs.
+
 ### Compartments: run what your change can affect
 
 Running the whole suite after every edit is wasteful. Most tests cannot be

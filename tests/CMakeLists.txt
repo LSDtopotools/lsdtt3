@@ -2700,6 +2700,18 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "sw_swath_profile.csv:450,200,45,40.5,"
 )
 
+# Pixels beyond the ends of a baseline that stops short of the raster are left
+# out (they used to be clamped into the end bins: 2026-11-13).
+add_lsdtt_cli_smoke_test(
+    smoke_swath_profile_short_baseline
+    lsdtt-swath-profile
+    swath_profile_short_baseline.param.in
+    swshort_swath_profile.csv
+    --expect-file-contains "swshort_swath_profile.csv:50,200,15,10.5,"
+    --expect-file-contains "swshort_swath_profile.csv:150,200,25,20.5,"
+    --expect-file-contains "swshort_swath_profile.csv:250,200,35,30.5,"
+)
+
 # =============================================================================
 # lsdtt-basin-stats
 #
@@ -11551,6 +11563,25 @@ endif()
 lsdtt_set_tests_properties(unit_test_inventory_is_current PROPERTIES
     LABELS "core;docs;python"
     SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
+# tools/summarise_tests.py (test counts by evidence category, and a list of
+# every test with its description) still runs on this build and reads the
+# CTest and pytest tests. It reports whatever is registered, so nothing is
+# compared with a stored file.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_summarise_tests_runs
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_SOURCE_DIR}/tools/summarise_tests.py"
+            --build-dir "${CMAKE_BINARY_DIR}" --ctest "${CMAKE_CTEST_COMMAND}"
+            --table counts --format csv)
+    lsdtt_mark_test_runtime(python unit_summarise_tests_runs)
+else()
+    lsdtt_mark_test_unregistered(python unit_summarise_tests_runs)
+endif()
+lsdtt_set_tests_properties(unit_summarise_tests_runs PROPERTIES
+    LABELS "core;docs;python"
+    PASS_REGULAR_EXPRESSION "all tests,,[1-9][0-9]*,[1-9][0-9]*,"
     TIMEOUT 300)
 
 # =============================================================================

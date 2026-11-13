@@ -22,6 +22,12 @@ guides, the design and algorithms, and a reference page for every
 command-line tool. Each tool also documents itself: `<tool> -h` lists every
 parameter it accepts, and `<tool> -h <parameter_name>` explains one.
 
+**Examples: <https://github.com/LSDtopotools/lsdtt3_notebooks>** — worked
+examples of lsdtt3 on real landscapes (channels, chi and k<sub>sn</sub>,
+lithology, cross sections, floodplains, field data, hydrology and landscape
+evolution), as notebooks you can run in Google Colab without installing
+anything.
+
 ---
 
 ## Overview

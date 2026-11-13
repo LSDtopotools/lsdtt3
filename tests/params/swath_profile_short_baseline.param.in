@@ -1,0 +1,18 @@
+# lsdtt-swath-profile, a baseline that stops short of the raster edges.
+# The same 50 x 50, 10 m plane as swath_profile_plane.param.in (z = 0.1 x, x in
+# metres from the west edge), with baseline_short.csv running west to east along
+# its middle row from x = 100 m to x = 400 m. Pixels behind the start (x < 100)
+# or past the end (x > 400) are not alongside the baseline and must be left
+# out: before 2026-11-13 the half-disc of them within half_width_metres of each
+# end was clamped into the first and last bins. With half_width_metres and
+# bin_width_metres both 100, each of the three bins holds exactly 10 columns x
+# 20 rows = 200 pixels, with mean 0.1 x the bin's middle: 15, 25, 35, and
+# p0 at its first column centre: 10.5, 20.5, 30.5.
+read_path: __READ_PATH__/swath_plane
+read_fname: plane.asc
+write_path: __WRITE_PATH__
+write_fname: swshort
+baseline_vector_fname: baseline_short.csv
+half_width_metres: 100
+bin_width_metres: 100
+n_threads: 1

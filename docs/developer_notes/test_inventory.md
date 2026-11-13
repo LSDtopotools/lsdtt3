@@ -12,8 +12,8 @@ Regenerate with `python3 tools/generate_test_inventory.py --build-dir build --up
 
 | Suite | Tests | `exact_solution` | `property` | `metamorphic` | `differential` | `characterisation` | `smoke` | `negative` | `performance` | `conformance` | `unit` | `system` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| CTest | 882 | 208 | 138 | 131 | 19 | 176 | 386 | 245 | . | 43 | 217 | 665 |
-| pytest | 240 | 78 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 237 | 3 |
+| CTest | 884 | 209 | 138 | 131 | 19 | 176 | 388 | 245 | . | 43 | 218 | 666 |
+| pytest | 241 | 79 | 59 | 47 | . | 10 | 27 | 62 | . | 61 | 238 | 3 |
 
 ## CTest by domain
 
@@ -28,7 +28,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `chi` | 19 | 10 | 1 | 7 | 1 | 2 | 4 | . | . | . |
 | `compatibility` | 1 | . | . | . | . | 1 | 1 | . | . | . |
 | `conventions` | 9 | 2 | . | . | . | . | . | 1 | . | 9 |
-| `core` | 36 | 14 | 2 | 3 | . | 4 | 1 | 8 | . | 16 |
+| `core` | 37 | 14 | 2 | 3 | . | 4 | 2 | 8 | . | 16 |
 | `cosmo` | 56 | 7 | 11 | 9 | 1 | 18 | 20 | 9 | . | 3 |
 | `cosmo_realworld` | 8 | . | . | . | . | 8 | . | . | . | . |
 | `cross_sections` | 2 | . | . | . | . | . | 2 | . | . | . |
@@ -36,7 +36,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `distributed_hydrology` | 32 | 9 | 12 | 2 | 3 | 4 | 10 | 18 | . | . |
 | `divide_diagnostics` | 1 | . | 1 | 1 | 1 | . | . | 1 | . | . |
 | `divide_migration` | 13 | 7 | . | 2 | . | 3 | 8 | 4 | . | . |
-| `docs` | 3 | . | . | . | . | . | . | . | . | 3 |
+| `docs` | 4 | . | . | . | . | . | 1 | . | . | 3 |
 | `erodibility_calibration` | 30 | 8 | 1 | 4 | 1 | 1 | 12 | 10 | . | . |
 | `fetch` | 80 | 11 | 4 | 6 | 1 | 5 | 17 | 47 | . | 8 |
 | `flow` | 47 | 6 | 7 | 7 | 3 | 25 | 28 | 13 | . | . |
@@ -73,7 +73,7 @@ A test in several domains (for example `lithology`, which cuts across compartmen
 | `step_change` | 5 | 2 | 3 | 2 | . | . | 1 | . | . | . |
 | `stream_burning` | 14 | 3 | 5 | 4 | . | 4 | 8 | 2 | . | . |
 | `streamlines` | 1 | 1 | . | . | . | . | . | . | . | . |
-| `surface_metrics` | 49 | 13 | 7 | 12 | . | 16 | 33 | 5 | . | 4 |
+| `surface_metrics` | 50 | 14 | 7 | 12 | . | 16 | 34 | 5 | . | 4 |
 | `synthetic_networks` | 31 | 2 | 4 | 3 | 1 | 6 | 17 | 9 | . | 4 |
 | `water` | 1 | 1 | . | . | . | . | . | . | . | . |
 
@@ -84,7 +84,7 @@ These are checked only by smoke, negative, characterisation or conformance tests
 - `compatibility` (1 test)
 - `cosmo_realworld` (8 tests)
 - `cross_sections` (2 tests)
-- `docs` (3 tests)
+- `docs` (4 tests)
 - `marsh` (1 test)
 - `outlet_matching` (1 test)
 - `packaging` (3 tests)
@@ -137,7 +137,7 @@ CTest tests whose command runs the program, directly or through the harness. Uni
 | `lsdtt-spectral-analysis` | 7 | . | . | 1 | . | 2 | 5 | . | . | 2 |
 | `lsdtt-stream-burning` | 12 | . | 4 | 3 | . | 5 | 9 | 2 | . | . |
 | `lsdtt-surface-metrics` | 11 | 3 | . | 1 | . | . | 7 | 2 | . | 2 |
-| `lsdtt-swath-profile` | 1 | 1 | . | 1 | . | . | 1 | . | . | . |
+| `lsdtt-swath-profile` | 2 | 2 | . | 1 | . | . | 2 | . | . | . |
 | `lsdtt-synthetic-networks` | 22 | 2 | 3 | 1 | . | 4 | 12 | 9 | . | 1 |
 | `lsdtt-synthetic-surfaces` | 13 | 1 | . | 1 | . | 2 | 9 | . | . | 4 |
 | `lsdtt-valley-centreline` | 11 | 1 | 1 | 1 | . | 3 | 8 | 1 | . | 1 |
@@ -194,7 +194,7 @@ None.
 | `test_sediment_routing.py` | 3 | . | 1 | 1 | . | . | . | 2 | . | 1 | 3 | . |
 | `test_spectral.py` | 3 | . | 3 | . | . | . | 1 | . | . | . | 3 | . |
 | `test_surface_keyword_migrations.py` | 5 | . | . | 3 | . | . | . | 2 | . | 4 | 5 | . |
-| `test_swath.py` | 3 | 2 | . | . | . | . | . | 1 | . | . | 3 | . |
+| `test_swath.py` | 4 | 3 | . | . | . | . | . | 1 | . | . | 4 | . |
 | `test_synthetic_workflows.py` | 3 | . | 2 | 1 | . | . | . | . | . | . | 3 | . |
 | `test_terrain_features.py` | 2 | 1 | 1 | . | . | . | 2 | . | . | . | 2 | . |
 | `test_tidal_workflows.py` | 2 | 1 | 1 | . | . | . | . | . | . | . | 2 | . |

@@ -59,6 +59,25 @@ class SwathTest(unittest.TestCase):
         np.testing.assert_allclose(profile.table["mean"], [10.0, 11.0, 12.0, 13.5])
         np.testing.assert_allclose(profile.table["p50"], profile.table["mean"])
 
+    @pytest.mark.exact_solution
+    def test_swath_profile_leaves_out_pixels_beyond_the_ends(self):
+        # The baseline runs from the centre of column 1 to the centre of
+        # column 3 of the middle row. Columns 0 and 4 lie behind its start and
+        # past its end: they are within half_width of an end point but not
+        # alongside the line, so they are left out (before 2026-11-13 they
+        # were clamped into the first and last bins, giving [2, 3] pixels).
+        short = gpd.GeoDataFrame(
+            geometry=[LineString([(500015.0, 4400025.0), (500035.0, 4400025.0)])],
+            crs=self.crs,
+        )
+        profile = lsdtt3.swath_profile(
+            self.raster, short, half_width_metres=5.0,
+            bin_width_metres=10.0, n_threads=1,
+        )
+
+        self.assertEqual(profile.table["n_pixels"].tolist(), [1, 2])
+        np.testing.assert_allclose(profile.table["mean"], [11.0, 12.5])
+
     @pytest.mark.negative
     def test_swath_rejects_mismatched_value_grid(self):
         other = lsdtt3.Raster.from_numpy(

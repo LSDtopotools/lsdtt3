@@ -244,6 +244,7 @@ foreach(_t IN ITEMS mutual_best_on mutual_best_off wide_road_gap separate_roads)
     lsdtt_evidence(smoke_water_line_repair_${_t} system smoke exact_solution)
 endforeach()
 lsdtt_evidence(smoke_swath_profile_plane system smoke exact_solution metamorphic)  # analytic answers
+lsdtt_evidence(smoke_swath_profile_short_baseline system smoke exact_solution)  # analytic answers; pixels beyond the baseline ends left out
 
 # Mountain front, feature finder, channel network analysis, raster calculator
 lsdtt_evidence(rigorous_mountain_front_legacy_keys system smoke characterisation metamorphic)
@@ -704,6 +705,7 @@ lsdtt_evidence(unit_python_test_markers_selftest unit conformance exact_solution
 lsdtt_evidence(unit_python_binding_free_tests unit conformance exact_solution negative)
 # The generated test inventory must match the registered tests (a docs check).
 lsdtt_evidence(unit_test_inventory_is_current unit conformance)
+lsdtt_evidence(unit_summarise_tests_runs unit smoke)  # the counting tool runs and finds CTest and pytest tests
 
 # -----------------------------------------------------------------------------
 # Benchmarks (LSDTT_ENABLE_BENCHMARKS) and performance (LSDTT_ENABLE_PERF_TESTS)
