@@ -24,6 +24,10 @@ class LandslideTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_event_and_cosmogenic_response(self):
+        """trigger_landslides with a 1000 m3 target produces landslides with positive
+        volume and a new elevation raster; the excavation depth and failure time give a
+        concentration raster, and concentrations for Be10, Al26 and C14.
+        """
         event = lsdtt3.trigger_landslides(
             self.dem, self.flow, 1_000.0, channel_threshold_pixels=100, seed=4
         )
@@ -43,6 +47,10 @@ class LandslideTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_annealing_aware_series(self):
+        """run_landslide_series over 1000 years with a fixed 250-year recurrence gives
+        exactly 4 events with their times, landslides and positive volume; the Be10
+        concentration at 1000 years has the DEM's shape.
+        """
         series = lsdtt3.run_landslide_series(
             self.dem, self.flow,
             end_time_yr=1_000.0,
@@ -68,6 +76,10 @@ class LandslideTest(unittest.TestCase):
     @pytest.mark.negative
     @pytest.mark.conformance
     def test_event_budget_tolerance_keyword_compatibility(self):
+        """run_landslide_series's signature has event_budget_relative_tolerance; the old
+        budget_tol still works with a DeprecationWarning and gives the same volume and
+        elevation; giving both is refused.
+        """
         parameters = inspect.signature(lsdtt3.run_landslide_series).parameters
         self.assertIn("event_budget_relative_tolerance", parameters)
         self.assertNotIn("budget_tol", parameters)

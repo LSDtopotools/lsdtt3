@@ -54,7 +54,19 @@ and the top entry of `debian/changelog`. `tools/set_version.py` rewrites all
 six together; the CTest test `unit_version_consistency` fails if any differs,
 and `make_release.sh` and `make_all_packages.sh` refuse to build. Only the
 ecosystem rebuild suffixes may differ: `.postN` in `pyproject.toml` (a
-rebuilt wheel) and `+pkgN` in the Debian changelog. The version numbers quoted
+rebuilt wheel) and `+pkgN` in the Debian changelog.
+
+For a new X.Y.Z, `tools/set_version.py` then regenerates the test inventory
+(`docs/developer_notes/test_inventory.md`), which names the version it was
+generated from. It configures `build/inventory_tests` with every test tier
+registered (nothing is compiled; about a minute the first time, then
+seconds), which needs what the full test suite needs: Python 3 with
+`osgeo.gdal`, numpy, rasterio, geopandas, shapely and pytest, and `gdal-bin`.
+`--inventory-build-dir DIR` reuses a build directory you have already
+configured that way; `--skip-inventory` skips the step, and
+`unit_test_inventory_is_current` then fails until the inventory is
+regenerated. Commit the regenerated page with the version change, before
+tagging: the documentation site is built from the tag. The version numbers quoted
 in the install documentation (`README.md`,
 [Installing lsdtt3](../what_is_lsdtt3/install_lsdtt3.md)) are examples and have no authority.
 

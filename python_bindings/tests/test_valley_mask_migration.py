@@ -19,6 +19,10 @@ PROBE_AVAILABLE = hasattr(native, "_extract_valley_centrelines_with_mask_probe")
     reason="private supplied-mask probe is disabled",
 )
 def test_ordered_channels_explicit_mask_oracle():
+    """Valley centrelines from an ordered channel and an explicit valley mask: 429 valley
+    pixels and a 33-node centreline, routing succeeds, and the mask and centreline match
+    their frozen sha256; a narrower mask changes the result.
+    """
     metadata = lsdtt3.RasterMeta.from_shape(41, 41, cell_size=10.0)
     rows, cols = np.indices((41, 41))
     elevation = (np.abs(cols - 20) * 2.0 + rows * 0.05).astype(np.float32)
@@ -71,6 +75,10 @@ def test_ordered_channels_explicit_mask_oracle():
     reason="private supplied-mask probe is disabled",
 )
 def test_channel_scope_explicit_mask_oracle():
+    """Valley centrelines from a channel scope with an all-valley mask: 36 valley pixels
+    for each of the 6 channels, 4 centreline nodes each, and routing not succeeding for
+    any.
+    """
     crs = CRS.from_epsg(32630)
     metadata = lsdtt3.RasterMeta.from_shape(
         6, 6, cell_size=10.0, crs_wkt=crs.to_wkt(), epsg_code=32630

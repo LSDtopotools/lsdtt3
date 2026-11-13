@@ -19,6 +19,10 @@ def flow_fixture():
 
 
 def test_flow_threshold_methods_accept_legacy_keyword_without_signature_drift():
+    """FlowInfo.channel_mask, channel_scope, distance_to_channel and sources expose
+    threshold_contributing_pixels; the old threshold_pixels works with a
+    DeprecationWarning each and gives the same results; giving both is refused.
+    """
     _, flow = flow_fixture()
     for method_name in ("channel_mask", "channel_scope", "distance_to_channel", "sources"):
         parameters = inspect.signature(getattr(flow, method_name)).parameters
@@ -46,6 +50,10 @@ def test_flow_threshold_methods_accept_legacy_keyword_without_signature_drift():
 
 
 def test_channel_head_threshold_legacy_keyword_preserves_results():
+    """extract_channel_heads exposes threshold_contributing_pixels; the old
+    threshold_pixels works with a DeprecationWarning and finds the same heads; giving
+    both is refused.
+    """
     dem, flow = flow_fixture()
     parameters = inspect.signature(lsdtt3.extract_channel_heads).parameters
     assert "threshold_contributing_pixels" in parameters

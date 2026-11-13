@@ -19,6 +19,9 @@ class SpectralTest(unittest.TestCase):
         return lsdtt3.Raster.from_numpy(data, np.ones_like(data, dtype=bool), metadata)
 
     def test_filters_preserve_grid_and_mask(self):
+        """Low-pass, high-pass, band-pass and Wiener filters return rasters of the input's
+        shape with the same number of valid pixels.
+        """
         raster = self.raster()
         outputs = [
             lsdtt3.lowpass_filter(raster, 100.0, n_threads=1),
@@ -34,6 +37,11 @@ class SpectralTest(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_full_analysis_and_directional_periodicity(self):
+        """spectral_analysis pads to 64 x 64 and returns 2-D and background spectra,
+        frequency axes, a finite rollover frequency and the binned table's columns;
+        detect_directional_periodicity returns strength, spacing and orientation rasters
+        at the input's shape.
+        """
         raster = self.raster()
         result = lsdtt3.spectral_analysis(
             raster, n_background_iterations=2, seed=7, n_threads=1
@@ -60,6 +68,9 @@ class SpectralTest(unittest.TestCase):
         self.assertTrue(all(output.shape == raster.shape for output in periodicity.values()))
 
     def test_masked_surface_recovery(self):
+        """masked_surface_recovery returns a raster of the input's shape with the same
+        number of valid pixels.
+        """
         raster = self.raster()
         mask = np.zeros(raster.shape, dtype=np.float32)
         mask[:, :32] = 1.0

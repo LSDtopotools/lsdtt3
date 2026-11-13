@@ -11,6 +11,10 @@ pytestmark = [pytest.mark.metamorphic, pytest.mark.conformance, pytest.mark.unit
 
 @pytest.mark.negative
 def test_crn_depth_keyword_compatibility_preserves_column_results():
+    """CRNColumn.set_erosion_history and transient expose removal_metres and
+    sampling_depths_metres; the old *_m names work with DeprecationWarnings and give the
+    same Be10 profile; giving both is refused.
+    """
     column_parameters = inspect.signature(lsdtt3.CRNColumn.set_erosion_history).parameters
     transient_parameters = inspect.signature(lsdtt3.CRNColumn.transient).parameters
     assert "removal_metres" in column_parameters
@@ -41,6 +45,9 @@ def test_crn_depth_keyword_compatibility_preserves_column_results():
 
 
 def test_crn_raster_history_depth_keyword_compatibility():
+    """crn_transient_history exposes sampling_depth_metres; the old sampling_depth_m works
+    with a DeprecationWarning and gives the same Be10 raster.
+    """
     meta = lsdtt3.RasterMeta.from_shape(2, 2, cell_size=30.0)
     production = lsdtt3.Raster.from_numpy(
         np.ones((2, 2), dtype=np.float32), np.ones((2, 2), dtype=bool), meta
@@ -65,6 +72,11 @@ def test_crn_raster_history_depth_keyword_compatibility():
 
 @pytest.mark.negative
 def test_fetch_size_and_synthetic_relief_keyword_compatibility():
+    """fetch_dem exposes size_pixels and synthetic_network relief_metres; the old size_px
+    and relief_m work with DeprecationWarnings (the fetch then fails on its bad box as
+    before; the synthetic network is identical); giving size_pixels and size_px together
+    is refused.
+    """
     fetch_parameters = inspect.signature(lsdtt3.fetch_dem).parameters
     assert "size_pixels" in fetch_parameters
     assert "size_px" not in fetch_parameters

@@ -26,6 +26,11 @@
 //      (set half_width_metres = 0 to include all pixels).  This half-width
 //      clipping naturally excludes the ambiguous interior of tight meander
 //      loops where multiple segments are equidistant.
+//      Pixels beyond either END of the baseline (behind the start or past the
+//      end, whose nearest baseline point is that end point) are excluded too,
+//      with or without half-width clipping: they are not alongside the
+//      baseline, and binning them would pile them into the first and last
+//      bins.
 //
 //   3. Pixels are assigned to along-axis bins of width `bin_width_metres`.
 //      Within each bin the values of a user-supplied raster are collected and
@@ -42,7 +47,8 @@
 //   signed_perp   - signed perpendicular distance:
 //                     positive = left of travel direction
 //                     negative = right of travel direction
-//   (pixels outside half_width, or nodata pixels, carry nodata in all three)
+//   (pixels outside half_width, beyond either end of the baseline, or nodata
+//    pixels, carry nodata in all three)
 //
 // All distances are in metres in the raster CRS.
 // -----------------------------------------------------------------------------
@@ -141,7 +147,9 @@ struct swath_profile_result
 //                       Requires at least 2 points.
 // half_width_metres   - pixels farther than this from the baseline receive
 //                       nodata in the distance rasters and are excluded from
-//                       the bin statistics.  Pass 0.0 to include all pixels.
+//                       the bin statistics.  Pass 0.0 to include all pixels
+//                       alongside the baseline.  Pixels beyond either end of
+//                       the baseline are always excluded.
 // bin_width_metres    - along-axis bin size in metres.  Must be > 0.
 // n_threads           - OpenMP thread count (0 = all available).
 //

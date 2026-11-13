@@ -166,6 +166,10 @@ def test_every_parameter_is_named_in_the_parameters_section():
 
 
 def test_generated_parameters_carry_types_and_defaults():
+    """Generated docstrings give each parameter its type and default (fill_pits), keep and
+    complete a binding's own Parameters section without duplicating it (sample_points),
+    and mark keyword-only parameters.
+    """
     doc = inspect.getdoc(lsdtt3.fill_pits)
     parameters = _section(doc, "Parameters")
     assert "raster : Raster\n    Elevation raster (m)." in parameters
@@ -183,6 +187,9 @@ def test_generated_parameters_carry_types_and_defaults():
 
 
 def test_overloaded_functions_list_every_call_form():
+    """The docstring of an overloaded function (classify_surface_shape) lists both of its
+    call forms.
+    """
     doc = inspect.getdoc(lsdtt3.classify_surface_shape)
     assert "This function has 2 call forms:" in doc
     assert "1. ``classify_surface_shape(raster: Raster" in doc

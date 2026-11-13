@@ -11,6 +11,91 @@ numbers do not match, read §5 before concluding anything is wrong.
 
 ---
 
+## Where the test categories come from
+
+Every lsdtt3 test is labelled by its **level** and by its **evidence**. Neither
+set of words was invented here: they are the standard terms of the
+software-testing literature, and this section says where each comes from.
+
+**The oracle.** A test runs the software and compares what it produces with
+what it should produce. The source of that expected result is the test's
+*oracle* (Barr et al., 2015). For most of what lsdtt3 computes there is no
+oracle in the obvious sense: nobody knows the true drainage area of every cell
+of a real DEM, or the true curvature of a real hilltop. This is the *oracle
+problem*, and it is particularly acute for scientific software (Kanewala and
+Bieman, 2014). An lsdtt3 test's **evidence** label says which kind of oracle it
+uses: how it knows the right answer.
+
+**Level** describes how much of the software a test exercises (ISTQB glossary):
+a *unit* (or *component*) test checks one part in isolation, such as the
+depression-filling routine; a *system* test checks the integrated program,
+here a whole run of a command-line program from a parameter file to its
+output files.
+
+**Oracle types.** Barr et al. (2015) distinguish three kinds of oracle:
+
+- a **specified** oracle comes from what the method is supposed to do;
+- a **derived** oracle comes from something other than a specification:
+  another run of the same program, another program, or an earlier version;
+- an **implicit** oracle needs neither a specification nor domain knowledge:
+  for example, a program should not crash.
+
+**Techniques.** Each evidence label is a standard testing technique, grouped by
+the kind of oracle it uses. The grouping of techniques into oracle types is
+lsdtt3's own; the oracle types are Barr et al.'s.
+
+| Label | Technique | Oracle | Source of the term |
+|---|---|---|---|
+| `exact_solution` | Exact-solution testing: the output equals an answer worked out analytically or by hand | Specified | Oberkampf and Roy (2010), as code verification against exact solutions |
+| `property` | Property-based testing: the output has a property every correct answer must have | Specified | Claessen and Hughes (2000) |
+| `metamorphic` | Metamorphic testing: a known change to the input gives a known change in the output | Derived | Chen et al. (2018) |
+| `differential` | Differential testing: an independent implementation gives the same output; it acts as a *pseudo-oracle* | Derived | McKeeman (1998); pseudo-oracle: Davis and Weyuker (1981) |
+| `characterisation` | Characterisation testing: the output is unchanged from a stored, previously checked version | Derived | Feathers (2004) |
+| `smoke` | Smoke testing: the program runs to completion and writes its outputs | Implicit | standard term |
+| `negative` | Negative testing: invalid input is refused with a clear message | Implicit | standard term |
+| `conformance` | Help text, documentation, names, versions or tooling conform to a stated rule | none: no computed output is judged | lsdtt3's own category |
+| `performance` | Timings, reported and never asserted | none: no evidence of correctness | lsdtt3's own category |
+
+A test carries every evidence label that applies. The exact definitions the
+suite uses, with lsdtt3's rules for borderline cases, are in
+[§2, Evidence and level labels](#evidence-and-level-labels). The labels
+themselves are assigned in `tests/cmake/evidence_labels.cmake` (CTest) and
+checked against the list in `tests/scripts/check_python_test_markers.py`
+(pytest markers). The full write-up, with examples of each technique in
+lsdtt3, is `docs/tex_technical/testing_regime.tex`, with its bibliography in
+`testing_regime.bib`.
+
+**References**
+
+- Barr, E. T., Harman, M., McMinn, P., Shahbaz, M. and Yoo, S. (2015). The
+  oracle problem in software testing: a survey. *IEEE Transactions on Software
+  Engineering*, 41(5), 507–525. https://doi.org/10.1109/TSE.2014.2372785
+- Chen, T. Y., Kuo, F.-C., Liu, H., Poon, P.-L., Towey, D., Tse, T. H. and
+  Zhou, Z. Q. (2018). Metamorphic testing: a review of challenges and
+  opportunities. *ACM Computing Surveys*, 51(1), 4:1–4:27.
+  https://doi.org/10.1145/3143561
+- Claessen, K. and Hughes, J. (2000). QuickCheck: a lightweight tool for random
+  testing of Haskell programs. *Proceedings of ICFP '00*, 268–279.
+  https://doi.org/10.1145/351240.351266
+- Davis, M. D. and Weyuker, E. J. (1981). Pseudo-oracles for non-testable
+  programs. *Proceedings of the ACM '81 Conference*, 254–257.
+  https://doi.org/10.1145/800175.809889
+- Feathers, M. C. (2004). *Working Effectively with Legacy Code*. Prentice
+  Hall.
+- International Software Testing Qualifications Board (2018). *Standard
+  Glossary of Terms used in Software Testing*, version 3.2.
+  https://glossary.istqb.org
+- Kanewala, U. and Bieman, J. M. (2014). Testing scientific software: a
+  systematic literature review. *Information and Software Technology*, 56(10),
+  1219–1232. https://doi.org/10.1016/j.infsof.2014.05.006
+- McKeeman, W. M. (1998). Differential testing for software. *Digital
+  Technical Journal*, 10(1), 100–107.
+- Oberkampf, W. L. and Roy, C. J. (2010). *Verification and Validation in
+  Scientific Computing*. Cambridge University Press.
+  https://doi.org/10.1017/CBO9780511760396
+
+---
+
 ## 1. Principles
 
 A few rules that the suite is built on. They are worth stating because they
@@ -193,6 +278,66 @@ Other labels:
 
 Downloading tests carry `needs_network`; `network` is the flow-routing
 **domain** below, not network access.
+
+### Counting and listing the tests (for a paper or a report)
+
+The number of tests changes with every commit, so count them when you need the
+numbers. The quickest way configures a scratch directory (no compiling, about
+20 s) with every test tier registered, then counts:
+
+```bash
+python3 tools/summarise_tests.py --configure-dir /tmp/lsdtt3_tests      # counts by category, Markdown
+python3 tools/summarise_tests.py --build-dir build                    # an existing build directory
+python3 tools/summarise_tests.py --build-dir build --format tex        # the same as a LaTeX table
+python3 tools/summarise_tests.py --build-dir build --table list --format csv -o tests.csv
+```
+
+`--table counts` (the default) gives, for each evidence label and each level
+label, the number of CTest and pytest tests that carry it, with the label's
+definition and the total. A test with several evidence labels is counted under
+each. `--table list` gives every test: its suite, level, evidence labels,
+domains, the programs it runs, what the CLI harness checks (from its assertion
+flags: outputs written, file contents, checksums, the expected failure message)
+and a description; the `source` column says where it came from. Formats are
+`md`, `csv` and `tex`; `--suite ctest` or `--suite pytest` restricts to one
+suite.
+
+**Every new test needs a description**, and the tool finds it here:
+
+- a CTest test registered by name (`add_test`, `add_lsdtt_cli_smoke_test`, or
+  any `add_*test*` helper): the comment directly above the call, with nothing
+  but blank lines or an `if(...)` between them;
+- a CTest test generated in a loop: the comment directly above the list entry
+  it is built from. Write one entry per line, with its comment above it (CMake
+  allows comments between arguments):
+
+  ```cmake
+  foreach(_case IN ITEMS
+          # Refused: rotation together with force_reproject.
+          "rotate_force_reproject|cannot be combined with force_reproject"
+          ...)
+  ```
+
+- a smoke test with a parameter file and no comment: the header comment of its
+  `tests/params/*.param.in`;
+- a Python test: its docstring.
+
+Failing those, the tool falls back to the nearest comment above (`section`,
+which usually describes a group) or the test's name as words (`name`). On
+2026-11-13 every test had its own description.
+
+The CTest counts are for the configuration of the build directory, which the
+output states. A default configure registers only the native tests, about a
+quarter of the total, because `LSDTT_ENABLE_PYTHON_TESTS`,
+`LSDTT_ENABLE_PYTHON_GEO_TESTS` and `LSDTT_ENABLE_NETWORK_TESTS` default to OFF;
+the tool warns and marks the output INCOMPLETE when any of them is off. The
+release builds configure with `BUILD_TESTING=OFF` and register no tests, so the
+tool refuses them: count from a source checkout of the release tag instead.
+`--configure-dir` turns the three options on. The
+committed `docs/developer_notes/test_inventory.md` (from
+`tools/generate_test_inventory.py`) is for one fixed configuration, and breaks
+the counts down by domain, CLI and Python file. The CTest test
+`unit_summarise_tests_runs` checks that the tool still runs.
 
 ### Compartments: run what your change can affect
 

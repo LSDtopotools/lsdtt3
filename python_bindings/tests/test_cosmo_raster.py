@@ -14,6 +14,9 @@ def _raster(values):
 
 @pytest.mark.property
 def test_steady_state_ratio_and_accumulation():
+    """Steady-state Be10 and Al26 rasters give a positive Al26/Be10 ratio on all 9 cells,
+    and the accumulated concentration has the DEM's shape.
+    """
     dem = _raster([[1000, 990, 980], [1010, 1000, 970], [1020, 1010, 960]])
     erosion = lsdtt3.crn_uniform_raster(dem, 0.01)
     production = lsdtt3.crn_uniform_raster(dem, 1.0)
@@ -29,6 +32,7 @@ def test_steady_state_ratio_and_accumulation():
 
 @pytest.mark.smoke
 def test_arbitrary_history_returns_all_three_nuclides():
+    """crn_transient_history returns Be10, Al26 and C14 rasters at the DEM's shape."""
     dem = _raster([[1000, 990], [1010, 980]])
     column = lsdtt3.CRNColumn()
     column.set_erosion_history(

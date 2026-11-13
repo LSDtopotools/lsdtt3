@@ -14,6 +14,15 @@ is the truth; this script writes the same X.Y.Z into the checked copies:
 
 and then runs the same check as the unit_version_consistency CTest test.
 
+A new X.Y.Z then regenerates docs/developer_notes/test_inventory.md, whose top
+line names the version it was generated from (unit_test_inventory_is_current
+fails until it matches). The inventory needs a build directory configured
+with every test tier registered; nothing is compiled. By default one is
+configured in build/inventory_tests (about 20 s the first time); give your
+own with --inventory-build-dir, or skip with --skip-inventory. The configure
+needs what the full test suite needs: Python 3 with osgeo.gdal, numpy,
+rasterio, geopandas, shapely and pytest, and the GDAL programs (gdal-bin).
+
 A new X.Y.Z also resets the conda build number to 0, clears any .postN from
 pyproject.toml, and adds a "Release X.Y.Z." changelog entry.
 
@@ -35,6 +44,7 @@ Usage:
     tools/set_version.py 0.7.0 --post 1
     tools/set_version.py 0.7.0 --debian-revision 2
     tools/set_version.py 0.7.0 --dry-run
+    tools/set_version.py 0.7.0 --inventory-build-dir build
 """
 
 from __future__ import annotations
@@ -48,7 +58,34 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests" / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "tools"))
 import check_version_consistency  # noqa: E402
+import generate_test_inventory  # noqa: E402
+
+DEFAULT_INVENTORY_BUILD = Path("build") / "inventory_tests"
+
+
+def regenerate_test_inventory(root: Path, build_dir: Path) -> int:
+    """Configure build_dir with the inventory's test options (no compiling) and
+    rewrite docs/developer_notes/test_inventory.md from it."""
+    import subprocess
+    if not build_dir.is_absolute():
+        build_dir = root / build_dir
+    options = [f"-D{k}={v}" for k, v in generate_test_inventory.CANONICAL.items()]
+    command = ["cmake", "-S", str(root), "-B", str(build_dir)] + options
+    print(f"Regenerating the test inventory: configuring {build_dir} (no compiling)")
+    done = subprocess.run(command, capture_output=True, text=True)
+    if done.returncode != 0:
+        sys.stderr.write((done.stdout + done.stderr)[-3000:])
+        print(f"ERROR: configure failed (above), so docs/developer_notes/test_inventory.md "
+              f"still names the old version. The version files HAVE been written. The "
+              f"configure needs what the full test suite needs (Python 3 with osgeo.gdal, "
+              f"numpy, rasterio, geopandas, shapely and pytest; gdal-bin). Fix that, then "
+              f"finish with:\n  {' '.join(command)}\n"
+              f"  python3 tools/generate_test_inventory.py --build-dir {build_dir} --update",
+              file=sys.stderr)
+        return 1
+    return generate_test_inventory.main(["--build-dir", str(build_dir), "--update"])
 
 
 class Edit:
@@ -119,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
                        help="Debian-only rebuild: changelog entry X.Y.Z+pkgN")
     parser.add_argument("--dry-run", action="store_true",
                         help="show what would change, write nothing")
+    parser.add_argument("--inventory-build-dir", type=Path, default=DEFAULT_INVENTORY_BUILD,
+                        metavar="DIR",
+                        help="build directory to configure for the test inventory "
+                             f"(default: {DEFAULT_INVENTORY_BUILD}, relative to the repository)")
+    parser.add_argument("--skip-inventory", action="store_true",
+                        help="do not regenerate docs/developer_notes/test_inventory.md")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     root = args.repo_root.resolve()
@@ -178,14 +221,26 @@ def main(argv: list[str] | None = None) -> int:
     for edit in edits:
         state = "changed" if edit.changed else "unchanged"
         print(f"  {edit.relpath:40s} {state}")
+    new_version = not rebuild
     if args.dry_run:
+        if new_version and not args.skip_inventory:
+            print(f"  {'docs/developer_notes/test_inventory.md':40s} would be regenerated")
         print("Dry run: nothing written.")
         return 0
     for edit in edits:
         if edit.changed:
             edit.path.write_text(edit.text, encoding="utf-8")
 
-    return check_version_consistency.main(["--repo-root", str(root)])
+    status = check_version_consistency.main(["--repo-root", str(root)])
+    if status != 0 or not new_version:
+        return status
+    if args.skip_inventory:
+        print("WARNING: --skip-inventory: docs/developer_notes/test_inventory.md still "
+              "names the old version, and unit_test_inventory_is_current fails until it is "
+              "regenerated (python3 tools/generate_test_inventory.py --build-dir <dir> "
+              "--update). Do it before tagging the release.")
+        return 0
+    return regenerate_test_inventory(root, args.inventory_build_dir)
 
 
 if __name__ == "__main__":

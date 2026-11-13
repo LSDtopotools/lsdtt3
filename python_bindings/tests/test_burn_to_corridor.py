@@ -67,6 +67,11 @@ def run():
 
 @pytest.mark.property
 def test_burn_drains_and_reports(run):
+    """burn_to_corridor on a valley with a dam: one path fitted, nothing left rising after
+    the burn, the final profile falls downstream, the dam is cut by more than 3 m, and
+    the profiles and channels carry the documented columns, the line name and the DEM's
+    CRS.
+    """
     r = run.report
     assert r["n_fitted"] == 1 and r["n_skipped"] == 0 and r["n_paths"] == 1
     assert r["n_paths_rising_after_burn"] == 0 and r["n_paths_rising_final"] == 0
@@ -84,12 +89,18 @@ def test_burn_drains_and_reports(run):
 
 @pytest.mark.metamorphic
 def test_lines_in_another_crs_are_reprojected(run):
+    """Lines given in WGS84 are reprojected and give the same burned DEM as lines in the
+    DEM's CRS.
+    """
     other = lsdtt3.burn_to_corridor(_valley_dem(), _lines().to_crs("EPSG:4326"), vector_name_field="name")
     assert np.array_equal(other.dem.to_numpy(), run.dem.to_numpy())
 
 
 @pytest.mark.negative
 def test_refusals():
+    """burn_to_corridor refuses an unknown profile fit, a negative maximum pit size, a
+    missing name field and an unknown breach algorithm, each with its message.
+    """
     dem, lines = _valley_dem(), _lines()
     with pytest.raises(ValueError, match="burn_profile_fit_algorithm_choice"):
         lsdtt3.burn_to_corridor(dem, lines, burn_profile_fit_algorithm_choice="cubic")
@@ -103,6 +114,10 @@ def test_refusals():
 
 @pytest.mark.metamorphic
 def test_same_dem_and_profiles_as_the_cli(run, tmp_path):
+    """The Python burn gives the same burned DEM and profile table (columns, values to
+    1e-6, and flags) as lsdtt-stream-burning run on the same inputs; skipped without the
+    CLI.
+    """
     exe = _cli_binary()
     if exe is None:
         pytest.skip("lsdtt-stream-burning binary not available")
@@ -133,6 +148,10 @@ def test_same_dem_and_profiles_as_the_cli(run, tmp_path):
 
 @pytest.mark.characterisation
 def test_fetch_river_lines_local_extract():
+    """fetch_river_lines on the committed Open Rivers extract: 24 lines in UTM 30N with the
+    documented columns, nodes and topology, an attribution naming the local file; an
+    empty source and a missing area are refused.
+    """
     data = REPO / "tests" / "data" / "river_lines" / "os_open_rivers_extract" / "Data" / "oprvrs_gb.gpkg"
     if not data.is_file():
         pytest.skip("committed Open Rivers extract not found")

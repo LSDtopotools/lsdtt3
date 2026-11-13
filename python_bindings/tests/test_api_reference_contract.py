@@ -9,6 +9,9 @@ pytestmark = [pytest.mark.conformance, pytest.mark.unit]
 
 
 def test_generated_reference_assigns_every_export_exactly_once():
+    """The generated docs/python_api pages are exactly the generator's domains, and every
+    export in the manifest appears on exactly one page, the one its domain says.
+    """
     repository = Path(__file__).parents[2]
     manifest = json.loads(
         (repository / "python_bindings/api/public_api.json").read_text(encoding="utf-8")

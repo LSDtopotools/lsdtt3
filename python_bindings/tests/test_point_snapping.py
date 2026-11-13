@@ -174,6 +174,10 @@ def test_without_a_threshold_every_method_uses_the_cli_default(method):
 
 @pytest.mark.negative
 def test_downstream_reports_the_status(flow, contributing):
+    """snap_points' downstream method refuses, with outlet_reached_before_threshold and the
+    threshold in the message, a threshold the fixture cannot reach: the default 1000
+    pixels, and one more than its largest contributing area.
+    """
     x, y = _centre_xy(0, 0)
     # The fixture has 441 pixels, so the default 1000 cannot be reached.
     with pytest.raises(ValueError, match="outlet_reached_before_threshold.*threshold 1000"):
@@ -186,6 +190,9 @@ def test_downstream_reports_the_status(flow, contributing):
 @pytest.mark.metamorphic
 @pytest.mark.property
 def test_expanding_square_lands_on_the_nearest_channel_pixel(flow, contributing):
+    """expanding_square snaps a point off the channel to a channel pixel in the nearest
+    ring that has one; min_search_radius_pixels skips the inner rings, as in the CLIs.
+    """
     threshold_pixels = 20
     x, y = _centre_xy(5, CENTRE + 4)
     snapped = flow.snap_points(
@@ -209,6 +216,10 @@ def test_expanding_square_lands_on_the_nearest_channel_pixel(flow, contributing)
 
 @pytest.mark.negative
 def test_expanding_square_requires_a_reachable_channel(flow):
+    """expanding_square refuses a point with no channel pixel within the radius
+    (threshold_not_found_in_search_window), and a minimum radius larger than the
+    maximum.
+    """
     x, y = _centre_xy(0, 0)
     with pytest.raises(ValueError, match="threshold_not_found_in_search_window"):
         flow.snap_points(x, y, method="expanding_square", max_search_radius_pixels=2,
@@ -222,6 +233,10 @@ def test_expanding_square_requires_a_reachable_channel(flow):
 @pytest.mark.metamorphic
 @pytest.mark.negative
 def test_largest_area_takes_the_largest_area_in_the_window(flow, contributing):
+    """largest_area moves a point to the pixel with the largest contributing area in its
+    window; radius 0 keeps it in place; the threshold accepts or rejects that pixel but
+    does not move it.
+    """
     x, y = _centre_xy(10, CENTRE + 2)
     snapped = flow.snap_points(x, y, method="largest_area", max_search_radius_pixels=3,
                                threshold_contributing_pixels=1)
@@ -254,6 +269,9 @@ def test_largest_area_ties_go_to_the_nearer_pixel(flow, contributing):
 
 @pytest.mark.metamorphic
 def test_max_search_radius_metres_rounds_up_to_whole_pixels(flow):
+    """max_search_radius_metres 25 on 10 m cells gives the same result as
+    max_search_radius_pixels 3: the radius rounds up to whole pixels.
+    """
     x, y = _centre_xy(10, CENTRE + 2)
     in_metres = flow.snap_points(x, y, method="largest_area", max_search_radius_metres=25.0,
                                  threshold_contributing_pixels=1)
@@ -265,6 +283,11 @@ def test_max_search_radius_metres_rounds_up_to_whole_pixels(flow):
 @pytest.mark.negative
 @pytest.mark.property
 def test_off_grid_and_nodata_points_raise_naming_each_point(flow):
+    """Points off the grid (including on the eastern boundary line) are refused with
+    input_out_of_bounds, naming the point; downstream snapping from a nodata pixel is
+    refused with input_invalid_flow_cell, while largest_area moves such a point to a
+    valid pixel.
+    """
     inside = _centre_xy(10, CENTRE)
     with pytest.raises(ValueError, match=r"1 of 2 points .*point 1 .*input_out_of_bounds"):
         flow.snap_points([inside[0], X_MIN - 5.0], [inside[1], inside[1]],
@@ -291,6 +314,11 @@ def test_off_grid_and_nodata_points_raise_naming_each_point(flow):
 # numpy), not by lsdtt3: the test passes plain floats.
 @pytest.mark.filterwarnings("ignore:Conversion of an array with ndim > 0 to a scalar:DeprecationWarning")
 def test_input_forms_and_argument_errors(flow):
+    """snap_points accepts x/y in the raster CRS, longitude/latitude, x/y with a crs, a
+    GeoDataFrame and a GeoSeries, all giving the same pixel; mixed or missing
+    coordinates, an unknown method, negative radii, non-point geometry and crs with
+    points are refused; empty input gives an empty result.
+    """
     x, y = _centre_xy(12, CENTRE)
     to_lonlat = Transformer.from_crs(EPSG, 4326, always_xy=True)
     longitude, latitude = to_lonlat.transform(x, y)
@@ -326,6 +354,9 @@ def test_input_forms_and_argument_errors(flow):
 
 @pytest.mark.metamorphic
 def test_snapped_outlets_feed_basins(flow, contributing):
+    """Snapped points used as outlets give basins numbered in order, with their outlet rows
+    and pixel counts equal to the contributing areas there.
+    """
     xs, ys = zip(*(_centre_xy(r, c) for r, c in ((4, CENTRE + 1), (15, CENTRE - 2))))
     outlets = flow.snap_points(list(xs), list(ys), method="largest_area", max_search_radius_pixels=2,
                                threshold_contributing_pixels=1)
@@ -339,6 +370,9 @@ def test_snapped_outlets_feed_basins(flow, contributing):
 @pytest.mark.property
 @pytest.mark.exact_solution
 def test_xy_row_col_round_trip_and_north_edge_orientation():
+    """row_col_to_xy and xy_to_row_col round-trip every cell; row 0 is the northern edge (y
+    falls as the row grows); scalar input gives Python ints.
+    """
     meta = _meta()
     rows, cols = np.indices((N_ROWS, N_COLS))
     x, y = meta.row_col_to_xy(rows, cols)
@@ -358,6 +392,9 @@ def test_xy_row_col_round_trip_and_north_edge_orientation():
 
 @pytest.mark.exact_solution
 def test_xy_to_row_col_marks_off_grid_points():
+    """xy_to_row_col gives -1, -1 for points west, east, north and south of the grid and
+    for NaN, and broadcasts a scalar against an array.
+    """
     meta = _meta()
     rows, cols = meta.xy_to_row_col(
         [X_MIN - 1.0, meta.x_max, X_MIN + 1.0, X_MIN + 1.0, np.nan],
@@ -372,6 +409,10 @@ def test_xy_to_row_col_marks_off_grid_points():
 @pytest.mark.exact_solution
 @pytest.mark.negative
 def test_lonlat_to_row_col_uses_the_raster_crs():
+    """lonlat_to_row_col converts through the raster's CRS back to the original cells,
+    gives -1, -1 off the grid, and is refused for a raster with no CRS or an invalid
+    crs.
+    """
     meta = _meta()
     x, y = meta.row_col_to_xy([3, 17], [5, 9])
     longitude, latitude = Transformer.from_crs(EPSG, 4326, always_xy=True).transform(x, y)
@@ -392,6 +433,10 @@ def test_lonlat_to_row_col_uses_the_raster_crs():
 ])
 @pytest.mark.conformance
 def test_new_helpers_are_fully_documented(owner, member):
+    """Each new snapping helper has a docstring with Parameters, Returns and Examples
+    sections that names every parameter of its signature, and its class docstring lists
+    it.
+    """
     value = getattr(getattr(lsdtt3, owner), member)
     doc = inspect.cleandoc(inspect.unwrap(value).__doc__ or "")
     assert UNDESCRIBED not in doc

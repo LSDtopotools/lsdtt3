@@ -25,6 +25,10 @@ class SedimentRoutingTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_routes_and_returns_reach_and_raster_diagnostics(self):
+        """route_sediment for 2 hourly steps returns one reach row per junction, a non-
+        negative outgoing flux, and deposition and active-layer d50 rasters at the DEM's
+        shape.
+        """
         result = lsdtt3.route_sediment(
             self.network, self.dem, n_timesteps=2, timestep_seconds=3600.0
         )
@@ -39,6 +43,10 @@ class SedimentRoutingTest(unittest.TestCase):
     @pytest.mark.negative
     @pytest.mark.conformance
     def test_dimension_keyword_compatibility_preserves_routing_results(self):
+        """route_sediment exposes the *_metres layer-depth and grain-size keywords; the old
+        *_m names work with four DeprecationWarnings and give the same flux, deposition
+        and d50; giving both is refused.
+        """
         parameters = inspect.signature(lsdtt3.route_sediment).parameters
         for canonical, legacy in (
             ("active_layer_depth_metres", "active_layer_depth_m"),
@@ -79,6 +87,8 @@ class SedimentRoutingTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_rejects_invalid_discharge_shape(self):
+        """route_sediment refuses a discharge array that is not (n_timesteps, n_junctions).
+        """
         with self.assertRaisesRegex(ValueError, "n_timesteps, n_junctions"):
             lsdtt3.route_sediment(
                 self.network, self.dem, n_timesteps=2,

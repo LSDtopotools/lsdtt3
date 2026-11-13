@@ -17,6 +17,9 @@ def load_checker():
 
 
 def test_api_naming_matches_reviewed_baseline():
+    """The API's naming-rule violations are exactly the reviewed list in
+    api/naming_baseline.json: no new ones.
+    """
     root = Path(__file__).parents[1]
     manifest = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))
     baseline = json.loads((root / "api" / "naming_baseline.json").read_text(encoding="utf-8"))

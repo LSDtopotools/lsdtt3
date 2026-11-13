@@ -11,6 +11,10 @@ pytestmark = [pytest.mark.unit]
 class FlatSurfaceTest(unittest.TestCase):
     @pytest.mark.exact_solution
     def test_relief_window_radius_sets_the_window_side(self):
+        """relief_window_radius_metres sets the relief window: with radius 1 m a cell two
+        cells from a 10 m spike sees no relief, with radius 2 m it sees the spike's 10
+        m.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
         values = np.zeros((9, 9), dtype=np.float32)
         values[4, 4] = 10.0
@@ -33,6 +37,9 @@ class FlatSurfaceTest(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_find_flat_surfaces_returns_diagnostics_and_labels(self):
+        """find_flat_surfaces returns its roughness, relief, combined mask and labelled
+        mask at the DEM's shape.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(64, 64, cell_size=1.0)
         rows, cols = np.indices((64, 64), dtype=np.float32)
         dem = lsdtt3.Raster.from_numpy(
@@ -59,6 +66,9 @@ class FlatSurfaceTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_classify_flat_surfaces_uses_hand_and_channel_ids(self):
+        """classify_flat_surfaces classes a low-HAND flat patch containing a channel cell
+        as floodplain: one floodplain label in the table.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         valid = np.ones((7, 7), dtype=bool)
         labels = np.zeros((7, 7), dtype=np.float32)

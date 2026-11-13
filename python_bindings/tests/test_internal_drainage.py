@@ -24,6 +24,9 @@ class InternalDrainageTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_hierarchy_candidates_and_polygons(self):
+        """find_internal_drainage finds the one pit, at (4, 4), with positive depth and
+        volume, one candidate and one polygon, in the DEM's CRS.
+        """
         result = lsdtt3.find_internal_drainage(self.dem)
 
         self.assertEqual(result.n_candidates, 1)
@@ -37,6 +40,9 @@ class InternalDrainageTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_detected_pit_can_be_retained_for_routing(self):
+        """The detected pit, given to fill_pits_with_sinks, is kept at its own elevation
+        and stays valid.
+        """
         result = lsdtt3.find_internal_drainage(self.dem, include_polygons=False)
         pits = result.candidates[["pit_row", "pit_col"]].to_numpy(dtype=np.int64)
         retained = lsdtt3.fill_pits_with_sinks(self.dem, pits, min_slope=0.001)
@@ -46,6 +52,9 @@ class InternalDrainageTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_empty_result_keeps_candidate_schema(self):
+        """With a minimum depth no pit reaches, the candidate table is empty but keeps its
+        columns.
+        """
         result = lsdtt3.find_internal_drainage(self.dem, min_depth_metres=100.0)
 
         self.assertEqual(result.n_candidates, 0)
@@ -57,6 +66,10 @@ class InternalDrainageTest(unittest.TestCase):
     @pytest.mark.conformance
     @pytest.mark.negative
     def test_area_and_volume_keyword_compatibility_preserves_candidates(self):
+        """find_internal_drainage's signature has min_area_m2 and min_volume_m3; the old
+        names still work with DeprecationWarnings and give the same candidates; giving
+        both forms is refused.
+        """
         parameters = inspect.signature(lsdtt3.find_internal_drainage).parameters
         self.assertIn("min_area_m2", parameters)
         self.assertIn("min_volume_m3", parameters)
@@ -86,6 +99,9 @@ class InternalDrainageTest(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.smoke
     def test_complete_hierarchy_exposes_labels_and_parent_tree(self):
+        """depression_hierarchy has at least the ocean and one leaf, a label raster at the
+        DEM's shape and a node table with parent ids.
+        """
         hierarchy = lsdtt3.depression_hierarchy(self.dem)
 
         self.assertGreaterEqual(hierarchy.n_nodes, 2)  # ocean plus one leaf

@@ -16,6 +16,9 @@ class TerrainFeatureTest(unittest.TestCase):
         return lsdtt3.Raster.from_numpy(values, np.ones((size, size), dtype=bool), metadata)
 
     def test_marsh_and_road_feature_results(self):
+        """find_marsh_platform, find_roads and extract_roads_smooth return their masks at
+        the DEM's shape.
+        """
         dem = self.dem()
         marsh = lsdtt3.find_marsh_platform(
             dem, max_scarp_growth_iterations=2, max_platform_growth_iterations=2,
@@ -35,6 +38,10 @@ class TerrainFeatureTest(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.exact_solution
     def test_ridgeline_and_valley_centreline(self):
+        """A ridgeline along a row is 4-connected with one elevation per pixel;
+        extract_valley_centrelines returns a valley mask and a centreline;
+        fit_valley_baseline fills a gap linearly ([10, 8.5, 7]).
+        """
         metadata = lsdtt3.RasterMeta.from_shape(48, 48, cell_size=1.0)
         rows, cols = np.indices((48, 48), dtype=np.float32)
         valley_dem = lsdtt3.Raster.from_numpy(

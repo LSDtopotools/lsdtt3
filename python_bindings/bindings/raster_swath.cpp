@@ -212,7 +212,9 @@ baseline : geopandas.GeoDataFrame
 values : Raster, optional
     Co-registered raster to summarise. Defaults to reference.
 half_width_metres : float, default=0
-    Corridor half-width. Zero includes all valid pixels.
+    Corridor half-width. Zero includes all valid pixels alongside the
+    baseline. Pixels beyond either end of the baseline (behind its start or
+    past its end) are never included.
 bin_width_metres : float, default=1000
     Along-axis bin width; must be positive.
 n_threads : int, default=0
@@ -221,7 +223,8 @@ n_threads : int, default=0
 Returns
 -------
 SwathProfile
-    Distance rasters and per-bin mean and percentile statistics.
+    Distance rasters and per-bin mean and percentile statistics. The
+    distance rasters are nodata outside the swath.
 )doc");
 }
 

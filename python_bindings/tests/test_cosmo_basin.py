@@ -9,6 +9,9 @@ pytestmark = [pytest.mark.property, pytest.mark.unit]
 
 
 def test_basin_inversion_returns_annotated_geodataframe():
+    """crn_invert_basin_erosion on one sample returns status ok, at least one basin pixel,
+    and a positive erosion rate and predicted concentration.
+    """
     values = np.array([[100.0, 99.0, 98.0], [101.0, 100.0, 97.0], [102.0, 101.0, 96.0]], dtype=np.float32)
     meta = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=30.0, x_min=500_000.0, y_min=4_400_000.0)
     dem = lsdtt3.Raster.from_numpy(values, np.ones(values.shape, dtype=bool), meta)
@@ -30,6 +33,10 @@ def test_basin_inversion_returns_annotated_geodataframe():
 
 
 def test_pair_diagnostics_returns_annotated_geodataframe():
+    """crn_pair_diagnostics in burial mode, on the Al26 and Be10 concentrations of a
+    steady-state column, converges with a positive erosion rate and a burial time of
+    zero or more.
+    """
     column = lsdtt3.CRNColumn()
     steady = column.steady_state(
         effective_erosion_rate_g_cm2_yr=0.01,

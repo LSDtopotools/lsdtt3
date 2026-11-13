@@ -31,6 +31,11 @@ compatibility_function.__signature__ = inspect.signature(
 @pytest.mark.exact_solution
 @pytest.mark.conformance
 def test_function_keyword_compatibility_prototype_preserves_signature_and_value():
+    """The keyword-compatibility wrapper on a test function keeps the native signature
+    (keyword-only canonical and legacy names, no defaults) and the wrapped function,
+    passes the canonical value through, and maps the legacy keyword to it with one
+    DeprecationWarning at the caller's line naming the new keyword.
+    """
     parameters = inspect.signature(compatibility_function).parameters
     assert list(parameters) == ["prefix", "canonical", "legacy"]
     assert parameters["prefix"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
@@ -54,6 +59,9 @@ def test_function_keyword_compatibility_prototype_preserves_signature_and_value(
 
 @pytest.mark.negative
 def test_function_keyword_compatibility_prototype_rejects_conflict():
+    """The keyword-compatibility wrapper refuses the canonical and legacy keywords given
+    together.
+    """
     with pytest.raises(TypeError, match="cannot both be supplied"):
         compatibility_function("p", canonical=7, legacy=9)
 
@@ -67,6 +75,11 @@ def test_function_keyword_compatibility_prototype_rejects_conflict():
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_native_constructor_keyword_compatibility_prototype():
+    """On a native probe class, the constructor accepts the canonical keyword and a
+    positional value, accepts the legacy keyword with one DeprecationWarning at the
+    caller's line, keeps the class type, refuses both keywords together, and still
+    supports subclassing.
+    """
     probe_type = native._KeywordCompatibilityProbe
     signatures = probe_type.__init__.__nb_signature__
     assert len(signatures) == 2

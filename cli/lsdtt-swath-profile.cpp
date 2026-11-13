@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
     float_default_map["half_width_metres"] = 0.0f;
     help_map["half_width_metres"] = {"float","0.0",
         "Only pixels within this distance of the baseline are included.",
-        "Set to 0 to include all valid pixels (full-extent swath).",
+        "Set to 0 to include all valid pixels alongside the baseline (full-extent swath). Pixels beyond either end of the baseline are never included.",
         "Swath geometry", "param", ""};
 
     float_default_map["bin_width_metres"] = 1000.0f;

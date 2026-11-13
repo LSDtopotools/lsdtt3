@@ -143,6 +143,9 @@ def test_unknown_topic_or_symbol_is_actionable():
 
 
 def test_high_risk_cards_match_runtime_contracts():
+    """python_bindings/tools/check_llm_cards.py passes: the LLM helper's cards match the
+    runtime contracts.
+    """
     path = Path(__file__).parents[1] / "tools" / "check_llm_cards.py"
     spec = importlib.util.spec_from_file_location("check_llm_cards", path)
     assert spec is not None and spec.loader is not None

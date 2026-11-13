@@ -2,7 +2,8 @@
 
 A swath profile along an ordered baseline polyline. Every valid pixel within
 `half_width_metres` of the baseline is projected onto it and binned by
-distance along the baseline. Each bin reports the pixel count, the mean and a
+distance along the baseline. Pixels beyond either end of the baseline (behind
+its start or past its end) are not alongside it and are left out. Each bin reports the pixel count, the mean and a
 21-level percentile distribution (p0, p5, …, p100) of a value raster, which
 is the DEM's own elevation unless you give `value_raster_fname`. The tool also
 writes rasters of the along-axis and perpendicular distance of every pixel.
@@ -45,14 +46,27 @@ bin_width_metres: 250
 
 The first LineString feature in `baseline_vector_fname` is the baseline, in
 the order its vertices are stored. `half_width_metres: 0` (the default)
-includes every valid pixel in the raster.
+includes every valid pixel alongside the baseline.
+
+!!! note "Pixels beyond the ends of the baseline"
+    A pixel is in the swath only if its nearest point on the baseline is not
+    one of the baseline's ends with the pixel lying beyond it. Versions up to
+    v0.9.5 included the pixels within `half_width_metres` of each end point,
+    in a half-disc behind the start and past the end, and counted them in the
+    first and last bins: a 30 m wide cross section in 2 m bins had about 350
+    extra pixels in each end bin against 60 in the others. Those versions
+    could also add an empty bin past the end when the baseline's length was a
+    whole number of bins plus a rounding error.
+
+A pixel beyond the ends has nodata in the distance rasters, like a pixel
+farther than `half_width_metres` from the baseline.
 
 ## Outputs
 
 | File | Written when | Contents |
 |---|---|---|
 | `<write_fname>_swath_profile.csv` | always | One row per bin: `along_axis_centre` (m along the baseline), `n_pixels`, `mean`, then `p0`, `p5`, …, `p100`. |
-| `<write_fname>_swath_along_axis.tif` | `write_distance_rasters: true` (default) | Distance along the baseline of each pixel's projection (m). |
+| `<write_fname>_swath_along_axis.tif` | `write_distance_rasters: true` (default) | Distance along the baseline of each pixel's projection (m), for the pixels in the swath. |
 | `<write_fname>_swath_perp_distance.tif` | as above | Perpendicular distance from the baseline (m). |
 | `<write_fname>_swath_signed_perp.tif` | as above | Perpendicular distance, signed by which side of the baseline the pixel is on (m). |
 
@@ -83,7 +97,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `half_width_metres` | `float` | `0.0` | `param` | - | Only pixels within this distance of the baseline are included. | Set to 0 to include all valid pixels (full-extent swath). |
+| `half_width_metres` | `float` | `0.0` | `param` | - | Only pixels within this distance of the baseline are included. | Set to 0 to include all valid pixels alongside the baseline (full-extent swath). Pixels beyond either end of the baseline are never included. |
 | `bin_width_metres` | `float` | `1000.0` | `param` | - | Along-axis bin width in metres. Must be &gt; 0. | - |
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads (0 = all available). | - |
 

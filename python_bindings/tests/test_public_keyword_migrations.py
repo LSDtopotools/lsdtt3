@@ -33,6 +33,10 @@ def hydraulic_inputs():
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_graphflood_legacy_tolerances_warn_and_match(solver):
+    """Each GraphFlood solver accepts the old tolerance keywords with a DeprecationWarning
+    pointing at the caller and gives the same water depth as the new ones; giving both
+    forms is refused.
+    """
     inputs = hydraulic_inputs()
     common = dict(max_steps=2, run_until_converged=False)
     canonical = solver(
@@ -64,6 +68,10 @@ def test_graphflood_legacy_tolerances_warn_and_match(solver):
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_accelerator_legacy_tolerances_normalize_before_dispatch(accelerator):
+    """Multigrid and induced GraphFlood translate the old tolerance keywords (with two
+    DeprecationWarnings) before calling the backend, which sees only the new names;
+    giving both forms is refused.
+    """
     calls = []
 
     def backend(*args, **kwargs):
@@ -99,6 +107,10 @@ def test_accelerator_legacy_tolerances_normalize_before_dispatch(accelerator):
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_landscape_threshold_legacy_keyword_warns_and_conflicts():
+    """LandscapeModel accepts incision_threshold_area with one DeprecationWarning and the
+    same channel mask as incision_threshold_specific_area; positional construction and
+    subclassing still work; giving both is refused.
+    """
     meta = lsdtt3.RasterMeta.from_shape(5, 5, cell_size=10.0)
     rows, _ = np.indices((5, 5), dtype=np.float32)
     dem = lsdtt3.Raster.from_numpy(
@@ -140,6 +152,10 @@ def test_landscape_threshold_legacy_keyword_warns_and_conflicts():
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_flat_relief_window_legacy_keyword_warns_and_conflicts():
+    """find_flat_surfaces accepts relief_window_side_pixels, relief_window_pixels and
+    relief_threshold_metres with DeprecationWarnings, giving the same relief as the new
+    keywords; giving both window keywords is refused.
+    """
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     values = np.zeros((9, 9), dtype=np.float32)
     values[4, 4] = 10.0
@@ -180,6 +196,9 @@ def test_flat_relief_window_legacy_keyword_warns_and_conflicts():
 @pytest.mark.exact_solution
 @pytest.mark.negative
 def test_valley_mask_is_required_validated_and_thresholded():
+    """extract_valley_centrelines needs a valley_mask on the DEM's grid; values above 0.5
+    are valley (45 cells here), and an all-zero mask gives an empty valley.
+    """
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     rows, cols = np.indices((9, 9), dtype=np.float32)
     dem = lsdtt3.Raster.from_numpy(
@@ -213,6 +232,9 @@ def test_valley_mask_is_required_validated_and_thresholded():
 
 @pytest.mark.smoke
 def test_classification_floodplain_mask_composes_with_centreline():
+    """The floodplain mask from classify_flat_surfaces can be the valley mask of
+    extract_valley_centrelines, which then finds a centreline.
+    """
     meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=1.0)
     rows, cols = np.indices((9, 9), dtype=np.float32)
     dem = lsdtt3.Raster.from_numpy(
