@@ -213,13 +213,33 @@ definition and the total. A test with several evidence labels is counted under
 each. `--table list` gives every test: its suite, level, evidence labels,
 domains, the programs it runs, what the CLI harness checks (from its assertion
 flags: outputs written, file contents, checksums, the expected failure message)
-and a description. The description is the test's own comment in
-`tests/CMakeLists.txt`, the header of its parameter file, its docstring
-(pytest), or, failing those, the nearest comment above it (`section`, which
-often describes a group of tests) or its name as words (`name`); the `source`
-column says which. Formats are `md`, `csv` and `tex`; `--suite ctest` or
-`--suite pytest` restricts to one suite. Writing more specific comments above a
-test's registration, or docstrings on Python tests, improves the list.
+and a description; the `source` column says where it came from. Formats are
+`md`, `csv` and `tex`; `--suite ctest` or `--suite pytest` restricts to one
+suite.
+
+**Every new test needs a description**, and the tool finds it here:
+
+- a CTest test registered by name (`add_test`, `add_lsdtt_cli_smoke_test`, or
+  any `add_*test*` helper): the comment directly above the call, with nothing
+  but blank lines or an `if(...)` between them;
+- a CTest test generated in a loop: the comment directly above the list entry
+  it is built from. Write one entry per line, with its comment above it (CMake
+  allows comments between arguments):
+
+  ```cmake
+  foreach(_case IN ITEMS
+          # Refused: rotation together with force_reproject.
+          "rotate_force_reproject|cannot be combined with force_reproject"
+          ...)
+  ```
+
+- a smoke test with a parameter file and no comment: the header comment of its
+  `tests/params/*.param.in`;
+- a Python test: its docstring.
+
+Failing those, the tool falls back to the nearest comment above (`section`,
+which usually describes a group) or the test's name as words (`name`). On
+2026-11-13 every test had its own description.
 
 The CTest counts are for the configuration of the build directory, which the
 output states. A default configure registers only the native tests, about a

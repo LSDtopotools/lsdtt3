@@ -31,7 +31,8 @@ Descriptions, in order of preference:
     tests/CMakeLists.txt; else the header comment of its parameter file
     (tests/params/*.param.in); else the nearest comment above it, which often
     describes a group of tests ("section"); else none. Tests registered in a
-    loop are found by the longest trailing part of their name in the file.
+    loop take the comment directly above the list entry they were built
+    from (one entry per line of the foreach / set / list(APPEND) list).
   * pytest: the test's docstring, else its class's docstring.
   * Either, failing those: the test's name, as words ("name").
 The "source" column says which was used.
@@ -78,7 +79,11 @@ SECTION_REACH = 120
 # -----------------------------------------------------------------------------
 # CTest descriptions
 # -----------------------------------------------------------------------------
-REGISTRATION = re.compile(r"^\s*(add_test\(\s*(?:NAME)?|add_lsdtt_\w+\(|lsdtt_add_\w+\()\s*([A-Za-z0-9_]+)?")
+# add_test(NAME x ...), and the helpers that wrap it (add_lsdtt_cli_smoke_test,
+# lsdtt_add_harness_test, add_internal_drainage_cli_test, ...): a call whose
+# first argument, on the same line or the next, is the test name.
+REGISTRATION = re.compile(
+    r"^\s*(add_test\(\s*(?:NAME)?|add_\w*test\w*\(|lsdtt_add_\w+\()\s*([A-Za-z0-9_]+)?")
 
 
 def registration_lines(lines: list[str]) -> dict[str, int]:
@@ -213,6 +218,55 @@ def programs(command: list[str], clis: set[str]) -> str:
     return ", ".join(sorted(found))
 
 
+LIST_OPEN = re.compile(r"^\s*(foreach|set|list)\s*\(")
+NUMBER = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+
+
+def list_item_lines(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """Each line that is one entry of a foreach / set / list(APPEND) argument
+    list, with the identifier-like fields of that entry, normalised as test
+    names are built from them ("lsdtt-drainage-analysis" -> "drainage_analysis").
+    An entry is a quoted string ("a|b|message", "a;b") or a bare token on its
+    own line; the command's first line is not an entry."""
+    out = []
+    depth = 0
+    for i, raw in enumerate(lines):
+        line = raw.split("#", 1)[0] if not raw.lstrip().startswith('"') else raw
+        if depth == 0:
+            if LIST_OPEN.match(line):
+                depth = line.count("(") - line.count(")")
+            continue
+        m = re.match(r'^\s*"([^"]*)"\s*\)?\s*$', line) or \
+            re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*\)?\s*$", line)
+        if m:
+            fields = []
+            for f in re.split(r"[|;]", m.group(1)):
+                f = f.strip()
+                if re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", f) and not NUMBER.match(f):
+                    fields.append(re.sub(r"^lsdtt_", "", f.replace("-", "_")))
+            if fields:
+                out.append((i, fields))
+        depth += line.count("(") - line.count(")")
+        if depth <= 0:
+            depth = 0
+    return out
+
+
+def list_item_for(items: list[tuple[int, list[str]]], name: str) -> int | None:
+    """The list entry a test generated in a loop was built from: every field of
+    the entry appears in the test name as whole underscore-separated words. The
+    entry matching the most characters wins; a tie is no match."""
+    best, best_score, tie = None, 0, False
+    for i, fields in items:
+        if all(re.search(r"(?:^|_)" + re.escape(f) + r"(?:_|$)", name) for f in fields):
+            score = sum(len(f) for f in fields)
+            if score > best_score:
+                best, best_score, tie = i, score, False
+            elif score == best_score:
+                tie = True
+    return None if tie else best
+
+
 def anchor_line(lines: list[str], name: str) -> tuple[int | None, bool]:
     """For a test with no literal registration: the first line naming it, or else
     the first naming the longest trailing part of its name (at least two words),
@@ -230,12 +284,15 @@ def anchor_line(lines: list[str], name: str) -> tuple[int | None, bool]:
 def ctest_rows(build: Path, ctest: str) -> list[dict]:
     lines = CMAKELISTS.read_text().splitlines()
     where = registration_lines(lines)
+    items = list_item_lines(lines)
     clis = set(cli_names())
     rows = []
     for t in ctest_tests(build, ctest):
         labels = set(t["labels"])
         description, source = "", ""
         i = where.get(t["name"])
+        if i is None:
+            i = list_item_for(items, t["name"])
         if i is None:
             i, _ = anchor_line(lines, t["name"])
         if i is not None:

@@ -1095,11 +1095,17 @@ add_lsdtt_cli_smoke_test(
 )
 
 foreach(_rp_case IN ITEMS
+        # Refused: rotate_to_linear_feature and rotate_to_data_footprint together.
         "rotate_both_switches|rotate_to_linear_feature and rotate_to_data_footprint cannot be combined"
+        # Refused: rotation together with force_reproject.
         "rotate_force_reproject|cannot be combined with force_reproject"
+        # Refused: rotate_to_linear_feature without rotation_feature_fname.
         "rotate_missing_fname|needs rotation_feature_fname"
+        # Refused: run_rotate_back together with write_fill_raster.
         "rotate_back_with_fill|cannot be combined with: write_fill_raster"
+        # Refused: run_rotate_back without rotate_back_file_list.
         "rotate_back_no_list|needs rotate_back_file_list"
+        # Refused: rotating back a raster that is not in the frame's CRS.
         "rotate_back_not_in_frame|not the frame CRS")
     string(REPLACE "|" ";" _rp_parts "${_rp_case}")
     list(GET _rp_parts 0 _rp_name)
@@ -3058,12 +3064,24 @@ add_executable(lsdtt-test-channel-bearing-statistics cpp/test_channel_bearing_st
 target_link_libraries(lsdtt-test-channel-bearing-statistics PRIVATE lsdtt3_cpu)
 
 foreach(_cbs_mode
+        # The analytic cases of the circular two-sample functions, including the
+        # 8 bearings and answers the retired lsdtt-bearing-comparison CLI tests pinned.
         "circular|--circular-two-sample"
+        # Group summaries: circular mean, R-bar, axial fold, length weights,
+        # Rayleigh, D8 fraction and rose bins.
         "summaries|--group-summaries"
+        # Comparisons: Holm correction, the pairwise, one-vs-rest and reference
+        # row counts, the minimum group size, and the reference-CSV reader.
         "comparisons|--comparisons"
+        # Linear statistics of junction angles.
         "junction_angles|--junction-angle-stats"
+        # Known-answer synthetic trellis networks (four N-S valleys, E-W
+        # tributaries): flow routing, junctions, bearings and angles.
         "trellis|--trellis-network"
+        # Grouping keys: region (with purity), order pooling, donor order pairs,
+        # order-k basins, and innermost-wins outlet basins.
         "grouping|--grouping-keys"
+        # A diamond-square surface: the all-link axial R-bar stays below 0.15.
         "isotropic_null|--isotropic-null")
     string(REPLACE "|" ";" _cbs_mode "${_cbs_mode}")
     list(GET _cbs_mode 0 _cbs_name)
@@ -5226,9 +5244,12 @@ add_test(NAME unit_cli_helper_formats COMMAND lsdtt-test-cli-helper-formats)
 # D5 quote-aware lsdtt::csv_split_row and load_csv_table.
 add_executable(lsdtt-test-csv-table-quoting cpp/test_csv_table_quoting.cpp)
 target_link_libraries(lsdtt-test-csv-table-quoting PRIVATE lsdtt3_core)
-# PLACEHOLDER: the driver has no assertions yet; it prints a message and passes
-# without checking anything.
-add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting)
+# The quote-aware splitter csv_split_row (every case its header documents,
+# including the lenient readings of malformed input and the D5 trailing-comma
+# change), csv_trim, and load_csv_table on files with quoted names and values,
+# CRLF, blank, short and over-long rows; empty and missing files refused.
+add_test(NAME unit_csv_table_quoting COMMAND lsdtt-test-csv-table-quoting
+    "${CMAKE_CURRENT_BINARY_DIR}/csv_table_quoting_work")
 
 # Strict field converters shared by the hand-written CSV readers (Manning,
 # crn_column erosion history, particle restart): file, line and text on error.
@@ -5368,6 +5389,13 @@ target_link_libraries(lsdtt-test-mountain-front-outlet-pruning PRIVATE lsdtt3_cp
 add_executable(lsdtt-test-synthetic-networks cpp/test_synthetic_networks.cpp)
 target_link_libraries(lsdtt-test-synthetic-networks PRIVATE lsdtt3_cpu)
 
+# Optimal channel networks (lsdtt_synthetic_network_cpu): energy and tree
+# validity for three cases (rectangles at two gamma and temperature settings, an
+# island mask); determinism; D8 round-trip routing fidelity; drainage-area
+# exceedance scaling; length-weighted energy and planform; north-south outlets
+# with periodic columns; synthetic georeferencing; incremental energy against
+# the full sum; annealing; agreement with an lsdtt-lem steady state; and the
+# polygon true-area fixture.
 add_test(NAME unit_synthetic_networks
          COMMAND lsdtt-test-synthetic-networks
                  ${LSDTT_SYNTHETIC_NETWORKS_FIXTURE_DIR})
@@ -5544,6 +5572,9 @@ function(add_internal_drainage_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT
         FIXTURES_REQUIRED internal_drainage_cli_fixture)
 endfunction()
 
+# The detect stage of lsdtt-internal-drainage on the crater-field DEM writes at
+# least 3 sink candidates (points and CSV), the depression polygons and table,
+# and the fill-difference raster.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_detect
     internal_drainage_detect.param.in
@@ -5555,6 +5586,9 @@ add_internal_drainage_cli_test(
     --expect-vector-feature-min phase4_detect_sink_candidates.fgb:3
     --stdout-contains "Stage: detect")
 
+# Detect then route with forced-outlet sinks: writes the sink ids, accepted
+# sinks and sink statistics, the sink basins, channels, junctions and channel
+# nodes with chi, and the drainage-area and flow-direction rasters.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_both
     internal_drainage_both.param.in
@@ -5580,6 +5614,9 @@ add_internal_drainage_cli_test(
     --expect-raster-stat phase4_both_sink_chi.tif:min:0:0
     --stdout-contains "Stage: route")
 
+# The route stage from a candidate CSV with nodata-hole sinks: a 300 x 300
+# sink-id raster with ids 0 to 2, the punched DEM, the accepted sink at its
+# pinned elevation, and the sink channels with chi.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_route
     internal_drainage_route.param.in
@@ -5597,6 +5634,9 @@ add_internal_drainage_cli_test(
     --expect-raster-stat phase4_route_sink_id.tif:max:2:2
     --stdout-contains "Stage: route")
 
+# Routing from candidates that have moved: the accepted-sink table pins the
+# elevation of the one that matches and nan for the one that does not; the old
+# key sink_candidate_format still works with a deprecation warning.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_moved_route
     internal_drainage_moved_route.param.in
@@ -5607,6 +5647,8 @@ add_internal_drainage_cli_test(
     --stdout-contains "Stage: route"
     --stderr-contains "'sink_candidate_format' is deprecated")
 
+# Refused: breaching before filling with sinks (breach_depressions_with_sinks is
+# not available).
 add_internal_drainage_cli_test(
     failure_internal_drainage_breach
     internal_drainage_breach_failure.param.in
@@ -5614,6 +5656,7 @@ add_internal_drainage_cli_test(
     --expect-failure
     --stderr-contains "breach_depressions_with_sinks")
 
+# Refused: PNG output.
 add_internal_drainage_cli_test(
     failure_internal_drainage_png
     internal_drainage_png_failure.param.in
@@ -5630,6 +5673,8 @@ add_internal_drainage_cli_test(
     phase4_leaves_warning_sink_candidates.fgb
     --stderr-contains "sink_leaves_only: false has no effect")
 
+# Refused: the both stage with nested depression-hierarchy sinks (both requires
+# sink_leaves_only: true).
 add_internal_drainage_cli_test(
     failure_internal_drainage_nested_both
     internal_drainage_nested_both_failure.param.in
@@ -5637,6 +5682,8 @@ add_internal_drainage_cli_test(
     --expect-failure
     --stderr-contains "both requires sink_leaves_only: true")
 
+# With a threshold no channel reaches, the sink channel tables are written with
+# their header only and the empty FlatGeobuf layers are reported.
 add_internal_drainage_cli_test(
     smoke_internal_drainage_empty_channels
     internal_drainage_empty_channels.param.in
@@ -5960,6 +6007,12 @@ lsdtt_set_tests_properties(unit_drainage_area_exceedance_ols PROPERTIES
 add_executable(lsdtt-test-hydraulic-routing cpp/test_hydraulic_routing.cpp)
 target_link_libraries(lsdtt-test-hydraulic-routing PRIVATE lsdtt3_cpu)
 
+# Hydraulic routing (lsdtt_hydraulic_graph_cpu, GraphFlood): water depth never
+# negative in any mode, volume never rises under closed forcing, rainfall
+# balances outlet export, the same inputs give the same outputs, the transient
+# and dynamic modes dispatch as set, the outlet rules and outlet mask, MFD uses
+# the diagonal effective width, and the optimised solver conserves mass and
+# reuses its topology.
 add_test(NAME unit_hydraulic_routing
          COMMAND lsdtt-test-hydraulic-routing)
 lsdtt_set_tests_properties(unit_hydraulic_routing PROPERTIES LABELS "hydraulic")
@@ -6078,6 +6131,10 @@ add_executable(lsdtt-test-raster-jenks-classification
                cpp/test_raster_jenks_classification.cpp)
 target_link_libraries(lsdtt-test-raster-jenks-classification PRIVATE lsdtt3_cpu)
 
+# Jenks classification of a raster: exact classes on four valid values; masked,
+# non-finite and nodata cells left out of the classes and the count with
+# metadata kept; no valid input refused; one unique value gives one class; more
+# classes than unique values are capped; the histogram path caps its bins.
 add_test(NAME unit_raster_jenks_classification
          COMMAND lsdtt-test-raster-jenks-classification)
 lsdtt_set_tests_properties(unit_raster_jenks_classification PROPERTIES
@@ -6086,6 +6143,11 @@ lsdtt_set_tests_properties(unit_raster_jenks_classification PROPERTIES
 add_executable(lsdtt-test-raster-active-masks cpp/test_raster_active_masks.cpp)
 target_link_libraries(lsdtt-test-raster-active-masks PRIVATE lsdtt3_cpu)
 
+# Active and excluded masks: a value-set mask follows its truth table (lround
+# matching, duplicates ignored, the source mask and not the nodata value
+# deciding membership); active AND NOT excluded follows its truth table and
+# counts only active exclusions; a null active mask with an ice mask; mismatched
+# dimensions refused.
 add_test(NAME unit_raster_active_masks COMMAND lsdtt-test-raster-active-masks)
 lsdtt_set_tests_properties(unit_raster_active_masks PROPERTIES
     LABELS "raster;mask")
@@ -6130,6 +6192,10 @@ lsdtt_set_tests_properties(unit_hillslope_length_statistic PROPERTIES
 add_executable(lsdtt-test-critical-slope cpp/test_critical_slope.cpp)
 target_link_libraries(lsdtt-test-critical-slope PRIVATE lsdtt3_cpu)
 
+# Divide diagnostics: an invalid k is refused; a ramp that does not change gives
+# zero change; half-step and class sanity; on a dendritic fixture (noise on a
+# cone) the divide path set equals a brute-force reference; the result does not
+# depend on the thread count; the output mask never holds nodata.
 add_test(NAME unit_divide_diagnostics
          COMMAND lsdtt-test-divide-diagnostics)
 lsdtt_set_tests_properties(unit_divide_diagnostics PROPERTIES
@@ -6340,6 +6406,9 @@ function(add_hilltop_coupling_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
         FIXTURES_REQUIRED hilltop_coupling_cli_fixture)
 endfunction()
 
+# lsdtt-hillslope-channel-coupling on its fixture DEM writes the hilltop points
+# and ridgelines, and reports the hilltops never traced because of the DEM
+# border.
 add_hilltop_coupling_cli_test(
     smoke_hillslope_channel_coupling
     hillslope_channel_coupling_smoke.param.in
@@ -6413,6 +6482,7 @@ add_hilltop_coupling_cli_test(
     --expect-file-not-contains "hccchi_hilltop_points.csv:-9999"
     --stdout-contains "Joined k_sn onto")
 
+# Refused: critical_hillslope_slope 0.
 add_hilltop_coupling_cli_test(
     failure_hillslope_channel_coupling_bad_sc
     hillslope_channel_coupling_bad_sc.param.in
@@ -6420,6 +6490,7 @@ add_hilltop_coupling_cli_test(
     --expect-failure
     --stderr-contains "critical_hillslope_slope must be > 0")
 
+# Refused: an unknown ridge_extraction_algorithm_choice.
 add_hilltop_coupling_cli_test(
     failure_hillslope_channel_coupling_bad_ridge_choice
     hillslope_channel_coupling_bad_ridge_choice.param.in
@@ -6427,6 +6498,7 @@ add_hilltop_coupling_cli_test(
     --expect-failure
     --stderr-contains "ridge_extraction_algorithm_choice must be")
 
+# Refused: a channel threshold no channel reaches (no channel).
 add_hilltop_coupling_cli_test(
     failure_hillslope_channel_coupling_no_channels
     hillslope_channel_coupling_no_channels.param.in
@@ -6791,7 +6863,11 @@ if(TEST smoke_chi_analysis_erodibility_calibration)
     # west 9.46848e-6 (rel err 5.32 %), east 3.86206e-5 (rel err 3.45 %); twice
     # those exceed the plan's 6.4 % cap, so the pin is the cap. (mono, measured
     # west 7.05 %, east 3.58 %, is not asserted: west exceeds the cap.)
-    foreach(_u "west;1e-5" "east;4e-5")
+    foreach(_u
+            # The west unit's calibrated K, built with 1e-5, is within the 6.4 % cap.
+            "west;1e-5"
+            # The east unit's calibrated K, built with 4e-5, is within the 6.4 % cap.
+            "east;4e-5")
         list(GET _u 0 _name)
         list(GET _u 1 _K)
         add_test(NAME rigorous_chi_erodibility_calibration_lithology_units_${_name}
@@ -7436,12 +7512,19 @@ target_link_libraries(cellular-hillslope-particle-benchmark PRIVATE lsdtt3_cpu)
 add_executable(lsdtt-test-hillslope-particle-io
                cpp/test_hillslope_particle_io.cpp)
 target_link_libraries(lsdtt-test-hillslope-particle-io PRIVATE lsdtt3_cpu)
+# A hillslope particle tracker written to the restart CSV and read back is
+# exactly the same: ids, cells, weights, sources, ages, distances, status,
+# mixing depth, seed and substep index.
 add_test(NAME unit_hillslope_particle_io
          COMMAND lsdtt-test-hillslope-particle-io
                  ${CMAKE_CURRENT_BINARY_DIR}/cellular_hillslope_reference_output)
 lsdtt_set_tests_properties(unit_hillslope_particle_io PROPERTIES
                      LABELS "hillslope;cellular")
 
+# Cellular hillslope transport converges to the Newton-Roering transient on a
+# long, narrow, near-critical strip: its error does not grow as the CFL safety
+# factor is refined (0.8 to 0.1) and the finest run is within 1 mm of Newton at
+# dt 0.25; skipped without Eigen.
 add_test(NAME unit_cellular_hillslope_common_limit
          COMMAND cellular-hillslope-common-limit)
 lsdtt_set_tests_properties(unit_cellular_hillslope_common_limit PROPERTIES
@@ -7653,11 +7736,17 @@ add_lsdtt_cli_smoke_test(
 # and so are a missing feature file and a line without a width, all before
 # any network access. green_river_line.geojson is a three-vertex WGS84 line.
 foreach(_ff_case IN ITEMS
+        # Refused: fetch_from_linear_feature together with a west/south/east/north box.
         "with_bbox|cannot be combined with west/south/east/north"
+        # Refused: fetch_from_linear_feature together with bounds_fname.
         "with_bounds_file|cannot be combined with bounds_fname"
+        # Refused: fetch_from_linear_feature together with bounds_mode vector or outlets.
         "with_outlets|cannot be combined with bounds_mode vector or outlets"
+        # Refused: fetch_from_linear_feature together with size_pixels.
         "with_size_pixels|cannot be combined with size_pixels"
+        # Refused: fetch_from_linear_feature without fetch_feature_fname.
         "missing_fname|needs fetch_feature_fname"
+        # Refused: a line feature with no width (a line or two points needs a width > 0).
         "no_width|a line or two points needs a width > 0")
     string(REPLACE "|" ";" _ff_parts "${_ff_case}")
     list(GET _ff_parts 0 _ff_name)
@@ -8559,9 +8648,24 @@ lsdtt_set_tests_properties(smoke_spectral_analysis_valley_spacing PROPERTIES
 # columns. --threshold and --align need no FFTW.
 add_executable(lsdtt-test-spectral-significant-2d cpp/test_spectral_significant_2d.cpp)
 target_link_libraries(lsdtt-test-spectral-significant-2d PRIVATE lsdtt3_cpu)
-set(_sss2d_modes "threshold" "align")
+set(_sss2d_modes
+    # The normalised PSD significance threshold against its closed form
+    # -ln(1 - p), and p outside (0, 1) refused.
+    "threshold"
+    # Per-bin values matched by log bin, so a bin missing from one grid does not
+    # shift the others.
+    "align")
 if(LSDTT_HAS_FFTW)
-    list(APPEND _sss2d_modes "bearings" "seed" "edges")
+    list(APPEND _sss2d_modes
+        # Known-answer plane waves: the strongest significant pair sits at the
+        # wave's bearing and that bearing + 180, including on a non-square grid.
+        "bearings"
+        # The same background seed gives bit-identical background spectra at 1
+        # and 4 threads; a different seed does not.
+        "seed"
+        # A wave at the north Nyquist frequency: its peaks pair as theta and
+        # 360 - theta, not theta + 180 (the Nyquist-edge exception).
+        "edges")
 endif()
 foreach(_sss2d_mode IN LISTS _sss2d_modes)
     add_test(NAME unit_spectral_analysis_significant_2d_${_sss2d_mode}
@@ -8616,17 +8720,29 @@ add_lsdtt_cli_smoke_test(
 )
 
 foreach(default_help_spec IN ITEMS
+        # lsdtt-surface-metrics -h n_threads shows its default, 0.
         "lsdtt-surface-metrics|n_threads|default : 0"
+        # lsdtt-surface-metrics -h frangi_c shows its default, 1.0.
         "lsdtt-surface-metrics|frangi_c|default : 1.0"
+        # lsdtt-synthetic-surfaces -h n_rows shows its default, 128.
         "lsdtt-synthetic-surfaces|n_rows|default : 128"
+        # lsdtt-synthetic-surfaces -h n_cols shows its default, 128.
         "lsdtt-synthetic-surfaces|n_cols|default : 128"
+        # lsdtt-spectral-analysis -h n_threads shows its default, 0.
         "lsdtt-spectral-analysis|n_threads|default : 0"
+        # lsdtt-spectral-analysis -h valley_spacing_area_exponent shows its default, 0.45.
         "lsdtt-spectral-analysis|valley_spacing_area_exponent|default : 0.45"
+        # lsdtt-valley-centreline -h write_output_format shows its default, cog.
         "lsdtt-valley-centreline|write_output_format|default : cog"
+        # lsdtt-feature-finder -h big_channel_threshold_contributing_pixels shows its default, 5000.
         "lsdtt-feature-finder|big_channel_threshold_contributing_pixels|default : 5000"
+        # lsdtt-mountain-front -h basin_minimum_contributing_pixels shows its default, 1000.
         "lsdtt-mountain-front|basin_minimum_contributing_pixels|default : 1000"
+        # lsdtt-lem -h incision_threshold_specific_area says it is an A/dx threshold in metres.
         "lsdtt-lem|incision_threshold_specific_area|A/dx channel threshold in metres"
+        # lsdtt-lem -h channel_mask_threshold_specific_area says it is an A/dx threshold in metres.
         "lsdtt-lem|channel_mask_threshold_specific_area|A/dx threshold in metres"
+        # lsdtt-drainage-analysis -h connectivity_area_threshold_m2 refers to the total map area in m^2.
         "lsdtt-drainage-analysis|connectivity_area_threshold_m2|total map area in m\\^2")
     string(REPLACE "|" ";" default_help_fields "${default_help_spec}")
     list(GET default_help_fields 0 default_help_exe)
@@ -8915,7 +9031,13 @@ set(_lsdtt_contract_args
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     "-DGENERATOR=${CMAKE_GENERATOR}"
     -DCXX_COMPILER=${CMAKE_CXX_COMPILER})
-foreach(_case native_default geo_without_python)
+foreach(_case
+        # Defaults: configure succeeds, warns that the Python tests are not
+        # registered, and the summary shows the Python and network tiers off.
+        native_default
+        # Geo tests on with Python tests off: a configure error naming
+        # LSDTT_ENABLE_PYTHON_TESTS.
+        geo_without_python)
     add_test(NAME configure_contract_${_case}
              COMMAND ${CMAKE_COMMAND} -DCASE=${_case} ${_lsdtt_contract_args}
                      -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/configure_contract/${_case}
@@ -8923,7 +9045,13 @@ foreach(_case native_default geo_without_python)
     lsdtt_set_tests_properties(configure_contract_${_case} PROPERTIES
         LABELS "configure_contract")
 endforeach()
-foreach(_case geo_missing_modules gdal_programs_missing)
+foreach(_case
+        # Geo tests on with a bare Python environment: a configure error naming
+        # the imports that fail.
+        geo_missing_modules
+        # Python tests on with the GDAL program names pointed at one that does
+        # not exist: a configure error naming it and gdal-bin.
+        gdal_programs_missing)
     if(LSDTT_ENABLE_PYTHON_TESTS)
         add_test(NAME configure_contract_${_case}
                  COMMAND ${CMAKE_COMMAND} -DCASE=${_case} ${_lsdtt_contract_args}
@@ -10927,10 +11055,15 @@ lsdtt_set_tests_properties(smoke_fluvial_surfaces_help PROPERTIES
     PASS_REGULAR_EXPRESSION "fill_before_routing")
 
 foreach(threshold_help_target IN ITEMS
+        # lsdtt-drainage-analysis -h lists threshold_contributing_pixels.
         drainage-analysis
+        # lsdtt-fluvial-surfaces -h lists threshold_contributing_pixels.
         fluvial-surfaces
+        # lsdtt-valley-centreline -h lists threshold_contributing_pixels.
         valley-centreline
+        # lsdtt-stream-burning -h lists threshold_contributing_pixels.
         stream-burning
+        # lsdtt-feature-finder -h lists threshold_contributing_pixels.
         feature-finder)
     string(REPLACE "-" "_" threshold_help_slug "${threshold_help_target}")
     add_test(NAME smoke_${threshold_help_slug}_threshold_help
