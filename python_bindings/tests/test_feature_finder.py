@@ -22,6 +22,9 @@ class FeatureFinderTest(unittest.TestCase):
         )
 
     def test_feature_detection_results(self):
+        """relief_ratio, frangi_filter, find_channel_candidates (3 scales), find_drains and
+        find_valleys return their rasters at the DEM's shape.
+        """
         raster = self.raster()
         ratio = lsdtt3.relief_ratio(raster, 2.0, 8.0)
         frangi = lsdtt3.frangi_filter(raster, 1.0, 3.0, 3, target="valleys", n_threads=1)
@@ -44,6 +47,10 @@ class FeatureFinderTest(unittest.TestCase):
         self.assertEqual(valleys.shape_class.shape, raster.shape)
 
     def test_mountain_front_and_outlets(self):
+        """identify_mountain_front with two relief scales returns its masks, fitted
+        surface, residual and one relief raster per scale; mountain_front_outlets
+        returns a raster at the DEM's shape.
+        """
         raster = self.raster()
         result = lsdtt3.identify_mountain_front(
             raster,
@@ -71,6 +78,10 @@ class FeatureFinderTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_road_flow_canonical_keywords(self):
+        """find_road_flow_discrimination runs with the current keyword names, and the old
+        names flow_accumulation_threshold_pixels and dem_is_filled are refused
+        (TypeError).
+        """
         raster = self.raster()
         result = lsdtt3.find_road_flow_discrimination(
             raster,

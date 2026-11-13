@@ -14,6 +14,9 @@ pytestmark = [pytest.mark.unit]
 @pytest.mark.exact_solution
 class LinearStatsTests(unittest.TestCase):
     def test_line_sampling_preserves_geometry_and_adds_statistics(self):
+        """linear_stats along a 40 m line across the middle row keeps the line's attributes
+        and gives 5 samples with mean 12, the row's mean.
+        """
         meta = lsdtt3.RasterMeta.from_shape(
             5, 5, x_min=0.0, y_min=0.0, cell_size=10.0,
             crs_wkt=CRS.from_epsg(32633).to_wkt(), epsg_code=32633,
@@ -39,6 +42,10 @@ class LinearStatsTests(unittest.TestCase):
 @pytest.mark.property
 class BearingComparisonTests(unittest.TestCase):
     def test_rotation_invariant_and_axial_comparisons(self):
+        """compare_bearings: two sets 30 degrees apart differ, are identical (distance 0)
+        when rotation-invariant, and bearings 180 degrees apart are identical when
+        axial.
+        """
         first = np.array([5.0, 25.0, 60.0, 150.0])
         shifted = first + 30.0
         ordinary = lsdtt3.compare_bearings(first, shifted)
@@ -52,6 +59,9 @@ class BearingComparisonTests(unittest.TestCase):
 class BasinOutlineRidgelineTests(unittest.TestCase):
     @pytest.mark.characterisation
     def test_selected_basin_outlines_are_split_into_georeferenced_ridges(self):
+        """A V-shaped basin's outline is split into 2 ridgelines with basin and ridgeline
+        ids, lengths and geometry.
+        """
         meta = lsdtt3.RasterMeta.from_shape(9, 9, cell_size=10.0)
         rows, cols = np.indices((9, 9))
         dem = lsdtt3.Raster.from_numpy(
@@ -71,6 +81,9 @@ class BasinOutlineRidgelineTests(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_ridgeline_extrema_include_network_topology_diagnostics(self):
+        """basin_ridgeline_extrema on a V-shaped basin returns extrema with their type,
+        distance to the channel junction, ridgeline slope fit and geometry.
+        """
         meta = lsdtt3.RasterMeta.from_shape(21, 21, cell_size=10.0)
         rows, cols = np.indices((21, 21))
         dem = lsdtt3.Raster.from_numpy(

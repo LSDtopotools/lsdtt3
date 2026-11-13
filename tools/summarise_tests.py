@@ -14,11 +14,17 @@ and the Python binding tests (pytest, read statically: no built binding needed):
 
 Formats: md (Markdown, the default), csv, or tex (LaTeX, booktabs).
 
-Unlike tools/generate_test_inventory.py, which writes the committed
-docs/developer_notes/test_inventory.md for one fixed configuration, this reports
-on whatever the build directory is configured with, and says so: the options
-LSDTT_ENABLE_PYTHON_TESTS, _PYTHON_GEO_TESTS, _NETWORK_TESTS, _BENCHMARKS and
-_PERF_TESTS change which CTest tests exist.
+WHICH BUILD. The CTest tests are the ones a configured build directory
+registers, and the configure options decide which: a default configure
+registers only the native tests (about a quarter of them), because
+LSDTT_ENABLE_PYTHON_TESTS, _PYTHON_GEO_TESTS and _NETWORK_TESTS default to OFF,
+and the release builds configure with BUILD_TESTING=OFF and register none.
+Nothing needs compiling: `ctest --show-only` lists the tests a configure
+registered. For complete counts use --configure-dir, which configures a fresh
+directory with all three ON. The output states the configuration, and a
+warning says when it is incomplete. (tools/generate_test_inventory.py writes
+the committed docs/developer_notes/test_inventory.md for one fixed
+configuration instead.)
 
 Descriptions, in order of preference:
   * CTest: the comment block directly above the test's registration in
@@ -31,6 +37,7 @@ Descriptions, in order of preference:
 The "source" column says which was used.
 
 Usage:
+  python3 tools/summarise_tests.py --configure-dir /tmp/lsdtt3_tests      # configure, then count
   python3 tools/summarise_tests.py --build-dir build                     # counts, Markdown
   python3 tools/summarise_tests.py --build-dir build --format tex        # counts, LaTeX
   python3 tools/summarise_tests.py --build-dir build --table list --format csv -o tests.csv
@@ -311,13 +318,43 @@ def pytest_rows() -> list[dict]:
 # -----------------------------------------------------------------------------
 # Output
 # -----------------------------------------------------------------------------
-def configuration(build: Path) -> str:
+# The options that register tests; all three ON registers every test except
+# the benchmark and performance tiers, which assert nothing.
+COMPLETE = ("LSDTT_ENABLE_PYTHON_TESTS", "LSDTT_ENABLE_PYTHON_GEO_TESTS",
+            "LSDTT_ENABLE_NETWORK_TESTS")
+CONFIGURE_HINT = ("cmake -S <lsdtt3 source> -B <new dir> " + " ".join(f"-D{k}=ON" for k in COMPLETE)
+                  + "   (configure only: nothing needs compiling), or use --configure-dir")
+
+
+def option_values(build: Path) -> dict[str, str]:
     cache = read_cache(build)
-    parts = []
+    out = {}
     for key in CANONICAL:
         value = cache.get(key, "OFF").upper()
-        parts.append(f"{key}={'ON' if value in ('ON', 'TRUE', '1', 'YES') else 'OFF'}")
-    return ", ".join(parts)
+        out[key] = "ON" if value in ("ON", "TRUE", "1", "YES") else "OFF"
+    return out
+
+
+def configuration(build: Path) -> str:
+    return ", ".join(f"{k}={v}" for k, v in option_values(build).items())
+
+
+def incomplete_options(build: Path) -> list[str]:
+    values = option_values(build)
+    return [k for k in COMPLETE if values[k] != "ON"]
+
+
+def configure(source: Path, build: Path) -> int:
+    """Configure (not build) a directory that registers every test."""
+    import subprocess
+    cmd = ["cmake", "-S", str(source), "-B", str(build)] + [f"-D{k}=ON" for k in COMPLETE]
+    print("configuring: " + " ".join(cmd), file=sys.stderr)
+    done = subprocess.run(cmd, capture_output=True, text=True)
+    if done.returncode != 0:
+        sys.stderr.write(done.stdout[-3000:] + done.stderr[-3000:])
+        print("ERROR configure failed (see above). It needs the same dependencies as a "
+              "build of lsdtt3 (GDAL, PROJ, a C++17 compiler, Python 3).", file=sys.stderr)
+    return done.returncode
 
 
 def count_table(rows: list[dict]) -> list[list[str]]:
@@ -420,8 +457,13 @@ def render(rows: list[dict], table: str, fmt: str, config: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--build-dir", required=True, type=Path,
-                    help="A configured lsdtt3 build directory (for the CTest tests).")
+    where = ap.add_mutually_exclusive_group(required=True)
+    where.add_argument("--build-dir", type=Path,
+                       help="A configured lsdtt3 build directory (for the CTest tests). "
+                            "It need not be compiled.")
+    where.add_argument("--configure-dir", type=Path,
+                       help="Configure this directory first (no compiling), with every test "
+                            "tier registered, then count. Takes about 20 s.")
     ap.add_argument("--table", choices=("counts", "list"), default="counts")
     ap.add_argument("--format", choices=("md", "csv", "tex"), default="md")
     ap.add_argument("--suite", choices=("all", "ctest", "pytest"), default="all")
@@ -429,16 +471,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ctest", default="ctest")
     args = ap.parse_args(argv)
 
+    if args.configure_dir:
+        if configure(REPO, args.configure_dir) != 0:
+            return 2
+        args.build_dir = args.configure_dir
     if not (args.build_dir / "CTestTestfile.cmake").exists():
         print(f"ERROR {args.build_dir} is not a configured lsdtt3 build directory "
-              "(no CTestTestfile.cmake). Run cmake there first.", file=sys.stderr)
+              "(no CTestTestfile.cmake). Configure one with:\n  " + CONFIGURE_HINT, file=sys.stderr)
         return 2
+    missing = incomplete_options(args.build_dir)
+    if missing and args.suite != "pytest":
+        print("WARNING this build does not register every test: " + ", ".join(
+            f"{k}=OFF" for k in missing) + ". The CTest counts are for this configuration "
+            "only; most CLI system tests need LSDTT_ENABLE_PYTHON_TESTS=ON. For complete "
+            "counts:\n  " + CONFIGURE_HINT, file=sys.stderr)
     rows = []
     if args.suite in ("all", "ctest"):
         rows += ctest_rows(args.build_dir, args.ctest)
+        if not any(r["suite"] == "ctest" for r in rows):
+            print(f"ERROR {args.build_dir} registers no CTest tests (BUILD_TESTING=OFF, as in "
+                  "the release builds?). Configure a directory for counting with:\n  "
+                  + CONFIGURE_HINT, file=sys.stderr)
+            return 2
     if args.suite in ("all", "pytest"):
         rows += pytest_rows()
-    text = render(rows, args.table, args.format, configuration(args.build_dir))
+    config = configuration(args.build_dir)
+    if missing and args.suite != "pytest":
+        config += " (INCOMPLETE: not every test tier is registered)"
+    text = render(rows, args.table, args.format, config)
     if args.output:
         args.output.write_text(text)
         print(f"wrote {args.output} ({len(rows)} tests)", file=sys.stderr)

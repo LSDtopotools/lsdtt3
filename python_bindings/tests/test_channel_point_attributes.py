@@ -47,6 +47,11 @@ def _sites():
 @pytest.mark.exact_solution
 @pytest.mark.conformance
 def test_same_values_as_the_cli(grid):
+    """channel_point_attributes gives the same columns and values as the CLI: the first
+    site snaps to channel cell 12 with its exact snap distance, area, flow distance,
+    elevation and slope, and keeps its own attributes; the second, off the grid, is
+    input_out_of_bounds, keeps its position and gets empty values.
+    """
     filled, flow = grid
     out = flow.channel_point_attributes(filled, _sites(), threshold_contributing_pixels=3,
                                         slope_window_half_length_metres=2.0)
@@ -75,6 +80,9 @@ def pd_na():
 
 @pytest.mark.metamorphic
 def test_points_in_another_crs_are_reprojected(grid):
+    """Sites given in WGS84 are reprojected and snap to the same cell, with their original
+    position reported in the DEM's CRS.
+    """
     filled, flow = grid
     ll = _sites().to_crs("EPSG:4326")
     out = flow.channel_point_attributes(filled, ll, threshold_contributing_pixels=3,
@@ -85,6 +93,9 @@ def test_points_in_another_crs_are_reprojected(grid):
 
 @pytest.mark.exact_solution
 def test_clashing_column_renamed_with_warning(grid):
+    """A site column named like an added field (slope_m_per_m) is kept unchanged; the added
+    field becomes slope_m_per_m_lsdtt, with a warning.
+    """
     filled, flow = grid
     sites = _sites().assign(slope_m_per_m=[0.1, 0.2])
     with warnings.catch_warnings(record=True) as caught:
@@ -98,6 +109,9 @@ def test_clashing_column_renamed_with_warning(grid):
 
 @pytest.mark.negative
 def test_refusals(grid):
+    """channel_point_attributes refuses sites with no CRS, non-point geometry, a slope
+    window shorter than two cells, and input that is not a GeoDataFrame.
+    """
     filled, flow = grid
     with pytest.raises(ValueError, match="CRS"):
         flow.channel_point_attributes(filled, _sites().set_crs(None, allow_override=True),

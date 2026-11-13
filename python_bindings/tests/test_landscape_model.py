@@ -19,6 +19,10 @@ class LandscapeModelTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_fluvial_model_advances_and_returns_erosion_diagnostics(self):
+        """One fluvial LandscapeModel step advances the iteration and time by one step (10
+        years), returns an erosion-rate raster and a non-negative largest change, and
+        leaves the fixed-elevation outlet row unchanged.
+        """
         model = lsdtt3.LandscapeModel(
             self.dem, timestep_years=10.0, erodibility=1.0e-4,
             uplift_rate=0.0, hillslope_model="none", boundary_conditions="nnon",
@@ -35,6 +39,9 @@ class LandscapeModelTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_hillslope_only_run_reuses_model_state(self):
+        """A hillslope-only run of 2 steps of 2 years reaches iteration 2 and 4 years, and
+        the fixed channel row keeps its elevation.
+        """
         channels = np.zeros((15, 15), dtype=np.float32)
         channels[-1] = 1.0
         channel_raster = lsdtt3.Raster.from_numpy(
@@ -55,6 +62,9 @@ class LandscapeModelTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_cellular_model_reports_resolved_coupling(self):
+        """A cellular hillslope model reports hillslope model 'cellular' and coupling
+        regime 'coupled', and accepts set_forcing.
+        """
         model = lsdtt3.LandscapeModel(
             self.dem, timestep_years=1.0, fluvial_method="none", uplift_rate=0.0,
             hillslope_model="cellular", boundary_conditions="nnnn",
@@ -66,6 +76,10 @@ class LandscapeModelTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.characterisation
     def test_threshold_controls_automatic_coupling_and_channel_mask(self):
+        """Incision threshold 0 gives the coupled regime and no channel cells; 20 (compared
+        with A/dx in metres) gives channels as boundaries and exactly 197 channel cells
+        on this 10 m grid.
+        """
         common = dict(
             timestep_years=1.0, fluvial_method="none", hillslope_model="none",
             uplift_rate=0.0, boundary_conditions="nnon", n_threads=1,
@@ -88,6 +102,9 @@ class LandscapeModelTest(unittest.TestCase):
 
     @pytest.mark.metamorphic
     def test_default_critical_slope_is_point_eight(self):
+        """The default critical hillslope gradient of the nonlinear (CIDRE) model is 0.8:
+        one step equals a step with 0.8 set, and differs from one with 0.6.
+        """
         meta = lsdtt3.RasterMeta.from_shape(7, 7, cell_size=1.0)
         rows, cols = np.indices((7, 7), dtype=np.float32)
         values = 20.0 - 0.7 * rows - 0.01 * (cols - 3.0) ** 2
@@ -140,6 +157,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
 
     @pytest.mark.metamorphic
     def test_erodibility_uniform_field_equals_scalar_bitwise(self):
+        """A uniform erodibility field, as an array or a Raster, gives bit-identical
+        results to the same scalar erodibility, for D8 and D-infinity.
+        """
         for method in ("d8", "dinf"):
             scalar = self._run(fluvial_method=method)
             uniform = self._run(
@@ -158,6 +178,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
 
     @pytest.mark.metamorphic
     def test_set_erodibility_field_applies_to_next_step_and_none_restores(self):
+        """set_erodibility_field changes the next step, and setting it to None returns the
+        model to the scalar erodibility (bit-identical to a fresh scalar model).
+        """
         field = np.full((15, 15), 2.0e-4, dtype=np.float32)
         field[:7] = 8.0e-4
         model = lsdtt3.LandscapeModel(self.dem, **self.common)
@@ -180,6 +203,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_erodibility_field_property_round_trips(self):
+        """An erodibility field given as an array reads back as a Raster with the same
+        values.
+        """
         field = np.linspace(1.0e-4, 5.0e-4, 225, dtype=np.float32).reshape(15, 15)
         model = lsdtt3.LandscapeModel(self.dem, erodibility_field=field, **self.common)
         self.assertIsInstance(model.erodibility_field, lsdtt3.Raster)
@@ -187,6 +213,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_bad_erodibility_fields_raise_value_error(self):
+        """Erodibility fields of the wrong shape, with a zero, negative or NaN value, or on
+        another grid are refused, as is a field combined with erodibility_m_exponent.
+        """
         bad = {}
         bad["shape"] = np.full((14, 15), 2.0e-4, dtype=np.float32)
         for name, value in (("zero", 0.0), ("negative", -1.0e-4), ("nan", np.nan)):
@@ -211,6 +240,8 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
     # still reaches the same check; its DeprecationWarning is expected.
     @pytest.mark.filterwarnings("ignore:'incision_threshold_area' is deprecated:DeprecationWarning")
     def test_scalar_erodibility_must_be_positive(self):
+        """A scalar erodibility of zero or below is refused, with either threshold keyword.
+        """
         for value in (0.0, -1.0e-3):
             for key in ("incision_threshold_specific_area", "incision_threshold_area"):
                 kwargs = {**self.common, "erodibility": value, key: 0.0}
@@ -220,6 +251,9 @@ class LandscapeModelErodibilityTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_erodibility_strip_steady_slopes_follow_k(self):
+        """With m = 0 and erodibility falling fourfold at a contact, the steady-state
+        gradient on each side is U/K to within 0.2%.
+        """
         # A1 at 40x3: m = 0, so at steady state S_i = U / K_i either side of the
         # contact (n = 1); K1 upstream, K2 = K1/4 downstream.
         nr, nc, dx = 40, 3, 10.0

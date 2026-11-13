@@ -23,6 +23,9 @@ def raster_and_flow():
 
 @pytest.mark.conformance
 def test_surface_keyword_migrations_preserve_native_signatures():
+    """extract_channel_heads and wiener_filter expose only the *_metres keyword names in
+    their signatures, not the old *_m names.
+    """
     channel_head_parameters = inspect.signature(lsdtt3.extract_channel_heads).parameters
     assert "surface_fitting_radius_metres" in channel_head_parameters
     assert "surface_fitting_radius_m" not in channel_head_parameters
@@ -38,6 +41,9 @@ def test_surface_keyword_migrations_preserve_native_signatures():
 @pytest.mark.conformance
 @pytest.mark.negative
 def test_channel_head_legacy_radius_warns_and_matches_canonical():
+    """extract_channel_heads accepts surface_fitting_radius_m with one DeprecationWarning
+    pointing at the caller and finds the same heads; giving both names is refused.
+    """
     dem, flow = raster_and_flow()
     canonical = lsdtt3.extract_channel_heads(
         dem, flow, threshold_contributing_pixels=3, surface_fitting_radius_metres=8.0
@@ -62,6 +68,10 @@ def test_channel_head_legacy_radius_warns_and_matches_canonical():
 @pytest.mark.metamorphic
 @pytest.mark.conformance
 def test_channel_head_wiener_radius_legacy_keyword_preserves_results():
+    """With the Wiener method, the old radius keyword gives the same heads and tangential
+    curvature as the new one, and a different radius gives a different curvature (the
+    keyword is not ignored).
+    """
     dem, flow = raster_and_flow()
     common = dict(
         method="wiener", pruning_drainage_area_m2=100.0,
@@ -93,6 +103,9 @@ def test_channel_head_wiener_radius_legacy_keyword_preserves_results():
 @pytest.mark.metamorphic
 @pytest.mark.conformance
 def test_wiener_legacy_wavelengths_warn_and_match_canonical():
+    """wiener_filter accepts the old *_m wavelength keywords with two DeprecationWarnings
+    and gives the same result.
+    """
     dem, _ = raster_and_flow()
     canonical = lsdtt3.wiener_filter(
         dem, signal_wavelength_long_metres=300.0,
@@ -111,6 +124,7 @@ def test_wiener_legacy_wavelengths_warn_and_match_canonical():
 
 @pytest.mark.negative
 def test_wiener_canonical_and_legacy_wavelengths_conflict():
+    """wiener_filter refuses the old and new long-wavelength keywords given together."""
     with pytest.raises(TypeError, match="cannot both be supplied"):
         lsdtt3.wiener_filter(
             None, signal_wavelength_long_metres=300.0,

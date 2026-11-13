@@ -31,6 +31,11 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_fill_and_stationary_route(self):
+        """fill_hydraulic_surface returns the filled surface and added depth at the bed's
+        shape with a non-negative added volume; run_graphflood with a point inflow runs
+        exactly the 10 requested steps and returns depth and discharge at the bed's
+        shape.
+        """
         filled = lsdtt3.fill_hydraulic_surface(
             self.bed, self.states, boundary_conditions="nnno"
         )
@@ -56,6 +61,9 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_each_active_island_requires_a_state_three_sink(self):
+        """run_graphflood refuses a domain with closed edges and no outlet cell (no state-3
+        sink), with a message naming the outlet.
+        """
         no_outlet = lsdtt3.Raster.from_numpy(
             np.ones((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool), self.meta
         )
@@ -67,6 +75,8 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_internal_outlet_is_an_explicit_sink(self):
+        """An interior cell given state 3 is an outlet: after one step it receives inflow.
+        """
         states = np.ones((5, 5), dtype=np.float32)
         states[2, 2] = 3.0
         internal_state = lsdtt3.Raster.from_numpy(
@@ -200,6 +210,10 @@ class HydraulicRoutingTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_separate_optimised_graphflood(self):
+        """run_graphflood_optimised, one step: the inflow at the outlet cell equals the
+        rain on all 25 cells plus the point inflow (exact), and the performance counters
+        are filled.
+        """
         result = lsdtt3.run_graphflood_optimised(
             self.bed,
             self.states,
@@ -220,6 +234,10 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.metamorphic
     def test_direct_graphflood_current_defaults(self):
+        """For each GraphFlood solver, a run with the defaults left out equals a run with
+        the current defaults written out, in water depth, inflow, outflow and depth
+        change.
+        """
         controls = dict(max_steps=2, run_until_converged=False)
         cases = (
             (lsdtt3.run_graphflood, dict(
@@ -271,6 +289,9 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.conformance
     def test_direct_graphflood_defaults_match_cli(self):
+        """The three GraphFlood solvers' defaults for max_steps, convergence_check_every
+        and the two convergence tolerances are the CLI's values.
+        """
         for solver in (
             lsdtt3.run_graphflood,
             lsdtt3.run_graphflood_optimised,
@@ -290,6 +311,11 @@ class HydraulicRoutingTest(unittest.TestCase):
     @pytest.mark.metamorphic
     @pytest.mark.characterisation
     def test_graphflood_convergence_defaults_are_sensitive(self):
+        """With zero rain, each GraphFlood solver stops on convergence at the first check
+        (10 steps) by default and runs the full 100 steps without the convergence test;
+        from a uniform initial depth the default tolerances stop after one step, loose
+        ones likewise, and strict ones run all 1000 steps.
+        """
         zero_rain = lsdtt3.Raster.from_numpy(
             np.zeros((5, 5), dtype=np.float32),
             np.ones((5, 5), dtype=bool), self.meta,
@@ -354,6 +380,10 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_accelerators_forward_backend_options(self):
+        """run_graphflood_multigrid and run_graphflood_induced pass every solver option
+        through to the backend unchanged, with the steps per level (multigrid) and a
+        first short run without convergence (induced).
+        """
         calls = []
 
         def recording_backend(*args, **kwargs):
@@ -402,6 +432,11 @@ class HydraulicRoutingTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_v2_multigrid_and_induced_drivers(self):
+        """run_graphflood_optimised_v2 gives the exact outlet inflow (rain plus point
+        inflow) and fills its counters; multigrid returns one result per level at the
+        bed's shape; induced activates only part of the domain, conserves mass to 1e-5
+        and gives the same outlet inflow.
+        """
         options = dict(
             boundary_conditions="nnno",
             point_inflows=[[0, 4, 0.01]],
@@ -439,6 +474,10 @@ class HydraulicRoutingTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_multigrid_rejects_unregistered_fields_and_invalid_points(self):
+        """run_graphflood_multigrid refuses rain on a shifted grid, a friction raster with
+        nodata in the active domain, and point inflows at non-integer cell coordinates,
+        each with its message.
+        """
         shifted = lsdtt3.RasterMeta.from_shape(5, 5, x_min=1.0, cell_size=10.0)
         shifted_rain = lsdtt3.Raster.from_numpy(
             np.ones((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool), shifted

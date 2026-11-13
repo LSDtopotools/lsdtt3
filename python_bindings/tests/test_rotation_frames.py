@@ -59,6 +59,11 @@ def _same_crs(a, b):
 @pytest.mark.characterisation
 @pytest.mark.unit
 def test_line_frame_built_for_a_source_dem(line_frame):
+    """A rotation frame built from a line and a source DEM has the expected grid size, cell
+    size, azimuth, extent, width and end buffer, rotates back onto the source DEM's own
+    grid (UTM 15N, 30 m, its corner), and has grid convergence 90 degrees minus its
+    azimuth at its centre.
+    """
     f = line_frame
     assert f.frame_source == "line"
     assert (f.n_cols, f.n_rows) == (144, 40)
@@ -79,6 +84,10 @@ def test_line_frame_built_for_a_source_dem(line_frame):
 @pytest.mark.metamorphic
 @pytest.mark.system
 def test_frame_file_from_the_cli_matches_the_python_frame(line_frame):
+    """The frame file written by lsdtt-raster-preprocessing reads back to the same azimuth,
+    extent, centre and rotate-back target as the frame built in Python (to 1e-9, the
+    difference between two PROJ builds).
+    """
     f = lsdtt3.RotationFrame.read(str(ROTATION / "lakeland_line_oblique_rotation_frame.txt"))
     # The frame file was written by a CLI built against one PROJ; a wheel
     # links its own, and the reprojected line differs in the 11th digit
@@ -95,6 +104,9 @@ def test_frame_file_from_the_cli_matches_the_python_frame(line_frame):
 @pytest.mark.property
 @pytest.mark.unit
 def test_frame_file_round_trip(line_frame, tmp_path):
+    """A frame written by Python and read back has the same azimuth, extent and rotate-back
+    origin, and the file records that Python wrote it.
+    """
     path = tmp_path / "x_rotation_frame.txt"
     line_frame.write(str(path))
     back = lsdtt3.RotationFrame.read(str(path))
@@ -108,6 +120,10 @@ def test_frame_file_round_trip(line_frame, tmp_path):
 @pytest.mark.exact_solution
 @pytest.mark.unit
 def test_fetch_frame_defaults_without_a_source():
+    """A frame built from a feature without a source DEM uses the fetch defaults (30 m
+    cells, the UTM zone of the frame centre, origin 0,0); grid_spacing and target_epsg
+    override them.
+    """
     f = lsdtt3.RotationFrame.from_feature(str(ROTATION / "lakeland_line.geojson"), width=1200.0)
     assert f.cell_size == 30.0                   # the fetch_dem default
     assert f.target_epsg == 32615                # UTM zone of the frame centre
@@ -122,6 +138,9 @@ def test_fetch_frame_defaults_without_a_source():
 @pytest.mark.exact_solution
 @pytest.mark.unit
 def test_polygon_frame(dem):
+    """A frame built from a polygon is a polygon frame, buffered on all sides, of 122 x 52
+    cells.
+    """
     f = lsdtt3.RotationFrame.from_feature(str(ROTATION / "lakeland_polygon.geojson"), source=dem)
     assert f.frame_source == "polygon"
     assert f.buffer_all_sides
@@ -132,6 +151,9 @@ def test_polygon_frame(dem):
 @pytest.mark.characterisation
 @pytest.mark.unit
 def test_footprint_frame_of_a_square_dem_warns(dem):
+    """A frame built from the valid-data footprint of a square DEM warns that its axis is
+    ill-defined, and covers 150 x 150 cells.
+    """
     with pytest.warns(UserWarning, match="ill-defined"):
         f = lsdtt3.RotationFrame.from_valid_data(dem)
     assert f.frame_source == "data_footprint"
@@ -142,6 +164,9 @@ def test_footprint_frame_of_a_square_dem_warns(dem):
 @pytest.mark.conformance
 @pytest.mark.system
 def test_frame_rebuilt_from_a_frame_raster_warns(cli_rotated, line_frame):
+    """A frame rebuilt from a rotated raster's CRS warns, and has the same azimuth and
+    extent as the frame that made the raster.
+    """
     with pytest.warns(UserWarning):
         f = lsdtt3.RotationFrame.from_raster(cli_rotated)
     assert f.frame_source == "crs"
@@ -152,6 +177,9 @@ def test_frame_rebuilt_from_a_frame_raster_warns(cli_rotated, line_frame):
 @pytest.mark.negative
 @pytest.mark.unit
 def test_frame_refusals(dem):
+    """Frames are refused for a missing feature file, for target_epsg given together with a
+    source DEM, and from a raster that is not in a frame CRS.
+    """
     with pytest.raises(ValueError):
         lsdtt3.RotationFrame.from_feature(str(ROTATION / "missing.geojson"), width=100.0)
     with pytest.raises(ValueError, match="target_epsg"):
@@ -166,6 +194,9 @@ def test_frame_refusals(dem):
 @pytest.mark.metamorphic
 @pytest.mark.system
 def test_python_rotation_equals_the_cli_raster(dem, line_frame, cli_rotated):
+    """rotate_to_frame in Python gives the same grid, CRS, mask and values as the rotated
+    raster written by the CLI.
+    """
     rotated = lsdtt3.rotate_to_frame(dem, line_frame)
     a, b = rotated.metadata, cli_rotated.metadata
     assert rotated.shape == cli_rotated.shape == (40, 144)
@@ -180,6 +211,9 @@ def test_python_rotation_equals_the_cli_raster(dem, line_frame, cli_rotated):
 @pytest.mark.characterisation
 @pytest.mark.unit
 def test_rotate_back_lands_on_the_source_lattice(cli_rotated, line_frame):
+    """rotate_back of the CLI's rotated raster gives a 125 x 136 grid of 30 m cells whose
+    corner lies on the source DEM's lattice.
+    """
     back = lsdtt3.rotate_back(cli_rotated, line_frame, resampling="near")
     meta = back.metadata
     assert back.shape == (125, 136)              # as smoke_raster_preprocessing_rotate_back
@@ -191,6 +225,9 @@ def test_rotate_back_lands_on_the_source_lattice(cli_rotated, line_frame):
 @pytest.mark.property
 @pytest.mark.unit
 def test_ids_survive_the_round_trip(dem, line_frame):
+    """Block ids rotated into the frame and back with nearest-neighbour resampling stay ids
+    of the original raster (no new values), and more than 50 of them survive.
+    """
     rows, cols = np.indices(dem.shape)
     ids = (rows // 8) * 100 + cols // 8
     id_raster = lsdtt3.Raster.from_numpy(ids.astype(np.float32), dem.mask_numpy(), dem.metadata)
@@ -204,6 +241,7 @@ def test_ids_survive_the_round_trip(dem, line_frame):
 @pytest.mark.negative
 @pytest.mark.unit
 def test_rotate_back_refuses_a_raster_not_in_the_frame(dem, line_frame):
+    """rotate_back refuses a raster that is not in the frame CRS."""
     with pytest.raises(ValueError, match="frame CRS"):
         lsdtt3.rotate_back(dem, line_frame)
 
@@ -213,6 +251,10 @@ def test_rotate_back_refuses_a_raster_not_in_the_frame(dem, line_frame):
 @pytest.mark.negative
 @pytest.mark.unit
 def test_fetch_dem_frame_argument_checks(line_frame):
+    """fetch_dem with a frame refuses a box, target_epsg, grid_spacing, size_pixels or
+    fetch_from_linear_feature given with it; fetch_from_linear_feature needs
+    fetch_feature_fname; and with no area at all it asks for one.
+    """
     fetch_frame = lsdtt3.RotationFrame.from_feature(
         str(ROTATION / "lakeland_line.geojson"), width=1200.0)
     with pytest.raises(ValueError, match="west/south/east/north"):
@@ -250,6 +292,10 @@ def _centre(raster):
 @pytest.mark.metamorphic
 @pytest.mark.unit
 def test_aspect_of_a_plane_dipping_to_true_200(name, grid_aspect):
+    """On a plane in a frame CRS dipping towards true bearing 200, aspect relative to grid
+    north is the grid aspect and relative to true north is 200 degrees, in aspect and in
+    polyfit_metrics; the true-north option leaves the slope unchanged.
+    """
     dem = _plane(name)
     grid = lsdtt3.aspect(dem, lambda_metres=90.0)
     true = lsdtt3.aspect(dem, lambda_metres=90.0, bearings_relative_to_true_north=True)
@@ -267,6 +313,7 @@ def test_aspect_of_a_plane_dipping_to_true_200(name, grid_aspect):
 @pytest.mark.negative
 @pytest.mark.unit
 def test_true_north_needs_a_crs():
+    """Aspect relative to true north is refused for a raster with no CRS."""
     meta = lsdtt3.RasterMeta.from_shape(10, 10, cell_size=10.0)
     raster = lsdtt3.Raster.from_numpy(
         np.arange(100, dtype=np.float32).reshape(10, 10), np.ones((10, 10), bool), meta)
@@ -285,6 +332,10 @@ def frame_network(cli_rotated):
 @pytest.mark.metamorphic
 @pytest.mark.unit
 def test_link_and_com_bearings_convert_at_their_own_location(frame_network, line_frame):
+    """Link bearings and basin centre-of-mass bearings relative to true north equal the
+    grid bearings minus the grid convergence at each link's representative point, and at
+    the midpoint from outlet to centre of mass; the direction vectors are unchanged.
+    """
     _filled, _flow, network = frame_network
     grid = network.link_bearings()
     true = network.link_bearings(bearings_relative_to_true_north=True)
@@ -307,6 +358,10 @@ def test_link_and_com_bearings_convert_at_their_own_location(frame_network, line
 @pytest.mark.metamorphic
 @pytest.mark.unit
 def test_basin_orientation_converts_at_the_centroid(frame_network, line_frame):
+    """Basin shape orientation relative to true north equals the grid orientation minus the
+    grid convergence at the basin centroid (modulo 180); other shape metrics such as
+    solidity are unchanged.
+    """
     filled, flow, network = frame_network
     heads = network.junctions()
     outlets = heads[heads.stream_order >= 2][["row", "col"]].to_numpy()[:5]
@@ -324,6 +379,10 @@ def test_basin_orientation_converts_at_the_centroid(frame_network, line_frame):
 @pytest.mark.metamorphic
 @pytest.mark.unit
 def test_basin_surface_aspect_and_raster_orientations_shift(frame_network):
+    """Basin surface-metric aspect changes when bearings are relative to true north, and
+    find_roads' feature orientations on a frame plane shift by 39.87 degrees (modulo
+    180).
+    """
     filled, flow, network = frame_network
     heads = network.junctions()
     basins = flow.basins(heads[heads.stream_order >= 2][["row", "col"]].to_numpy()[:3])

@@ -197,10 +197,12 @@ Downloading tests carry `needs_network`; `network` is the flow-routing
 ### Counting and listing the tests (for a paper or a report)
 
 The number of tests changes with every commit, so count them when you need the
-numbers, from a configured build directory:
+numbers. The quickest way configures a scratch directory (no compiling, about
+20 s) with every test tier registered, then counts:
 
 ```bash
-python3 tools/summarise_tests.py --build-dir build                    # counts by category, Markdown
+python3 tools/summarise_tests.py --configure-dir /tmp/lsdtt3_tests      # counts by category, Markdown
+python3 tools/summarise_tests.py --build-dir build                    # an existing build directory
 python3 tools/summarise_tests.py --build-dir build --format tex        # the same as a LaTeX table
 python3 tools/summarise_tests.py --build-dir build --table list --format csv -o tests.csv
 ```
@@ -219,9 +221,14 @@ column says which. Formats are `md`, `csv` and `tex`; `--suite ctest` or
 `--suite pytest` restricts to one suite. Writing more specific comments above a
 test's registration, or docstrings on Python tests, improves the list.
 
-The counts are for the configuration of the build directory, which the output
-states: `LSDTT_ENABLE_PYTHON_TESTS`, `_PYTHON_GEO_TESTS`, `_NETWORK_TESTS`,
-`_BENCHMARKS` and `_PERF_TESTS` change which CTest tests are registered. The
+The CTest counts are for the configuration of the build directory, which the
+output states. A default configure registers only the native tests, about a
+quarter of the total, because `LSDTT_ENABLE_PYTHON_TESTS`,
+`LSDTT_ENABLE_PYTHON_GEO_TESTS` and `LSDTT_ENABLE_NETWORK_TESTS` default to OFF;
+the tool warns and marks the output INCOMPLETE when any of them is off. The
+release builds configure with `BUILD_TESTING=OFF` and register no tests, so the
+tool refuses them: count from a source checkout of the release tag instead.
+`--configure-dir` turns the three options on. The
 committed `docs/developer_notes/test_inventory.md` (from
 `tools/generate_test_inventory.py`) is for one fixed configuration, and breaks
 the counts down by domain, CLI and Python file. The CTest test

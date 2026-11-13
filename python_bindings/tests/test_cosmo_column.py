@@ -7,6 +7,9 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.mark.metamorphic
 def test_crn_column_steady_state_round_trip():
+    """The Be10 concentration of a steady-state column eroding at 0.01 g/cm2/yr inverts
+    back to that rate (to 1e-6).
+    """
     column = lsdtt3.CRNColumn()
     sample = column.steady_state(effective_erosion_rate_g_cm2_yr=0.01)
     inferred = lsdtt3.crn_apparent_erosion_rate("Be10", sample.concentration_be10)
@@ -16,6 +19,9 @@ def test_crn_column_steady_state_round_trip():
 
 @pytest.mark.property
 def test_crn_column_transient_profile():
+    """A transient column profile sampled at 0 and 1 m has a higher Be10 concentration at
+    the surface than at depth.
+    """
     column = lsdtt3.CRNColumn()
     column.set_erosion_history([0.0, 1000.0, -9999.0], [0.0001, 0.0001, 0.0001], removal_metres=[0.0, 0.0, 0.0])
     profile = column.transient(sampling_depths_metres=[0.0, 1.0])

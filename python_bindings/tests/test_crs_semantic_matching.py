@@ -50,6 +50,9 @@ def frame():
 
 @pytest.mark.property
 def test_wkt_dialects_differ_as_text():
+    """The two WKT dialects used below really differ as text, so the other tests compare
+    CRSs by meaning, not by string.
+    """
     assert WKT1 != WKT2
 
 
@@ -92,11 +95,18 @@ def _hydraulic(elevation, dem, wkt):
 @pytest.mark.parametrize("name", sorted(CASES))
 @pytest.mark.smoke
 def test_same_frame_in_another_wkt_dialect_is_accepted(frame, name):
+    """Each binding grid check (flow accumulation, TWI, channel heads, CRN, hydraulic fill,
+    basin ridgelines) accepts a raster whose oblique Mercator CRS is the DEM's written
+    in another WKT dialect.
+    """
     CASES[name](*frame, WKT2)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
 @pytest.mark.negative
 def test_frame_with_another_azimuth_is_refused(frame, name):
+    """The same checks refuse a raster in an oblique Mercator frame whose azimuth differs
+    by 1 degree.
+    """
     with pytest.raises(ValueError):
         CASES[name](*frame, ROTATED)

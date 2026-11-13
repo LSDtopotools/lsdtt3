@@ -25,6 +25,7 @@ import argparse
 import json
 import re
 import subprocess
+import tempfile
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -88,8 +89,17 @@ def configuration_mismatch(build: Path) -> list[str]:
 
 
 def ctest_tests(build: Path, ctest: str) -> list[dict]:
-    raw = subprocess.run([ctest, "--test-dir", str(build), "--show-only=json-v1"],
-                         check=True, capture_output=True, text=True).stdout
+    # Any ctest run in <build> rewrites <build>/Testing/Temporary/LastTest.log,
+    # even --show-only, and these tools also run AS tests (the inventory check,
+    # unit_summarise_tests_runs): run there, the suite's own log came out empty
+    # (found 2026-11-13). So list the tests through a throwaway directory whose
+    # CTestTestfile.cmake only points at the build: ctest writes its scratch
+    # files there, and the listing is identical (names, commands, properties).
+    with tempfile.TemporaryDirectory(prefix="lsdtt_ctest_list_") as proxy:
+        Path(proxy, "CTestTestfile.cmake").write_text(
+            'subdirs("' + str(build.resolve()).replace("\\", "/") + '")\n')
+        raw = subprocess.run([ctest, "--test-dir", proxy, "--show-only=json-v1"],
+                             check=True, capture_output=True, text=True).stdout
     tests = []
     for t in json.loads(raw)["tests"]:
         labels = next((p["value"] for p in t.get("properties", [])

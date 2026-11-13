@@ -24,6 +24,9 @@ class HillslopeTransportTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_steady_state_keeps_channel_elevations_and_reports_convergence(self):
+        """hillslope_steady_state (Roering) converges below its tolerance and leaves the
+        channel rows (first and last) at their elevations.
+        """
         result = lsdtt3.hillslope_steady_state(
             self.dem, self.channels, diffusivity=0.05, uplift_rate=4.0e-4,
             model="roering", boundary_conditions="nnnn", tolerance=1.0e-4,
@@ -37,6 +40,9 @@ class HillslopeTransportTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_explicit_and_implicit_transport_keep_channels_fixed(self):
+        """Explicit and implicit hillslope transport both leave the channel rows unchanged;
+        the implicit solver reports at least one substep.
+        """
         explicit = lsdtt3.hillslope_transport_explicit(
             self.dem, self.channels, 0.05, 10.0, boundary_conditions="nnnn", n_threads=1
         )
@@ -51,6 +57,7 @@ class HillslopeTransportTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_rejects_nonbinary_channels(self):
+        """A channel raster with values other than 0 or 1 is refused."""
         bad = lsdtt3.Raster.from_numpy(
             np.full((21, 21), 2.0, dtype=np.float32),
             np.ones((21, 21), dtype=bool), self.meta,
@@ -60,6 +67,9 @@ class HillslopeTransportTest(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_cellular_transport_returns_conservative_diagnostics(self):
+        """Cellular hillslope transport completes, reports at least one substep and returns
+        elevation at the DEM's shape.
+        """
         result = lsdtt3.hillslope_transport_cellular(
             self.dem, self.channels, 10.0, diffusivity=0.05,
             boundary_conditions="nnnn", n_threads=1,

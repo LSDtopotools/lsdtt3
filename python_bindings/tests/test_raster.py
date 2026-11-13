@@ -20,6 +20,9 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.property
     def test_from_numpy_copies_data_mask_and_metadata(self):
+        """Raster.from_numpy keeps the values, the mask, the shape and the corner and cell
+        size of the metadata.
+        """
         raster = self.raster()
 
         np.testing.assert_array_equal(raster.to_numpy(), np.arange(25, dtype=np.float32).reshape(5, 5))
@@ -31,6 +34,10 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_raster_hierarchy_restricts_and_prolongs(self):
+        """RasterHierarchy on an 8 x 8 raster has 4 levels; level 2 is 2 x 2 at factor 4;
+        restricting to it and prolonging back gives 2 x 2 and 8 x 8; a level can be
+        added for factor 8.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(8, 8, cell_size=10.0)
         raster = lsdtt3.Raster.from_numpy(
             np.arange(64, dtype=np.float32).reshape(8, 8),
@@ -52,6 +59,9 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_fill_interior_nodata_preserves_input_and_edge_nodata(self):
+        """fill_interior_nodata fills an interior hole but leaves nodata on the edge, and
+        does not change its input raster.
+        """
         raster = self.raster()
         with_holes = lsdtt3.set_nodata_rectangle(raster, 2, 3, 2, 3)
         with_holes = lsdtt3.set_nodata_rectangle(with_holes, 0, 1, 0, 1)
@@ -65,6 +75,9 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_clip_to_maximum_rectangle_updates_shape_and_extent(self):
+        """clip_to_maximum_rectangle drops a nodata first column: 5 x 4 cells, x_min moved
+        one cell east, 20 valid pixels.
+        """
         clipped = lsdtt3.clip_to_maximum_rectangle(
             lsdtt3.set_nodata_rectangle(self.raster(), 0, 5, 0, 1)
         )
@@ -77,6 +90,10 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_masking_and_algebra_return_new_rasters(self):
+        """threshold_above, mask_by_binary, mask_to_nodata, scale, add and
+        normalize_unit_interval give the expected values, each as a new raster: the
+        input is unchanged.
+        """
         raster = self.raster()
         mask = lsdtt3.threshold_above(raster, 12.0)
         kept = lsdtt3.mask_by_binary(raster, mask)
@@ -102,6 +119,10 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.smoke
     def test_preprocessing_and_surface_metric_outputs(self):
+        """On a one-cell pit, fill_pits and fill_depth raise it by 10 m (the input is
+        unchanged), breaching keeps the shape and carve depth is never negative; on a
+        plane, hillshades, slope, aspect and curvatures give valid values at the centre.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         depression_values = np.full((5, 5), 10.0, dtype=np.float32)
         depression_values[2, 2] = 0.0
@@ -135,6 +156,10 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.metamorphic
     @pytest.mark.negative
     def test_polyfit_metrics_returns_requested_rasters_from_one_fit(self):
+        """polyfit_metrics on a paraboloid returns every requested metric at the raster's
+        shape, positive mean and Gaussian curvature at the bowl's centre, the same
+        aspect as aspect(), and refuses an unknown metric name.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(7, 7)
         rows, cols = np.indices((7, 7), dtype=np.float32)
         paraboloid = lsdtt3.Raster.from_numpy(
@@ -170,6 +195,11 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.metamorphic
     @pytest.mark.property
     def test_surface_shape_and_fundamental_form_principal_curvatures(self):
+        """classify_surface_shape gives the same classes from the DEM as from polyfit's
+        principal curvatures, class -3 at the centre of a paraboloid bowl;
+        fundamental_form_principal_curvatures returns both curvatures, positive at the
+        centre.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(7, 7)
         rows, cols = np.indices((7, 7), dtype=np.float32)
         paraboloid = lsdtt3.Raster.from_numpy(
@@ -203,6 +233,13 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.metamorphic
     @pytest.mark.property
     def test_boundary_sinks_and_least_cost_breaching(self):
+        """Boundary helpers: boundary-condition strings, an outlet mask on the south edge,
+        filling to outlets (the pit fills) and to sinks given as points or as a mask
+        (the pit stays); on a DEM framed by nodata on two edges, boundary-aware filling
+        with open edges equals fill_pits, and with closed edges the cells beside the
+        nodata frame drain the 5 m interior; least-cost breaching keeps the shape and
+        its carve depth is never negative.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(5, 5)
         values = np.full((5, 5), 10.0, dtype=np.float32)
         values[2, 2] = 0.0
@@ -281,6 +318,12 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.negative
     def test_breach_least_cost_edge_policy_and_errors(self):
+        """breach_least_cost on a 7 x 7 bowl: with edge_policy 'outlet' the pit is breached
+        off the east edge to the exact expected values; with 'whitebox' and no remainder
+        fill only the pit raise remains; the carve depth at the saddle is 2.375; a
+        wrong-case edge policy, max_distance 0 and a negative fill_min_slope are refused
+        with their messages.
+        """
         # The 7x7 bowl of tests/data/tiny_breach_lc_dem.asc: pit 1.0 at (3, 3),
         # a 4 saddle at (3, 5) and a 3 on the east border at (3, 6).
         values = np.array([
@@ -325,6 +368,10 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.metamorphic
     def test_breach_least_cost_max_distance_default_follows_edge_policy(self):
+        """breach_least_cost's default max_distance is 100 cells with edge_policy
+        'whitebox' (a pit 120 cells from its outlet stays unsolved) and 1000 with
+        'outlet'.
+        """
         # A pit at (2, 2) in a 2 m corridor walled by 9 m; the only cell low
         # enough to drain to is a nodata hole 120 steps along the corridor.
         # In whitebox mode the edge is no outlet, so max_distance decides:
@@ -351,6 +398,10 @@ class RasterTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_geopandas_reprojection_mosaic_clipping_and_sampling(self):
+        """rasterize_polygons and clip_to_polygons with a polygon covering the raster,
+        sample_points at a cell centre, a mosaic of two copies and reprojection onto the
+        raster's own grid all give back the raster's values.
+        """
         crs = gpd.GeoSeries([], crs=32612).crs
         metadata = lsdtt3.RasterMeta.from_shape(
             5, 5, x_min=500000.0, y_min=4400000.0, cell_size=10.0,
@@ -387,6 +438,11 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_in_memory_resampling(self):
+        """halve_raster on a 4 x 4 raster gives the exact expected 2 x 2 values for
+        nearest, linear, mean, sum, min, max, mode and conservative mean, and a full 2 x
+        2 for cubic; double_raster gives 8 x 8 and resample_raster an arbitrary 3 x 3
+        grid.
+        """
         metadata = lsdtt3.RasterMeta.from_shape(4, 4, cell_size=1.0)
         values = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
         raster = lsdtt3.Raster.from_numpy(values, np.ones((4, 4), bool), metadata)
@@ -416,6 +472,10 @@ class RasterTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_power_of_two_helpers(self):
+        """pad_to_nearest_power_of_two pads a 3 x 3 raster to 4 x 4 with a nodata top row
+        and the values in place; interpolate_to_nearest_power_of_two goes to 2 x 2
+        (lower) or 4 x 4 (higher).
+        """
         metadata = lsdtt3.RasterMeta.from_shape(3, 3, cell_size=2.0)
         values = np.arange(9, dtype=np.float32).reshape(3, 3)
         raster = lsdtt3.Raster.from_numpy(values, np.ones((3, 3), bool), metadata)

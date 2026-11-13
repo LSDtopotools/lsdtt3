@@ -34,6 +34,7 @@ def _step_with_noise(seed=1):
 @pytest.mark.exact_solution
 class RasterAlgebraTest(unittest.TestCase):
     def test_divide_is_nodata_where_the_divisor_is_zero(self):
+        """divide gives a / b, and nodata where b is zero."""
         a = _raster([[6.0, 8.0], [1.0, 9.0]])
         b = _raster([[3.0, 0.0], [2.0, -3.0]])
         result = lsdtt3.divide(a, b)
@@ -44,6 +45,7 @@ class RasterAlgebraTest(unittest.TestCase):
         self.assertAlmostEqual(float(values[1, 1]), -3.0)
 
     def test_absolute_gives_the_absolute_difference(self):
+        """absolute(subtract(a, b)) is |a - b|."""
         a = _raster([[1.0, 5.0]])
         b = _raster([[4.0, 2.0]])
         np.testing.assert_allclose(lsdtt3.absolute(lsdtt3.subtract(a, b)).to_numpy(), [[3.0, 3.0]])
@@ -52,6 +54,10 @@ class RasterAlgebraTest(unittest.TestCase):
 class SmoothingTest(unittest.TestCase):
     @pytest.mark.property
     def test_perona_malik_smooths_noise_but_keeps_the_step(self):
+        """perona_malik_smoothing on two noisy plateaus separated by a 100 m step halves
+        the noise on the plateaus and keeps the step above 95 m, after the requested 20
+        iterations.
+        """
         dem = _raster(_step_with_noise())
         result = lsdtt3.perona_malik_smoothing(dem, n_iterations=20)
         smoothed = result["raster"].to_numpy()
@@ -64,12 +70,18 @@ class SmoothingTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_perona_malik_k_can_be_stated(self):
+        """perona_malik_smoothing uses a stated k_metres_per_cell instead of one from a
+        quantile.
+        """
         dem = _raster(_step_with_noise())
         result = lsdtt3.perona_malik_smoothing(dem, k_quantile=0.0, k_metres_per_cell=2.0)
         self.assertAlmostEqual(result["k_metres_per_cell"], 2.0)
 
     @pytest.mark.negative
     def test_perona_malik_rejects_bad_options(self):
+        """perona_malik_smoothing refuses an unknown conductance and an unstable time step
+        (0.3).
+        """
         dem = _raster(_step_with_noise())
         with self.assertRaises(ValueError):
             lsdtt3.perona_malik_smoothing(dem, conductance="linear")
@@ -78,12 +90,18 @@ class SmoothingTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_stencil_difference_is_the_largest_neighbour_step(self):
+        """stencil_difference_magnitude on a ramp rising 2 m per cell is 2 m in the
+        interior.
+        """
         ramp = _raster(np.tile(np.arange(6, dtype=np.float32) * 2.0, (6, 1)))
         np.testing.assert_allclose(lsdtt3.stencil_difference_magnitude(ramp).to_numpy()[2:4, 2:4], 2.0)
 
     @pytest.mark.metamorphic
     @pytest.mark.property
     def test_coherence_diffusion_zero_radii_mean_one_and_three_cells(self):
+        """coherence_diffusion's default radii (0) mean one and three cells: they give the
+        same result as 10 m and 30 m on 10 m cells, and the noise on the plateaus falls.
+        """
         dem = _raster(_step_with_noise(seed=2))
         by_default = lsdtt3.coherence_diffusion(dem)
         explicit = lsdtt3.coherence_diffusion(dem, derivative_radius_metres=10.0,
@@ -97,6 +115,9 @@ class SmoothingTest(unittest.TestCase):
 @pytest.mark.negative
 class VerticalUnitsTest(unittest.TestCase):
     def test_feet_are_converted_to_metres(self):
+        """vertical_units_to_metres multiplies feet by 0.3048, leaves metres unchanged and
+        refuses an unknown unit.
+        """
         dem = _raster([[100.0, 1000.0]])
         np.testing.assert_allclose(lsdtt3.vertical_units_to_metres(dem, "feet").to_numpy(),
                                    [[30.48, 304.8]], rtol=1e-6)
@@ -119,6 +140,10 @@ class CoregistrationTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.property
     def test_a_known_shift_is_recovered_and_removed(self):
+        """coregister_dem recovers a known 15 m / 10 m horizontal shift to within 2 m and
+        cuts the median elevation difference from the reference to under a tenth, with
+        per-iteration diagnostics.
+        """
         reference = self._hills()
         moving = self._hills(x_shift=15.0, y_shift=-10.0, z_shift=3.0)
         before = np.median(np.abs(moving.to_numpy() - reference.to_numpy()))
@@ -134,6 +159,9 @@ class CoregistrationTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_rasters_must_share_a_grid(self):
+        """coregister_dem refuses two rasters on different grids and points to
+        reproject_to_grid.
+        """
         reference = self._hills()
         other = _raster(np.zeros((10, 10)), cell_size=20.0)
         with self.assertRaisesRegex(ValueError, "reproject_to_grid"):

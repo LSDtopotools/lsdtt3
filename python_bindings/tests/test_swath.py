@@ -28,6 +28,10 @@ class SwathTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_swath_distances(self):
+        """swath_distances along the middle row: along-axis distance 0 to 40 m,
+        perpendicular distance 0 on the line, positive signed distance on the left (row
+        above) and negative on the right.
+        """
         distances = lsdtt3.swath_distances(self.raster, self.baseline, n_threads=1)
 
         self.assertEqual(
@@ -44,6 +48,10 @@ class SwathTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_swath_profile_table_and_width(self):
+        """swath_profile with a 5 m half-width and 10 m bins along the middle row: the
+        table's columns, 21 quantile levels, pixel counts [1, 1, 1, 2] and exact bin
+        means (the last cell, at the end of the line, falls in the last bin).
+        """
         profile = lsdtt3.swath_profile(
             self.raster, self.baseline, half_width_metres=5.0,
             bin_width_metres=10.0, n_threads=1,
@@ -61,6 +69,9 @@ class SwathTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_swath_profile_leaves_out_pixels_beyond_the_ends(self):
+        """swath_profile leaves out pixels beyond the ends of the baseline: a baseline from
+        column 1 to column 3 gives bins of [1, 2] pixels, not [2, 3].
+        """
         # The baseline runs from the centre of column 1 to the centre of
         # column 3 of the middle row. Columns 0 and 4 lie behind its start and
         # past its end: they are within half_width of an end point but not
@@ -80,6 +91,7 @@ class SwathTest(unittest.TestCase):
 
     @pytest.mark.negative
     def test_swath_rejects_mismatched_value_grid(self):
+        """swath_profile refuses a value raster on a different grid."""
         other = lsdtt3.Raster.from_numpy(
             np.ones((5, 5), dtype=np.float32), np.ones((5, 5), dtype=bool),
             lsdtt3.RasterMeta.from_shape(

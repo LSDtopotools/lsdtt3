@@ -28,6 +28,10 @@ class FlowInfoTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.smoke
     def test_topology_and_core_products(self):
+        """FlowInfo on the fixture DEM: 6 outlets, flat index and row/column conversions,
+        the receiver of a cell, an upslope test, drainage area of 600 m2 along the last
+        row, and contributing pixels, flow distance and accumulation at the DEM's shape.
+        """
         self.assertEqual(self.flow.shape, self.dem.shape)
         self.assertEqual(self.flow.n_outlets, 6)
         self.assertEqual(self.flow.outlets.shape, (6, 2))
@@ -44,6 +48,10 @@ class FlowInfoTest(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_channel_hand_and_reductions(self):
+        """Channel products: 6 sources at threshold 3; HAND (with and without the channel
+        donor), distance to channel, upslope sum and mean, and downstream sum all at the
+        DEM's shape.
+        """
         channels = self.flow.channel_mask(3)
         self.assertEqual(self.flow.sources(3).shape, (6, 2))
         hand = self.flow.height_above_channel(self.dem, channels)
@@ -57,6 +65,7 @@ class FlowInfoTest(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_forced_outlet_coordinates(self):
+        """A cell given as a forced outlet (boundary 'b') is an outlet."""
         flow = lsdtt3.FlowInfo(
             self.dem, boundary_conditions="nnbo", forced_outlets=[[3, 2]], n_threads=1
         )
@@ -64,6 +73,13 @@ class FlowInfoTest(unittest.TestCase):
 
     @pytest.mark.smoke
     def test_channel_scope_and_junction_network(self):
+        """channel_scope and channel_network give their masks, tables, profiles, bearings
+        and junction angles; chi gives basins, nodes and a raster; the chi fit has k_sn
+        and source keys, one tributary row per branch with the trunk ranked 0, one
+        knickpoint per segment boundary away from junctions with delta k_sn = upstream
+        minus downstream, the 9 suggested knickpoint thresholds of 5 methods, and a
+        disorder table.
+        """
         scope = self.flow.channel_scope(3)
         self.assertEqual(scope.mode, "all_channels_threshold")
         self.assertEqual(scope.mask.shape, self.dem.shape)
@@ -110,6 +126,9 @@ class FlowInfoTest(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.smoke
     def test_fractional_flow_graphs(self):
+        """FlowGraph with MFD and D-infinity: drainage area at the DEM's shape and receiver
+        weights that sum to 1; D-infinity also gives slope and direction.
+        """
         for method in ("mfd", "dinf"):
             graph = lsdtt3.FlowGraph(self.dem, method=method, boundary_conditions="nnbo")
             self.assertEqual(graph.shape, self.dem.shape)
@@ -125,6 +144,10 @@ class FlowInfoTest(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.smoke
     def test_wetness_connectivity_and_sti_tables(self):
+        """Topographic wetness index is finite on valid cells; the sediment connectivity
+        index returns its four rasters; the soil-topographic index is built from small
+        lnKd and SPR tables and rasterised soil categories, with valid output pixels.
+        """
         area = self.flow.drainage_area()
         gradient = lsdtt3.slope(self.dem)
         twi = lsdtt3.topographic_wetness_index(area, gradient)
@@ -174,6 +197,10 @@ class FlowInfoTest(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.smoke
     def test_scope_workflows_and_basin_collection(self):
+        """extract_valley_centrelines and classify_flat_surfaces_with_scope run from a
+        channel scope; basins from two nested outlets: 2 basins, the second's parent is
+        the first, and a cell's membership lists both.
+        """
         scope = self.flow.channel_scope(3)
         valley_mask = lsdtt3.Raster.from_numpy(
             np.ones(self.dem.shape, dtype=np.float32),

@@ -19,6 +19,9 @@ def load_generator():
 
 
 def test_public_api_manifest_matches_runtime():
+    """The committed python_bindings/api/public_api.json equals the manifest built from the
+    installed module (regenerate it after reviewing an API change).
+    """
     root = Path(__file__).parents[1]
     expected = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))
     actual = load_generator().build_manifest()
@@ -30,6 +33,9 @@ def test_public_api_manifest_matches_runtime():
 
 
 def test_api_decision_manifest_has_release_gate():
+    """api/decisions.json has schema version 1 and passes the generator's validation
+    against the runtime manifest.
+    """
     root = Path(__file__).parents[1]
     decisions = json.loads((root / "api" / "decisions.json").read_text(encoding="utf-8"))
     assert decisions["schema_version"] == 1
@@ -39,6 +45,9 @@ def test_api_decision_manifest_has_release_gate():
 
 
 def test_runtime_exposes_package_version():
+    """lsdtt3.__version__ is the installed distribution's version, or 0.0.0 when running
+    from a source tree.
+    """
     import lsdtt3
 
     try:
@@ -51,6 +60,10 @@ def test_runtime_exposes_package_version():
 
 
 def test_core_reports_the_shared_lsdtt3_version():
+    """The C++ core reports the package's version (one version number for the repository):
+    the version in CMakeLists.txt when running from a source tree, else the installed
+    version, in the form X.Y.Z with an optional .postN or +local suffix.
+    """
     # One version number for the repository: the C++ library inside the
     # package must report the version the package was built as.
     import lsdtt3
@@ -72,6 +85,10 @@ def test_core_reports_the_shared_lsdtt3_version():
 
 
 def test_graphflood_backend_option_schema_matches_runtime_manifest():
+    """api/graphflood_backend_options.json lists the two accelerators, the migration rules
+    and, for each built-in backend, exactly the options of its runtime signature besides
+    the four required inputs.
+    """
     root = Path(__file__).parents[1]
     manifest = json.loads((root / "api" / "public_api.json").read_text(encoding="utf-8"))
     schema = json.loads(
@@ -100,6 +117,9 @@ def test_graphflood_backend_option_schema_matches_runtime_manifest():
 
 
 def test_manifest_distinguishes_static_methods_and_absent_constructors():
+    """The manifest records Raster.read and Raster.from_numpy as static methods and
+    to_numpy as a method, and BasinCollection as having no constructor.
+    """
     manifest = load_generator().build_manifest()
     exports = {entry["name"]: entry for entry in manifest["exports"]}
     raster_members = {member["name"]: member for member in exports["Raster"]["members"]}

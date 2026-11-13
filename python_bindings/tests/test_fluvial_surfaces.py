@@ -31,6 +31,10 @@ class ThresholdAndLevelTests(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.negative
     def test_select_threshold_fixed_and_qq(self):
+        """select_threshold: 'fixed' returns the given value; 'qq_gaussian' on a normal
+        sample with a low uniform tail picks a threshold between 0 and the normal mean;
+        an unknown method is refused.
+        """
         fixed = lsdtt3.select_threshold([1.0, 2.0, 3.0], "fixed", fixed_value=2.5)
         self.assertEqual(fixed["threshold"], 2.5)
         self.assertTrue(fixed["found"])
@@ -48,6 +52,7 @@ class ThresholdAndLevelTests(unittest.TestCase):
             lsdtt3.select_threshold(sample, "no_such_method")
 
     def test_select_threshold_reads_a_raster_ignoring_nodata(self):
+        """select_threshold on a raster counts only its valid pixels (3 of 4)."""
         values = np.array([[1.0, 2.0], [3.0, 99.0]])
         valid = np.array([[True, True], [True, False]])
         result = lsdtt3.select_threshold(raster(values, valid=valid), "fixed", fixed_value=0.0)
@@ -55,6 +60,10 @@ class ThresholdAndLevelTests(unittest.TestCase):
 
     @pytest.mark.property
     def test_cluster_surface_levels_splits_at_the_gap(self):
+        """cluster_surface_levels splits heights at gaps of more than required_gap_metres:
+        three groups of 3, 2 and 2 values, the middle centred at 5.05 m, with the empty
+        fraction, p-value and number of null draws reported.
+        """
         result = lsdtt3.cluster_surface_levels(
             [1.0, 1.1, 1.2, 5.0, 5.1, 9.0, 9.2], required_gap_metres=1.0, n_null=99)
         clusters = result["clusters"]
@@ -69,6 +78,10 @@ class ThresholdAndLevelTests(unittest.TestCase):
 class FloodplainThresholdTests(unittest.TestCase):
     @pytest.mark.exact_solution
     def test_floodplain_must_touch_the_channel(self):
+        """Threshold floodplain: low HAND ground connected to the channel is floodplain; an
+        equally low patch that does not touch the channel is dropped and counted (27
+        floodplain pixels, 1 patch dropped).
+        """
         hand = np.full((9, 9), 10.0)
         hand[:, 3:6] = 0.5            # low ground along the channel
         hand[0:2, 7:9] = 0.5          # low, but not connected to it
@@ -85,6 +98,11 @@ class FloodplainThresholdTests(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_terraces_start_above_the_floodplain_bound(self):
+        """With find_terraces, ground above the floodplain HAND bound plus the minimum
+        terrace height and below max_terrace_height_metres is terrace (band 1), the
+        channel strip is floodplain (band 0), and ground above the maximum is neither
+        (band -1).
+        """
         hand = np.full((9, 9), 20.0)
         hand[:, 3:6] = 0.5
         hand[:, 0:2] = 4.0
@@ -102,6 +120,9 @@ class FloodplainThresholdTests(unittest.TestCase):
 
     @pytest.mark.negative
     def test_gradient_bound_needs_a_gradient(self):
+        """Setting max_floodplain_gradient without a gradient raster is refused with a
+        message naming the gradient.
+        """
         ones = raster(np.ones((5, 5)))
         with self.assertRaisesRegex(ValueError, "gradient"):
             lsdtt3.classify_floodplain_terraces_by_thresholds(
@@ -112,6 +133,10 @@ class FloodplainThresholdTests(unittest.TestCase):
 class ComparisonTests(unittest.TestCase):
     @pytest.mark.exact_solution
     def test_identical_methods_agree_and_bits_mark_each_method(self):
+        """compare_surface_classes on two class rasters differing in one pixel: terrace IoU
+        1, floodplain IoU 3/4; surface_class_agreement marks each pixel with a bit per
+        method (2 = second method only, 3 = both, 0 = neither).
+        """
         a = np.array([[0, 1, 1], [2, 2, 0], [1, 0, 2]], dtype=np.float32)
         b = a.copy()
         b[0, 0] = 1.0
@@ -129,12 +154,17 @@ class ComparisonTests(unittest.TestCase):
 
     @pytest.mark.negative
     def test_class_values_are_checked(self):
+        """compare_surface_classes refuses class values outside the surface-class codes.
+        """
         bad = raster(np.full((3, 3), 4.0))
         with self.assertRaises(ValueError):
             lsdtt3.compare_surface_classes({"a": bad, "b": bad})
 
     @pytest.mark.exact_solution
     def test_baseline_relief_on_a_plane(self):
+        """relief_above_nearest_baseline on a plane rising 2 m per 10 m cell from a
+        baseline in the first column: 8 m of relief four cells away.
+        """
         dem = np.tile(np.arange(10, dtype=np.float32) * 2.0, (10, 1))
         baseline = np.zeros((10, 10))
         baseline[:, 0] = 1.0
@@ -147,6 +177,10 @@ class RiserTests(unittest.TestCase):
     @pytest.mark.property
     @pytest.mark.smoke
     def test_a_step_between_tilted_treads_is_a_riser(self):
+        """find_risers on two tilted treads separated by a 5 m step finds at least one
+        riser segment taller than 2.5 m, with the documented segment columns and a
+        centreline raster of the DEM's shape.
+        """
         n = 80
         rows, cols = np.indices((n, n), dtype=np.float64)
         dem = 0.02 * cols * 2.0 + np.where(cols >= 40, 5.0, 0.0)
@@ -162,6 +196,7 @@ class RiserTests(unittest.TestCase):
 
     @pytest.mark.negative
     def test_bad_gap_closing_choice_is_refused(self):
+        """find_risers refuses an unknown gap_closing_algorithm_choice."""
         with self.assertRaises(ValueError):
             lsdtt3.find_risers(raster(np.zeros((20, 20))), gap_closing_algorithm_choice="nope")
 
@@ -176,6 +211,10 @@ class ScopeBasedTests(unittest.TestCase):
     @pytest.mark.metamorphic
     @pytest.mark.negative
     def test_stream_order_definition_keeps_fewer_pixels(self):
+        """channel_scope with the stream_order definition (minimum order 2) keeps fewer
+        channel pixels than the plain threshold; an unknown channel definition is
+        refused.
+        """
         every = self.flow.channel_scope(threshold_contributing_pixels=10)
         ordered = self.flow.channel_scope(
             threshold_contributing_pixels=10,
@@ -190,6 +229,10 @@ class ScopeBasedTests(unittest.TestCase):
 
     @pytest.mark.exact_solution
     def test_perimeter_source_where_the_floor_enters(self):
+        """find_perimeter_sources on a flat-floored valley finds one source, on the first
+        row where the floor enters the DEM, with one source and one outlet crossing, and
+        fills the pixels, outlets and report outputs.
+        """
         # A 25-cell (750 m) floor: wide enough that the 300 m minimum survives
         # the gradient fit's reach into the walls.
         dem = raster(flat_floored_valley(cell_size=self.cell, half_floor=12), cell_size=self.cell)
@@ -208,6 +251,10 @@ class ScopeBasedTests(unittest.TestCase):
     @pytest.mark.smoke
     @pytest.mark.negative
     def test_ladder_keywords_and_tables(self):
+        """classify_flat_surfaces_with_scope with the ladder keywords returns the class and
+        banded-label rasters and the ladder-window and patch tables with their columns;
+        an unknown ladder_gap_rank and a riser_mask passed with this method are refused.
+        """
         scope = self.flow.channel_scope(threshold_contributing_pixels=10)
         labels = raster(np.where(np.abs(np.indices((60, 60))[1] - 30) <= 5, 1.0, 0.0),
                         cell_size=self.cell)
@@ -230,6 +277,9 @@ class ScopeBasedTests(unittest.TestCase):
 
     @pytest.mark.conformance
     def test_legacy_classify_keywords_warn(self):
+        """The old keyword floodplain_max_height_metres still works in
+        classify_flat_surfaces_with_scope but raises a DeprecationWarning.
+        """
         scope = self.flow.channel_scope(threshold_contributing_pixels=10)
         labels = raster(np.zeros((60, 60)), cell_size=self.cell)
         with self.assertWarns(DeprecationWarning):
@@ -240,6 +290,11 @@ class ScopeBasedTests(unittest.TestCase):
     @pytest.mark.exact_solution
     @pytest.mark.smoke
     def test_width_network_relative_elevation_and_profile(self):
+        """build_valley_width_network on a valley floor gives segments; its centrelines'
+        relative elevation covers more than 90% of the floor and nothing off it;
+        terrace_profile bins a patch along the valley; centrelines from channel
+        crossings also give a relative-elevation raster.
+        """
         scope = self.flow.channel_scope(threshold_contributing_pixels=10)
         floor = raster(np.where(np.abs(np.indices((60, 60))[1] - 30) <= 8, 1.0, 0.0),
                        cell_size=self.cell)
@@ -267,6 +322,9 @@ class ScopeBasedTests(unittest.TestCase):
 
     @pytest.mark.negative
     def test_relative_elevation_needs_flow_ranked_centrelines(self):
+        """relative_elevation on centrelines built from bare pixel lists (no drainage area
+        to rank them) is refused with a message naming drainage area.
+        """
         channel = np.column_stack((np.arange(2, 58), np.full(56, 30)))
         floor = raster(np.where(np.abs(np.indices((60, 60))[1] - 30) <= 8, 1.0, 0.0),
                        cell_size=self.cell)
@@ -281,6 +339,10 @@ class ScopeBasedTests(unittest.TestCase):
 @pytest.mark.negative
 class RidgelineMovingAverageTests(unittest.TestCase):
     def test_moving_average_fits_are_kept_per_window(self):
+        """Ridgeline.fit_profile with two moving-average windows keeps a fit per window,
+        the fitted and detrended values add back to the elevation, and an even window is
+        refused.
+        """
         values = np.tile(np.linspace(0.0, 20.0, 30, dtype=np.float32), (5, 1))
         values[2, ::4] += 1.0
         dem = raster(values, cell_size=10.0)
