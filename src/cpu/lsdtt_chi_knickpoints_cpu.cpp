@@ -285,10 +285,13 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
         // segments per branch
         std::map<std::int32_t, std::vector<const lsdtt_chi_network_fit_segment*>> segs_of;
         std::unordered_map<std::int32_t, const lsdtt_chi_network_fit_segment*> seg_by_id;
+        // Step segments of a step-aware fit (Part C) are in the steps table:
+        // they take no part in the k_sn statistics or the knickpoints.
         for (const auto& s : r.segments)
         {
-            segs_of[s.branch_id].push_back(&s);
             seg_by_id[s.segment_id] = &s;
+            if (s.is_step) continue;
+            segs_of[s.branch_id].push_back(&s);
             all_ksn.push_back(s.k_sn);
         }
         for (auto& [b, t] : trib)
@@ -369,7 +372,7 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
                     junction = true;
                 }
             }
-            if (!p) continue;
+            if (!p || s.is_step || p->is_step) continue;
             lsdtt_chi_knickpoint_row k;
             k.basin_index = static_cast<std::int32_t>(bi);
             k.basin_key = basin_key;
@@ -561,14 +564,16 @@ void write_chi_tributaries_csv(const std::string& filename,
 }
 
 void write_chi_knickpoints_csv(const std::string& filename,
-                               const std::vector<lsdtt_chi_knickpoint_row>& rows)
+                               const std::vector<lsdtt_chi_knickpoint_row>& rows,
+                               bool with_steps)
 {
     std::ofstream out = open_csv(filename);
     out << "basin_index,basin_key,source_key,branch_id,upstream_segment_id,downstream_segment_id,flat,"
            "x,y,chi,elevation,flow_distance_m,drainage_area_m2,ksn_upstream,ksn_downstream,delta_ksn,"
            "log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised,split_rank,split_depth,"
            "split_divergence_metres,split_dchi_below,split_dchi_above,split_ksn_below,split_ksn_above,"
-           "split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major\n";
+           "split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major"
+        << (with_steps ? ",nearest_step_id,nearest_step_chi_distance,step_in_adjacent_segments\n" : "\n");
     for (const auto& k : rows)
         out << k.basin_index << ',' << k.basin_key << ',' << k.source_key << ',' << k.branch_id << ','
             << k.upstream_segment_id << ',' << k.downstream_segment_id << ',' << k.flat << ','
@@ -581,7 +586,11 @@ void write_chi_knickpoints_csv(const std::string& filename,
             << num(k.split_dchi_above) << ',' << num(k.split_ksn_below) << ',' << num(k.split_ksn_above) << ','
             << num(k.split_delta_ksn) << ',' << num(k.split_delta_ksn_metres) << ','
             << num(k.split_delta_ksn_normalised) << ',' << static_cast<int>(k.split_clamped) << ','
-            << static_cast<int>(k.is_major) << '\n';
+            << static_cast<int>(k.is_major)
+            << (with_steps ? "," + std::to_string(k.nearest_step_id) + "," + num(k.nearest_step_chi_distance) +
+                                 "," + std::to_string(static_cast<int>(k.step_in_adjacent_segments))
+                           : std::string())
+            << '\n';
 }
 
 void write_chi_knickpoint_thresholds_csv(const std::string& filename,

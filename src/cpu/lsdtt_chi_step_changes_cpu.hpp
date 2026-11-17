@@ -52,6 +52,7 @@
 #include "../core/lsdtt_types.hpp"
 #include "lsdtt_chi_data_maps_cpu.hpp"
 #include "lsdtt_chi_extraction_cpu.hpp"
+#include "lsdtt_chi_knickpoints_cpu.hpp"
 #include "lsdtt_chi_network_analysis_cpu.hpp"
 
 namespace lsdtt
@@ -127,5 +128,24 @@ struct lsdtt_chi_step_row
 );
 
 void write_chi_steps_csv(const std::string& filename, const std::vector<lsdtt_chi_step_row>& rows);
+
+// PART C. The step reaches as the step-aware fit takes them
+// (lsdtt_chi_network_fit_options::step_reaches): (bottom_flat, top_flat).
+[[nodiscard]] std::vector<std::pair<std::int64_t, std::int64_t>> chi_step_reaches_for_fit(
+    const std::vector<lsdtt_chi_step_row>& steps
+);
+
+// Fill the stage 1 knickpoints' step columns (lsdtt_chi_knickpoint_row):
+//   nearest_step_id, nearest_step_chi_distance: the nearest step on the row's
+//     branch, by chi (0 if the boundary lies inside it); -1 / NaN if none;
+//   step_in_adjacent_segments: 1 if a step on the row's branch, or on the
+//     branch of its downstream segment (the parent, at a junction), overlaps
+//     the chi range of the two segments either side of the boundary.
+// fits must be the fit the knickpoints were built from (stage 1).
+void cross_reference_chi_knickpoints_with_steps(
+    std::vector<lsdtt_chi_knickpoint_row>&          knickpoints,
+    const std::vector<lsdtt_chi_step_row>&          steps,
+    const lsdtt_chi_network_fit_collection_result&  fits
+);
 
 } // namespace lsdtt

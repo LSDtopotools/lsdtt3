@@ -27,6 +27,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "lsdtt_chi_extraction_cpu.hpp"
@@ -46,6 +47,19 @@ struct lsdtt_chi_network_fit_options
     float critical_divergence_m = 5.0f;
     lsdtt_chi_mainstem_choice mainstem_choice =
         lsdtt_chi_mainstem_choice::max_flow_length;
+
+    // STEP-AWARE FIT (docs/plan_docs/plan_chi_knickpoints.md, Part C). With
+    // step_aware, each branch path is cut at the step reaches that lie on it,
+    // given as (bottom_flat, top_flat) pairs (lsdtt_chi_step_changes_cpu; any
+    // basin's: a basin uses those on its own paths). A step reach becomes one
+    // fixed segment flagged is_step, from its bottom to its top node, each
+    // pinned to its observed elevation (or to its fitted one if already set,
+    // as at a junction); the recursive fit runs only on the sub-paths between
+    // steps, each with its own split hierarchy (depth 0 at its first split).
+    // The result, its segments and its node / segment tables then carry
+    // is_step. Without step_aware (the default) the fit is unchanged.
+    bool step_aware = false;
+    std::vector<std::pair<std::int64_t, std::int64_t>> step_reaches;
 };
 
 struct lsdtt_chi_network_fit_segment
@@ -69,6 +83,9 @@ struct lsdtt_chi_network_fit_segment
 
     float max_abs_residual = 0.0f;
     std::int32_t n_nodes   = 0;
+
+    // 1 for a step segment of a step-aware fit (Part C).
+    std::uint8_t is_step = 0;
 };
 
 
@@ -124,6 +141,11 @@ struct lsdtt_chi_network_fit_result
 
     // Piecewise-linear segments
     std::vector<lsdtt_chi_network_fit_segment> segments;
+
+    // Step-aware fit (options.step_aware): is_step per node, 1 on the nodes of
+    // a step segment (both ends included). Empty otherwise.
+    bool step_aware = false;
+    std::vector<std::uint8_t> is_step;
 };
 
 
@@ -157,6 +179,10 @@ struct lsdtt_chi_network_fit_node_table
     // Channel key of the chi data maps (attach_chi_source_keys); empty if not
     // attached, and then the CSV has no source_key column.
     std::vector<std::int32_t> source_key;
+
+    // Step-aware fit only: an is_step column (last).
+    bool step_aware = false;
+    std::vector<std::uint8_t> is_step;
 };
 
 
@@ -186,6 +212,10 @@ struct lsdtt_chi_network_fit_segment_table
     // Channel key of the segment's upstream node (attach_chi_source_keys);
     // empty if not attached, and then the CSV has no source_key column.
     std::vector<std::int32_t> source_key;
+
+    // Step-aware fit only: an is_step column (last).
+    bool step_aware = false;
+    std::vector<std::uint8_t> is_step;
 };
 
 // Per fitted basin (same index as the fit collection), node flat -> the chi

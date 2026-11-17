@@ -279,4 +279,64 @@ void write_chi_steps_csv(const std::string& filename, const std::vector<lsdtt_ch
             << int(s.at_basin_outlet) << ',' << int(s.contains_uphill_pairs) << '\n';
 }
 
+// -----------------------------------------------------------------------------
+// Part C helpers
+// -----------------------------------------------------------------------------
+std::vector<std::pair<std::int64_t, std::int64_t>> chi_step_reaches_for_fit(
+    const std::vector<lsdtt_chi_step_row>& steps)
+{
+    std::vector<std::pair<std::int64_t, std::int64_t>> out;
+    out.reserve(steps.size());
+    for (const auto& s : steps) out.emplace_back(s.bottom_flat, s.top_flat);
+    return out;
+}
+
+void cross_reference_chi_knickpoints_with_steps(
+    std::vector<lsdtt_chi_knickpoint_row>&          knickpoints,
+    const std::vector<lsdtt_chi_step_row>&          steps,
+    const lsdtt_chi_network_fit_collection_result&  fits)
+{
+    std::map<std::pair<std::int32_t, std::int32_t>, std::vector<const lsdtt_chi_step_row*>> on_branch;
+    for (const auto& s : steps) on_branch[{s.basin_index, s.branch_id}].push_back(&s);
+    std::vector<std::unordered_map<std::int32_t, const lsdtt_chi_network_fit_segment*>> seg_by_id(fits.basins.size());
+    for (std::size_t bi = 0; bi < fits.basins.size(); ++bi)
+        for (const auto& g : fits.basins[bi].segments) seg_by_id[bi][g.segment_id] = &g;
+
+    for (auto& k : knickpoints)
+    {
+        k.nearest_step_id = -1;
+        k.nearest_step_chi_distance = k_chi_step_nan;
+        k.step_in_adjacent_segments = 0;
+        if (k.basin_index < 0 || static_cast<std::size_t>(k.basin_index) >= fits.basins.size()) continue;
+        const auto& segs = seg_by_id[static_cast<std::size_t>(k.basin_index)];
+        const auto up = segs.find(k.upstream_segment_id);
+        const auto dn = segs.find(k.downstream_segment_id);
+
+        const auto it = on_branch.find({k.basin_index, k.branch_id});
+        if (it != on_branch.end() && std::isfinite(k.chi))
+        {
+            for (const auto* s : it->second)
+            {
+                const double d = (k.chi >= s->bottom_chi && k.chi <= s->top_chi)
+                                     ? 0.0
+                                     : std::min(std::fabs(k.chi - s->bottom_chi), std::fabs(k.chi - s->top_chi));
+                if (k.nearest_step_id < 0 || d < k.nearest_step_chi_distance)
+                {
+                    k.nearest_step_id = s->step_id;
+                    k.nearest_step_chi_distance = d;
+                }
+            }
+        }
+        if (up == segs.end() || dn == segs.end()) continue;
+        const double lo = dn->second->downstream_chi, hi = up->second->upstream_chi;
+        for (const std::int32_t b : {k.branch_id, dn->second->branch_id})
+        {
+            const auto jt = on_branch.find({k.basin_index, b});
+            if (jt == on_branch.end()) continue;
+            for (const auto* s : jt->second)
+                if (s->bottom_chi < hi && s->top_chi > lo) k.step_in_adjacent_segments = 1;
+        }
+    }
+}
+
 } // namespace lsdtt

@@ -136,6 +136,13 @@ struct lsdtt_chi_knickpoint_row
     double split_delta_ksn_normalised = k_chi_nan;   // / the branch's chi span (the ranking measure)
     std::uint8_t split_clamped = 0;
     std::uint8_t is_major = 0;            // |split_delta_ksn_normalised| above the chosen threshold
+    // Cross-reference to the step reaches (Part C; cross_reference_chi_knickpoints_with_steps,
+    // lsdtt_chi_step_changes_cpu): the nearest step on the same branch and its
+    // chi distance (0 if the boundary is inside it), and 1 if a step lies on
+    // the two segments either side of the boundary. Written with with_steps.
+    std::int32_t nearest_step_id = -1;
+    double nearest_step_chi_distance = k_chi_nan;
+    std::uint8_t step_in_adjacent_segments = 0;
 };
 
 struct lsdtt_chi_knickzone_row
@@ -214,8 +221,11 @@ inline const std::vector<std::string>& chi_knickpoint_threshold_methods()
 
 void write_chi_tributaries_csv(const std::string& filename,
                                const std::vector<lsdtt_chi_tributary_row>& rows);
+// with_steps appends nearest_step_id, nearest_step_chi_distance and
+// step_in_adjacent_segments.
 void write_chi_knickpoints_csv(const std::string& filename,
-                               const std::vector<lsdtt_chi_knickpoint_row>& rows);
+                               const std::vector<lsdtt_chi_knickpoint_row>& rows,
+                               bool with_steps = false);
 void write_chi_knickpoint_thresholds_csv(const std::string& filename,
                                          const std::vector<lsdtt_chi_threshold_row>& rows);
 void write_chi_knickzones_csv(const std::string& filename,

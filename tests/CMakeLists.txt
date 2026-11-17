@@ -4621,9 +4621,11 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
 
-# Step changes (run_step_change_detection, plan_chi_knickpoints.md Part B):
-# the steps file, its header and the summary line, with a low gradient
-# threshold so the tiny DEM has reaches. The values are tested in
+# Step changes and the step-aware fit (run_step_change_detection,
+# plan_chi_knickpoints.md Parts B and C): the steps file, the stage 2
+# (_stepaware) fit and knickpoint files with their is_step columns, the stage 1
+# knickpoint cross-reference columns and the summary lines, with a low
+# gradient threshold so the tiny DEM has reaches. The values are tested in
 # unit_chi_step_changes.
 add_lsdtt_cli_smoke_test(
     smoke_chi_step_changes
@@ -4632,6 +4634,14 @@ add_lsdtt_cli_smoke_test(
     tiny_chi_steps_mn_0p500.csv
     --expect-file-contains "tiny_chi_steps_mn_0p500.csv:step_id,basin_index,basin_key,source_key,branch_id,bottom_flat,top_flat,bottom_x,bottom_y,top_x,top_y,bottom_elevation,top_elevation,drop_m,flow_length_m,mean_gradient,max_window_gradient,n_pairs,bottom_chi,top_chi,bottom_flow_distance_m,bottom_drainage_area_m2,distance_to_branch_base_m,at_tributary_mouth,at_basin_outlet,contains_uphill_pairs"
     --stdout-contains "Step changes (gradient >= 0.05"
+    --expect tiny_chi_fit_nodes_stepaware_mn_0p500.csv
+    --expect tiny_chi_knickpoints_stepaware_mn_0p500.csv
+    --expect tiny_chi_knickzones_stepaware_mn_0p500.csv
+    --expect tiny_chi_tributaries_stepaware_mn_0p500.csv
+    --expect-file-contains "tiny_chi_fit_segments_stepaware_mn_0p500.csv:n_nodes,source_key,is_step"
+    --expect-file-contains "tiny_chi_fit_nodes_stepaware_mn_0p500.csv:is_split_point,source_key,is_step"
+    --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:is_major,nearest_step_id,nearest_step_chi_distance,step_in_adjacent_segments"
+    --stdout-contains "Step-aware fit:"
 )
 lsdtt_set_tests_properties(smoke_chi_step_changes PROPERTIES LABELS "chi")
 
@@ -6756,11 +6766,16 @@ target_link_libraries(lsdtt-test-chi-split-hierarchy PRIVATE lsdtt3_cpu)
 add_test(NAME unit_chi_split_hierarchy COMMAND lsdtt-test-chi-split-hierarchy)
 lsdtt_set_tests_properties(unit_chi_split_hierarchy PROPERTIES LABELS "chi")
 
-# Step-change (waterfall) detection on chi network branches
-# (plan_chi_knickpoints.md, Part B): window gradients up to the maximum window
-# length, reach trimming, the minimum drop, uphill pairs bridged and flagged,
-# 10 m and 30 m pixels, bad options; on a fitted network a diagonal tributary
-# mouth step, the basin outlet and tributary mouth flags, distance to the base.
+# Step-change (waterfall) detection on chi network branches and the
+# step-aware fit (plan_chi_knickpoints.md, Parts B and C): window gradients up
+# to the maximum window length, reach trimming, the minimum drop, uphill pairs
+# bridged and flagged, 10 m and 30 m pixels, bad options; on a fitted network
+# a diagonal tributary mouth step, the outlet and mouth flags, distance to
+# the base. Part C: a step under the critical divergence bends the stage 1
+# fit, stage 2 recovers k_sn 50 either side with one step segment and exact
+# elevations; is_step only on step-aware tables; stage 2 knickpoints leave
+# out the step ends; stage 1 knickpoints are cross-referenced to the step; a
+# tributary anchored inside a step takes the step line's elevation.
 add_executable(lsdtt-test-chi-step-changes cpp/test_chi_step_changes.cpp)
 target_link_libraries(lsdtt-test-chi-step-changes PRIVATE lsdtt3_cpu)
 # Step reaches on synthetic paths and a fitted network: the planned window,
