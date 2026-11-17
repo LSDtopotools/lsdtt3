@@ -246,7 +246,8 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
             t.head_flat = r.flats[head];
             t.head_x = x_of(t.head_flat);
             t.head_y = y_of(t.head_flat);
-            t.source_key = static_cast<std::int32_t>(from_keys(t.head_flat, 2));
+            const double sk = from_keys(t.head_flat, 2);
+            t.source_key = std::isfinite(sk) ? static_cast<std::int32_t>(sk) : -1;
             const std::int64_t rec = r.receiver_flats[low];
             const auto jt = fit_idx.find(rec);
             double chi_down = r.chi[low], fd_down = from_keys(r.flats[low], 1);

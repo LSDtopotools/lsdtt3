@@ -57,6 +57,7 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_data_maps_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_knickpoints_cpu.hpp"
+#include "../src/cpu/lsdtt_chi_step_changes_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_disorder_cpu.hpp"
 #include "../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #if defined(LSDTT_HAS_EIGEN)
@@ -528,6 +529,46 @@ int main(int argc, char* argv[])
         "plots can use another.",
         "Outputs", "param", "write_chi_knickpoint_table"};
 
+    // --- Step changes (waterfalls) ---
+    bool_default_map["run_step_change_detection"] = false;
+    help_map["run_step_change_detection"] = {"bool","false",
+        "Find step changes (waterfalls, dams, steep gorge reaches) on the fitted channel branches.",
+        "Works on the longitudinal profile, not in chi: on each branch of the chi fit (the same nodes, D8 "
+        "receivers and elevations), every window of consecutive pixel pairs up to "
+        "step_change_max_window_length_metres of flow length whose gradient (drop / flow length) is at "
+        "least step_change_min_gradient marks its pairs; consecutive marked pairs form a reach, its gentle "
+        "end pairs are trimmed, and it is kept if it drops at least step_change_min_drop_metres. Flat or "
+        "uphill pairs inside a window lower its gradient rather than breaking it. Detection does not "
+        "depend on m/n (only the chi of the reach ends does). The gradient threshold is resolution "
+        "dependent: on a 30 m DEM 0.40 also marks steep gorge reaches, so each reach carries its drop, "
+        "flow length, mean and maximum window gradient and flags (at_basin_outlet, at_tributary_mouth, "
+        "contains_uphill_pairs). Dams are found too; breach them out of the DEM first if they are not "
+        "wanted. Written once per m/n. Output: <write_fname>_chi_steps_mn_*.csv.",
+        "Step changes", "switch", "fit_chi_networks"};
+
+    float_default_map["step_change_min_gradient"] = 0.40f;
+    help_map["step_change_min_gradient"] = {"float","0.40",
+        "Gradient (m/m, drop / flow length) at or above which a window of pixel pairs is steep.",
+        "About the angle of repose. Resolution dependent: coarser pixels smear a waterfall over a longer "
+        "flow length and lower its gradient. Must be > 0.",
+        "Step changes", "param", "run_step_change_detection"};
+
+    float_default_map["step_change_max_window_length_metres"] = 90.0f;
+    help_map["step_change_max_window_length_metres"] = {"float","90.0",
+        "Longest window, as flow length (m), over which the gradient of consecutive pixel pairs is taken.",
+        "Every window up to this length is tested, so a one-pixel waterfall and a step smeared over "
+        "several pixels are both found. A single pair is always a window, even if it is longer. Also "
+        "the distance from a branch's base within which a reach is flagged at_basin_outlet or "
+        "at_tributary_mouth. Must be > 0.",
+        "Step changes", "param", "run_step_change_detection"};
+
+    float_default_map["step_change_min_drop_metres"] = 5.0f;
+    help_map["step_change_min_drop_metres"] = {"float","5.0",
+        "Smallest drop (m, top minus bottom elevation) of a reported step reach.",
+        "The default equals the default fit_critical_divergence_metres, so a step is something the "
+        "fit would resolve; it does not follow that parameter, set both if you change one. Must be >= 0.",
+        "Step changes", "param", "run_step_change_detection"};
+
     bool_default_map["write_ksn_basin_summary"] = true;
     help_map["write_ksn_basin_summary"] = {"bool","true",
         "Write a per-basin channel-steepness (k_sn) summary CSV.",
@@ -771,6 +812,27 @@ int main(int argc, char* argv[])
                       << ".\n";
             return 1;
         }
+    }
+    if (bf["run_step_change_detection"])
+    {
+        if (!(ff["step_change_min_gradient"] > 0.0f))
+        {
+            std::cerr << "FATAL: step_change_min_gradient must be > 0.\n";
+            return 1;
+        }
+        if (!(ff["step_change_max_window_length_metres"] > 0.0f))
+        {
+            std::cerr << "FATAL: step_change_max_window_length_metres must be > 0.\n";
+            return 1;
+        }
+        if (!(ff["step_change_min_drop_metres"] >= 0.0f))
+        {
+            std::cerr << "FATAL: step_change_min_drop_metres must be >= 0.\n";
+            return 1;
+        }
+        if (!bf["fit_chi_networks"])
+            std::cerr << "Warning: run_step_change_detection needs fit_chi_networks: true; no steps "
+                         "are written.\n";
     }
     if (ifs["threshold_contributing_pixels"] <= 0)
     {
@@ -1935,6 +1997,37 @@ int main(int argc, char* argv[])
                 catch (const std::exception& e)
                 {
                     std::cerr << "Warning: tributary / knickpoint tables failed for m/n = " << mn << ": "
+                              << e.what() << "\n";
+                }
+            }
+
+            if (bf["run_step_change_detection"])
+            {
+                try
+                {
+                    lsdtt::lsdtt_chi_step_options so;
+                    so.min_gradient = ff["step_change_min_gradient"];
+                    so.max_window_length_metres = ff["step_change_max_window_length_metres"];
+                    so.min_drop_metres = ff["step_change_min_drop_metres"];
+                    const auto steps = lsdtt::build_chi_step_changes(
+                        fit_results, chi_networks, chi_basin_keys, routed_dem.get_meta(), so);
+                    const std::string f = pp.make_output_path("_chi_steps_mn_" + mn_suffix(mn), ".csv");
+                    lsdtt::write_chi_steps_csv(f, steps);
+                    long n_out = 0, n_mouth = 0, n_up = 0;
+                    for (const auto& st : steps)
+                    {
+                        n_out += st.at_basin_outlet;
+                        n_mouth += st.at_tributary_mouth;
+                        n_up += st.contains_uphill_pairs;
+                    }
+                    std::cout << "  Step changes (gradient >= " << so.min_gradient << ", window <= "
+                              << so.max_window_length_metres << " m, drop >= " << so.min_drop_metres
+                              << " m): " << steps.size() << " (" << n_out << " at a basin outlet, " << n_mouth
+                              << " at a tributary mouth, " << n_up << " with uphill pairs) -> " << f << "\n";
+                }
+                catch (const std::exception& e)
+                {
+                    std::cerr << "Warning: step-change detection failed for m/n = " << mn << ": "
                               << e.what() << "\n";
                 }
             }

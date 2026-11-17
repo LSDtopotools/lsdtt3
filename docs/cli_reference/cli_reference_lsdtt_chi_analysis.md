@@ -919,6 +919,15 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_disorder_sample_tables` | `bool` | `false` | `switch` | - | Write detailed disorder sample tables for each m/n value. | - |
 | `write_output_format` | `string` | `cog` | `io` | - | Raster output format for the chi coordinate and inversion rasters. | Allowed values: cog, gtiff, same_as_input. |
 
+### Step changes
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_step_change_detection` | `bool` | `false` | `switch` | `fit_chi_networks` | Find step changes (waterfalls, dams, steep gorge reaches) on the fitted channel branches. | Works on the longitudinal profile, not in chi: on each branch of the chi fit (the same nodes, D8 receivers and elevations), every window of consecutive pixel pairs up to step_change_max_window_length_metres of flow length whose gradient (drop / flow length) is at least step_change_min_gradient marks its pairs; consecutive marked pairs form a reach, its gentle end pairs are trimmed, and it is kept if it drops at least step_change_min_drop_metres. Flat or uphill pairs inside a window lower its gradient rather than breaking it. Detection does not depend on m/n (only the chi of the reach ends does). The gradient threshold is resolution dependent: on a 30 m DEM 0.40 also marks steep gorge reaches, so each reach carries its drop, flow length, mean and maximum window gradient and flags (at_basin_outlet, at_tributary_mouth, contains_uphill_pairs). Dams are found too; breach them out of the DEM first if they are not wanted. Written once per m/n. Output: &lt;write_fname&gt;_chi_steps_mn_*.csv. |
+| `step_change_min_gradient` | `float` | `0.40` | `param` | `run_step_change_detection` | Gradient (m/m, drop / flow length) at or above which a window of pixel pairs is steep. | About the angle of repose. Resolution dependent: coarser pixels smear a waterfall over a longer flow length and lower its gradient. Must be &gt; 0. |
+| `step_change_max_window_length_metres` | `float` | `90.0` | `param` | `run_step_change_detection` | Longest window, as flow length (m), over which the gradient of consecutive pixel pairs is taken. | Every window up to this length is tested, so a one-pixel waterfall and a step smeared over several pixels are both found. A single pair is always a window, even if it is longer. Also the distance from a branch's base within which a reach is flagged at_basin_outlet or at_tributary_mouth. Must be &gt; 0. |
+| `step_change_min_drop_metres` | `float` | `5.0` | `param` | `run_step_change_detection` | Smallest drop (m, top minus bottom elevation) of a reported step reach. | The default equals the default fit_critical_divergence_metres, so a step is something the fit would resolve; it does not follow that parameter, set both if you change one. Must be &gt;= 0. |
+
 ### Lithology input
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

@@ -4621,6 +4621,20 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
 
+# Step changes (run_step_change_detection, plan_chi_knickpoints.md Part B):
+# the steps file, its header and the summary line, with a low gradient
+# threshold so the tiny DEM has reaches. The values are tested in
+# unit_chi_step_changes.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_step_changes
+    lsdtt-chi-analysis
+    chi_analysis_step_changes_smoke.param.in
+    tiny_chi_steps_mn_0p500.csv
+    --expect-file-contains "tiny_chi_steps_mn_0p500.csv:step_id,basin_index,basin_key,source_key,branch_id,bottom_flat,top_flat,bottom_x,bottom_y,top_x,top_y,bottom_elevation,top_elevation,drop_m,flow_length_m,mean_gradient,max_window_gradient,n_pairs,bottom_chi,top_chi,bottom_flow_distance_m,bottom_drainage_area_m2,distance_to_branch_base_m,at_tributary_mouth,at_basin_outlet,contains_uphill_pairs"
+    --stdout-contains "Step changes (gradient >= 0.05"
+)
+lsdtt_set_tests_properties(smoke_chi_step_changes PROPERTIES LABELS "chi")
+
 # The chi fit nodes of the tiny DEM at m/n 0.5 match their pinned sha256
 # (re-pinned when chi moved to the trapezoidal rule, verified against
 # TopoToolbox, and when source_key was added; see the notes inside the call).
@@ -6741,6 +6755,18 @@ target_link_libraries(lsdtt-test-chi-split-hierarchy PRIVATE lsdtt3_cpu)
 # is_major is set on the normalised measure.
 add_test(NAME unit_chi_split_hierarchy COMMAND lsdtt-test-chi-split-hierarchy)
 lsdtt_set_tests_properties(unit_chi_split_hierarchy PROPERTIES LABELS "chi")
+
+# Step-change (waterfall) detection on chi network branches
+# (plan_chi_knickpoints.md, Part B): window gradients up to the maximum window
+# length, reach trimming, the minimum drop, uphill pairs bridged and flagged,
+# 10 m and 30 m pixels, bad options; on a fitted network a diagonal tributary
+# mouth step, the basin outlet and tributary mouth flags, distance to the base.
+add_executable(lsdtt-test-chi-step-changes cpp/test_chi_step_changes.cpp)
+target_link_libraries(lsdtt-test-chi-step-changes PRIVATE lsdtt3_cpu)
+# Step reaches on synthetic paths and a fitted network: the planned window,
+# trim and minimum-drop cases, and the outlet / tributary-mouth flags.
+add_test(NAME unit_chi_step_changes COMMAND lsdtt-test-chi-step-changes)
+lsdtt_set_tests_properties(unit_chi_step_changes PROPERTIES LABELS "chi")
 
 # Erodibility calibration from basin erosion rates: the York regression
 # (Pearson's data with York's weights), the erosion-rate sample reader and its
