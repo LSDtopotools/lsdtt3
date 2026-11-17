@@ -4596,8 +4596,10 @@ add_lsdtt_cli_smoke_test(
 )
 
 # Tributary and knickpoint tables (write_chi_tributary_table,
-# write_chi_knickpoint_table, both on by default): the three files and their
-# headers. The values are tested in unit_chi_knickpoints.
+# write_chi_knickpoint_table, both on by default): the four files (tributaries,
+# knickpoints with the split-hierarchy columns, thresholds, knickzones) and
+# their headers. The values are tested in unit_chi_knickpoints and
+# unit_chi_split_hierarchy.
 add_lsdtt_cli_smoke_test(
     smoke_chi_tributaries_knickpoints
     lsdtt-chi-analysis
@@ -4605,11 +4607,16 @@ add_lsdtt_cli_smoke_test(
     tiny_chi_tributaries_mn_0p500.csv
     --expect tiny_chi_knickpoints_mn_0p500.csv
     --expect tiny_chi_knickpoint_thresholds_mn_0p500.csv
+    --expect tiny_chi_knickzones_mn_0p500.csv
+    --expect-file-contains "tiny_chi_knickzones_mn_0p500.csv:knickzone_id,basin_index,basin_key,source_key,branch_id,foot_flat,lip_flat,foot_x,foot_y,lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,threshold_method,threshold"
+    --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:chi_normalised,split_rank,split_depth,split_divergence_metres,split_dchi_below,split_dchi_above,split_ksn_below,split_ksn_above,split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major"
+    --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_split_delta_ksn_metres,p95,"
     --expect-file-contains "tiny_chi_tributaries_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,parent_branch_id,branch_order,head_flat,junction_flat,head_x,head_y,junction_x,junction_y,junction_drainage_area_m2,basin_drainage_area_m2,area_fraction,area_rank_in_basin,length_m,chi_span,n_segments,ksn_min,ksn_median,ksn_max,ksn_max_segment_id,ksn_max_chi,n_descendants"
     --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,upstream_segment_id,downstream_segment_id,flat,x,y,chi,elevation,flow_distance_m,drainage_area_m2,ksn_upstream,ksn_downstream,delta_ksn,log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised"
     --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_delta_ksn,otsu,"
     --expect-file-contains "tiny_chi_fit_segments_mn_0p500.csv:n_nodes,source_key"
     --stdout-contains "Knickpoint candidates:"
+    --stdout-contains "knickzones:"
 )
 lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
 
@@ -6718,6 +6725,19 @@ target_link_libraries(lsdtt-test-chi-knickpoints PRIVATE lsdtt3_cpu)
 # segment at its junction, and the threshold methods.
 add_test(NAME unit_chi_knickpoints COMMAND lsdtt-test-chi-knickpoints)
 lsdtt_set_tests_properties(unit_chi_knickpoints PROPERTIES LABELS "chi")
+
+# The split hierarchy of the chi fit (plan_chi_knickpoints.md, Part A), on
+# synthetic one-row channels fitted by fit_chi_network: a reach change with
+# one-node steps below must be the first split and rank first by the
+# scale-weighted k_sn change (while a step has the larger raw change); a
+# gentle-steep-gentle profile gives one knickzone with the right foot, lip and
+# k_sn; an unknown threshold method throws.
+add_executable(lsdtt-test-chi-split-hierarchy cpp/test_chi_split_hierarchy.cpp)
+target_link_libraries(lsdtt-test-chi-split-hierarchy PRIVATE lsdtt3_cpu)
+# Split hierarchy and knickzones on synthetic channels: the reach change is
+# the first split and ranks first by split_delta_ksn_metres; one knickzone.
+add_test(NAME unit_chi_split_hierarchy COMMAND lsdtt-test-chi-split-hierarchy)
+lsdtt_set_tests_properties(unit_chi_split_hierarchy PROPERTIES LABELS "chi")
 
 # Erodibility calibration from basin erosion rates: the York regression
 # (Pearson's data with York's weights), the erosion-rate sample reader and its

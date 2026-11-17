@@ -497,13 +497,31 @@ int main(int argc, char* argv[])
         "flagged at_junction = 1, where a tributary's first segment meets the parent-branch segment at "
         "the junction. Columns include x / y, chi, elevation, flow distance, drainage area, k_sn upstream "
         "and downstream, delta_ksn (upstream minus downstream: positive where the channel steepens "
-        "upstream) and log_ratio_ksn (log10 of their ratio; empty if either k_sn <= 0). A second file "
-        "suggests thresholds for a major knickpoint over the within-branch rows: for |delta_ksn| and "
-        "|log_ratio_ksn|, the 90th and 95th percentiles, the median plus 3 MAD (MAD scaled by 1.4826) "
-        "and Otsu's two-class split; and an outlier k_sn for segments (Q3 + 3 IQR). Written once per "
-        "m/n. Outputs: <write_fname>_chi_knickpoints_mn_*.csv, "
-        "<write_fname>_chi_knickpoint_thresholds_mn_*.csv.",
+        "upstream) and log_ratio_ksn (log10 of their ratio; empty if either k_sn <= 0). Each "
+        "within-branch row also carries how the recursive fit split the profile there: split_rank "
+        "(order within its branch), split_depth (0 = the branch's first split), split_divergence_metres "
+        "(observed minus the chord), the chi spans and k_sn of the two child chords at that moment "
+        "(split_dchi_below / above, split_ksn_below / above), split_delta_ksn (above minus below: the "
+        "k_sn change at the scale the split was made), split_delta_ksn_metres (that change divided by "
+        "sqrt(1/dchi_below^2 + 1/dchi_above^2): the ranking measure, which does not reward short, noisy "
+        "segments as delta_ksn does), split_delta_ksn_normalised (the same over the branch's chi span, "
+        "so long channels do not dominate) and is_major (|split_delta_ksn_metres| above the "
+        "knickpoint_threshold_method threshold). A second file suggests thresholds over the "
+        "within-branch rows for |split_delta_ksn_metres|, |split_delta_ksn_normalised|, |delta_ksn| and "
+        "|log_ratio_ksn|: the 90th and 95th percentiles, the median plus 3 MAD (MAD scaled by 1.4826) and "
+        "Otsu's two-class split; and an outlier k_sn for segments (Q3 + 3 IQR). A third lists "
+        "knickzones: on a branch, a major steepening split followed upstream by a major shallowing one "
+        "(foot and lip), with relief, chi span, flow length and k_sn below, inside and above. Written "
+        "once per m/n. Outputs: <write_fname>_chi_knickpoints_mn_*.csv, "
+        "<write_fname>_chi_knickpoint_thresholds_mn_*.csv, <write_fname>_chi_knickzones_mn_*.csv.",
         "Outputs", "switch", "fit_chi_networks"};
+
+    string_default_map["knickpoint_threshold_method"] = "p95";
+    help_map["knickpoint_threshold_method"] = {"string","p95",
+        "Threshold for a major knickpoint, on |split_delta_ksn_metres|: p90, p95, median_plus_3mad or otsu.",
+        "Sets is_major in the knickpoint table and which splits are paired into knickzones. The "
+        "thresholds file lists the value of every method, so plots can use another.",
+        "Outputs", "param", "write_chi_knickpoint_table"};
 
     bool_default_map["write_ksn_basin_summary"] = true;
     help_map["write_ksn_basin_summary"] = {"bool","true",
@@ -738,6 +756,16 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // Validate params
     // -------------------------------------------------------------------------
+    {
+        const std::string m = lsdtt::to_lower_ascii(sf["knickpoint_threshold_method"]);
+        const auto& ok = lsdtt::chi_knickpoint_threshold_methods();
+        if (std::find(ok.begin(), ok.end(), m) == ok.end())
+        {
+            std::cerr << "FATAL: knickpoint_threshold_method must be p90, p95, median_plus_3mad "
+                         "or otsu, got " << sf["knickpoint_threshold_method"] << ".\n";
+            return 1;
+        }
+    }
     if (ifs["threshold_contributing_pixels"] <= 0)
     {
         std::cerr << "FATAL: threshold_contributing_pixels must be > 0.\n";
@@ -1867,7 +1895,8 @@ int main(int argc, char* argv[])
                 {
                     const lsdtt::lsdtt_chi_tributary_knickpoint_tables tk =
                         lsdtt::build_chi_tributaries_and_knickpoints(
-                            fit_results, chi_networks, chi_basin_keys, routed_dem.get_meta());
+                            fit_results, chi_networks, chi_basin_keys, routed_dem.get_meta(),
+                            lsdtt::to_lower_ascii(sf["knickpoint_threshold_method"]));
                     if (bf["write_chi_tributary_table"])
                     {
                         const std::string f = pp.make_output_path("_chi_tributaries_mn_" + mn_suffix(mn), ".csv");
@@ -1884,8 +1913,15 @@ int main(int argc, char* argv[])
                         for (const auto& k : tk.knickpoints) n_j += k.at_junction;
                         std::cout << "  Knickpoint candidates: " << tk.knickpoints.size() << " (" << n_j
                                   << " at tributary junctions) -> " << f << "\n";
+                        const std::string z = pp.make_output_path("_chi_knickzones_mn_" + mn_suffix(mn), ".csv");
+                        lsdtt::write_chi_knickzones_csv(z, tk.knickzones);
+                        long n_major = 0;
+                        for (const auto& k : tk.knickpoints) n_major += k.is_major;
+                        std::cout << "  Major knickpoints (|split_delta_ksn_metres|, "
+                                  << sf["knickpoint_threshold_method"] << "): " << n_major
+                                  << "; knickzones: " << tk.knickzones.size() << " -> " << z << "\n";
                         for (const auto& t : tk.thresholds)
-                            if (t.measure == "abs_delta_ksn" || t.measure == "ksn")
+                            if (t.measure == "abs_split_delta_ksn_metres" || t.measure == "ksn")
                                 std::cout << "    suggested " << t.measure << " threshold (" << t.method << "): "
                                           << t.threshold << ", " << t.n_above << " of " << t.n_total << " above\n";
                     }

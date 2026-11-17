@@ -24,6 +24,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +72,26 @@ struct lsdtt_chi_network_fit_segment
 };
 
 
+// How and when the recursive fit split the profile at a node (one per node;
+// rank -1 where the node is not a split point). The fit splits each branch
+// top-down: the chord from the downstream anchor to the upstream end is split
+// at the node furthest from it, if that is further than the critical
+// divergence, and the halves are fitted the same way. Early splits are where
+// the profile departs most from a straight line at the scale of the whole
+// channel; late, deep ones are small corrections. See
+// docs/plan_docs/plan_chi_knickpoints.md (Part A).
+struct lsdtt_chi_split_record
+{
+    std::int32_t rank  = -1;    // order of the split within its branch (the recursion sequence)
+    std::int32_t depth = -1;    // recursion depth: 0 = the branch's first split
+    float divergence_m = std::numeric_limits<float>::quiet_NaN();   // observed - chord (m); + = above the chord
+    float dchi_below   = std::numeric_limits<float>::quiet_NaN();   // chi span of the lower child chord
+    float dchi_above   = std::numeric_limits<float>::quiet_NaN();   // chi span of the upper child chord
+    float ksn_below    = std::numeric_limits<float>::quiet_NaN();   // slope of the lower child chord
+    float ksn_above    = std::numeric_limits<float>::quiet_NaN();   // slope of the upper child chord
+    std::uint8_t clamped = 0;   // 1 if the split chord's upper end was clamped to its lower end
+};
+
 struct lsdtt_chi_network_fit_result
 {
     std::int64_t outlet_flat = k_nodata_receiver;
@@ -99,6 +120,7 @@ struct lsdtt_chi_network_fit_result
     // Split-point bookkeeping
     std::vector<std::uint8_t> is_split_point;
     std::vector<std::int64_t> split_flats;
+    std::vector<lsdtt_chi_split_record> split_records;   // per node
 
     // Piecewise-linear segments
     std::vector<lsdtt_chi_network_fit_segment> segments;

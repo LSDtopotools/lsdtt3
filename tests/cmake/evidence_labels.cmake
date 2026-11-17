@@ -297,6 +297,7 @@ lsdtt_evidence(smoke_channel_extraction_point_attributes system smoke exact_solu
 lsdtt_evidence(smoke_channel_extraction_point_attributes_fgb system smoke)
 lsdtt_evidence(unit_channel_nearest_point_snap unit exact_solution property)  # vs brute force
 lsdtt_evidence(unit_chi_knickpoints unit exact_solution)  # hand-built fit, known k_sn / areas
+lsdtt_evidence(unit_chi_split_hierarchy unit exact_solution property)  # synthetic channels: reach change ranks first, one knickzone
 lsdtt_evidence(smoke_chi_tributaries_knickpoints system smoke characterisation)
 lsdtt_evidence(smoke_chi_lithology_ksn system smoke exact_solution)  # 9600 px per unit, k_sn 20 / 5 bins
 lsdtt_evidence(rigorous_chi_lithology_observation_only system smoke characterisation metamorphic)

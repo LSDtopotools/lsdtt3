@@ -191,6 +191,7 @@ private:
     int                                   root_local_index_ = -1;
     int                                   next_branch_id_   = 1;
     int                                   next_segment_id_  = 0;
+    int                                   split_rank_in_branch_ = 0;
 
     // -------------------------------------------------------------------------
     // output
@@ -280,6 +281,7 @@ private:
         result_.is_junction.assign(chi_network_.flats.size(), std::uint8_t{0});
 
         result_.is_split_point.assign(chi_network_.flats.size(), std::uint8_t{0});
+        result_.split_records.assign(chi_network_.flats.size(), lsdtt_chi_split_record{});
 
         result_.split_flats.clear();
         result_.segments.clear();
@@ -694,11 +696,15 @@ private:
 
         if (path.size() >= 2)
         {
+            // Tributaries are processed after this branch is fitted, so the
+            // counter belongs to this branch alone.
+            split_rank_in_branch_ = 0;
             fit_path_recursive(
                 path,
                 0,
                 static_cast<int>(path.size()) - 1,
-                branch_id
+                branch_id,
+                0
             );
         }
 
@@ -754,7 +760,8 @@ private:
         const std::vector<int>& path,
         int down_pos,
         int up_pos,
-        int branch_id)
+        int branch_id,
+        int depth)
     {
         if (down_pos < 0 || up_pos < 0 || down_pos >= up_pos)
         {
@@ -790,9 +797,11 @@ private:
         // different value in accept_segment and trip the consistency check. A
         // segment that must descend to honour such a constraint (because the
         // downstream anchor's fitted elevation overshoots it) is accepted as-is.
+        bool clamped = false;
         if (!up_already_assigned && z_up < z_down)
         {
             z_up = z_down;
+            clamped = true;
         }
 
         const double chi_down =
@@ -871,13 +880,36 @@ private:
             }
 
             result_.is_split_point[static_cast<std::size_t>(split_local)] = 1u;
+            record_split(split_local, chi_down, chi_up, z_down, z_up, depth, clamped);
 
-            fit_path_recursive(path, down_pos, split_pos, branch_id);
-            fit_path_recursive(path, split_pos, up_pos, branch_id);
+            fit_path_recursive(path, down_pos, split_pos, branch_id, depth + 1);
+            fit_path_recursive(path, split_pos, up_pos, branch_id, depth + 1);
             return;
         }
 
         accept_segment(path, down_pos, up_pos, branch_id, z_down, z_up);
+    }
+
+    // The split's place in the hierarchy and the two child chords' slopes
+    // (bookkeeping only: the fit does not use them).
+    void record_split(int split_local, double chi_down, double chi_up,
+                      float z_down, float z_up, int depth, bool clamped)
+    {
+        const std::size_t i = static_cast<std::size_t>(split_local);
+        const double chi_s = static_cast<double>(result_.chi[i]);
+        const double z_s   = static_cast<double>(result_.observed_elevation[i]);
+        lsdtt_chi_split_record& rec = result_.split_records[i];
+        rec.rank  = split_rank_in_branch_++;
+        rec.depth = depth;
+        rec.divergence_m = static_cast<float>(
+            z_s - static_cast<double>(line_elevation(chi_down, chi_up, z_down, z_up, chi_s)));
+        const double db = chi_s - chi_down;
+        const double da = chi_up - chi_s;
+        rec.dchi_below = static_cast<float>(db);
+        rec.dchi_above = static_cast<float>(da);
+        if (db > 0.0) rec.ksn_below = static_cast<float>((z_s - static_cast<double>(z_down)) / db);
+        if (da > 0.0) rec.ksn_above = static_cast<float>((static_cast<double>(z_up) - z_s) / da);
+        rec.clamped = clamped ? std::uint8_t{1} : std::uint8_t{0};
     }
 
     float line_elevation(
