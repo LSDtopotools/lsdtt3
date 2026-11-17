@@ -4608,7 +4608,7 @@ add_lsdtt_cli_smoke_test(
     --expect tiny_chi_knickpoints_mn_0p500.csv
     --expect tiny_chi_knickpoint_thresholds_mn_0p500.csv
     --expect tiny_chi_knickzones_mn_0p500.csv
-    --expect-file-contains "tiny_chi_knickzones_mn_0p500.csv:knickzone_id,basin_index,basin_key,source_key,branch_id,foot_flat,lip_flat,foot_x,foot_y,lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,foot_split_delta_ksn_normalised,lip_split_delta_ksn_normalised,threshold_method,threshold"
+    --expect-file-contains "tiny_chi_knickzones_mn_0p500.csv:knickzone_id,basin_index,basin_key,source_key,branch_id,foot_type,foot_flat,lip_flat,foot_x,foot_y,lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,foot_split_delta_ksn_normalised,lip_split_delta_ksn_normalised,threshold_method,threshold,foot_threshold_split_delta_ksn_metres"
     --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:chi_normalised,split_rank,split_depth,split_divergence_metres,split_dchi_below,split_dchi_above,split_ksn_below,split_ksn_above,split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major"
     --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_split_delta_ksn_metres,p95,"
     --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_split_delta_ksn_normalised,p95,"

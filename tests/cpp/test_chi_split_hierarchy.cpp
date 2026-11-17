@@ -24,7 +24,17 @@
 //    k_sn below ~20, inside ~200, above ~20; both rows is_major; is_major is
 //    set on exactly the within-branch rows whose |split_delta_ksn_normalised|
 //    exceeds the abs_split_delta_ksn_normalised threshold of the method.
-// 3. An unknown threshold method throws.
+// 3. Outlet on a knickzone: k_sn 200 to chi 1 (node 50), 20 to chi 6, plus
+//    6 m one-node steps every 12 nodes. Expected: one knickzone, foot_type
+//    basin_outlet, foot at the outlet (chi 0, flat 0), lip within 0.1 of
+//    chi 1 (the step at node 54 moves it to chi 1.08), k_sn
+//    inside ~200, ksn_below and the foot split fields NaN.
+// 4. Foot below the lip's threshold: k_sn 100 to chi 2, 200 to chi 3, 10 to
+//    chi 6, 6 m one-node steps every 12 nodes, method otsu. The lip (chi 3)
+//    is major; the foot (chi 2) is not (|split_delta_ksn_metres| 94.8, otsu
+//    95.2) but passes the p95 (7.2). Expected: one knickzone, foot_type
+//    split, foot chi 2, lip chi 3 (not a knickzone from the outlet).
+// 5. An unknown threshold method throws.
 //
 // Usage: lsdtt-test-chi-split-hierarchy
 // -----------------------------------------------------------------------------
@@ -190,6 +200,7 @@ int main()
             check("k_sn below and above ~20 (+ the steps' 150 per chi)",
                   z.ksn_below < 100.0 && z.ksn_above < 100.0, s(z.ksn_below) + " / " + s(z.ksn_above));
             check("threshold method recorded", z.threshold_method == "median_plus_3mad");
+            check("foot_type split", z.foot_type == "split", z.foot_type);
             const auto* foot = row_at(t, z.foot_flat);
             const auto* lip = row_at(t, z.lip_flat);
             check("foot and lip rows are major", foot && lip && foot->is_major && lip->is_major);
@@ -211,7 +222,82 @@ int main()
               major_matches && n_major >= 2, "threshold " + s(thr) + ", n_major " + s(n_major));
     }
 
-    // ---- 3. bad method -------------------------------------------------------
+    // ---- 3. outlet on a knickzone -------------------------------------------
+    {
+        const double dchi = 0.02;
+        auto z_of = [&](int i)
+        {
+            const double chi = dchi * i;
+            double z = chi <= 1.0 ? 200.0 * chi : 200.0 + 20.0 * (chi - 1.0);
+            for (int st = 6; st < 300; st += 12)
+                if (i >= st) z += 6.0;
+            return z;
+        };
+        channel c = make_channel(301, dchi, z_of);
+        lsdtt_chi_network_fit_options o;
+        o.critical_divergence_m = 2.0f;
+        lsdtt_chi_network_fit_collection_result fits;
+        fits.basins.push_back(fit_chi_network(c.basin, c.dem, o));
+        lsdtt_chi_collection_result nets;
+        nets.basins.push_back(c.basin);
+        const auto t = build_chi_tributaries_and_knickpoints(fits, nets, {}, c.dem.get_meta(),
+                                                             "median_plus_3mad");
+        check("outlet knickzone: one knickzone", t.knickzones.size() == 1,
+              s(static_cast<double>(t.knickzones.size())));
+        if (!t.knickzones.empty())
+        {
+            const auto& z = t.knickzones[0];
+            check("outlet knickzone: foot_type basin_outlet", z.foot_type == "basin_outlet", z.foot_type);
+            check("outlet knickzone: foot at the outlet, lip at chi 1",
+                  z.foot_flat == 0 && std::fabs(z.foot_chi) < 1e-9 && std::fabs(z.lip_chi - 1.0) < 0.1,
+                  s(static_cast<double>(z.foot_flat)) + " / " + s(z.foot_chi) + " / " + s(z.lip_chi));
+            check("outlet knickzone: k_sn inside ~200", std::fabs(z.ksn_inside - 200.0) < 25.0, s(z.ksn_inside));
+            check("outlet knickzone: ksn_below and foot split fields NaN",
+                  std::isnan(z.ksn_below) && std::isnan(z.foot_split_delta_ksn_metres) &&
+                      std::isnan(z.foot_split_delta_ksn_normalised));
+        }
+    }
+
+    // ---- 4. foot below the lip's threshold --------------------------------------
+    {
+        const double dchi = 0.02;
+        auto z_of = [&](int i)
+        {
+            const double chi = dchi * i;
+            double z = chi <= 2.0 ? 100.0 * chi
+                     : chi <= 3.0 ? 200.0 + 200.0 * (chi - 2.0)
+                                  : 400.0 + 10.0 * (chi - 3.0);
+            for (int st = 6; st < 300; st += 12)
+                if (i >= st) z += 6.0;
+            return z;
+        };
+        channel c = make_channel(301, dchi, z_of);
+        lsdtt_chi_network_fit_options o;
+        o.critical_divergence_m = 2.0f;
+        lsdtt_chi_network_fit_collection_result fits;
+        fits.basins.push_back(fit_chi_network(c.basin, c.dem, o));
+        lsdtt_chi_collection_result nets;
+        nets.basins.push_back(c.basin);
+        const auto t = build_chi_tributaries_and_knickpoints(fits, nets, {}, c.dem.get_meta(), "otsu");
+        check("sub-threshold foot: one knickzone", t.knickzones.size() == 1,
+              s(static_cast<double>(t.knickzones.size())));
+        if (!t.knickzones.empty())
+        {
+            const auto& z = t.knickzones[0];
+            check("sub-threshold foot: foot_type split, foot chi 2, lip chi 3",
+                  z.foot_type == "split" && std::fabs(z.foot_chi - 2.0) < 0.05 && std::fabs(z.lip_chi - 3.0) < 0.05,
+                  z.foot_type + " " + s(z.foot_chi) + " / " + s(z.lip_chi));
+            const auto* foot = row_at(t, z.foot_flat);
+            const auto* lip = row_at(t, z.lip_flat);
+            check("sub-threshold foot: lip major, foot not major but above the p95 of "
+                  "|split_delta_ksn_metres|",
+                  foot && lip && lip->is_major && !foot->is_major &&
+                      std::fabs(foot->split_delta_ksn_metres) > z.foot_threshold_split_delta_ksn_metres,
+                  foot ? s(foot->split_delta_ksn_metres) + " vs " + s(z.foot_threshold_split_delta_ksn_metres) : "no foot row");
+        }
+    }
+
+    // ---- 5. bad method -------------------------------------------------------
     {
         bool threw = false;
         try

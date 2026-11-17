@@ -174,18 +174,24 @@ knickpoints : pandas.DataFrame
     ranking measure), ``split_clamped``, ``is_major`` (|normalised| above the
     ``knickpoint_threshold_algorithm_choice`` threshold).
 knickzones : pandas.DataFrame
-    Steep reaches: on a branch, a major steepening split (the foot) paired
-    with the largest major shallowing split upstream of it before the next
-    steepening one (the lip), as lsdtt-chi-analysis
+    Steep reaches. The lip is a major shallowing split (the largest of
+    consecutive ones); the foot is the largest steepening split below it
+    that is major or whose ``|split_delta_ksn_metres|`` passes that
+    measure's p95. A branch that starts steep (no such foot) has a
+    knickzone from its base to the lip. As lsdtt-chi-analysis
     ``_chi_knickzones_mn_*.csv``: ``knickzone_id``, ``basin_id``,
-    ``basin_key``, ``source_key``, ``branch_id``, ``foot_flat``,
+    ``basin_key``, ``source_key``, ``branch_id``, ``foot_type``
+    (``split``, or ``basin_outlet`` / ``tributary_junction`` for a
+    knickzone from the branch base; then ``ksn_below`` and the foot split
+    fields are NaN), ``foot_flat``,
     ``lip_flat``, ``foot_x``, ``foot_y``, ``lip_x``, ``lip_y``,
     ``foot_chi``, ``lip_chi``, ``foot_elevation``, ``lip_elevation``,
     ``relief_m``, ``chi_span``, ``flow_length_m``, ``ksn_below``,
     ``ksn_inside`` (relief / chi span), ``ksn_above``,
     ``foot_split_delta_ksn_metres``, ``lip_split_delta_ksn_metres``,
     ``foot_split_delta_ksn_normalised``, ``lip_split_delta_ksn_normalised``,
-    ``threshold_method``, ``threshold``.
+    ``threshold_method``, ``threshold`` (the lip's),
+    ``foot_threshold_split_delta_ksn_metres`` (the foot's p95).
 knickpoint_thresholds : pandas.DataFrame
     Suggested thresholds for a major knickpoint, over the rows with
     ``at_junction`` 0: ``measure`` (``abs_split_delta_ksn_metres``,
@@ -351,7 +357,7 @@ Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments
 
 #### `knickzones`
 
-Knickzones (pandas.DataFrame): major steepening splits paired with the shallowing split above them; see the class documentation for columns.
+Knickzones (pandas.DataFrame): major shallowing splits (lips) with the strongest steepening split below them or the branch base; see the class documentation for columns.
 
 #### `nodes`
 

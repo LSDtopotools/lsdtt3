@@ -44,12 +44,20 @@
 // value for segment k_sn itself (Q3 + 3 IQR). is_major marks the rows above
 // the chosen method's threshold on |split_delta_ksn_normalised|.
 //
-// KNICKZONES: on each branch, walking upstream through the major rows, a
-// steepening one (split_delta_ksn > 0) is the foot; the lip is the strongest
-// shallowing major row (< 0, largest |split_delta_ksn_normalised|) between
-// it and the next steepening major row
-// upstream, so small major splits inside the steep reach do not cut the
-// knickzone short. Unpaired major rows stay single knickpoints.
+// KNICKZONES: lips are the shallowing major rows (split_delta_ksn < 0). Foot
+// candidates are the steepening rows (> 0) that are major or whose
+// |split_delta_ksn_metres| passes its p95 (the normalised ranking rarely
+// passes two splits on one branch, so the foot has the weaker, unnormalised
+// test). Walking upstream on each branch these form alternating runs of feet
+// and lips. Each run of lips is one knickzone: the lip is the run's strongest
+// (largest |split_delta_ksn_normalised|, so small major splits inside the
+// steep reach do not cut it short), the foot the strongest of the run of
+// feet just below (foot_type split). A run of lips with no feet below it
+// means the branch starts on the knickzone (typically a basin whose outlet
+// is on it): the knickzone runs down to the branch base, the basin outlet on
+// the trunk or the junction on a tributary (foot_type basin_outlet /
+// tributary_junction). Feet with no lip above them (steep to the channel
+// head) make no knickzone.
 //
 // GDAL-free; the CSV writers use std::ofstream.
 // -----------------------------------------------------------------------------
@@ -137,6 +145,11 @@ struct lsdtt_chi_knickzone_row
     std::int32_t basin_key = -1;
     std::int32_t source_key = -1;
     std::int32_t branch_id = -1;
+    // split, or where the branch starts on the knickzone (no foot candidate
+    // below the lip): basin_outlet (trunk) or tributary_junction, and then
+    // the foot is the branch base and ksn_below and the foot split fields are
+    // NaN.
+    std::string foot_type;
     std::int64_t foot_flat = -1, lip_flat = -1;
     double foot_x = k_chi_nan, foot_y = k_chi_nan, lip_x = k_chi_nan, lip_y = k_chi_nan;
     double foot_chi = k_chi_nan, lip_chi = k_chi_nan;
@@ -150,7 +163,8 @@ struct lsdtt_chi_knickzone_row
     double foot_split_delta_ksn_metres = k_chi_nan, lip_split_delta_ksn_metres = k_chi_nan;
     double foot_split_delta_ksn_normalised = k_chi_nan, lip_split_delta_ksn_normalised = k_chi_nan;
     std::string threshold_method;          // on |split_delta_ksn_normalised|
-    double threshold = k_chi_nan;
+    double threshold = k_chi_nan;          // the lip's (and is_major's) threshold
+    double foot_threshold_split_delta_ksn_metres = k_chi_nan;  // p95 of |split_delta_ksn_metres|
 };
 
 struct lsdtt_chi_threshold_row

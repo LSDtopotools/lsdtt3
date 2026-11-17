@@ -133,6 +133,7 @@ class FlowInfoTest(unittest.TestCase):
             expected = (rows.at_junction == 0) & (rows.split_delta_ksn_normalised.abs() > limit)
             self.assertTrue((rows.is_major.astype(bool) == expected).all())
         self.assertIn("lip_split_delta_ksn_normalised", fit.knickzones.columns)
+        self.assertIn("foot_type", fit.knickzones.columns)
         with self.assertRaises(ValueError):
             chi.fit(self.dem, knickpoint_threshold_algorithm_choice="p99")
         self.assertIn("disorder", fit.disorder().columns)

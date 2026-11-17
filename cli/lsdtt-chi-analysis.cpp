@@ -510,9 +510,11 @@ int main(int argc, char* argv[])
         "within-branch rows for |split_delta_ksn_metres|, |split_delta_ksn_normalised|, |delta_ksn| and "
         "|log_ratio_ksn|: the 90th and 95th percentiles, the median plus 3 MAD (MAD scaled by 1.4826) and "
         "Otsu's two-class split; and an outlier k_sn for segments (Q3 + 3 IQR). A third lists "
-        "knickzones: on a branch, a major steepening split followed upstream by a major shallowing one "
-        "(foot and lip; the lip is the largest shallowing split before the next steepening one), with "
-        "relief, chi span, flow length and k_sn below, inside and above. Written "
+        "knickzones: a lip is a major shallowing split (the largest of consecutive ones); its foot is the "
+        "largest steepening split below it that is major or whose |split_delta_ksn_metres| passes that "
+        "measure's p95. A branch that starts steep (no such foot below the lip, as where a basin "
+        "outlet is on a knickzone) gets a knickzone from its base, the basin outlet or the tributary "
+        "junction; foot_type says which (split, basin_outlet, tributary_junction). Each knickzone has relief, chi span, flow length and k_sn below, inside and above. Written "
         "once per m/n. Outputs: <write_fname>_chi_knickpoints_mn_*.csv, "
         "<write_fname>_chi_knickpoint_thresholds_mn_*.csv, <write_fname>_chi_knickzones_mn_*.csv.",
         "Outputs", "switch", "fit_chi_networks"};
@@ -521,8 +523,8 @@ int main(int argc, char* argv[])
     help_map["knickpoint_threshold_algorithm_choice"] = {"string","p95",
         "Threshold for a major knickpoint, on |split_delta_ksn_normalised|: p90, p95, median_plus_3mad or otsu.",
         "The threshold is computed over every within-branch split of the run (main stems and "
-        "tributaries pooled). It sets is_major in the knickpoint table and which splits are paired "
-        "into knickzones. The thresholds file lists the value of every method for every measure, so "
+        "tributaries pooled). It sets is_major in the knickpoint table and which shallowing splits "
+        "are knickzone lips; feet need only pass the p95 of |split_delta_ksn_metres|. The thresholds file lists the value of every method for every measure, so "
         "plots can use another.",
         "Outputs", "param", "write_chi_knickpoint_table"};
 

@@ -519,10 +519,10 @@ nb::object chi_fit_knickpoints(const ChiFit& fit)
 nb::object chi_fit_knickzones(const ChiFit& fit)
 {
     const auto rows = chi_fit_tables(fit).knickzones;
-    std::vector<std::int32_t> id, basin, bkey, skey, branch; std::vector<std::int64_t> ff, lf; std::vector<std::string> method;
-    std::vector<double> fx, fy, lx, ly, fchi, lchi, fz, lz, relief, span, flen, kb, ki, ka, fm, lm, fn, ln, thr;
-    for (const auto& z : rows) { id.push_back(z.knickzone_id); basin.push_back(z.basin_index); bkey.push_back(z.basin_key); skey.push_back(z.source_key); branch.push_back(z.branch_id); ff.push_back(z.foot_flat); lf.push_back(z.lip_flat); fx.push_back(z.foot_x); fy.push_back(z.foot_y); lx.push_back(z.lip_x); ly.push_back(z.lip_y); fchi.push_back(z.foot_chi); lchi.push_back(z.lip_chi); fz.push_back(z.foot_elevation); lz.push_back(z.lip_elevation); relief.push_back(z.relief_m); span.push_back(z.chi_span); flen.push_back(z.flow_length_m); kb.push_back(z.ksn_below); ki.push_back(z.ksn_inside); ka.push_back(z.ksn_above); fm.push_back(z.foot_split_delta_ksn_metres); lm.push_back(z.lip_split_delta_ksn_metres); fn.push_back(z.foot_split_delta_ksn_normalised); ln.push_back(z.lip_split_delta_ksn_normalised); method.push_back(z.threshold_method); thr.push_back(z.threshold); }
-    nb::dict d; d["knickzone_id"]=id; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["foot_flat"]=ff; d["lip_flat"]=lf; d["foot_x"]=fx; d["foot_y"]=fy; d["lip_x"]=lx; d["lip_y"]=ly; d["foot_chi"]=fchi; d["lip_chi"]=lchi; d["foot_elevation"]=fz; d["lip_elevation"]=lz; d["relief_m"]=relief; d["chi_span"]=span; d["flow_length_m"]=flen; d["ksn_below"]=kb; d["ksn_inside"]=ki; d["ksn_above"]=ka; d["foot_split_delta_ksn_metres"]=fm; d["lip_split_delta_ksn_metres"]=lm; d["foot_split_delta_ksn_normalised"]=fn; d["lip_split_delta_ksn_normalised"]=ln; d["threshold_method"]=method; d["threshold"]=thr;
+    std::vector<std::int32_t> id, basin, bkey, skey, branch; std::vector<std::int64_t> ff, lf; std::vector<std::string> ftype, method;
+    std::vector<double> fx, fy, lx, ly, fchi, lchi, fz, lz, relief, span, flen, kb, ki, ka, fm, lm, fn, ln, thr, fthr;
+    for (const auto& z : rows) { id.push_back(z.knickzone_id); basin.push_back(z.basin_index); bkey.push_back(z.basin_key); skey.push_back(z.source_key); branch.push_back(z.branch_id); ftype.push_back(z.foot_type); ff.push_back(z.foot_flat); lf.push_back(z.lip_flat); fx.push_back(z.foot_x); fy.push_back(z.foot_y); lx.push_back(z.lip_x); ly.push_back(z.lip_y); fchi.push_back(z.foot_chi); lchi.push_back(z.lip_chi); fz.push_back(z.foot_elevation); lz.push_back(z.lip_elevation); relief.push_back(z.relief_m); span.push_back(z.chi_span); flen.push_back(z.flow_length_m); kb.push_back(z.ksn_below); ki.push_back(z.ksn_inside); ka.push_back(z.ksn_above); fm.push_back(z.foot_split_delta_ksn_metres); lm.push_back(z.lip_split_delta_ksn_metres); fn.push_back(z.foot_split_delta_ksn_normalised); ln.push_back(z.lip_split_delta_ksn_normalised); method.push_back(z.threshold_method); thr.push_back(z.threshold); fthr.push_back(z.foot_threshold_split_delta_ksn_metres); }
+    nb::dict d; d["knickzone_id"]=id; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["foot_type"]=ftype; d["foot_flat"]=ff; d["lip_flat"]=lf; d["foot_x"]=fx; d["foot_y"]=fy; d["lip_x"]=lx; d["lip_y"]=ly; d["foot_chi"]=fchi; d["lip_chi"]=lchi; d["foot_elevation"]=fz; d["lip_elevation"]=lz; d["relief_m"]=relief; d["chi_span"]=span; d["flow_length_m"]=flen; d["ksn_below"]=kb; d["ksn_inside"]=ki; d["ksn_above"]=ka; d["foot_split_delta_ksn_metres"]=fm; d["lip_split_delta_ksn_metres"]=lm; d["foot_split_delta_ksn_normalised"]=fn; d["lip_split_delta_ksn_normalised"]=ln; d["threshold_method"]=method; d["threshold"]=thr; d["foot_threshold_split_delta_ksn_metres"]=fthr;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -966,18 +966,24 @@ knickpoints : pandas.DataFrame
     ranking measure), ``split_clamped``, ``is_major`` (|normalised| above the
     ``knickpoint_threshold_algorithm_choice`` threshold).
 knickzones : pandas.DataFrame
-    Steep reaches: on a branch, a major steepening split (the foot) paired
-    with the largest major shallowing split upstream of it before the next
-    steepening one (the lip), as lsdtt-chi-analysis
+    Steep reaches. The lip is a major shallowing split (the largest of
+    consecutive ones); the foot is the largest steepening split below it
+    that is major or whose ``|split_delta_ksn_metres|`` passes that
+    measure's p95. A branch that starts steep (no such foot) has a
+    knickzone from its base to the lip. As lsdtt-chi-analysis
     ``_chi_knickzones_mn_*.csv``: ``knickzone_id``, ``basin_id``,
-    ``basin_key``, ``source_key``, ``branch_id``, ``foot_flat``,
+    ``basin_key``, ``source_key``, ``branch_id``, ``foot_type``
+    (``split``, or ``basin_outlet`` / ``tributary_junction`` for a
+    knickzone from the branch base; then ``ksn_below`` and the foot split
+    fields are NaN), ``foot_flat``,
     ``lip_flat``, ``foot_x``, ``foot_y``, ``lip_x``, ``lip_y``,
     ``foot_chi``, ``lip_chi``, ``foot_elevation``, ``lip_elevation``,
     ``relief_m``, ``chi_span``, ``flow_length_m``, ``ksn_below``,
     ``ksn_inside`` (relief / chi span), ``ksn_above``,
     ``foot_split_delta_ksn_metres``, ``lip_split_delta_ksn_metres``,
     ``foot_split_delta_ksn_normalised``, ``lip_split_delta_ksn_normalised``,
-    ``threshold_method``, ``threshold``.
+    ``threshold_method``, ``threshold`` (the lip's),
+    ``foot_threshold_split_delta_ksn_metres`` (the foot's p95).
 knickpoint_thresholds : pandas.DataFrame
     Suggested thresholds for a major knickpoint, over the rows with
     ``at_junction`` 0: ``measure`` (``abs_split_delta_ksn_metres``,
@@ -1000,7 +1006,7 @@ summary : pandas.DataFrame
         .def_prop_ro("knickpoints", &chi_fit_knickpoints, nb::sig("def knickpoints(self) -> pandas.DataFrame"),
             "Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.")
         .def_prop_ro("knickzones", &chi_fit_knickzones, nb::sig("def knickzones(self) -> pandas.DataFrame"),
-            "Knickzones (pandas.DataFrame): major steepening splits paired with the shallowing split above them; see the class documentation for columns.")
+            "Knickzones (pandas.DataFrame): major shallowing splits (lips) with the strongest steepening split below them or the branch base; see the class documentation for columns.")
         .def_prop_ro("knickpoint_thresholds", &chi_fit_knickpoint_thresholds, nb::sig("def knickpoint_thresholds(self) -> pandas.DataFrame"),
             "Suggested major-knickpoint thresholds (pandas.DataFrame); see the class documentation for columns.")
         .def_prop_ro("summary", &chi_fit_summary, nb::sig("def summary(self) -> pandas.DataFrame"),
