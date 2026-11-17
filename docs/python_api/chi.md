@@ -21,7 +21,7 @@ n_basins : int
 
 Methods
 -------
-fit(dem: Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> ChiFit
+fit(dem: Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95') -> ChiFit
     Fit piecewise-linear channel profiles in chi-elevation space.
 nodes() -> object
     Return extracted channel chi nodes as a pandas DataFrame.
@@ -36,7 +36,7 @@ B. Gailleton
 
 #### `fit`
 
-fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> lsdtt3.ChiFit
+fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95') -> lsdtt3.ChiFit
 
 Fit piecewise-linear channel profiles in chi-elevation space.
 
@@ -57,6 +57,12 @@ critical_divergence_metres : float, default=5.0
 mainstem : {"max_flow_length", "max_chi"}, default="max_flow_length"
     How the main stem of each basin is chosen: the longest D8 flow path,
     or the path reaching the largest chi.
+knickpoint_threshold_algorithm_choice : {"p90", "p95", "median_plus_3mad", "otsu"}, default="p95"
+    Threshold for a major knickpoint on |split_delta_ksn_normalised|,
+    computed over every within-branch split of the fit (main stems and
+    tributaries pooled). Sets ``is_major`` in ``ChiFit.knickpoints`` and
+    which splits are paired into ``ChiFit.knickzones``; as
+    lsdtt-chi-analysis ``knickpoint_threshold_algorithm_choice``.
 
 Returns
 -------
@@ -64,7 +70,7 @@ ChiFit
     Fitted nodes, segments and per-basin k_sn summaries.
 
 ```python
-def fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> lsdtt3.ChiFit
+def fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95') -> lsdtt3.ChiFit
 ```
 
 #### `n_basins`
@@ -156,10 +162,34 @@ knickpoints : pandas.DataFrame
     ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,
     ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``
     (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a
-    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.
+    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``; and how
+    the recursive fit split the profile there (empty / -1 at junctions):
+    ``split_rank`` (order within the branch), ``split_depth`` (0 = the
+    branch's first split), ``split_divergence_metres`` (observed minus the
+    chord), ``split_dchi_below``, ``split_dchi_above`` (chi spans of the two
+    child chords), ``split_ksn_below``, ``split_ksn_above`` (their slopes),
+    ``split_delta_ksn`` (above minus below), ``split_delta_ksn_metres``
+    (that change / sqrt(1/dchi_below^2 + 1/dchi_above^2)),
+    ``split_delta_ksn_normalised`` (the same / the branch's chi span: the
+    ranking measure), ``split_clamped``, ``is_major`` (|normalised| above the
+    ``knickpoint_threshold_algorithm_choice`` threshold).
+knickzones : pandas.DataFrame
+    Steep reaches: on a branch, a major steepening split (the foot) paired
+    with the largest major shallowing split upstream of it before the next
+    steepening one (the lip), as lsdtt-chi-analysis
+    ``_chi_knickzones_mn_*.csv``: ``knickzone_id``, ``basin_id``,
+    ``basin_key``, ``source_key``, ``branch_id``, ``foot_flat``,
+    ``lip_flat``, ``foot_x``, ``foot_y``, ``lip_x``, ``lip_y``,
+    ``foot_chi``, ``lip_chi``, ``foot_elevation``, ``lip_elevation``,
+    ``relief_m``, ``chi_span``, ``flow_length_m``, ``ksn_below``,
+    ``ksn_inside`` (relief / chi span), ``ksn_above``,
+    ``foot_split_delta_ksn_metres``, ``lip_split_delta_ksn_metres``,
+    ``foot_split_delta_ksn_normalised``, ``lip_split_delta_ksn_normalised``,
+    ``threshold_method``, ``threshold``.
 knickpoint_thresholds : pandas.DataFrame
     Suggested thresholds for a major knickpoint, over the rows with
-    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,
+    ``at_junction`` 0: ``measure`` (``abs_split_delta_ksn_metres``,
+    ``abs_split_delta_ksn_normalised``, ``abs_delta_ksn``,
     ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,
     ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),
     ``threshold``, ``n_above``, ``n_total``.
@@ -318,6 +348,10 @@ Suggested major-knickpoint thresholds (pandas.DataFrame); see the class document
 #### `knickpoints`
 
 Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.
+
+#### `knickzones`
+
+Knickzones (pandas.DataFrame): major steepening splits paired with the shallowing split above them; see the class documentation for columns.
 
 #### `nodes`
 

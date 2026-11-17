@@ -77,8 +77,10 @@ class FlowInfoTest(unittest.TestCase):
         and junction angles; chi gives basins, nodes and a raster; the chi fit has k_sn
         and source keys, one tributary row per branch with the trunk ranked 0, one
         knickpoint per segment boundary away from junctions with delta k_sn = upstream
-        minus downstream, the 9 suggested knickpoint thresholds of 5 methods, and a
-        disorder table.
+        minus downstream, split fields on within-branch rows with is_major set exactly
+        where |split_delta_ksn_normalised| exceeds the chosen method's threshold, a
+        knickzones table, the 17 suggested knickpoint thresholds (4 measures x 4 methods
+        plus the k_sn outlier), a refused unknown threshold choice, and a disorder table.
         """
         scope = self.flow.channel_scope(3)
         self.assertEqual(scope.mode, "all_channels_threshold")
@@ -116,10 +118,23 @@ class FlowInfoTest(unittest.TestCase):
         within = knickpoints[knickpoints.at_junction == 0]
         self.assertEqual(len(within), int((segments.parent_segment_id >= 0).sum()))
         self.assertTrue(np.allclose(within.delta_ksn, within.ksn_upstream - within.ksn_downstream))
+        self.assertTrue((within.split_rank >= 0).all())
+        self.assertTrue((knickpoints.loc[knickpoints.at_junction == 1, "split_rank"] == -1).all())
         thresholds = fit.knickpoint_thresholds
-        self.assertEqual(len(thresholds), 9)
+        self.assertEqual(len(thresholds), 17)
         self.assertEqual(set(thresholds.method),
                          {"p90", "p95", "median_plus_3mad", "otsu", "q3_plus_3iqr"})
+        self.assertIn("abs_split_delta_ksn_normalised", set(thresholds.measure))
+        for choice in ("p95", "otsu"):
+            chosen = chi.fit(self.dem, knickpoint_threshold_algorithm_choice=choice)
+            rows = chosen.knickpoints
+            limit = chosen.knickpoint_thresholds.query(
+                "measure == 'abs_split_delta_ksn_normalised' and method == @choice").threshold.iloc[0]
+            expected = (rows.at_junction == 0) & (rows.split_delta_ksn_normalised.abs() > limit)
+            self.assertTrue((rows.is_major.astype(bool) == expected).all())
+        self.assertIn("lip_split_delta_ksn_normalised", fit.knickzones.columns)
+        with self.assertRaises(ValueError):
+            chi.fit(self.dem, knickpoint_threshold_algorithm_choice="p99")
         self.assertIn("disorder", fit.disorder().columns)
         self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
 

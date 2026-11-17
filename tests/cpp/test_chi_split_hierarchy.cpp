@@ -21,7 +21,9 @@
 // 2. Knickzone: k_sn 20 to chi 2 (node 100), 200 to chi 3 (node 150), 20 to
 //    chi 6, plus 3 m one-node steps every 12 nodes. Threshold
 //    median_plus_3mad. Expected: one knickzone, foot at chi 2, lip at chi 3,
-//    k_sn below ~20, inside ~200, above ~20; both rows is_major.
+//    k_sn below ~20, inside ~200, above ~20; both rows is_major; is_major is
+//    set on exactly the within-branch rows whose |split_delta_ksn_normalised|
+//    exceeds the abs_split_delta_ksn_normalised threshold of the method.
 // 3. An unknown threshold method throws.
 //
 // Usage: lsdtt-test-chi-split-hierarchy
@@ -192,6 +194,21 @@ int main()
             const auto* lip = row_at(t, z.lip_flat);
             check("foot and lip rows are major", foot && lip && foot->is_major && lip->is_major);
         }
+        double thr = std::nan("");
+        for (const auto& th : t.thresholds)
+            if (th.measure == "abs_split_delta_ksn_normalised" && th.method == "median_plus_3mad")
+                thr = th.threshold;
+        bool major_matches = std::isfinite(thr);
+        long n_major = 0;
+        for (const auto& k : t.knickpoints)
+        {
+            const bool expect = !k.at_junction && std::isfinite(k.split_delta_ksn_normalised) &&
+                                std::fabs(k.split_delta_ksn_normalised) > thr;
+            major_matches = major_matches && (expect == (k.is_major != 0));
+            n_major += k.is_major;
+        }
+        check("is_major = |split_delta_ksn_normalised| above the normalised threshold",
+              major_matches && n_major >= 2, "threshold " + s(thr) + ", n_major " + s(n_major));
     }
 
     // ---- 3. bad method -------------------------------------------------------

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -19,6 +20,7 @@
 #include <cpu/lsdtt_chi_knickpoints_cpu.hpp>
 #include <cpu/lsdtt_chi_disorder_cpu.hpp>
 #include <cpu/lsdtt_chi_ksn_inversion_cpu.hpp>
+#include <utils/lsdtt_string_utils.hpp>
 
 namespace lsdtt3_python {
 namespace {
@@ -451,8 +453,17 @@ Raster chi_raster(const ChiCollection& chi)
     return Raster(lsdtt::lsdtt_raster_cpu(std::move(values), std::move(mask), chi.flow().meta()));
 }
 
-ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_divergence_metres, const std::string& mainstem)
+ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_divergence_metres, const std::string& mainstem,
+               const std::string& knickpoint_threshold_algorithm_choice)
 {
+    // Same choices, and the same lower-casing, as lsdtt-chi-analysis.
+    const std::string threshold_choice = lsdtt::to_lower_ascii(knickpoint_threshold_algorithm_choice);
+    {
+        const auto& ok = lsdtt::chi_knickpoint_threshold_methods();
+        if (std::find(ok.begin(), ok.end(), threshold_choice) == ok.end())
+            throw std::invalid_argument("knickpoint_threshold_algorithm_choice must be p90, p95, "
+                                        "median_plus_3mad or otsu, got '" + knickpoint_threshold_algorithm_choice + "'");
+    }
     lsdtt::lsdtt_chi_network_fit_options options; options.critical_divergence_m = critical_divergence_metres;
     if (mainstem == "max_flow_length") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_flow_length;
     else if (mainstem == "max_chi") options.mainstem_choice = lsdtt::lsdtt_chi_mainstem_choice::max_chi;
@@ -460,7 +471,7 @@ ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_diver
     const auto& meta = chi.flow().meta();
     auto keys = lsdtt::assign_chi_source_keys(chi.native(), chi.flow(), meta.n_cols, meta.cell_size);
     return ChiFit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow(),
-                  chi.native(), std::move(keys));
+                  chi.native(), std::move(keys), threshold_choice);
 }
 
 nb::object chi_fit_nodes(const ChiFit& fit)
@@ -479,7 +490,8 @@ nb::object chi_fit_segments(const ChiFit& fit)
 
 lsdtt::lsdtt_chi_tributary_knickpoint_tables chi_fit_tables(const ChiFit& fit)
 {
-    return lsdtt::build_chi_tributaries_and_knickpoints(fit.native(), fit.chi(), fit.keys(), fit.flow().meta());
+    return lsdtt::build_chi_tributaries_and_knickpoints(fit.native(), fit.chi(), fit.keys(), fit.flow().meta(),
+                                                        fit.knickpoint_threshold_algorithm_choice());
 }
 
 nb::object chi_fit_tributaries(const ChiFit& fit)
@@ -495,10 +507,22 @@ nb::object chi_fit_tributaries(const ChiFit& fit)
 nb::object chi_fit_knickpoints(const ChiFit& fit)
 {
     const auto rows = chi_fit_tables(fit).knickpoints;
-    std::vector<std::int32_t> basin, bkey, skey, branch, useg, dseg, junction; std::vector<std::int64_t> flat;
-    std::vector<double> x, y, chi, z, fd, da, kup, kdown, delta, lr, fromhead, chin;
-    for (const auto& k : rows) { basin.push_back(k.basin_index); bkey.push_back(k.basin_key); skey.push_back(k.source_key); branch.push_back(k.branch_id); useg.push_back(k.upstream_segment_id); dseg.push_back(k.downstream_segment_id); flat.push_back(k.flat); x.push_back(k.x); y.push_back(k.y); chi.push_back(k.chi); z.push_back(k.elevation); fd.push_back(k.flow_distance_m); da.push_back(k.drainage_area_m2); kup.push_back(k.ksn_upstream); kdown.push_back(k.ksn_downstream); delta.push_back(k.delta_ksn); lr.push_back(k.log_ratio_ksn); junction.push_back(k.at_junction); fromhead.push_back(k.chi_from_branch_head); chin.push_back(k.chi_normalised); }
+    std::vector<std::int32_t> basin, bkey, skey, branch, useg, dseg, junction, srank, sdepth, sclamp, major; std::vector<std::int64_t> flat;
+    std::vector<double> x, y, chi, z, fd, da, kup, kdown, delta, lr, fromhead, chin, sdiv, sdb, sda, skb, ska, sdk, sdkm, sdkn;
+    for (const auto& k : rows) { basin.push_back(k.basin_index); bkey.push_back(k.basin_key); skey.push_back(k.source_key); branch.push_back(k.branch_id); useg.push_back(k.upstream_segment_id); dseg.push_back(k.downstream_segment_id); flat.push_back(k.flat); x.push_back(k.x); y.push_back(k.y); chi.push_back(k.chi); z.push_back(k.elevation); fd.push_back(k.flow_distance_m); da.push_back(k.drainage_area_m2); kup.push_back(k.ksn_upstream); kdown.push_back(k.ksn_downstream); delta.push_back(k.delta_ksn); lr.push_back(k.log_ratio_ksn); junction.push_back(k.at_junction); fromhead.push_back(k.chi_from_branch_head); chin.push_back(k.chi_normalised);
+        srank.push_back(k.split_rank); sdepth.push_back(k.split_depth); sdiv.push_back(k.split_divergence_metres); sdb.push_back(k.split_dchi_below); sda.push_back(k.split_dchi_above); skb.push_back(k.split_ksn_below); ska.push_back(k.split_ksn_above); sdk.push_back(k.split_delta_ksn); sdkm.push_back(k.split_delta_ksn_metres); sdkn.push_back(k.split_delta_ksn_normalised); sclamp.push_back(k.split_clamped); major.push_back(k.is_major); }
     nb::dict d; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["upstream_segment_id"]=useg; d["downstream_segment_id"]=dseg; d["flat"]=flat; d["x"]=x; d["y"]=y; d["chi"]=chi; d["elevation"]=z; d["flow_distance_m"]=fd; d["drainage_area_m2"]=da; d["ksn_upstream"]=kup; d["ksn_downstream"]=kdown; d["delta_ksn"]=delta; d["log_ratio_ksn"]=lr; d["at_junction"]=junction; d["chi_from_branch_head"]=fromhead; d["chi_normalised"]=chin;
+    d["split_rank"]=srank; d["split_depth"]=sdepth; d["split_divergence_metres"]=sdiv; d["split_dchi_below"]=sdb; d["split_dchi_above"]=sda; d["split_ksn_below"]=skb; d["split_ksn_above"]=ska; d["split_delta_ksn"]=sdk; d["split_delta_ksn_metres"]=sdkm; d["split_delta_ksn_normalised"]=sdkn; d["split_clamped"]=sclamp; d["is_major"]=major;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
+}
+
+nb::object chi_fit_knickzones(const ChiFit& fit)
+{
+    const auto rows = chi_fit_tables(fit).knickzones;
+    std::vector<std::int32_t> id, basin, bkey, skey, branch; std::vector<std::int64_t> ff, lf; std::vector<std::string> method;
+    std::vector<double> fx, fy, lx, ly, fchi, lchi, fz, lz, relief, span, flen, kb, ki, ka, fm, lm, fn, ln, thr;
+    for (const auto& z : rows) { id.push_back(z.knickzone_id); basin.push_back(z.basin_index); bkey.push_back(z.basin_key); skey.push_back(z.source_key); branch.push_back(z.branch_id); ff.push_back(z.foot_flat); lf.push_back(z.lip_flat); fx.push_back(z.foot_x); fy.push_back(z.foot_y); lx.push_back(z.lip_x); ly.push_back(z.lip_y); fchi.push_back(z.foot_chi); lchi.push_back(z.lip_chi); fz.push_back(z.foot_elevation); lz.push_back(z.lip_elevation); relief.push_back(z.relief_m); span.push_back(z.chi_span); flen.push_back(z.flow_length_m); kb.push_back(z.ksn_below); ki.push_back(z.ksn_inside); ka.push_back(z.ksn_above); fm.push_back(z.foot_split_delta_ksn_metres); lm.push_back(z.lip_split_delta_ksn_metres); fn.push_back(z.foot_split_delta_ksn_normalised); ln.push_back(z.lip_split_delta_ksn_normalised); method.push_back(z.threshold_method); thr.push_back(z.threshold); }
+    nb::dict d; d["knickzone_id"]=id; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["foot_flat"]=ff; d["lip_flat"]=lf; d["foot_x"]=fx; d["foot_y"]=fy; d["lip_x"]=lx; d["lip_y"]=ly; d["foot_chi"]=fchi; d["lip_chi"]=lchi; d["foot_elevation"]=fz; d["lip_elevation"]=lz; d["relief_m"]=relief; d["chi_span"]=span; d["flow_length_m"]=flen; d["ksn_below"]=kb; d["ksn_inside"]=ki; d["ksn_above"]=ka; d["foot_split_delta_ksn_metres"]=fm; d["lip_split_delta_ksn_metres"]=lm; d["foot_split_delta_ksn_normalised"]=fn; d["lip_split_delta_ksn_normalised"]=ln; d["threshold_method"]=method; d["threshold"]=thr;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -530,7 +554,7 @@ nb::object chi_sweep(const ChannelNetwork& network, const Raster& dem, nb::objec
 {
     const auto mn=nb::cast<std::vector<double>>(nb::module_::import_("numpy").attr("asarray")(m_over_n_values, nb::arg("dtype")="float64").attr("ravel")()); if(mn.empty()) throw std::invalid_argument("m_over_n_values cannot be empty");
     std::vector<double> mns, disorder; std::vector<std::int32_t> basin; std::vector<std::int64_t> outlet_flat;
-    for(const auto value:mn){auto chi=network_chi(network,outlets,value,reference_area,denominator); auto fit=fit_chi(chi,dem,critical_divergence_metres,"max_flow_length"); const auto d=lsdtt::get_chi_disorder(fit.native()); for(std::size_t i=0;i<d.disorder.size();++i){mns.push_back(value); basin.push_back(static_cast<std::int32_t>(i));outlet_flat.push_back(fit.native().basins[i].outlet_flat);disorder.push_back(d.disorder[i]);}}
+    for(const auto value:mn){auto chi=network_chi(network,outlets,value,reference_area,denominator); auto fit=fit_chi(chi,dem,critical_divergence_metres,"max_flow_length","p95"); const auto d=lsdtt::get_chi_disorder(fit.native()); for(std::size_t i=0;i<d.disorder.size();++i){mns.push_back(value); basin.push_back(static_cast<std::int32_t>(i));outlet_flat.push_back(fit.native().basins[i].outlet_flat);disorder.push_back(d.disorder[i]);}}
     nb::dict d;d["m_over_n"]=mns;d["basin_id"]=basin;d["outlet_flat"]=outlet_flat;d["disorder"]=disorder;return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -850,7 +874,7 @@ Returns
 Raster
     Chi (m) on the channel pixels of every basin; nodata elsewhere.
 )doc")
-        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", R"doc(
+        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", nb::arg("knickpoint_threshold_algorithm_choice") = "p95", R"doc(
 Fit piecewise-linear channel profiles in chi-elevation space.
 
 Each basin's main stem and then each tributary is fitted with straight
@@ -870,6 +894,12 @@ critical_divergence_metres : float, default=5.0
 mainstem : {"max_flow_length", "max_chi"}, default="max_flow_length"
     How the main stem of each basin is chosen: the longest D8 flow path,
     or the path reaching the largest chi.
+knickpoint_threshold_algorithm_choice : {"p90", "p95", "median_plus_3mad", "otsu"}, default="p95"
+    Threshold for a major knickpoint on |split_delta_ksn_normalised|,
+    computed over every within-branch split of the fit (main stems and
+    tributaries pooled). Sets ``is_major`` in ``ChiFit.knickpoints`` and
+    which splits are paired into ``ChiFit.knickzones``; as
+    lsdtt-chi-analysis ``knickpoint_threshold_algorithm_choice``.
 
 Returns
 -------
@@ -924,10 +954,34 @@ knickpoints : pandas.DataFrame
     ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,
     ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``
     (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a
-    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.
+    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``; and how
+    the recursive fit split the profile there (empty / -1 at junctions):
+    ``split_rank`` (order within the branch), ``split_depth`` (0 = the
+    branch's first split), ``split_divergence_metres`` (observed minus the
+    chord), ``split_dchi_below``, ``split_dchi_above`` (chi spans of the two
+    child chords), ``split_ksn_below``, ``split_ksn_above`` (their slopes),
+    ``split_delta_ksn`` (above minus below), ``split_delta_ksn_metres``
+    (that change / sqrt(1/dchi_below^2 + 1/dchi_above^2)),
+    ``split_delta_ksn_normalised`` (the same / the branch's chi span: the
+    ranking measure), ``split_clamped``, ``is_major`` (|normalised| above the
+    ``knickpoint_threshold_algorithm_choice`` threshold).
+knickzones : pandas.DataFrame
+    Steep reaches: on a branch, a major steepening split (the foot) paired
+    with the largest major shallowing split upstream of it before the next
+    steepening one (the lip), as lsdtt-chi-analysis
+    ``_chi_knickzones_mn_*.csv``: ``knickzone_id``, ``basin_id``,
+    ``basin_key``, ``source_key``, ``branch_id``, ``foot_flat``,
+    ``lip_flat``, ``foot_x``, ``foot_y``, ``lip_x``, ``lip_y``,
+    ``foot_chi``, ``lip_chi``, ``foot_elevation``, ``lip_elevation``,
+    ``relief_m``, ``chi_span``, ``flow_length_m``, ``ksn_below``,
+    ``ksn_inside`` (relief / chi span), ``ksn_above``,
+    ``foot_split_delta_ksn_metres``, ``lip_split_delta_ksn_metres``,
+    ``foot_split_delta_ksn_normalised``, ``lip_split_delta_ksn_normalised``,
+    ``threshold_method``, ``threshold``.
 knickpoint_thresholds : pandas.DataFrame
     Suggested thresholds for a major knickpoint, over the rows with
-    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,
+    ``at_junction`` 0: ``measure`` (``abs_split_delta_ksn_metres``,
+    ``abs_split_delta_ksn_normalised``, ``abs_delta_ksn``,
     ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,
     ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),
     ``threshold``, ``n_above``, ``n_total``.
@@ -945,6 +999,8 @@ summary : pandas.DataFrame
             "Per-tributary table (pandas.DataFrame): area where it joins, its fraction of the basin, rank, k_sn summary; see the class documentation for columns.")
         .def_prop_ro("knickpoints", &chi_fit_knickpoints, nb::sig("def knickpoints(self) -> pandas.DataFrame"),
             "Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.")
+        .def_prop_ro("knickzones", &chi_fit_knickzones, nb::sig("def knickzones(self) -> pandas.DataFrame"),
+            "Knickzones (pandas.DataFrame): major steepening splits paired with the shallowing split above them; see the class documentation for columns.")
         .def_prop_ro("knickpoint_thresholds", &chi_fit_knickpoint_thresholds, nb::sig("def knickpoint_thresholds(self) -> pandas.DataFrame"),
             "Suggested major-knickpoint thresholds (pandas.DataFrame); see the class documentation for columns.")
         .def_prop_ro("summary", &chi_fit_summary, nb::sig("def summary(self) -> pandas.DataFrame"),

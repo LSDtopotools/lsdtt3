@@ -173,7 +173,7 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
     {
         const auto& ok = chi_knickpoint_threshold_methods();
         if (std::find(ok.begin(), ok.end(), threshold_method) == ok.end())
-            throw std::invalid_argument("knickpoint threshold method must be p90, p95, "
+            throw std::invalid_argument("knickpoint_threshold_algorithm_choice must be p90, p95, "
                                         "median_plus_3mad or otsu, got " + threshold_method);
     }
     lsdtt_chi_tributary_knickpoint_tables out;
@@ -407,13 +407,13 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
     // ---- major rows and knickzones --------------------------------------------
     double thr = k_chi_nan;
     for (const auto& t : out.thresholds)
-        if (t.measure == "abs_split_delta_ksn_metres" && t.method == threshold_method) thr = t.threshold;
+        if (t.measure == "abs_split_delta_ksn_normalised" && t.method == threshold_method) thr = t.threshold;
     std::map<std::pair<std::int32_t, std::int32_t>, std::vector<std::size_t>> majors;
     for (std::size_t i = 0; i < out.knickpoints.size(); ++i)
     {
         auto& k = out.knickpoints[i];
-        if (k.at_junction || !std::isfinite(thr) || !std::isfinite(k.split_delta_ksn_metres)) continue;
-        if (std::fabs(k.split_delta_ksn_metres) > thr)
+        if (k.at_junction || !std::isfinite(thr) || !std::isfinite(k.split_delta_ksn_normalised)) continue;
+        if (std::fabs(k.split_delta_ksn_normalised) > thr)
         {
             k.is_major = 1;
             majors[{k.basin_index, k.branch_id}].push_back(i);
@@ -438,7 +438,8 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
                 const auto& c = out.knickpoints[idx[next]];
                 if (c.split_delta_ksn > 0.0) break;
                 if (best == idx.size() ||
-                    std::fabs(c.split_delta_ksn_metres) > std::fabs(out.knickpoints[idx[best]].split_delta_ksn_metres))
+                    std::fabs(c.split_delta_ksn_normalised) >
+                        std::fabs(out.knickpoints[idx[best]].split_delta_ksn_normalised))
                     best = next;
             }
             if (best == idx.size()) continue;
@@ -461,6 +462,8 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
             z.ksn_above = lip.ksn_upstream;
             z.foot_split_delta_ksn_metres = foot.split_delta_ksn_metres;
             z.lip_split_delta_ksn_metres = lip.split_delta_ksn_metres;
+            z.foot_split_delta_ksn_normalised = foot.split_delta_ksn_normalised;
+            z.lip_split_delta_ksn_normalised = lip.split_delta_ksn_normalised;
             z.threshold_method = threshold_method;
             z.threshold = thr;
             out.knickzones.push_back(z);
@@ -533,7 +536,7 @@ void write_chi_knickzones_csv(const std::string& filename,
     out << "knickzone_id,basin_index,basin_key,source_key,branch_id,foot_flat,lip_flat,foot_x,foot_y,"
            "lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,"
            "ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,"
-           "threshold_method,threshold\n";
+           "foot_split_delta_ksn_normalised,lip_split_delta_ksn_normalised,threshold_method,threshold\n";
     for (const auto& z : rows)
         out << z.knickzone_id << ',' << z.basin_index << ',' << z.basin_key << ',' << z.source_key << ','
             << z.branch_id << ',' << z.foot_flat << ',' << z.lip_flat << ',' << num(z.foot_x) << ','
@@ -542,6 +545,7 @@ void write_chi_knickzones_csv(const std::string& filename,
             << num(z.relief_m) << ',' << num(z.chi_span) << ',' << num(z.flow_length_m) << ','
             << num(z.ksn_below) << ',' << num(z.ksn_inside) << ',' << num(z.ksn_above) << ','
             << num(z.foot_split_delta_ksn_metres) << ',' << num(z.lip_split_delta_ksn_metres) << ','
+            << num(z.foot_split_delta_ksn_normalised) << ',' << num(z.lip_split_delta_ksn_normalised) << ','
             << z.threshold_method << ',' << num(z.threshold) << '\n';
 }
 

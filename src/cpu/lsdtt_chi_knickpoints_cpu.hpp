@@ -27,25 +27,27 @@
 // boundary is a split point of the recursive fit. Its row carries how the fit
 // made it (rank, depth, divergence from the chord, clamped) and the slopes of
 // the two child chords at that moment, split_ksn_below / split_ksn_above: a
-// k_sn change measured at the scale the split was resolved at. The ranking
-// measure is that change weighted by its scale,
+// k_sn change measured at the scale the split was resolved at. That change
+// weighted by its scale is
 //   split_delta_ksn_metres = split_delta_ksn / sqrt(1/dchi_below^2 + 1/dchi_above^2)
 // (in metres: the elevation misfit the change makes over its own chords, so
 // a change across long chords outranks the same change across short, noisy
-// ones), and split_delta_ksn_normalised, the same divided by the branch's chi
-// span (so long channels do not dominate). delta_ksn of the final segments is
-// kept for comparison; it ranks short-segment noise highest.
+// ones). The RANKING measure is split_delta_ksn_normalised, the same divided
+// by the branch's chi span (head to junction or outlet), so long channels do
+// not dominate the pooled ranking (Simon, R6, 2026-11-17). delta_ksn of the
+// final segments is kept for comparison; it ranks short-segment noise highest.
 //
 // Thresholds for a "major" knickpoint are suggested from the distribution of
 // |split_delta_ksn_metres|, |split_delta_ksn_normalised|, |delta_ksn| and
 // |log_ratio_ksn| over the within-branch rows (p90, p95, median + 3 MAD with
 // the MAD scaled by 1.4826, and Otsu's two-class split), plus an outlier
 // value for segment k_sn itself (Q3 + 3 IQR). is_major marks the rows above
-// the chosen method's threshold on |split_delta_ksn_metres|.
+// the chosen method's threshold on |split_delta_ksn_normalised|.
 //
 // KNICKZONES: on each branch, walking upstream through the major rows, a
 // steepening one (split_delta_ksn > 0) is the foot; the lip is the strongest
-// shallowing major row (< 0) between it and the next steepening major row
+// shallowing major row (< 0, largest |split_delta_ksn_normalised|) between
+// it and the next steepening major row
 // upstream, so small major splits inside the steep reach do not cut the
 // knickzone short. Unpaired major rows stay single knickpoints.
 //
@@ -122,10 +124,10 @@ struct lsdtt_chi_knickpoint_row
     double split_dchi_below = k_chi_nan, split_dchi_above = k_chi_nan;
     double split_ksn_below = k_chi_nan, split_ksn_above = k_chi_nan;
     double split_delta_ksn = k_chi_nan;              // above - below
-    double split_delta_ksn_metres = k_chi_nan;       // scale-weighted (the ranking measure)
-    double split_delta_ksn_normalised = k_chi_nan;   // / the branch's chi span
+    double split_delta_ksn_metres = k_chi_nan;       // scale-weighted
+    double split_delta_ksn_normalised = k_chi_nan;   // / the branch's chi span (the ranking measure)
     std::uint8_t split_clamped = 0;
-    std::uint8_t is_major = 0;            // |split_delta_ksn_metres| above the chosen threshold
+    std::uint8_t is_major = 0;            // |split_delta_ksn_normalised| above the chosen threshold
 };
 
 struct lsdtt_chi_knickzone_row
@@ -146,13 +148,15 @@ struct lsdtt_chi_knickzone_row
     double ksn_inside = k_chi_nan;        // relief / chi span
     double ksn_above = k_chi_nan;         // fitted segment above the lip
     double foot_split_delta_ksn_metres = k_chi_nan, lip_split_delta_ksn_metres = k_chi_nan;
-    std::string threshold_method;
+    double foot_split_delta_ksn_normalised = k_chi_nan, lip_split_delta_ksn_normalised = k_chi_nan;
+    std::string threshold_method;          // on |split_delta_ksn_normalised|
     double threshold = k_chi_nan;
 };
 
 struct lsdtt_chi_threshold_row
 {
-    std::string measure;                  // abs_delta_ksn, abs_log_ratio_ksn, ksn
+    std::string measure;                  // abs_split_delta_ksn_metres, abs_split_delta_ksn_normalised,
+                                          // abs_delta_ksn, abs_log_ratio_ksn, ksn
     std::string method;                   // p90, p95, median_plus_3mad, otsu, q3_plus_3iqr
     double threshold = k_chi_nan;
     long n_above = 0;
@@ -167,7 +171,7 @@ struct lsdtt_chi_tributary_knickpoint_tables
     std::vector<lsdtt_chi_knickzone_row> knickzones;
 };
 
-// The methods accepted by knickpoint_threshold_method.
+// The methods accepted by knickpoint_threshold_algorithm_choice.
 inline const std::vector<std::string>& chi_knickpoint_threshold_methods()
 {
     static const std::vector<std::string> m = {"p90", "p95", "median_plus_3mad", "otsu"};
