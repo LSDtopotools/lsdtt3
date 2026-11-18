@@ -243,9 +243,12 @@ steps : pandas.DataFrame
 step_aware_fit : ChiFit or None
     With ``run_step_change_detection``: the step-aware (stage 2) fit, as the
     lsdtt-chi-analysis ``_stepaware`` files. Its ``nodes`` and ``segments``
-    gain ``is_step`` (1 on a step segment and its nodes); its knickpoints,
-    knickzones, thresholds and tributary k_sn leave the step segments out
-    (the steps are in ``steps``). ``None`` without step detection, and on
+    gain ``is_step`` (1 on a step segment and its nodes); its tributary k_sn
+    leaves the step segments out (the steps are in ``steps``). Knickpoints,
+    knickzones and their thresholds are ranked on the ordinary fit only: on
+    the step-aware fit those properties raise ``ValueError`` (cutting a
+    branch at its steps breaks the split hierarchy, so a plateau rim above a
+    waterfall would lose its rank). ``None`` without step detection, and on
     the step-aware fit itself.
 
 With ``run_step_change_detection``, ``knickpoints`` (of this, the stage 1

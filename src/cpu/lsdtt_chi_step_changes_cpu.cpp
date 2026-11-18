@@ -279,6 +279,77 @@ void write_chi_steps_csv(const std::string& filename, const std::vector<lsdtt_ch
             << int(s.at_basin_outlet) << ',' << int(s.contains_uphill_pairs) << '\n';
 }
 
+void write_chi_steps_vector(
+    const std::string&                              filename,
+    const std::vector<lsdtt_chi_step_row>&          steps,
+    const lsdtt_chi_network_fit_collection_result&  fits,
+    const lsdtt_raster_meta&                        meta,
+    vector_output_format                            fmt,
+    bool                                            spatial_index)
+{
+    using ft = lsdtt_vector_field_type;
+    lsdtt_vector_schema schema;
+    schema.field_names = {"step_id", "basin_index", "basin_key", "source_key", "branch_id",
+                          "bottom_flat", "top_flat", "bottom_elevation", "top_elevation", "drop_m",
+                          "flow_length_m", "mean_gradient", "max_window_gradient", "n_pairs",
+                          "bottom_chi", "top_chi", "bottom_flow_distance_m", "bottom_drainage_area_m2",
+                          "distance_to_branch_base_m", "at_tributary_mouth", "at_basin_outlet",
+                          "contains_uphill_pairs"};
+    schema.field_types = {ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type, ft::int64_type,
+                          ft::int64_type, ft::int64_type, ft::double_type, ft::double_type, ft::double_type,
+                          ft::double_type, ft::double_type, ft::double_type, ft::int64_type,
+                          ft::double_type, ft::double_type, ft::double_type, ft::double_type,
+                          ft::double_type, ft::int64_type, ft::int64_type, ft::int64_type};
+
+    const std::int64_t n_cols = meta.n_cols;
+    auto flat_to_xy = [&](std::int64_t flat) -> lsdtt_xy
+    {
+        const std::int64_t row = flat / n_cols, col = flat % n_cols;
+        return {meta.x_min + (static_cast<double>(col) + 0.5) * meta.cell_size,
+                meta.y_min + (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size};
+    };
+
+    // flat -> receiver flat, per basin (built on first use)
+    std::vector<std::unordered_map<std::int64_t, std::int64_t>> receiver_of(fits.basins.size());
+
+    lsdtt_data_loader writer;
+    writer.begin_vector_write(filename, "chi_steps", schema, meta.crs_wkt, fmt, spatial_index);
+    for (const auto& s : steps)
+    {
+        std::vector<lsdtt_xy> pts;
+        if (s.basin_index >= 0 && static_cast<std::size_t>(s.basin_index) < fits.basins.size())
+        {
+            const auto& b = fits.basins[static_cast<std::size_t>(s.basin_index)];
+            auto& rec = receiver_of[static_cast<std::size_t>(s.basin_index)];
+            if (rec.empty())
+                for (std::size_t i = 0; i < b.flats.size(); ++i) rec[b.flats[i]] = b.receiver_flats[i];
+            std::int64_t cur = s.top_flat;
+            for (std::int32_t guard = 0; guard <= s.n_pairs + 1; ++guard)
+            {
+                pts.push_back(flat_to_xy(cur));
+                if (cur == s.bottom_flat) break;
+                const auto it = rec.find(cur);
+                if (it == rec.end() || it->second == cur) break;
+                cur = it->second;
+            }
+            if (cur != s.bottom_flat) pts.clear();   // trace failed: fall back to the ends
+        }
+        if (pts.empty()) pts = {flat_to_xy(s.top_flat), flat_to_xy(s.bottom_flat)};
+
+        const std::vector<lsdtt_vector_field_value> attrs = {
+            static_cast<std::int64_t>(s.step_id), static_cast<std::int64_t>(s.basin_index),
+            static_cast<std::int64_t>(s.basin_key), static_cast<std::int64_t>(s.source_key),
+            static_cast<std::int64_t>(s.branch_id), s.bottom_flat, s.top_flat,
+            s.bottom_elevation, s.top_elevation, s.drop_m, s.flow_length_m, s.mean_gradient,
+            s.max_window_gradient, static_cast<std::int64_t>(s.n_pairs), s.bottom_chi, s.top_chi,
+            s.bottom_flow_distance_m, s.bottom_drainage_area_m2, s.distance_to_branch_base_m,
+            static_cast<std::int64_t>(s.at_tributary_mouth), static_cast<std::int64_t>(s.at_basin_outlet),
+            static_cast<std::int64_t>(s.contains_uphill_pairs)};
+        writer.write_line(pts, attrs);
+    }
+    writer.finish_vector_write();
+}
+
 // -----------------------------------------------------------------------------
 // Part C helpers
 // -----------------------------------------------------------------------------

@@ -82,7 +82,7 @@ class FlowInfoTest(unittest.TestCase):
         knickzones table, the 17 suggested knickpoint thresholds (4 measures x 4 methods
         plus the k_sn outlier), a refused unknown threshold choice, a disorder table, and
         with run_step_change_detection the steps table, a step-aware fit whose step segments
-        are exactly the steps and whose knickpoints leave them out, the stage 1 step
+        are exactly the steps and which refuses knickpoint tables (stage 1 only), the stage 1 step
         cross-reference columns, an unchanged stage 1, and a refused bad gradient.
         """
         scope = self.flow.channel_scope(3)
@@ -165,14 +165,14 @@ class FlowInfoTest(unittest.TestCase):
         self.assertEqual(
             set(zip(seg2.loc[seg2.is_step == 1, "downstream_flat"], seg2.loc[seg2.is_step == 1, "upstream_flat"])),
             set(zip(steps.bottom_flat, steps.top_flat)))
-        step_segment_ids = set(seg2.loc[seg2.is_step == 1, "segment_id"])
-        kp2 = stage2.knickpoints
-        self.assertFalse(kp2.upstream_segment_id.isin(step_segment_ids).any())
-        self.assertFalse(kp2.downstream_segment_id.isin(step_segment_ids).any())
+        # knickpoints are ranked on stage 1 only, as in the CLI
+        for name in ("knickpoints", "knickzones", "knickpoint_thresholds"):
+            with self.assertRaisesRegex(ValueError, "stage 1"):
+                getattr(stage2, name)
+        self.assertGreater(len(stage2.tributaries), 0)
         kp1 = stepped.knickpoints
         for column in ("nearest_step_id", "nearest_step_chi_distance", "step_in_adjacent_segments"):
             self.assertIn(column, kp1.columns)
-        self.assertNotIn("nearest_step_id", kp2.columns)
         # stage 1 is the ordinary fit
         self.assertTrue(np.array_equal(stepped.segments.ksn.to_numpy(), fit.segments.ksn.to_numpy()))
         with self.assertRaises(ValueError):

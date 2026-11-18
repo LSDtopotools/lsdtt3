@@ -536,6 +536,15 @@ lsdtt::lsdtt_chi_tributary_knickpoint_tables chi_fit_tables(const ChiFit& fit)
     return t;
 }
 
+// Knickpoints are ranked on the ordinary (stage 1) fit only, as in the CLI:
+// the steps cut the split hierarchy of the step-aware fit.
+void require_stage1_for_knickpoints(const ChiFit& fit, const char* what)
+{
+    if (fit.is_step_aware())
+        throw std::invalid_argument(std::string(what) + " are ranked on the ordinary (stage 1) fit only; read "
+                                    "them from the ChiFit whose step_aware_fit this is");
+}
+
 nb::object chi_fit_tributaries(const ChiFit& fit)
 {
     const auto rows = chi_fit_tables(fit).tributaries;
@@ -548,6 +557,7 @@ nb::object chi_fit_tributaries(const ChiFit& fit)
 
 nb::object chi_fit_knickpoints(const ChiFit& fit)
 {
+    require_stage1_for_knickpoints(fit, "knickpoints");
     const auto rows = chi_fit_tables(fit).knickpoints;
     std::vector<std::int32_t> basin, bkey, skey, branch, useg, dseg, junction, srank, sdepth, sclamp, major; std::vector<std::int64_t> flat;
     std::vector<double> x, y, chi, z, fd, da, kup, kdown, delta, lr, fromhead, chin, sdiv, sdb, sda, skb, ska, sdk, sdkm, sdkn;
@@ -566,6 +576,7 @@ nb::object chi_fit_knickpoints(const ChiFit& fit)
 
 nb::object chi_fit_knickzones(const ChiFit& fit)
 {
+    require_stage1_for_knickpoints(fit, "knickzones");
     const auto rows = chi_fit_tables(fit).knickzones;
     std::vector<std::int32_t> id, basin, bkey, skey, branch; std::vector<std::int64_t> ff, lf; std::vector<std::string> ftype, method;
     std::vector<double> fx, fy, lx, ly, fchi, lchi, fz, lz, relief, span, flen, kb, ki, ka, fm, lm, fn, ln, thr, fthr;
@@ -576,6 +587,7 @@ nb::object chi_fit_knickzones(const ChiFit& fit)
 
 nb::object chi_fit_knickpoint_thresholds(const ChiFit& fit)
 {
+    require_stage1_for_knickpoints(fit, "knickpoint thresholds");
     const auto rows = chi_fit_tables(fit).thresholds;
     std::vector<std::string> measure, method; std::vector<double> thr; std::vector<std::int64_t> above, total;
     for (const auto& r : rows) { measure.push_back(r.measure); method.push_back(r.method); thr.push_back(r.threshold); above.push_back(r.n_above); total.push_back(r.n_total); }
@@ -1085,9 +1097,12 @@ steps : pandas.DataFrame
 step_aware_fit : ChiFit or None
     With ``run_step_change_detection``: the step-aware (stage 2) fit, as the
     lsdtt-chi-analysis ``_stepaware`` files. Its ``nodes`` and ``segments``
-    gain ``is_step`` (1 on a step segment and its nodes); its knickpoints,
-    knickzones, thresholds and tributary k_sn leave the step segments out
-    (the steps are in ``steps``). ``None`` without step detection, and on
+    gain ``is_step`` (1 on a step segment and its nodes); its tributary k_sn
+    leaves the step segments out (the steps are in ``steps``). Knickpoints,
+    knickzones and their thresholds are ranked on the ordinary fit only: on
+    the step-aware fit those properties raise ``ValueError`` (cutting a
+    branch at its steps breaks the split hierarchy, so a plateau rim above a
+    waterfall would lose its rank). ``None`` without step detection, and on
     the step-aware fit itself.
 
 With ``run_step_change_detection``, ``knickpoints`` (of this, the stage 1

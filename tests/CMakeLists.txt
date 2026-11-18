@@ -4635,13 +4635,17 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "tiny_chi_steps_mn_0p500.csv:step_id,basin_index,basin_key,source_key,branch_id,bottom_flat,top_flat,bottom_x,bottom_y,top_x,top_y,bottom_elevation,top_elevation,drop_m,flow_length_m,mean_gradient,max_window_gradient,n_pairs,bottom_chi,top_chi,bottom_flow_distance_m,bottom_drainage_area_m2,distance_to_branch_base_m,at_tributary_mouth,at_basin_outlet,contains_uphill_pairs"
     --stdout-contains "Step changes (gradient >= 0.05"
     --expect tiny_chi_fit_nodes_stepaware_mn_0p500.csv
-    --expect tiny_chi_knickpoints_stepaware_mn_0p500.csv
-    --expect tiny_chi_knickzones_stepaware_mn_0p500.csv
     --expect tiny_chi_tributaries_stepaware_mn_0p500.csv
+    # knickpoints are ranked on stage 1 only (2026-11-18)
+    --expect-absent tiny_chi_knickpoints_stepaware_mn_0p500.csv
+    --expect-absent tiny_chi_knickzones_stepaware_mn_0p500.csv
+    --expect-absent tiny_chi_knickpoint_thresholds_stepaware_mn_0p500.csv
     --expect-file-contains "tiny_chi_fit_segments_stepaware_mn_0p500.csv:n_nodes,source_key,is_step"
     --expect-file-contains "tiny_chi_fit_nodes_stepaware_mn_0p500.csv:is_split_point,source_key,is_step"
     --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:is_major,nearest_step_id,nearest_step_chi_distance,step_in_adjacent_segments"
     --stdout-contains "Step-aware fit:"
+    --expect tiny_chi_step_lines_mn_0p500.fgb
+    --stdout-contains "Writing step lines:"
 )
 lsdtt_set_tests_properties(smoke_chi_step_changes PROPERTIES LABELS "chi")
 

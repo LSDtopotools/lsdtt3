@@ -546,14 +546,15 @@ int main(int argc, char* argv[])
         "wanted. The chi fit is then run a second time, step-aware: each branch is cut at its steps, each "
         "step is one fixed segment (is_step = 1) between its ends pinned to the DEM, and the recursive "
         "fit runs only between steps, so the k_sn either side of a waterfall is not bent by the chord "
-        "across it. The step-aware tables leave the step segments out of the knickpoints and the k_sn "
-        "statistics. The ordinary (stage 1) knickpoint table gains nearest_step_id, "
+        "across it; its tributary table leaves the step segments out of the k_sn statistics. Knickpoints, "
+        "their thresholds and knickzones are ranked on the ordinary (stage 1) fit only: cutting a branch at "
+        "its steps breaks the split hierarchy, and a plateau rim just above a waterfall then loses its rank "
+        "(the stage 1 split is weighted by its chords, and the chord below the rim stops at the step). The ordinary (stage 1) knickpoint table gains nearest_step_id, "
         "nearest_step_chi_distance (0 inside the step) and step_in_adjacent_segments (1 if a step lies "
         "on the two segments either side of the boundary), to tell step-driven knickpoints from k_sn "
         "changes. Written once per m/n. Outputs: <write_fname>_chi_steps_mn_*.csv; with write_fit_tables "
         "_chi_fit_nodes_stepaware_mn_*.csv and _chi_fit_segments_stepaware_mn_*.csv (plus is_step); with "
-        "the tributary / knickpoint tables their _stepaware versions (_chi_tributaries_stepaware, "
-        "_chi_knickpoints_stepaware, _chi_knickpoint_thresholds_stepaware, _chi_knickzones_stepaware); "
+        "write_chi_tributary_table _chi_tributaries_stepaware_mn_*.csv; "
         "with write_chi_fit_segment_lines _chi_fit_segment_lines_stepaware_mn_* (plus is_step).",
         "Step changes", "switch", "fit_chi_networks"};
 
@@ -579,6 +580,15 @@ int main(int argc, char* argv[])
         "The default equals the default fit_critical_divergence_metres, so a step is something the "
         "fit would resolve; it does not follow that parameter, set both if you change one. Must be >= 0.",
         "Step changes", "param", "run_step_change_detection"};
+
+    bool_default_map["write_chi_step_lines"] = false;
+    help_map["write_chi_step_lines"] = {"bool","false",
+        "Write the step changes as a vector polyline file.",
+        "One polyline per step reach, traced along the channel from its top to its bottom, with the "
+        "attributes of the _chi_steps CSV (step_id, drop_m, mean_gradient, at_basin_outlet, ...) except "
+        "the end coordinates. Format from write_vector_format (flatgeobuf when csv is requested). "
+        "Output: <write_fname>_chi_step_lines_mn_*. Written once per m/n value tested.",
+        "Step changes", "switch", "run_step_change_detection"};
 
     bool_default_map["write_ksn_basin_summary"] = true;
     help_map["write_ksn_basin_summary"] = {"bool","true",
@@ -1996,6 +2006,16 @@ int main(int argc, char* argv[])
                               << so.max_window_length_metres << " m, drop >= " << so.min_drop_metres
                               << " m): " << steps.size() << " (" << n_out << " at a basin outlet, " << n_mouth
                               << " at a tributary mouth, " << n_up << " with uphill pairs) -> " << f << "\n";
+                    if (bf["write_chi_step_lines"])
+                    {
+                        const lsdtt::vector_output_format step_fmt =
+                            lsdtt::resolve_vector_output_format(sf["write_vector_format"]);
+                        const std::string g = pp.make_output_path(
+                            "_chi_step_lines_mn_" + mn_suffix(mn), lsdtt::output_extension(step_fmt));
+                        lsdtt::write_chi_steps_vector(g, steps, fit_results, routed_dem.get_meta(), step_fmt,
+                                                      bf["calculate_spatial_index"]);
+                        std::cout << "  Writing step lines: " << g << "\n";
+                    }
                 }
                 catch (const std::exception& e)
                 {
@@ -2005,10 +2025,12 @@ int main(int argc, char* argv[])
             }
 
             // Tributary / knickpoint / threshold / knickzone tables of one fit;
-            // file_tag "" for stage 1, "_stepaware" for stage 2.
+            // file_tag "" for stage 1, "_stepaware" for stage 2. Knickpoints,
+            // thresholds and knickzones are ranked on stage 1 only (with_knickpoints):
+            // the steps cut the split hierarchy of stage 2 (plan section 12, 2026-11-18).
             auto write_knickpoint_tables =
                 [&](const lsdtt::lsdtt_chi_network_fit_collection_result& fits, const std::string& file_tag,
-                    bool cross_reference)
+                    bool cross_reference, bool with_knickpoints)
             {
                 try
                 {
@@ -2025,7 +2047,7 @@ int main(int argc, char* argv[])
                         lsdtt::write_chi_tributaries_csv(f, tk.tributaries);
                         std::cout << "  Tributaries" << label << ": " << tk.tributaries.size() << " -> " << f << "\n";
                     }
-                    if (bf["write_chi_knickpoint_table"])
+                    if (bf["write_chi_knickpoint_table"] && with_knickpoints)
                     {
                         const std::string f = pp.make_output_path("_chi_knickpoints" + file_tag + "_mn_" + mn_suffix(mn), ".csv");
                         lsdtt::write_chi_knickpoints_csv(f, tk.knickpoints, cross_reference);
@@ -2061,7 +2083,7 @@ int main(int argc, char* argv[])
             };
 
             if (bf["write_chi_tributary_table"] || bf["write_chi_knickpoint_table"])
-                write_knickpoint_tables(fit_results, "", have_steps);
+                write_knickpoint_tables(fit_results, "", have_steps, true);
 
             // Part C: the step-aware (stage 2) fit, cut at the steps.
             if (have_steps)
@@ -2099,8 +2121,8 @@ int main(int argc, char* argv[])
                         lsdtt::write_chi_network_fit_segments_csv(
                             pp.make_output_path("_chi_fit_segments_stepaware_mn_" + mn_suffix(mn), ".csv"), seg_table);
                     }
-                    if (bf["write_chi_tributary_table"] || bf["write_chi_knickpoint_table"])
-                        write_knickpoint_tables(fit_results2, "_stepaware", false);
+                    if (bf["write_chi_tributary_table"])
+                        write_knickpoint_tables(fit_results2, "_stepaware", false, false);
                     if (bf["write_chi_fit_segment_lines"])
                     {
                         const std::string f = pp.make_output_path(

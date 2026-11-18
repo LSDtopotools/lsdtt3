@@ -38,7 +38,8 @@
 // reaches, which is why each reach carries its drop, length, gradients and
 // flags.
 //
-// GDAL-free; the CSV writer uses std::ofstream.
+// The CSV writer uses std::ofstream; the line writer (write_chi_steps_vector)
+// goes through lsdtt_data_loader.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -49,6 +50,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_types.hpp"
 #include "lsdtt_chi_data_maps_cpu.hpp"
 #include "lsdtt_chi_extraction_cpu.hpp"
@@ -128,6 +130,21 @@ struct lsdtt_chi_step_row
 );
 
 void write_chi_steps_csv(const std::string& filename, const std::vector<lsdtt_chi_step_row>& rows);
+
+// One polyline per step, traced node by node along the fit's D8 receivers
+// from its top to its bottom (downstream, as the fit segment lines), with the
+// CSV's attributes except the four end coordinates (the geometry carries
+// them). fits must be the fit the steps were built from; a step whose trace
+// leaves its basin is written as its two end points. fmt must be a binary
+// vector format (flatgeobuf or gpkg).
+void write_chi_steps_vector(
+    const std::string&                              filename,
+    const std::vector<lsdtt_chi_step_row>&          steps,
+    const lsdtt_chi_network_fit_collection_result&  fits,
+    const lsdtt_raster_meta&                        meta,
+    vector_output_format                            fmt,
+    bool                                            spatial_index = false
+);
 
 // PART C. The step reaches as the step-aware fit takes them
 // (lsdtt_chi_network_fit_options::step_reaches): (bottom_flat, top_flat).

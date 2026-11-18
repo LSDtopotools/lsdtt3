@@ -81,6 +81,8 @@ class ChiFit { public: ChiFit(lsdtt::lsdtt_chi_network_fit_collection_result res
     const std::vector<lsdtt::lsdtt_chi_step_row>& steps() const noexcept { return steps_; }
     const ChiFit* step_aware_fit() const noexcept { return step_aware_fit_.get(); }
     bool cross_reference_steps() const noexcept { return has_steps_ && step_aware_fit_ != nullptr; }
+    // the step-aware (stage 2) fit: it holds the steps but no further stage
+    bool is_step_aware() const noexcept { return has_steps_ && step_aware_fit_ == nullptr; }
 private: lsdtt::lsdtt_chi_network_fit_collection_result result_; std::shared_ptr<lsdtt::lsdtt_flowinfo> flow_; lsdtt::lsdtt_chi_collection_result chi_; std::vector<lsdtt::lsdtt_chi_basin_source_keys> keys_; lsdtt::lsdtt_chi_fit_source_key_map key_map_; std::string knickpoint_threshold_algorithm_choice_; std::vector<lsdtt::lsdtt_chi_step_row> steps_; bool has_steps_ = false; std::shared_ptr<ChiFit> step_aware_fit_; };
 class ChiInversion { public: ChiInversion(lsdtt::lsdtt_chi_ksn_inversion_collection_result result): result_(std::move(result)) {} const lsdtt::lsdtt_chi_ksn_inversion_collection_result& native() const noexcept { return result_; } private: lsdtt::lsdtt_chi_ksn_inversion_collection_result result_; };
 class FlowGraph { public: FlowGraph(const Raster& dem, const std::string& method, const std::string& boundary_conditions, bool interior_nodata_is_outlet, float mfd_exponent, int n_threads); const lsdtt::lsdtt_flowgraph_cpu& native() const noexcept { return graph_; } private: lsdtt::lsdtt_flowgraph_cpu graph_; };
