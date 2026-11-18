@@ -454,8 +454,18 @@ Raster chi_raster(const ChiCollection& chi)
 }
 
 ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_divergence_metres, const std::string& mainstem,
-               const std::string& knickpoint_threshold_algorithm_choice)
+               const std::string& knickpoint_threshold_algorithm_choice, bool run_step_change_detection = false,
+               float step_change_min_gradient = 0.40f, float step_change_max_window_length_metres = 90.0f,
+               float step_change_min_drop_metres = 5.0f)
 {
+    // Same checks as lsdtt-chi-analysis, before any work.
+    if (run_step_change_detection)
+    {
+        if (!(step_change_min_gradient > 0.0f)) throw std::invalid_argument("step_change_min_gradient must be > 0");
+        if (!(step_change_max_window_length_metres > 0.0f))
+            throw std::invalid_argument("step_change_max_window_length_metres must be > 0");
+        if (!(step_change_min_drop_metres >= 0.0f)) throw std::invalid_argument("step_change_min_drop_metres must be >= 0");
+    }
     // Same choices, and the same lower-casing, as lsdtt-chi-analysis.
     const std::string threshold_choice = lsdtt::to_lower_ascii(knickpoint_threshold_algorithm_choice);
     {
@@ -470,14 +480,42 @@ ChiFit fit_chi(const ChiCollection& chi, const Raster& dem, float critical_diver
     else throw std::invalid_argument("mainstem must be 'max_flow_length' or 'max_chi'");
     const auto& meta = chi.flow().meta();
     auto keys = lsdtt::assign_chi_source_keys(chi.native(), chi.flow(), meta.n_cols, meta.cell_size);
-    return ChiFit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow(),
-                  chi.native(), std::move(keys), threshold_choice);
+    ChiFit fit(lsdtt::fit_chi_networks(chi.native(), dem.native(), options), chi.shared_flow(),
+               chi.native(), keys, threshold_choice);
+    if (run_step_change_detection)
+    {
+        // Part B on the stage 1 fit, then the Part C step-aware fit (the same
+        // routines and order as lsdtt-chi-analysis).
+        lsdtt::lsdtt_chi_step_options so;
+        so.min_gradient = step_change_min_gradient;
+        so.max_window_length_metres = step_change_max_window_length_metres;
+        so.min_drop_metres = step_change_min_drop_metres;
+        auto steps = lsdtt::build_chi_step_changes(fit.native(), chi.native(), keys, meta, so);
+        lsdtt::lsdtt_chi_network_fit_options options2 = options;
+        options2.step_aware = true;
+        options2.step_reaches = lsdtt::chi_step_reaches_for_fit(steps);
+        auto stage2 = std::make_shared<ChiFit>(lsdtt::fit_chi_networks(chi.native(), dem.native(), options2),
+                                               chi.shared_flow(), chi.native(), std::move(keys), threshold_choice);
+        stage2->set_steps(steps, nullptr);
+        fit.set_steps(std::move(steps), std::move(stage2));
+    }
+    return fit;
+}
+
+nb::object chi_fit_steps(const ChiFit& fit)
+{
+    std::vector<std::int32_t> id, basin, bkey, skey, branch, npairs, mouth, outlet, uphill; std::vector<std::int64_t> bf, tf;
+    std::vector<double> bx, by, tx, ty, bz, tz, drop, len, mg, mwg, bchi, tchi, bfd, bda, dist;
+    for (const auto& s : fit.steps()) { id.push_back(s.step_id); basin.push_back(s.basin_index); bkey.push_back(s.basin_key); skey.push_back(s.source_key); branch.push_back(s.branch_id); bf.push_back(s.bottom_flat); tf.push_back(s.top_flat); bx.push_back(s.bottom_x); by.push_back(s.bottom_y); tx.push_back(s.top_x); ty.push_back(s.top_y); bz.push_back(s.bottom_elevation); tz.push_back(s.top_elevation); drop.push_back(s.drop_m); len.push_back(s.flow_length_m); mg.push_back(s.mean_gradient); mwg.push_back(s.max_window_gradient); npairs.push_back(s.n_pairs); bchi.push_back(s.bottom_chi); tchi.push_back(s.top_chi); bfd.push_back(s.bottom_flow_distance_m); bda.push_back(s.bottom_drainage_area_m2); dist.push_back(s.distance_to_branch_base_m); mouth.push_back(s.at_tributary_mouth); outlet.push_back(s.at_basin_outlet); uphill.push_back(s.contains_uphill_pairs); }
+    nb::dict d; d["step_id"]=id; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["bottom_flat"]=bf; d["top_flat"]=tf; d["bottom_x"]=bx; d["bottom_y"]=by; d["top_x"]=tx; d["top_y"]=ty; d["bottom_elevation"]=bz; d["top_elevation"]=tz; d["drop_m"]=drop; d["flow_length_m"]=len; d["mean_gradient"]=mg; d["max_window_gradient"]=mwg; d["n_pairs"]=npairs; d["bottom_chi"]=bchi; d["top_chi"]=tchi; d["bottom_flow_distance_m"]=bfd; d["bottom_drainage_area_m2"]=bda; d["distance_to_branch_base_m"]=dist; d["at_tributary_mouth"]=mouth; d["at_basin_outlet"]=outlet; d["contains_uphill_pairs"]=uphill;
+    return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
 nb::object chi_fit_nodes(const ChiFit& fit)
 {
     auto t = lsdtt::export_chi_network_fit_nodes(fit.native()); lsdtt::attach_chi_source_keys(t, fit.key_map()); nb::dict d;
     d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["flat"]=t.flat; d["receiver_flat"]=t.receiver_flat; d["chi"]=t.chi; d["observed_elevation"]=t.observed_elevation; d["fitted_elevation"]=t.fitted_elevation; d["residual_elevation"]=t.residual_elevation; d["abs_residual_elevation"]=t.abs_residual_elevation; d["branch_id"]=t.branch_id; d["is_main_stem"]=t.is_main_stem; d["is_source"]=t.is_source; d["is_junction"]=t.is_junction; d["is_split_point"]=t.is_split_point; d["source_key"]=t.source_key;
+    if (t.step_aware) d["is_step"]=t.is_step;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -485,13 +523,17 @@ nb::object chi_fit_segments(const ChiFit& fit)
 {
     auto t=lsdtt::export_chi_network_fit_segments(fit.native()); lsdtt::attach_chi_source_keys(t, fit.key_map()); nb::dict d;
     d["basin_id"]=t.basin_index; d["outlet_flat"]=t.outlet_flat; d["segment_id"]=t.segment_id; d["parent_segment_id"]=t.parent_segment_id; d["branch_id"]=t.branch_id; d["downstream_flat"]=t.downstream_flat; d["upstream_flat"]=t.upstream_flat; d["downstream_chi"]=t.downstream_chi; d["upstream_chi"]=t.upstream_chi; d["downstream_elevation"]=t.downstream_elevation; d["upstream_elevation"]=t.upstream_elevation; d["ksn"]=t.k_sn; d["max_abs_residual"]=t.max_abs_residual; d["n_nodes"]=t.n_nodes; d["source_key"]=t.source_key;
+    if (t.step_aware) d["is_step"]=t.is_step;
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
 lsdtt::lsdtt_chi_tributary_knickpoint_tables chi_fit_tables(const ChiFit& fit)
 {
-    return lsdtt::build_chi_tributaries_and_knickpoints(fit.native(), fit.chi(), fit.keys(), fit.flow().meta(),
-                                                        fit.knickpoint_threshold_algorithm_choice());
+    auto t = lsdtt::build_chi_tributaries_and_knickpoints(fit.native(), fit.chi(), fit.keys(), fit.flow().meta(),
+                                                          fit.knickpoint_threshold_algorithm_choice());
+    if (fit.cross_reference_steps())
+        lsdtt::cross_reference_chi_knickpoints_with_steps(t.knickpoints, fit.steps(), fit.native());
+    return t;
 }
 
 nb::object chi_fit_tributaries(const ChiFit& fit)
@@ -513,6 +555,12 @@ nb::object chi_fit_knickpoints(const ChiFit& fit)
         srank.push_back(k.split_rank); sdepth.push_back(k.split_depth); sdiv.push_back(k.split_divergence_metres); sdb.push_back(k.split_dchi_below); sda.push_back(k.split_dchi_above); skb.push_back(k.split_ksn_below); ska.push_back(k.split_ksn_above); sdk.push_back(k.split_delta_ksn); sdkm.push_back(k.split_delta_ksn_metres); sdkn.push_back(k.split_delta_ksn_normalised); sclamp.push_back(k.split_clamped); major.push_back(k.is_major); }
     nb::dict d; d["basin_id"]=basin; d["basin_key"]=bkey; d["source_key"]=skey; d["branch_id"]=branch; d["upstream_segment_id"]=useg; d["downstream_segment_id"]=dseg; d["flat"]=flat; d["x"]=x; d["y"]=y; d["chi"]=chi; d["elevation"]=z; d["flow_distance_m"]=fd; d["drainage_area_m2"]=da; d["ksn_upstream"]=kup; d["ksn_downstream"]=kdown; d["delta_ksn"]=delta; d["log_ratio_ksn"]=lr; d["at_junction"]=junction; d["chi_from_branch_head"]=fromhead; d["chi_normalised"]=chin;
     d["split_rank"]=srank; d["split_depth"]=sdepth; d["split_divergence_metres"]=sdiv; d["split_dchi_below"]=sdb; d["split_dchi_above"]=sda; d["split_ksn_below"]=skb; d["split_ksn_above"]=ska; d["split_delta_ksn"]=sdk; d["split_delta_ksn_metres"]=sdkm; d["split_delta_ksn_normalised"]=sdkn; d["split_clamped"]=sclamp; d["is_major"]=major;
+    if (fit.cross_reference_steps())
+    {
+        std::vector<std::int32_t> nid, adj; std::vector<double> ndist;
+        for (const auto& k : rows) { nid.push_back(k.nearest_step_id); ndist.push_back(k.nearest_step_chi_distance); adj.push_back(k.step_in_adjacent_segments); }
+        d["nearest_step_id"]=nid; d["nearest_step_chi_distance"]=ndist; d["step_in_adjacent_segments"]=adj;
+    }
     return nb::module_::import_("pandas").attr("DataFrame")(d);
 }
 
@@ -874,7 +922,9 @@ Returns
 Raster
     Chi (m) on the channel pixels of every basin; nodata elsewhere.
 )doc")
-        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", nb::arg("knickpoint_threshold_algorithm_choice") = "p95", R"doc(
+        .def("fit", &fit_chi, nb::arg("dem"), nb::arg("critical_divergence_metres") = 5.0f, nb::arg("mainstem") = "max_flow_length", nb::arg("knickpoint_threshold_algorithm_choice") = "p95",
+             nb::arg("run_step_change_detection") = false, nb::arg("step_change_min_gradient") = 0.40f,
+             nb::arg("step_change_max_window_length_metres") = 90.0f, nb::arg("step_change_min_drop_metres") = 5.0f, R"doc(
 Fit piecewise-linear channel profiles in chi-elevation space.
 
 Each basin's main stem and then each tributary is fitted with straight
@@ -900,6 +950,31 @@ knickpoint_threshold_algorithm_choice : {"p90", "p95", "median_plus_3mad", "otsu
     tributaries pooled). Sets ``is_major`` in ``ChiFit.knickpoints`` and
     which splits are paired into ``ChiFit.knickzones``; as
     lsdtt-chi-analysis ``knickpoint_threshold_algorithm_choice``.
+run_step_change_detection : bool, default=False
+    Find step changes (waterfalls, dams, steep gorge reaches) on the fitted
+    branches and fit the profiles a second time, step-aware, as
+    lsdtt-chi-analysis ``run_step_change_detection``. On the longitudinal
+    profile (not in chi), every window of consecutive pixel pairs up to
+    ``step_change_max_window_length_metres`` of flow length whose gradient
+    (drop / flow length) is at least ``step_change_min_gradient`` marks its
+    pairs; consecutive marked pairs form a reach, its gentle end pairs are
+    trimmed, and it is kept if it drops at least
+    ``step_change_min_drop_metres``. The step-aware fit cuts each branch at
+    its steps: each step is one fixed segment between its ends pinned to the
+    DEM and the recursive fit runs only between steps, so k_sn either side
+    of a waterfall is not bent by the chord across it. Gives
+    ``ChiFit.steps``, ``ChiFit.step_aware_fit`` and the step columns of
+    ``ChiFit.knickpoints``.
+step_change_min_gradient : float, default=0.40
+    Gradient (m/m) at or above which a window is steep (> 0). Resolution
+    dependent: at 30 m, 0.40 also marks steep gorge reaches.
+step_change_max_window_length_metres : float, default=90.0
+    Longest window, as flow length (m) (> 0). A single pixel pair is always a
+    window. Also the distance from a branch's base within which a step is
+    flagged ``at_basin_outlet`` or ``at_tributary_mouth``.
+step_change_min_drop_metres : float, default=5.0
+    Smallest drop (m) of a reported step (>= 0). The default equals the
+    default ``critical_divergence_metres`` but does not follow it.
 
 Returns
 -------
@@ -996,7 +1071,39 @@ summary : pandas.DataFrame
     ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,
     ``median_ksn``, ``min_ksn``, ``max_ksn``, ``chi_weighted_mean_ksn``,
     ``main_stem_mean_ksn``, ``main_stem_median_ksn``.
+steps : pandas.DataFrame
+    With ``run_step_change_detection``: one row per step reach, as
+    lsdtt-chi-analysis ``_chi_steps_mn_*.csv``: ``step_id``, ``basin_id``,
+    ``basin_key``, ``source_key`` (of the branch head), ``branch_id``,
+    ``bottom_flat``, ``top_flat``, ``bottom_x``, ``bottom_y``, ``top_x``,
+    ``top_y``, ``bottom_elevation``, ``top_elevation``, ``drop_m``,
+    ``flow_length_m``, ``mean_gradient``, ``max_window_gradient``,
+    ``n_pairs``, ``bottom_chi``, ``top_chi``, ``bottom_flow_distance_m``,
+    ``bottom_drainage_area_m2``, ``distance_to_branch_base_m``,
+    ``at_tributary_mouth``, ``at_basin_outlet``, ``contains_uphill_pairs``.
+    Empty without it.
+step_aware_fit : ChiFit or None
+    With ``run_step_change_detection``: the step-aware (stage 2) fit, as the
+    lsdtt-chi-analysis ``_stepaware`` files. Its ``nodes`` and ``segments``
+    gain ``is_step`` (1 on a step segment and its nodes); its knickpoints,
+    knickzones, thresholds and tributary k_sn leave the step segments out
+    (the steps are in ``steps``). ``None`` without step detection, and on
+    the step-aware fit itself.
+
+With ``run_step_change_detection``, ``knickpoints`` (of this, the stage 1
+fit) also has ``nearest_step_id`` and ``nearest_step_chi_distance`` (the
+nearest step on the same branch by chi, 0 inside it; -1 / NaN if none) and
+``step_in_adjacent_segments`` (1 if a step lies on the two segments either
+side of the boundary), to tell step-driven knickpoints from k_sn changes.
 )doc")
+        .def_prop_ro("steps", &chi_fit_steps, nb::sig("def steps(self) -> pandas.DataFrame"),
+            "Step reaches (pandas.DataFrame) with run_step_change_detection; empty otherwise. See the class documentation for columns.")
+        .def_prop_ro("step_aware_fit", [](const ChiFit& f) -> nb::object {
+                const ChiFit* s = f.step_aware_fit();
+                if (!s) return nb::none();
+                return nb::cast(*s);
+            }, nb::sig("def step_aware_fit(self) -> ChiFit | None"),
+            "The step-aware (stage 2) ChiFit with run_step_change_detection; None otherwise.")
         .def_prop_ro("nodes", &chi_fit_nodes, nb::sig("def nodes(self) -> pandas.DataFrame"),
             "Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.")
         .def_prop_ro("segments", &chi_fit_segments, nb::sig("def segments(self) -> pandas.DataFrame"),

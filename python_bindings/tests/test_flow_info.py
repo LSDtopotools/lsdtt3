@@ -80,7 +80,10 @@ class FlowInfoTest(unittest.TestCase):
         minus downstream, split fields on within-branch rows with is_major set exactly
         where |split_delta_ksn_normalised| exceeds the chosen method's threshold, a
         knickzones table, the 17 suggested knickpoint thresholds (4 measures x 4 methods
-        plus the k_sn outlier), a refused unknown threshold choice, and a disorder table.
+        plus the k_sn outlier), a refused unknown threshold choice, a disorder table, and
+        with run_step_change_detection the steps table, a step-aware fit whose step segments
+        are exactly the steps and whose knickpoints leave them out, the stage 1 step
+        cross-reference columns, an unchanged stage 1, and a refused bad gradient.
         """
         scope = self.flow.channel_scope(3)
         self.assertEqual(scope.mode, "all_channels_threshold")
@@ -138,6 +141,42 @@ class FlowInfoTest(unittest.TestCase):
             chi.fit(self.dem, knickpoint_threshold_algorithm_choice="p99")
         self.assertIn("disorder", fit.disorder().columns)
         self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
+
+        # Step changes and the step-aware fit (run_step_change_detection, as
+        # lsdtt-chi-analysis). Off by default: no steps, no stage 2, no step columns.
+        self.assertIsNone(fit.step_aware_fit)
+        self.assertEqual(len(fit.steps), 0)
+        self.assertNotIn("is_step", fit.segments.columns)
+        self.assertNotIn("nearest_step_id", fit.knickpoints.columns)
+        stepped = chi.fit(self.dem, run_step_change_detection=True, step_change_min_gradient=0.05,
+                          step_change_min_drop_metres=0.5)
+        steps = stepped.steps
+        self.assertGreater(len(steps), 0)
+        self.assertTrue((steps.top_elevation - steps.bottom_elevation >= 0.5 - 1e-6).all())
+        self.assertTrue(np.allclose(steps.drop_m, steps.top_elevation - steps.bottom_elevation, atol=1e-4))
+        stage2 = stepped.step_aware_fit
+        self.assertIsNotNone(stage2)
+        self.assertIsNone(stage2.step_aware_fit)
+        self.assertEqual(len(stage2.steps), len(steps))
+        seg2 = stage2.segments
+        self.assertIn("is_step", seg2.columns)
+        self.assertIn("is_step", stage2.nodes.columns)
+        self.assertEqual(int(seg2.is_step.sum()), len(steps))
+        self.assertEqual(
+            set(zip(seg2.loc[seg2.is_step == 1, "downstream_flat"], seg2.loc[seg2.is_step == 1, "upstream_flat"])),
+            set(zip(steps.bottom_flat, steps.top_flat)))
+        step_segment_ids = set(seg2.loc[seg2.is_step == 1, "segment_id"])
+        kp2 = stage2.knickpoints
+        self.assertFalse(kp2.upstream_segment_id.isin(step_segment_ids).any())
+        self.assertFalse(kp2.downstream_segment_id.isin(step_segment_ids).any())
+        kp1 = stepped.knickpoints
+        for column in ("nearest_step_id", "nearest_step_chi_distance", "step_in_adjacent_segments"):
+            self.assertIn(column, kp1.columns)
+        self.assertNotIn("nearest_step_id", kp2.columns)
+        # stage 1 is the ordinary fit
+        self.assertTrue(np.array_equal(stepped.segments.ksn.to_numpy(), fit.segments.ksn.to_numpy()))
+        with self.assertRaises(ValueError):
+            chi.fit(self.dem, run_step_change_detection=True, step_change_min_gradient=0.0)
 
     @pytest.mark.property
     @pytest.mark.smoke
