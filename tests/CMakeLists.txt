@@ -2510,8 +2510,14 @@ add_lsdtt_cli_smoke_test(
     --expect sa_lambda_150m_slope.tif
     --expect sa_dinf_drainage_area.tif
     --expect-absent sa_d8_flow_direction.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,3952.876248"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Fill-only pins were: 90,3962.762065
+    # and 150,3952.876248.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,10429.1897"
     --expect-valid-percent sa_lambda_90m_slope.tif:96.04
 )
 lsdtt_set_tests_properties(smoke_slope_area PROPERTIES
@@ -2526,7 +2532,12 @@ add_lsdtt_cli_smoke_test(
     --expect sa_d8_drainage_area.tif
     --expect sa_d8_flow_direction.tif
     --expect-absent sa_dinf_drainage_area.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3965.578391"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Fill-only pins were: 90,3965.578391.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3911.546956"
 )
 lsdtt_set_tests_properties(smoke_slope_area_d8 PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2538,7 +2549,13 @@ add_lsdtt_cli_smoke_test(
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect-absent sa_dinf_drainage_area.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Fill-only pins were: 90,3962.762065
+    # (the same row as smoke_slope_area, with the flow rasters off).
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
 )
 lsdtt_set_tests_properties(smoke_slope_area_no_flowinfo PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2550,10 +2567,29 @@ add_lsdtt_cli_smoke_test(
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect-valid-percent sa_lambda_90m_slope.tif:53.79
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3906.624295"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Fill-only pins were: 90,3906.624295.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3836.11712"
 )
 lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
     FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
+# The Lindsay (2016) breach path (breach_algorithm_choice: lindsay2016): runs,
+# says so, and writes the summary.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_lindsay2016
+    lsdtt-slope-area
+    slope_area_lindsay2016.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_lambda_90m.csv
+    --stdout-contains "Breaching (Lindsay 2016 efficient breaching)"
+)
+lsdtt_set_tests_properties(smoke_slope_area_lindsay2016 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
 
 # -----------------------------------------------------------------------------
 # REPRODUCTION GUARD for lsdtt-slope-area (pinned 2026-11-18, before any of the
@@ -2638,7 +2674,8 @@ foreach(_sa_bad
         "bad_flow_algorithm|flow_algorithm must be dinf or d8"
         "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
         "empty_lambdas|polyfit_lambda_metres_list cannot be empty"
-        "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM")
+        "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM"
+        "bad_breach_algorithm|breach_algorithm_choice must be least_cost or lindsay2016")
     string(REPLACE "|" ";" _sa_bad "${_sa_bad}")
     list(GET _sa_bad 0 _sa_case)
     list(GET _sa_bad 1 _sa_message)
@@ -6117,6 +6154,16 @@ target_link_libraries(lsdtt-test-log-binned-quantiles PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned-quantiles)
 lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
     LABELS "statistics;slope_area")
+
+# d8_flow_path_gradient (lsdtt_slope_area_cpu) and the options form of
+# channel_slope_at: exact gradients on planes (row and diagonal paths),
+# one-sided windows, exclusion of raised cells, donor ranking by an area
+# raster, refusals, thread independence.
+add_executable(lsdtt-test-slope-area cpp/test_slope_area.cpp)
+target_link_libraries(lsdtt-test-slope-area PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_area_d8_flow_path_gradient COMMAND lsdtt-test-slope-area)
+lsdtt_set_tests_properties(unit_slope_area_d8_flow_path_gradient PROPERTIES
+    LABELS "slope_area")
 
 # Stage 2 part B: records the D7 change from the private ols_fit to
 # compute_linear_regression in the drainage-area exceedance scaling.

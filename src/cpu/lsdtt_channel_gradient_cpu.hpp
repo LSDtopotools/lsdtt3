@@ -85,4 +85,28 @@ struct lsdtt_channel_slope_result
     double                  half_length_m,
     std::uint64_t           min_contributing_pixels);
 
+// Options form (lsdtt-slope-area's D8 flow-path gradient). The form above is
+// this one with min_contributing_pixels set, donor_rank and exclude null.
+//   - min_contributing_pixels: as above (0 = no floor, so the window is
+//     defined on hillslopes too; the s-vector is then not needed);
+//   - donor_rank: if given (same grid), the upstream walk follows the donor
+//     with the LARGEST value of this raster (e.g. a D-infinity drainage area)
+//     instead of the most contributing pixels; nodata / NaN ranks lowest;
+//     ties: the smaller flat index. The walk itself is still along D8 donors;
+//   - exclude: if given (one byte per cell, 1 = excluded), excluded cells are
+//     walked through but left out of the fit (e.g. pixels a pit fill raised).
+struct lsdtt_channel_slope_options
+{
+    std::uint64_t                    min_contributing_pixels = 0;
+    const lsdtt_raster_cpu*          donor_rank = nullptr;
+    const std::vector<std::uint8_t>* exclude = nullptr;
+};
+
+[[nodiscard]] lsdtt_channel_slope_result channel_slope_at(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_raster_cpu&            filled_dem,
+    std::int64_t                       flat,
+    double                             half_length_m,
+    const lsdtt_channel_slope_options& options);
+
 } // namespace lsdtt

@@ -19,6 +19,9 @@ write_fname: sa
 n_threads: 1
 fill_before_routing: true
 fill_min_slope: 0.0001
+# 2026-11-18 step 2a: the carve-before-fill default is new; the old
+# routing surface is fill alone.
+breach_before_fill: false
 boundary_conditions: oooo
 flow_algorithm: d8
 write_flowinfo_rasters: true

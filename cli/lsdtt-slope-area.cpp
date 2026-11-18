@@ -12,7 +12,8 @@
 //
 // This CLI calculates slope-area statistics from a DEM. Its workflow is:
 //
-//   1. Read the DEM, optionally pit-fill it, and build D-infinity (default) or
+//   1. Read the DEM, carve it (least-cost breach, default) and pit-fill what
+//      the carve leaves, and build D-infinity (default) or
 //      D8 flow information. Write the drainage-area and flow-direction rasters
 //      when requested.
 //   2. For every polyfit lambda, calculate direct-polyfit slope.
@@ -50,6 +51,7 @@
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
@@ -325,6 +327,80 @@ int main(int argc, char* argv[])
         "Minimum slope imposed during pit filling.",
         "Used when fill_before_routing is true.",
         "DEM preparation", "param", "fill_before_routing"};
+
+    // Carve before the fill (plan_slope_area_gradient_and_low_concavity.md,
+    // 3A): the names and help of lsdtt-raster-preprocessing, with this CLI's
+    // defaults (carve by default, least cost), so large filled areas are
+    // avoided. breach_before_fill: false gives the fill-only surface of runs
+    // before 2026-11-18 (see the reproduction note in the help).
+    bool_default_map["breach_before_fill"] = true;
+    help_map["breach_before_fill"] = {"bool","true",
+        "Breach (carve) depressions before filling pits.",
+        "The carve comes first, then the fill (fill_before_routing) takes only "
+        "the pits the carve could not solve, so large filled areas are avoided. "
+        "false = fill alone, the routing surface of lsdtt-slope-area before "
+        "2026-11-18 (set it to reproduce those runs).",
+        "DEM preparation", "switch", ""};
+    string_default_map["breach_algorithm_choice"] = "least_cost";
+    help_map["breach_algorithm_choice"] = {"string","least_cost",
+        "Algorithm for depression breaching.",
+        "lindsay2016: Lindsay (2016) efficient breaching. "
+        "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
+        "DEM preparation", "param", "breach_before_fill"};
+    // The declared default is the outlet-mode one; when the file does not set
+    // the key, the whitebox edge policy uses 100 instead (as in
+    // lsdtt-raster-preprocessing; see default_breach_lc_max_dist).
+    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
+    help_map["breach_lc_max_dist"] = {"int","1000 (outlet) / 100 (whitebox)",
+        "Maximum breach path length in cells for least-cost breaching.",
+        "Counted in steps from the pit (a diagonal step counts as one), not "
+        "as a radius. Pits that need a longer path are left unbreached (and "
+        "filled if fill_before_routing is true). 1 to 32767. If not set, 1000 "
+        "with breach_lc_edge_policy outlet (long enough to bridge large water "
+        "bodies, so a far-off pit is not carved to the nearest raster edge "
+        "instead) and 100 with whitebox (the WhiteboxTools default; longer "
+        "paths there can carve across divides). Only used when "
+        "breach_algorithm_choice is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
+    help_map["breach_lc_max_cost"] = {"float","unlimited",
+        "Maximum cost of a least-cost breach path.",
+        "The cost of a path is the depth each cell on it is lowered, summed: "
+        "metres when breach_lc_minimize_dist is false; with "
+        "breach_lc_minimize_dist true each step is weighted by its length in "
+        "cells (1 or 1.414), so the units are metres x cells. A pit whose "
+        "cheapest path costs more is left unbreached. Only used when "
+        "breach_algorithm_choice is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    bool_default_map["breach_lc_minimize_dist"] = false;
+    help_map["breach_lc_minimize_dist"] = {"bool","false",
+        "Weight least-cost breach paths by their length.",
+        "false: a path costs the total depth lowered (m), so the search "
+        "prefers shallow cuts however long. true: each step is weighted by "
+        "its length in cells, favouring shorter paths; breach_lc_max_cost is "
+        "then in metres x cells. Only used when breach_algorithm_choice is "
+        "least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    string_default_map["breach_lc_edge_policy"] = "outlet";
+    help_map["breach_lc_edge_policy"] = {"string","outlet",
+        "Whether a least-cost breach may drain off the raster edge.",
+        "outlet: the raster edge is an outlet, like a nodata cell, so a pit "
+        "near the edge can breach straight off the grid. whitebox: the edge "
+        "is not an outlet (as in WhiteboxTools), so a breach must reach an "
+        "edge cell that is already low enough, which can carve deep cuts "
+        "across divides near the edge. Only used when breach_algorithm_choice "
+        "is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    float_default_map["breach_lc_flat_increment"] = 0.0f;
+    help_map["breach_lc_flat_increment"] = {"float","0.0",
+        "Elevation drop (m) per cell along a least-cost breach channel.",
+        "0 or less selects the automatic value: twice the float32 spacing at "
+        "the largest absolute elevation in the DEM (e.g. 2.4e-4 m for "
+        "elevations of 1024-2047 m), the smallest drop that keeps the channel "
+        "strictly downhill. Only used when breach_algorithm_choice is "
+        "least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+
     string_default_map["flow_algorithm"] = "dinf";
     help_map["flow_algorithm"] = {"string", "dinf",
         "Flow-routing algorithm.", "Allowed values are dinf or d8.",
@@ -420,13 +496,36 @@ int main(int argc, char* argv[])
             throw std::runtime_error("n_log_bins must be at least 1");
         const std::vector<double> lambdas =
             parse_lambdas(sf.at("polyfit_lambda_metres_list"));
+        const std::string breach_choice = sf.at("breach_algorithm_choice");
+        if (breach_choice != "least_cost" && breach_choice != "lindsay2016")
+            throw std::runtime_error("breach_algorithm_choice must be least_cost or lindsay2016");
+        // Least-cost options, built and validated before any raster work. The
+        // breach's own remainder fill is OFF: the fill below (fill_pits) is
+        // the same call whether or not the DEM was carved first.
+        lsdtt::breach_least_cost_options breach_lc_options;
+        if (bf.at("breach_before_fill") && breach_choice == "least_cost")
+        {
+            breach_lc_options.max_cost =
+                (ff.at("breach_lc_max_cost") >= std::numeric_limits<float>::max())
+                    ? std::numeric_limits<double>::infinity()
+                    : static_cast<double>(ff.at("breach_lc_max_cost"));
+            breach_lc_options.minimize_dist  = bf.at("breach_lc_minimize_dist");
+            breach_lc_options.flat_increment = static_cast<double>(ff.at("breach_lc_flat_increment"));
+            breach_lc_options.fill_remainder = false;
+            breach_lc_options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(
+                sf.at("breach_lc_edge_policy"), "breach_lc_edge_policy");
+            breach_lc_options.max_dist = parser.parameter_supplied("breach_lc_max_dist")
+                ? ii.at("breach_lc_max_dist")
+                : lsdtt::default_breach_lc_max_dist(breach_lc_options.edge_policy);
+            lsdtt::validate_breach_least_cost_options(breach_lc_options);
+        }
         const std::string clip_mode = sf.at("basin_clip_mode");
         if (clip_mode != "none" && clip_mode != "mask" &&
             clip_mode != "polygon")
             throw std::runtime_error("basin_clip_mode must be none, mask, or polygon");
 
         // ---------------------------------------------------------------------
-        // Step 1: Read the DEM and optionally pit-fill it.
+        // Step 1: Read the DEM; carve (breach_before_fill) and pit-fill it.
         // ---------------------------------------------------------------------
         const std::string dem_path = parser.get_read_path() + "/" +
                                      parser.get_read_fname() +
@@ -445,6 +544,25 @@ int main(int argc, char* argv[])
         {
             std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
             return 1;
+        }
+        if (bf.at("breach_before_fill"))
+        {
+            if (breach_choice == "least_cost")
+            {
+                lsdtt::breach_least_cost_diagnostics diag;
+                dem = lsdtt::breach_depressions_least_cost(dem, breach_lc_options, &diag);
+                std::cout << "Least-cost breaching (Lindsay 2020): max_dist "
+                          << breach_lc_options.max_dist << ", edge policy "
+                          << lsdtt::breach_lc_edge_policy_name(breach_lc_options.edge_policy)
+                          << "; pits " << diag.pits_detected << ", solved " << diag.pits_solved
+                          << ", unsolved " << (diag.pits_unsolved_exhausted + diag.pits_unsolved_max_cost)
+                          << " (left for the fill)\n";
+            }
+            else
+            {
+                dem = lsdtt::breach_depressions(dem, ii.at("n_threads"));
+                std::cout << "Breaching (Lindsay 2016 efficient breaching)\n";
+            }
         }
         if (bf.at("fill_before_routing"))
         {
