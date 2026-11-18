@@ -238,6 +238,7 @@ lsdtt_evidence(smoke_slope_area_no_flowinfo system smoke characterisation metamo
 lsdtt_evidence(smoke_slope_area_clip system smoke characterisation)
 lsdtt_evidence(smoke_slope_area_lindsay2016 system smoke)
 lsdtt_evidence(smoke_slope_area_d8_flow_path system smoke)
+lsdtt_evidence(smoke_slope_area_low_concavity system smoke characterisation)
 lsdtt_evidence(smoke_slope_area_fill_only system smoke characterisation metamorphic)  # same polyfit raster as the carve run
 lsdtt_evidence(smoke_slope_area_reproduce_dinf system smoke characterisation)    # pinned outputs, ridgeline paper
 lsdtt_evidence(smoke_slope_area_reproduce_d8 system smoke characterisation)    # pinned outputs, ridgeline paper

@@ -36,6 +36,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -567,6 +568,65 @@ int main(int argc, char* argv[])
         "Empty uses <write_fname>_maximum_d50_slope_area.csv.",
         "Output", "param", ""};
 
+    // --- Low-concavity finder (plan section 4) -------------------------------
+    bool_default_map["run_low_concavity_detection"] = false;
+    help_map["run_low_concavity_detection"] = {"bool", "false",
+        "Find channel reaches whose gradient changes little with drainage area.",
+        "At each channel pixel (threshold_contributing_pixels), take it and the "
+        "next low_concavity_window_pixels - 1 pixels DOWNSTREAM along the D8 "
+        "receivers (downstream because the path upstream branches; the window "
+        "runs through tributary junctions), and fit log10 S = a + b log10 A "
+        "over those with a gradient that are not carved or filled "
+        "(exclude_carved_and_filled_pixels). The concavity is theta = -b "
+        "(S ~ A^-theta). A pixel is low concavity if |theta| < "
+        "low_concavity_max_abs_concavity, so a weakly convex reach counts too. "
+        "S is always the centred D8 flow-path gradient over "
+        "low_concavity_gradient_window_metres, whatever slope_algorithm_choice "
+        "is; A is the drainage_area_algorithm_choice area. Aimed at threshold "
+        "slopes, debris-flow channels and alluvial fans. Outputs: "
+        "<write_fname>_low_concavity_theta.tif and _low_concavity_flag.tif "
+        "(write_low_concavity_rasters) and _low_concavity_points.csv "
+        "(write_low_concavity_point_table).",
+        "Low concavity", "switch", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
+    float_default_map["low_concavity_gradient_window_metres"] = 150.0f;
+    help_map["low_concavity_gradient_window_metres"] = {"float", "150",
+        "Total length (m) of the centred D8 flow-path gradient window used by the low-concavity fit.",
+        "As d8_gradient_window_metres_list, but one value, and used whatever "
+        "slope_algorithm_choice is. At least four cell sizes.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    int_default_map["low_concavity_window_pixels"] = 10;
+    help_map["low_concavity_window_pixels"] = {"int", "10",
+        "Pixels in the downstream fit window (the pixel and the next ones down).",
+        "Fewer at an outlet. At least 2.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    int_default_map["low_concavity_min_pixels"] = 5;
+    help_map["low_concavity_min_pixels"] = {"int", "5",
+        "Fewest (area, gradient) pairs for a valid fit.",
+        "Carved, filled and gradient-less pixels in the window do not count. At "
+        "least 3 and at most low_concavity_window_pixels. A pixel without a "
+        "valid fit has flag -1.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    float_default_map["low_concavity_max_abs_concavity"] = 0.15f;
+    help_map["low_concavity_max_abs_concavity"] = {"float", "0.15",
+        "Threshold on |theta| below which a channel pixel is low concavity.",
+        "Fluvial channels are typically 0.35-0.6. Must be >= 0.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_rasters"] = true;
+    help_map["write_low_concavity_rasters"] = {"bool", "true",
+        "Write the low-concavity theta and flag rasters.",
+        "<write_fname>_low_concavity_theta.tif (theta where the fit is valid) and "
+        "_low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; "
+        "nodata off the channel network or outside the basin clip).",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_point_table"] = false;
+    help_map["write_low_concavity_point_table"] = {"bool", "false",
+        "Write one CSV row per channel pixel with its low-concavity fit.",
+        "<write_fname>_low_concavity_points.csv: flat, x, y, drainage_area_m2, "
+        "slope, theta, r2, n_pixels, log10_area_range, n_junctions_in_window, "
+        "low_concavity.",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
@@ -609,6 +669,19 @@ int main(int argc, char* argv[])
         const std::vector<double> d8_windows = parse_positive_lengths(
             sf.at("d8_gradient_window_metres_list"), "d8_gradient_window_metres_list",
             "D8 gradient window");
+        const bool run_low_concavity = bf.at("run_low_concavity_detection");
+        if (run_low_concavity)
+        {
+            if (ii.at("low_concavity_window_pixels") < 2)
+                throw std::runtime_error("low_concavity_window_pixels must be at least 2");
+            if (ii.at("low_concavity_min_pixels") < 3 ||
+                ii.at("low_concavity_min_pixels") > ii.at("low_concavity_window_pixels"))
+                throw std::runtime_error("low_concavity_min_pixels must be at least 3 and at most low_concavity_window_pixels");
+            if (!(ff.at("low_concavity_max_abs_concavity") >= 0.0f))
+                throw std::runtime_error("low_concavity_max_abs_concavity must be >= 0");
+            if (ii.at("threshold_contributing_pixels") < 1)
+                throw std::runtime_error("threshold_contributing_pixels must be at least 1");
+        }
         const std::string area_choice = sf.at("drainage_area_algorithm_choice");
         if (area_choice != "dinf" && area_choice != "d8")
             throw std::runtime_error("drainage_area_algorithm_choice must be dinf or d8");
@@ -899,6 +972,23 @@ int main(int argc, char* argv[])
                           lambda_files);
         }
 
+        // One D8 flow on the routing surface, built when a D8 path is needed
+        // (with its s-vector when the low-concavity finder needs contributing
+        // pixels).
+        std::unique_ptr<lsdtt::lsdtt_flow_base> d8_flow_holder;
+        auto get_d8_flow = [&]() -> std::unique_ptr<lsdtt::lsdtt_flow_base>& {
+            if (!d8_flow_holder)
+            {
+                lsdtt::lsdtt_flowinfo_options d8o;
+                d8o.boundary_conditions = sf.at("boundary_conditions");
+                d8o.build_s_vector = run_low_concavity;
+                d8o.n_threads = ii.at("n_threads");
+                d8_flow_holder = lsdtt::make_flow_base(
+                    dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
+            }
+            return d8_flow_holder;
+        };
+
         // ---------------------------------------------------------------------
         // Step 3b (slope_algorithm_choice: d8_flow_path): the centred D8
         // flow-path gradient for each window, on the routing surface, with
@@ -914,12 +1004,7 @@ int main(int argc, char* argv[])
                     throw std::runtime_error(
                         "d8_gradient_window_metres_list: a window of " + number_string(w) +
                         " m is under four cell sizes (" + number_string(4.0 * cs) + " m)");
-            lsdtt::lsdtt_flowinfo_options d8o;
-            d8o.boundary_conditions = sf.at("boundary_conditions");
-            d8o.build_s_vector = false;
-            d8o.n_threads = ii.at("n_threads");
-            const auto d8_flow = lsdtt::make_flow_base(
-                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
+            const auto& d8_flow = get_d8_flow();
             std::vector<std::pair<double, std::string>> window_files;
             for (const double w : d8_windows)
             {
@@ -948,6 +1033,96 @@ int main(int argc, char* argv[])
                               "_maximum_d50_slope_area_d8window.csv",
                           window_files, "d8_gradient_window_metres");
         }
+        // ---------------------------------------------------------------------
+        // Step 5 (run_low_concavity_detection): the downstream log S - log A
+        // fit at each channel pixel (plan section 4).
+        // ---------------------------------------------------------------------
+        if (run_low_concavity)
+        {
+            const double cs = dem.get_meta().cell_size;
+            const double gw = ff.at("low_concavity_gradient_window_metres");
+            if (!(gw >= 4.0 * cs))
+                throw std::runtime_error(
+                    "low_concavity_gradient_window_metres (" + number_string(gw) +
+                    " m) is under four cell sizes (" + number_string(4.0 * cs) + " m)");
+            const auto& d8_flow = get_d8_flow();
+            lsdtt::lsdtt_d8_flow_path_gradient_options go;
+            go.window_metres = gw;
+            go.exclude = exclude;
+            go.n_threads = ii.at("n_threads");
+            const lsdtt::lsdtt_raster_cpu lc_gradient =
+                lsdtt::d8_flow_path_gradient(*d8_flow, dem, drainage_area, go);
+            lsdtt::lsdtt_low_concavity_options lo;
+            lo.threshold_contributing_pixels =
+                static_cast<std::uint64_t>(ii.at("threshold_contributing_pixels"));
+            lo.window_pixels = ii.at("low_concavity_window_pixels");
+            lo.min_pixels = ii.at("low_concavity_min_pixels");
+            lo.max_abs_concavity = ff.at("low_concavity_max_abs_concavity");
+            lo.exclude = exclude;
+            lo.n_threads = ii.at("n_threads");
+            const lsdtt::lsdtt_low_concavity_result lc =
+                lsdtt::find_low_concavity(*d8_flow, drainage_area, lc_gradient, lo);
+
+            // Report only pixels inside the basin clip (the fits use the whole
+            // DEM, since a window may run past the clip's edge).
+            const auto& meta = dem.get_meta();
+            auto inside = [&](std::int64_t f) {
+                if (!has_clip) return true;
+                const std::size_t i = static_cast<std::size_t>(f);
+                return clip.get_mask()[i] != 0 && clip.get_data()[i] != 0.0f;
+            };
+            std::size_t n_low = 0, n_not = 0, n_none = 0;
+            for (std::size_t k = 0; k < lc.flat.size(); ++k)
+            {
+                if (!inside(lc.flat[k])) continue;
+                if (lc.flag[k] == 1) ++n_low;
+                else if (lc.flag[k] == 0) ++n_not;
+                else ++n_none;
+            }
+            std::cout << "Low concavity (|theta| < " << ff.at("low_concavity_max_abs_concavity") << ", window "
+                      << lo.window_pixels << " pixels, gradient window " << number_string(gw) << " m): "
+                      << n_low << " low-concavity, " << n_not << " not, " << n_none
+                      << " without a valid fit, of " << (n_low + n_not + n_none) << " channel pixels\n";
+
+            const std::string base = parser.get_write_path() + "/" + parser.get_write_fname();
+            if (bf.at("write_low_concavity_rasters"))
+            {
+                const float nodata = static_cast<float>(meta.no_data_value);
+                std::vector<float> th(dem.get_data().size(), nodata), fl(dem.get_data().size(), nodata);
+                for (std::size_t k = 0; k < lc.flat.size(); ++k)
+                {
+                    if (!inside(lc.flat[k])) continue;
+                    const std::size_t i = static_cast<std::size_t>(lc.flat[k]);
+                    fl[i] = static_cast<float>(lc.flag[k]);
+                    if (lc.flag[k] >= 0) th[i] = static_cast<float>(lc.theta[k]);
+                }
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(th, meta, base + "_low_concavity_theta.tif");
+                loader.write_full(fl, meta, base + "_low_concavity_flag.tif");
+            }
+            if (bf.at("write_low_concavity_point_table"))
+            {
+                const std::string path = base + "_low_concavity_points.csv";
+                std::ofstream out(path);
+                if (!out) throw std::runtime_error("Cannot write " + path);
+                out << "flat,x,y,drainage_area_m2,slope,theta,r2,n_pixels,log10_area_range,"
+                       "n_junctions_in_window,low_concavity\n";
+                for (std::size_t k = 0; k < lc.flat.size(); ++k)
+                {
+                    if (!inside(lc.flat[k])) continue;
+                    const std::int64_t f = lc.flat[k];
+                    const std::int64_t row = f / meta.n_cols, col = f % meta.n_cols;
+                    const double x = meta.x_min + (static_cast<double>(col) + 0.5) * meta.cell_size;
+                    const double y = meta.y_min + (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size;
+                    out << f << ',' << number_string(x) << ',' << number_string(y) << ','
+                        << number_string(lc.area_m2[k]) << ',' << number_string(lc.slope[k]) << ','
+                        << number_string(lc.theta[k]) << ',' << number_string(lc.r2[k]) << ','
+                        << lc.n_pixels[k] << ',' << number_string(lc.log10_area_range[k]) << ','
+                        << lc.n_junctions[k] << ',' << static_cast<int>(lc.flag[k]) << '\n';
+                }
+            }
+        }
+
         parser.print_parameters();
     }
     catch (const std::exception& error)

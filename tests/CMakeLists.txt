@@ -2661,6 +2661,25 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_area_d8_flow_path PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# The low-concavity finder (step 3 of the slope-area plan): runs, writes the
+# theta and flag rasters and the point table, and reports its counts. On this
+# pitty fixture 1457 of the 2320 channel pixels were carved or filled and are
+# excluded, and 602 more have too few usable pairs in their window; the fit
+# itself is tested in unit_slope_area_d8_flow_path_gradient.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_low_concavity
+    lsdtt-slope-area
+    slope_area_low_concavity.param.in
+    sa_low_concavity_points.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_low_concavity_theta.tif
+    --expect sa_low_concavity_flag.tif
+    --expect-file-contains "sa_low_concavity_points.csv:flat,x,y,drainage_area_m2,slope,theta,r2,n_pixels,log10_area_range,n_junctions_in_window,low_concavity"
+    --stdout-contains "Low concavity (|theta| < 0.15, window 10 pixels, gradient window 150 m): 29 low-concavity, 232 not, 2059 without a valid fit, of 2320 channel pixels"
+)
+lsdtt_set_tests_properties(smoke_slope_area_low_concavity PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 # flow_algorithm was renamed without an alias: an old file stops with a
 # message naming drainage_area_algorithm_choice.
 add_lsdtt_cli_smoke_test(
@@ -2758,6 +2777,7 @@ foreach(_sa_bad
         "bad_drainage_area_algorithm|drainage_area_algorithm_choice must be dinf or d8"
         "bad_slope_algorithm|slope_algorithm_choice must be polyfit or d8_flow_path"
         "d8_window_too_short|d8_gradient_window_metres_list: a window of 100 m is under four cell sizes (120 m)"
+        "low_concavity_bad_min_pixels|low_concavity_min_pixels must be at least 3 and at most low_concavity_window_pixels"
         "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
         "empty_lambdas|polyfit_lambda_metres_list cannot be empty"
         "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM"
@@ -6241,10 +6261,13 @@ add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned
 lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
     LABELS "statistics;slope_area")
 
-# d8_flow_path_gradient (lsdtt_slope_area_cpu) and the options form of
-# channel_slope_at: exact gradients on planes (row and diagonal paths),
-# one-sided windows, exclusion of raised cells, donor ranking by an area
-# raster, refusals, thread independence.
+# lsdtt_slope_area_cpu: d8_flow_path_gradient and the options form of
+# channel_slope_at (exact gradients on planes, row and diagonal paths;
+# one-sided windows incl. 30 m cells; exclusion; donor ranking by an area
+# raster), conditioned_pixel_mask codes, and the low-concavity fit
+# (fit_log_slope_area exact on arrays; find_low_concavity flag rule, outlet
+# cut, exclusion, junction count; theta recovered within 0.05 on a valley
+# built with S = k A^-theta); refusals; thread independence.
 add_executable(lsdtt-test-slope-area cpp/test_slope_area.cpp)
 target_link_libraries(lsdtt-test-slope-area PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_area_d8_flow_path_gradient COMMAND lsdtt-test-slope-area)

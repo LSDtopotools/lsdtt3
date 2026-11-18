@@ -203,6 +203,24 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `summary_csv_fname` | `string` | - | `param` | - | Summary CSV filename. | Empty uses &lt;write_fname&gt;_maximum_d50_slope_area.csv. |
 
+### Low concavity
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_low_concavity_detection` | `bool` | `false` | `switch` | - | Find channel reaches whose gradient changes little with drainage area. | At each channel pixel (threshold_contributing_pixels), take it and the next low_concavity_window_pixels - 1 pixels DOWNSTREAM along the D8 receivers (downstream because the path upstream branches; the window runs through tributary junctions), and fit log10 S = a + b log10 A over those with a gradient that are not carved or filled (exclude_carved_and_filled_pixels). The concavity is theta = -b (S ~ A^-theta). A pixel is low concavity if \|theta\| &lt; low_concavity_max_abs_concavity, so a weakly convex reach counts too. S is always the centred D8 flow-path gradient over low_concavity_gradient_window_metres, whatever slope_algorithm_choice is; A is the drainage_area_algorithm_choice area. Aimed at threshold slopes, debris-flow channels and alluvial fans. Outputs: &lt;write_fname&gt;_low_concavity_theta.tif and _low_concavity_flag.tif (write_low_concavity_rasters) and _low_concavity_points.csv (write_low_concavity_point_table). |
+| `low_concavity_gradient_window_metres` | `float` | `150` | `param` | `run_low_concavity_detection` | Total length (m) of the centred D8 flow-path gradient window used by the low-concavity fit. | As d8_gradient_window_metres_list, but one value, and used whatever slope_algorithm_choice is. At least four cell sizes. |
+| `low_concavity_window_pixels` | `int` | `10` | `param` | `run_low_concavity_detection` | Pixels in the downstream fit window (the pixel and the next ones down). | Fewer at an outlet. At least 2. |
+| `low_concavity_min_pixels` | `int` | `5` | `param` | `run_low_concavity_detection` | Fewest (area, gradient) pairs for a valid fit. | Carved, filled and gradient-less pixels in the window do not count. At least 3 and at most low_concavity_window_pixels. A pixel without a valid fit has flag -1. |
+| `low_concavity_max_abs_concavity` | `float` | `0.15` | `param` | `run_low_concavity_detection` | Threshold on \|theta\| below which a channel pixel is low concavity. | Fluvial channels are typically 0.35-0.6. Must be &gt;= 0. |
+| `write_low_concavity_rasters` | `bool` | `true` | `switch` | `run_low_concavity_detection` | Write the low-concavity theta and flag rasters. | &lt;write_fname&gt;_low_concavity_theta.tif (theta where the fit is valid) and _low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; nodata off the channel network or outside the basin clip). |
+| `write_low_concavity_point_table` | `bool` | `false` | `switch` | `run_low_concavity_detection` | Write one CSV row per channel pixel with its low-concavity fit. | &lt;write_fname&gt;_low_concavity_points.csv: flat, x, y, drainage_area_m2, slope, theta, r2, n_pixels, log10_area_range, n_junctions_in_window, low_concavity. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
 ### Interior nodata
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |

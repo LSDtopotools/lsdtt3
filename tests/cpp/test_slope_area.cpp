@@ -39,6 +39,22 @@
 //      window (divide, outlet) reaches 60 m of the 75 m half-window; with
 //      the span rule of window/2 less one diagonal step it is valid, and the
 //      gradient is exact.
+//  10. fit_log_slope_area on arrays: S = 2 A^-0.5 gives theta 0.5 (r2 1);
+//      constant S gives theta 0 (r2 NaN); S = A^0.1 gives theta -0.1; equal
+//      areas or fewer than min_pixels pairs are invalid; S <= 0 is dropped.
+//  11. find_low_concavity with given area and gradient rasters on an
+//      east-draining plane (every row a channel): the flag rule |theta| <
+//      0.15 for theta 0.5, 0.1, -0.1, -0.3; the window is cut at the outlet
+//      (too few pixels: flag -1); an excluded pixel has no fit; excluded
+//      window pixels are left out of the fit.
+//  12. junctions: on the valley with a tributary, the downstream window of a
+//      floor pixel upstream of the confluence counts one junction.
+//  13. integration: a valley whose floor area grows downstream, with the long
+//      profile built so S = k A^-theta; theta from the D8 flow-path gradient
+//      (window 4 cells) is within 0.05 of 0.5 and of 0.05 on the middle of
+//      the floor.
+//  14. refusals: window_pixels < 2, min_pixels < 3 or > window, negative
+//      threshold, rasters off the grid.
 //
 // Usage: lsdtt-test-slope-area
 // Prints one line per check and a final "RESULT: PASS|FAIL".
@@ -377,6 +393,207 @@ int main()
         const auto old_rule = channel_slope_at(*flow, dem, 4 * nc, 75.0, so);
         check("the unrelaxed rule (span >= window/2) rejects the divide pixel on 30 m cells",
               !old_rule.slope_valid);
+    }
+
+    // ---- 10. fit_log_slope_area ------------------------------------------------------
+    {
+        std::vector<double> A, S5, S0, Sm;
+        for (int i = 0; i < 10; ++i)
+        {
+            const double a = std::pow(10.0, 2.0 + 0.2 * i);
+            A.push_back(a);
+            S5.push_back(2.0 * std::pow(a, -0.5));
+            S0.push_back(0.3);
+            Sm.push_back(std::pow(a, 0.1));
+        }
+        const auto f5 = fit_log_slope_area(A, S5, 5);
+        check("S = 2 A^-0.5: theta 0.5, r2 1",
+              f5.valid && near(f5.theta, 0.5, 1e-9) && near(f5.r2, 1.0, 1e-9) && f5.n_pixels == 10 &&
+                  near(f5.log10_area_range, 1.8, 1e-9),
+              s(f5.theta));
+        const auto f0 = fit_log_slope_area(A, S0, 5);
+        check("constant S: theta 0, r2 NaN", f0.valid && f0.theta == 0.0 && std::isnan(f0.r2), s(f0.theta));
+        const auto fm = fit_log_slope_area(A, Sm, 5);
+        check("S = A^0.1: theta -0.1", fm.valid && near(fm.theta, -0.1, 1e-9), s(fm.theta));
+        const auto feq = fit_log_slope_area(std::vector<double>(6, 500.0), std::vector<double>{1, 2, 3, 4, 5, 6}, 5);
+        check("equal areas: invalid", !feq.valid && feq.n_pixels == 6);
+        const auto ffew = fit_log_slope_area(std::vector<double>{1, 10, 100, 1000}, std::vector<double>{1, 1, 1, 1}, 5);
+        check("4 pairs with min_pixels 5: invalid", !ffew.valid && ffew.n_pixels == 4);
+        std::vector<double> S5bad = S5;
+        S5bad[3] = 0.0;
+        S5bad[4] = -1.0;
+        const auto fdrop = fit_log_slope_area(A, S5bad, 5);
+        check("S <= 0 dropped: 8 pairs, theta still 0.5", fdrop.valid && fdrop.n_pixels == 8 && near(fdrop.theta, 0.5, 1e-9));
+    }
+
+    // ---- 11. flag rule, outlet cut, exclusion -----------------------------------------
+    {
+        const int nr = 5, nc = 30;
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c) z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(300.0 - 1.0 * c);
+        const auto dem = make_raster(nr, nc, z);
+        const auto flow = route(dem);
+        auto rasters_for = [&](double theta) {
+            std::vector<float> a(z.size()), g(z.size());
+            for (int r = 0; r < nr; ++r)
+                for (int c = 0; c < nc; ++c)
+                {
+                    const double av = 1000.0 * std::pow(1.3, c);       // log A grows along the row
+                    a[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(av);
+                    g[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(0.5 * std::pow(av, -theta));
+                }
+            return std::make_pair(make_raster(nr, nc, a), make_raster(nr, nc, g));
+        };
+        lsdtt_low_concavity_options lo;
+        lo.threshold_contributing_pixels = 1;
+        lo.window_pixels = 10;
+        lo.min_pixels = 5;
+        lo.max_abs_concavity = 0.15;
+        lo.n_threads = 1;
+        auto flag_at = [&](const lsdtt_low_concavity_result& res, int r, int c) -> int {
+            for (std::size_t k = 0; k < res.flat.size(); ++k)
+                if (res.flat[k] == static_cast<std::int64_t>(r) * nc + c) return res.flag[k];
+            return -9;
+        };
+        auto idx_of = [&](const lsdtt_low_concavity_result& res, int r, int c) -> std::size_t {
+            for (std::size_t k = 0; k < res.flat.size(); ++k)
+                if (res.flat[k] == static_cast<std::int64_t>(r) * nc + c) return k;
+            return res.flat.size();
+        };
+        for (const double th : {0.5, 0.1, -0.1, -0.3})
+        {
+            const auto rs = rasters_for(th);
+            const auto res = find_low_concavity(*flow, rs.first, rs.second, lo);
+            const std::size_t k = idx_of(res, 2, 5);
+            const int want = std::abs(th) < 0.15 ? 1 : 0;
+            check("theta " + s(th) + ": fitted exactly, flag " + std::to_string(want),
+                  k < res.flat.size() && near(res.theta[k], th, 1e-5) && res.flag[k] == want,
+                  k < res.flat.size() ? s(res.theta[k]) : "missing");
+        }
+        const auto rs = rasters_for(0.1);
+        const auto res = find_low_concavity(*flow, rs.first, rs.second, lo);
+        check("every pixel of the plane is a channel pixel (threshold 1)", res.flat.size() == static_cast<std::size_t>(nr * nc));
+        check("window cut at the outlet: 3 pixels left, no fit (-1)", flag_at(res, 2, nc - 3) == -1);
+        check("window cut at the outlet: 5 pixels left, a fit", flag_at(res, 2, nc - 5) == 1);
+        std::vector<std::uint8_t> ex(z.size(), 0);
+        ex[static_cast<std::size_t>(2 * nc + 5)] = 2;               // carved
+        ex[static_cast<std::size_t>(2 * nc + 8)] = 1;               // filled
+        lo.exclude = &ex;
+        const auto rx = find_low_concavity(*flow, rs.first, rs.second, lo);
+        check("an excluded (carved) pixel gets no fit", flag_at(rx, 2, 5) == -1);
+        const std::size_t k4 = idx_of(rx, 2, 4);
+        check("excluded window pixels are left out: 8 of 10 pairs, theta still exact",
+              k4 < rx.flat.size() && rx.n_pixels[k4] == 8 && near(rx.theta[k4], 0.1, 1e-5),
+              k4 < rx.flat.size() ? std::to_string(rx.n_pixels[k4]) : "missing");
+        lo.exclude = nullptr;
+        lo.n_threads = 4;
+        const auto r4 = find_low_concavity(*flow, rs.first, rs.second, lo);
+        lo.n_threads = 1;
+        bool same = r4.flat == res.flat && r4.flag == res.flag && r4.n_pixels == res.n_pixels;
+        for (std::size_t k = 0; same && k < res.theta.size(); ++k)
+            same = (std::isnan(res.theta[k]) && std::isnan(r4.theta[k])) || res.theta[k] == r4.theta[k];
+        check("find_low_concavity: n_threads 1 and 4 identical", same);
+
+        // ---- 14. refusals ----------------------------------------------------------------
+        auto refused = [&](lsdtt_low_concavity_options o, const lsdtt_raster_cpu& a) {
+            try { (void)find_low_concavity(*flow, a, rs.second, o); } catch (const std::invalid_argument&) { return true; }
+            return false;
+        };
+        lsdtt_low_concavity_options bad = lo;
+        bad.window_pixels = 1;
+        check("window_pixels 1 refused", refused(bad, rs.first));
+        bad = lo;
+        bad.min_pixels = 2;
+        check("min_pixels 2 refused", refused(bad, rs.first));
+        bad = lo;
+        bad.min_pixels = 11;
+        check("min_pixels above the window refused", refused(bad, rs.first));
+        bad = lo;
+        bad.max_abs_concavity = -0.1;
+        check("negative max_abs_concavity refused", refused(bad, rs.first));
+        check("an area raster off the grid refused", refused(lo, make_raster(3, 3, std::vector<float>(9, 1.0f))));
+    }
+
+    // ---- 12. junctions --------------------------------------------------------------------
+    {
+        const int nr = 21, nc = 60;
+        auto floor_z = [&](int c) { return 100.0 - 0.1 * c; };
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+            {
+                double h = floor_z(c) + 1.0 * std::abs(r - 10);
+                if (r < 10) h = std::min(h, floor_z(30) + 0.5 * (10 - r) + 1.0 * std::abs(c - 30));
+                z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(h);
+            }
+        const auto dem = make_raster(nr, nc, z);
+        const auto flow = route(dem);
+        const auto area = d8_area(*flow, dem);
+        auto F = [&](int r, int c) { return static_cast<std::int64_t>(r) * nc + c; };
+        lsdtt_d8_flow_path_gradient_options go;
+        go.window_metres = 4 * k_cs;
+        go.n_threads = 1;
+        const auto g = d8_flow_path_gradient(*flow, dem, area, go);
+        lsdtt_low_concavity_options lo;
+        lo.threshold_contributing_pixels = flow->s_vector_size(F(9, 30));   // the tributary's mouth is a channel
+        lo.n_threads = 1;
+        const auto res = find_low_concavity(*flow, area, g, lo);
+        std::size_t k = res.flat.size(), k2 = res.flat.size();
+        for (std::size_t i = 0; i < res.flat.size(); ++i)
+        {
+            if (res.flat[i] == F(10, 25)) k = i;
+            if (res.flat[i] == F(10, 40)) k2 = i;
+        }
+        check("junctions: the tributary mouth is a channel pixel, a side cell is not",
+              flow->s_vector_size(F(9, 20)) < lo.threshold_contributing_pixels);
+        check("junctions: the window from (10, 25) passes the confluence at (10, 30): 1 junction",
+              k < res.flat.size() && res.n_junctions[k] == 1,
+              k < res.flat.size() ? std::to_string(res.n_junctions[k]) : "missing");
+        check("junctions: the window from (10, 40) has none", k2 < res.flat.size() && res.n_junctions[k2] == 0);
+    }
+
+    // ---- 13. integration: S = k A^-theta on a valley floor ---------------------------------
+    for (const double th : {0.5, 0.05})
+    {
+        const int nr = 21, nc = 80;
+        // floor along row 10; sides rise 5 m per row, so every side cell drains
+        // straight to the floor and the floor area grows by 21 cells per column
+        std::vector<double> floor(static_cast<std::size_t>(nc), 0.0);
+        floor[static_cast<std::size_t>(nc - 1)] = 10.0;
+        for (int c = nc - 2; c >= 0; --c)
+        {
+            const double a = (c + 1) * 21.0 * k_cs * k_cs;            // area at the floor cell c
+            floor[static_cast<std::size_t>(c)] = floor[static_cast<std::size_t>(c + 1)] + 0.2 * std::pow(a / 1.0e4, -th) * k_cs;
+        }
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+                z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(floor[static_cast<std::size_t>(c)] + 5.0 * std::abs(r - 10));
+        const auto dem = make_raster(nr, nc, z);
+        const auto flow = route(dem);
+        const auto area = d8_area(*flow, dem);
+        lsdtt_d8_flow_path_gradient_options go;
+        go.window_metres = 4 * k_cs;
+        go.n_threads = 1;
+        const auto g = d8_flow_path_gradient(*flow, dem, area, go);
+        lsdtt_low_concavity_options lo;
+        lo.threshold_contributing_pixels = 200;                         // the floor from column 9 on
+        lo.window_pixels = 10;
+        lo.n_threads = 1;
+        const auto res = find_low_concavity(*flow, area, g, lo);
+        double worst = 0.0;
+        int n_mid = 0;
+        for (std::size_t k = 0; k < res.flat.size(); ++k)
+        {
+            const int r = static_cast<int>(res.flat[k] / nc), c = static_cast<int>(res.flat[k] % nc);
+            if (r != 10 || c < 20 || c > 60) continue;
+            ++n_mid;
+            worst = std::max(worst, std::abs(res.theta[k] - th));
+        }
+        std::cout << "  (valley floor, theta " << th << ": max |error| " << worst << ")\n";
+        check("valley floor built with theta " + s(th) + ": fitted theta within 0.05 on columns 20-60",
+              n_mid == 41 && worst < 0.05, "max |theta - " + s(th) + "| = " + s(worst) + ", n " + std::to_string(n_mid));
     }
 
     std::cout << "RESULT: " << (g_fail == 0 ? "PASS" : "FAIL") << " (" << g_n << " checks)\n";
