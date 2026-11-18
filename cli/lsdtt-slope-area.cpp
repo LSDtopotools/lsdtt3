@@ -52,6 +52,7 @@
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_status  = "stable";
 static const std::string k_citation =
@@ -197,19 +198,11 @@ struct BinRow
     std::size_t count = 0;
 };
 
-static double percentile(std::vector<double>& values, double fraction)
-{
-    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
-    const double position = fraction * static_cast<double>(values.size() - 1);
-    const std::size_t lower = static_cast<std::size_t>(std::floor(position));
-    const std::size_t upper = static_cast<std::size_t>(std::ceil(position));
-    std::nth_element(values.begin(), values.begin() + lower, values.end());
-    const double low = values[lower];
-    if (upper == lower) return low;
-    std::nth_element(values.begin(), values.begin() + upper, values.end());
-    return low + (values[upper] - low) * (position - lower);
-}
-
+// Bin the valid (area, slope) pixels with the shared utility
+// (src/utils/lsdtt_histogram, compute_log_binned_quantiles). Its float form
+// keeps this CLI's arithmetic exactly (float-precision ln of each area), so the
+// lambda CSVs are byte-identical to those written before the move (pinned by
+// the smoke_slope_area_reproduce_* tests).
 static std::vector<BinRow> make_bins(
     const lsdtt::lsdtt_raster_cpu& area,
     const lsdtt::lsdtt_raster_cpu& slope,
@@ -219,53 +212,37 @@ static std::vector<BinRow> make_bins(
     const auto& slope_data = slope.get_data();
     const auto& area_mask = area.get_mask();
     const auto& slope_mask = slope.get_mask();
-    double minimum = std::numeric_limits<double>::infinity();
-    double maximum = 0.0;
-    for (std::size_t i = 0; i < area_data.size(); ++i)
-    {
-        if (area_mask[i] && slope_mask[i] && area_data[i] > 0.0 &&
-            std::isfinite(area_data[i]) && std::isfinite(slope_data[i]))
-        {
-            minimum = std::min(minimum, static_cast<double>(area_data[i]));
-            maximum = std::max(maximum, static_cast<double>(area_data[i]));
-        }
-    }
-    if (!std::isfinite(minimum) || maximum <= minimum)
-        throw std::runtime_error("No valid slope-area pixels were found");
-
-    const double log_min = std::log(minimum);
-    const double log_max = std::log(maximum);
-    std::vector<std::vector<double>> slopes(static_cast<std::size_t>(n_bins));
+    std::vector<float> guide;
+    std::vector<float> values;
+    float minimum = std::numeric_limits<float>::infinity();
+    float maximum = 0.0f;
     for (std::size_t i = 0; i < area_data.size(); ++i)
     {
         if (!area_mask[i] || !slope_mask[i] || area_data[i] <= 0.0 ||
             !std::isfinite(area_data[i]) || !std::isfinite(slope_data[i]))
             continue;
-        const double fraction =
-            (std::log(area_data[i]) - log_min) / (log_max - log_min);
-        const int bin = std::min(n_bins - 1,
-            std::max(0, static_cast<int>(fraction * n_bins)));
-        slopes[static_cast<std::size_t>(bin)].push_back(slope_data[i]);
+        guide.push_back(area_data[i]);
+        values.push_back(slope_data[i]);
+        minimum = std::min(minimum, area_data[i]);
+        maximum = std::max(maximum, area_data[i]);
     }
+    if (guide.empty() || !(maximum > minimum))
+        throw std::runtime_error("No valid slope-area pixels were found");
 
+    const lsdtt::lsdtt_log_binned_quantiles binned = lsdtt::compute_log_binned_quantiles(
+        guide, values, static_cast<std::size_t>(n_bins), {0.05, 0.25, 0.50, 0.75, 0.95});
     std::vector<BinRow> rows;
-    rows.reserve(static_cast<std::size_t>(n_bins));
-    for (int bin = 0; bin < n_bins; ++bin)
+    rows.reserve(binned.counts.size());
+    for (std::size_t j = 0; j < binned.counts.size(); ++j)
     {
-        const double left = std::exp(log_min +
-            (log_max - log_min) * bin / n_bins);
-        const double right = std::exp(log_min +
-            (log_max - log_min) * (bin + 1) / n_bins);
-        std::vector<double>& values = slopes[static_cast<std::size_t>(bin)];
-        if (values.empty()) continue;
         BinRow row;
-        row.area = std::sqrt(left * right);
-        row.count = values.size();
-        row.d05 = percentile(values, 0.05);
-        row.d25 = percentile(values, 0.25);
-        row.d50 = percentile(values, 0.50);
-        row.d75 = percentile(values, 0.75);
-        row.d95 = percentile(values, 0.95);
+        row.area = binned.geometric_centre[j];
+        row.count = binned.counts[j];
+        row.d05 = binned.quantiles[0][j];
+        row.d25 = binned.quantiles[1][j];
+        row.d50 = binned.quantiles[2][j];
+        row.d75 = binned.quantiles[3][j];
+        row.d95 = binned.quantiles[4][j];
         rows.push_back(row);
     }
     return rows;

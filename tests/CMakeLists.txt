@@ -6108,6 +6108,16 @@ add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
 lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
     LABELS "statistics")
 
+# compute_log_binned_quantiles (src/utils/lsdtt_histogram): the slope-area
+# binning moved out of cli/lsdtt-slope-area.cpp, compared bit for bit with the
+# CLI's removed make_bins / percentile, kept verbatim in the driver (a
+# ridgeline paper in review reads the CSVs these numbers go into).
+add_executable(lsdtt-test-log-binned-quantiles cpp/test_log_binned_quantiles.cpp)
+target_link_libraries(lsdtt-test-log-binned-quantiles PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned-quantiles)
+lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
+    LABELS "statistics;slope_area")
+
 # Stage 2 part B: records the D7 change from the private ols_fit to
 # compute_linear_regression in the drainage-area exceedance scaling.
 add_executable(lsdtt-test-drainage-area-exceedance-ols cpp/test_drainage_area_exceedance_ols.cpp)

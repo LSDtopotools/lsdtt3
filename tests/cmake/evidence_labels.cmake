@@ -560,6 +560,7 @@ foreach(_t IN ITEMS raster_cell_predicates raster_sampling grid_neighbours
                     order_statistics)
     lsdtt_evidence(unit_${_t} unit characterisation)
 endforeach()
+lsdtt_evidence(unit_slope_area_log_binned_quantiles unit characterisation exact_solution)  # bit-identical to lsdtt-slope-area's removed make_bins (kept verbatim); hand cases
 lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)
 lsdtt_evidence(unit_raster_resampling unit exact_solution property)
 lsdtt_evidence(unit_raster_hierarchy unit exact_solution)  # dyadic layout and activation cases
