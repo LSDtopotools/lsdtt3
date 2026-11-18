@@ -236,6 +236,10 @@ lsdtt_evidence(smoke_slope_area system smoke characterisation metamorphic)
 lsdtt_evidence(smoke_slope_area_d8 system smoke characterisation)
 lsdtt_evidence(smoke_slope_area_no_flowinfo system smoke characterisation metamorphic)    # same row, flowinfo off
 lsdtt_evidence(smoke_slope_area_clip system smoke characterisation)
+lsdtt_evidence(smoke_slope_area_reproduce_dinf system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_d8 system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_dinf_clip system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_d8_clip system smoke characterisation)    # pinned outputs, ridgeline paper
 lsdtt_evidence(smoke_outlet_matching_identity system smoke property characterisation metamorphic)
 lsdtt_evidence(smoke_outlet_matching_resampled system smoke characterisation)
 lsdtt_evidence(smoke_outlet_matching_edge_only system smoke characterisation)

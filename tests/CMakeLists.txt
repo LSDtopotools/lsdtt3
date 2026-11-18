@@ -2555,6 +2555,85 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
     FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
 
+# -----------------------------------------------------------------------------
+# REPRODUCTION GUARD for lsdtt-slope-area (pinned 2026-11-18, before any of the
+# changes in docs/plan_docs/plan_slope_area_gradient_and_low_concavity.md).
+# A ridgeline paper in review uses the lambda CSVs and the summary CSV of this
+# CLI. These four runs (dinf / d8, with and without the basin mask) pin, by
+# sha256, every output that code wrote on a DEM whose fill raises 18.6% of the
+# cells: lambda CSVs, summary CSV, slope rasters, drainage-area raster (and the
+# D8 flow direction). Pinned from the code of commit 14c2ce5; repeat runs are
+# byte-identical, and turning the fill off changes the CSVs and rasters, so
+# the pins see the fill path. Later steps may change the param files ONLY to
+# the new parameter names plus the switches that restore the old behaviour;
+# the hashes must not change. NEVER re-pin without Simon.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_dinf
+    lsdtt-slope-area
+    slope_area_reproduce_dinf.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:2b663b68924de1571c98e20fce5aad4c7ebd868c6c6f5a07aade4982d46d2d5f
+    --expect-sha256 sa_lambda_150m.csv:a507f79fcc82d0565e2f5e3a72162c9ff8bf4f032c43459c452e21af6d741b2d
+    --expect-sha256 sa_maximum_d50_slope_area.csv:8fcdf1f4071a4af0961d489fc6fb67913dd1b5b3263a2bf365dcc8eada067031
+    --expect-sha256 sa_lambda_90m_slope.tif:778526faa752b2cdf672b20e4d92f455584d285f06e6eaa7793e8adf56c9e28c
+    --expect-sha256 sa_lambda_150m_slope.tif:3f927f8f339b367cb7c282a3388dc00e33914d7ac1c692d0a1fb15ad9b4cdcb1
+    --expect-sha256 sa_dinf_drainage_area.tif:126729beb6384b9a32fa8fa91ac45fd548b9bef01849a5824ba948fff0208a0e
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_dinf PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_d8
+    lsdtt-slope-area
+    slope_area_reproduce_d8.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:9403d586fd0ec2d5213802af9fffcf9f56b2ce0059e0141acb3a1e12c9aad91d
+    --expect-sha256 sa_lambda_150m.csv:d7201d507a27b695cde9697a5f9c28ccb98b2f12e633ee99be411202cba38011
+    --expect-sha256 sa_maximum_d50_slope_area.csv:f13341f3a6b887ad22292ae7b512bf95dca3298956da67a8dd80d18e10a0c4fc
+    --expect-sha256 sa_lambda_90m_slope.tif:778526faa752b2cdf672b20e4d92f455584d285f06e6eaa7793e8adf56c9e28c
+    --expect-sha256 sa_lambda_150m_slope.tif:3f927f8f339b367cb7c282a3388dc00e33914d7ac1c692d0a1fb15ad9b4cdcb1
+    --expect-sha256 sa_d8_drainage_area.tif:0a8ceb9e6a2784e590e6606c4cf95846adc101c26ca49bf09751e61ff21c6c9e
+    --expect-sha256 sa_d8_flow_direction.tif:5f5647a86f1ca70b131a893450ed4f50976b56b599082a7e23ee2aab82cd1e8f
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_d8 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_dinf_clip
+    lsdtt-slope-area
+    slope_area_reproduce_dinf_clip.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:5986906d7e73faca8251a2008905ab55e2548f68821d8f793505cb7c9d5bc737
+    --expect-sha256 sa_lambda_150m.csv:0fd800718f1024fa33cf9dac1144650b865a65cc15f45ad9f40ea07d36b88ae4
+    --expect-sha256 sa_maximum_d50_slope_area.csv:a021d79f2ed7b0650a7b4959ca44947215ba96ef7eb8ab254d6e2911fbe58f8b
+    --expect-sha256 sa_lambda_90m_slope.tif:4b03eda663a75fc804deef393a543e066e6ecd6d2b16727ec90fcf0ab5533ced
+    --expect-sha256 sa_lambda_150m_slope.tif:e834417bb14b9e8bfeadbc66dbe23a1bb8b875c915fa8b600b763fff549c311a
+    --expect-sha256 sa_dinf_drainage_area.tif:126729beb6384b9a32fa8fa91ac45fd548b9bef01849a5824ba948fff0208a0e
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_dinf_clip PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_d8_clip
+    lsdtt-slope-area
+    slope_area_reproduce_d8_clip.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:0a070ac018febd15f9129f06fbbf42e45cbf4e5408b11906a0c306dc8e342afb
+    --expect-sha256 sa_lambda_150m.csv:6854e673b345d252e779abf90491603251213a1fea83ced4294ecebee138401a
+    --expect-sha256 sa_maximum_d50_slope_area.csv:0ed17b8c5d29022e17e95aa00a578c6effec3ffe8cd8424c742771f076682b42
+    --expect-sha256 sa_lambda_90m_slope.tif:4b03eda663a75fc804deef393a543e066e6ecd6d2b16727ec90fcf0ab5533ced
+    --expect-sha256 sa_lambda_150m_slope.tif:e834417bb14b9e8bfeadbc66dbe23a1bb8b875c915fa8b600b763fff549c311a
+    --expect-sha256 sa_d8_drainage_area.tif:0a8ceb9e6a2784e590e6606c4cf95846adc101c26ca49bf09751e61ff21c6c9e
+    --expect-sha256 sa_d8_flow_direction.tif:5f5647a86f1ca70b131a893450ed4f50976b56b599082a7e23ee2aab82cd1e8f
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_d8_clip PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
 foreach(_sa_bad
         "bad_flow_algorithm|flow_algorithm must be dinf or d8"
         "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
