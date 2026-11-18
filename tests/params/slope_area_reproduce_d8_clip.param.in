@@ -1,0 +1,29 @@
+# REPRODUCTION GUARD (plan_slope_area_gradient_and_low_concavity.md, 3B).
+# A ridgeline paper in review uses lsdtt-slope-area's lambda CSVs as they are
+# written by the code of 2026-11-18. This run, in the parameter syntax of that
+# date, pins (sha256, in tests/CMakeLists.txt) the lambda CSVs, slope rasters,
+# drainage-area raster and summary CSV it produced then. When the CLI gains
+# carve-then-fill, filled-pixel exclusion and polyfit on the input DEM, this
+# file is updated ONLY to the new parameter names plus the three switches
+# that restore the old behaviour (breach_before_fill: false,
+# exclude_filled_pixels: false, polyfit_on_routing_surface: true); the hashes
+# must not change. Never re-pin without Simon.
+#
+# The fixture DEM has pits: the fill raises 7459 of its 40000 cells (18.6%),
+# up to 62 m, so the fill-only path and its pixels are exercised.
+# Every setting the output depends on is stated, not left to a default.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sa
+n_threads: 1
+fill_before_routing: true
+fill_min_slope: 0.0001
+boundary_conditions: oooo
+flow_algorithm: d8
+write_flowinfo_rasters: true
+write_slope_rasters: true
+polyfit_lambda_metres_list: 90,150
+n_log_bins: 20
+basin_clip_mode: mask
+basin_mask_fname: sa_basins_junction_basins.tif
