@@ -31,10 +31,14 @@
 //      up the tributary and the gradient is steeper.
 //   6. Refusals: a window under four cell sizes; a raster off the grid.
 //   7. n_threads 1 and 4 give bit-identical rasters.
-//   8. filled_pixel_mask: on a plane with a 3 x 3 depression, a pit fill
-//      marks exactly the cells it raised (the depression); a least-cost
-//      breach marks none of the cells it lowered; equal surfaces mark
-//      nothing; a raster off the grid is refused.
+//   8. conditioned_pixel_mask: on a plane with a 3 x 3 depression, a pit
+//      fill marks exactly the cells it raised as filled (1); a least-cost
+//      breach marks the cells it lowered as carved (2) and those it raised as
+//      filled; equal surfaces mark nothing; a raster off the grid is refused.
+//   9. F1 (plan section 10): on 30 m cells with a 150 m window a one-sided
+//      window (divide, outlet) reaches 60 m of the 75 m half-window; with
+//      the span rule of window/2 less one diagonal step it is valid, and the
+//      gradient is exact.
 //
 // Usage: lsdtt-test-slope-area
 // Prints one line per check and a final "RESULT: PASS|FAIL".
@@ -305,42 +309,74 @@ int main()
             for (int c = 6; c <= 8; ++c) z[static_cast<std::size_t>(r * nc + c)] -= 5.0f;   // depression
         const auto input = make_raster(nr, nc, z);
         const auto filled = fill_pits(input, 0.0001f, "oooo", 1);
-        const auto m = filled_pixel_mask(input, filled);
+        const auto m = conditioned_pixel_mask(input, filled);
         bool exact = true;
         int n = 0;
         for (std::size_t i = 0; i < m.size(); ++i)
         {
             const bool raised = filled.get_data()[i] > input.get_data()[i];
-            exact = exact && (m[i] == (raised ? 1 : 0));
-            n += m[i];
+            exact = exact && (m[i] == (raised ? k_pixel_filled : k_pixel_untouched));
+            n += m[i] == k_pixel_filled ? 1 : 0;
         }
         bool depression_marked = true;
         for (int r = 6; r <= 8; ++r)
             for (int c = 6; c <= 8; ++c) depression_marked = depression_marked && m[static_cast<std::size_t>(r * nc + c)];
-        check("fill: the mask is exactly the raised cells, and covers the depression",
+        check("fill: the mask is exactly the raised cells (code 1), and covers the depression",
               exact && depression_marked && n >= 9, std::to_string(n) + " marked");
         breach_least_cost_options bo;
         bo.fill_remainder = false;
         const auto breached = breach_depressions_least_cost(input, bo);
-        const auto mb = filled_pixel_mask(input, breached);
-        bool lowered_unmarked = true;
+        const auto mb = conditioned_pixel_mask(input, breached);
+        bool codes_right = true;
         int n_lowered = 0;
         for (std::size_t i = 0; i < mb.size(); ++i)
-            if (breached.get_data()[i] < input.get_data()[i])
-            {
-                ++n_lowered;
-                lowered_unmarked = lowered_unmarked && mb[i] == 0;
-            }
-        check("least-cost breach: no cell it lowered is marked", n_lowered > 0 && lowered_unmarked,
-              std::to_string(n_lowered) + " lowered");
-        const auto same = filled_pixel_mask(input, input);
+        {
+            const float a = input.get_data()[i], b = breached.get_data()[i];
+            const std::uint8_t want = b < a ? k_pixel_carved : (b > a ? k_pixel_filled : k_pixel_untouched);
+            codes_right = codes_right && mb[i] == want;
+            n_lowered += b < a ? 1 : 0;
+        }
+        check("least-cost breach: lowered cells carved (2), raised cells filled (1), others 0",
+              n_lowered > 0 && codes_right, std::to_string(n_lowered) + " lowered");
+        const auto same = conditioned_pixel_mask(input, input);
         bool none = true;
         for (const auto v : same) none = none && v == 0;
         check("equal surfaces: nothing marked", none);
         bool threw = false;
-        try { (void)filled_pixel_mask(input, make_raster(3, 3, std::vector<float>(9, 1.0f))); }
+        try { (void)conditioned_pixel_mask(input, make_raster(3, 3, std::vector<float>(9, 1.0f))); }
         catch (const std::invalid_argument&) { threw = true; }
-        check("filled_pixel_mask: a raster off the grid is refused", threw);
+        check("conditioned_pixel_mask: a raster off the grid is refused", threw);
+    }
+
+    // ---- 9. F1: one-sided windows on 30 m cells ------------------------------------
+    {
+        const int nr = 9, nc = 20;
+        const double cs30 = 30.0;
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+                z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(400.0 - S * cs30 * c);
+        auto meta = make_meta(nr, nc);
+        meta.cell_size = cs30;
+        std::vector<float> data = z;
+        std::vector<std::uint8_t> mask(data.size(), 1);
+        const lsdtt_raster_cpu dem(std::move(data), std::move(mask), meta);
+        const auto flow = route(dem);
+        const auto area = d8_area(*flow, dem);
+        lsdtt_d8_flow_path_gradient_options o;
+        o.window_metres = 150.0;
+        o.n_threads = 1;
+        const auto g = d8_flow_path_gradient(*flow, dem, area, o);
+        check("30 m cells, 150 m window: the divide pixel (one-sided, 60 m of 75 m) is valid, gradient S",
+              valid(g, 4, 0) && near(at(g, 4, 0), S, 1e-6), valid(g, 4, 0) ? s(at(g, 4, 0)) : "nodata");
+        check("30 m cells, 150 m window: the outlet pixel (one-sided) is valid, gradient S",
+              valid(g, 4, nc - 1) && near(at(g, 4, nc - 1), S, 1e-6));
+        // the old rule (min span = window/2) would have rejected both:
+        lsdtt_channel_slope_options so;
+        so.donor_rank = &area;
+        const auto old_rule = channel_slope_at(*flow, dem, 4 * nc, 75.0, so);
+        check("the unrelaxed rule (span >= window/2) rejects the divide pixel on 30 m cells",
+              !old_rule.slope_valid);
     }
 
     std::cout << "RESULT: " << (g_fail == 0 ? "PASS" : "FAIL") << " (" << g_n << " checks)\n";

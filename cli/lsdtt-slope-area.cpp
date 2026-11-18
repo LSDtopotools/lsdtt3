@@ -253,7 +253,7 @@ static std::vector<BinRow> make_bins(
         if (!area_mask[i] || !slope_mask[i] || area_data[i] <= 0.0 ||
             !std::isfinite(area_data[i]) || !std::isfinite(slope_data[i]))
             continue;
-        if (exclude && (*exclude)[i]) continue;     // filled pixels (exclude_filled_pixels)
+        if (exclude && (*exclude)[i]) continue;     // carved / filled pixels (exclude_carved_and_filled_pixels)
         guide.push_back(area_data[i]);
         values.push_back(slope_data[i]);
         minimum = std::min(minimum, area_data[i]);
@@ -435,22 +435,25 @@ int main(int argc, char* argv[])
         "least_cost.",
         "DEM preparation", "param", "breach_before_fill"};
 
-    bool_default_map["exclude_filled_pixels"] = true;
-    help_map["exclude_filled_pixels"] = {"bool","true",
-        "Leave filled pixels out of the slope-area bins.",
-        "A pixel is filled if the routing surface (after breach_before_fill and "
-        "fill_before_routing) is above the input DEM there. Drainage area is "
-        "still routed through filled pixels; they are only left out of the "
-        "measurements. The slope rasters are written without this exclusion "
-        "(so a saved raster does not depend on it); <write_fname>_filled_pixels.tif "
-        "shows the excluded pixels. false keeps them, as runs before "
-        "2026-11-18 did (set it to reproduce those runs).",
+    bool_default_map["exclude_carved_and_filled_pixels"] = true;
+    help_map["exclude_carved_and_filled_pixels"] = {"bool","true",
+        "Leave carved and filled pixels out of the slope-area measurements.",
+        "A pixel is filled where the routing surface (after breach_before_fill "
+        "and fill_before_routing) is above the input DEM, carved where it is "
+        "below. Their gradient is the conditioning's, not the landscape's (a "
+        "carved reach has the breach's own tiny slope), so they are left out of "
+        "the bins and of the D8 flow-path fits. Drainage area is still routed "
+        "through them. Polyfit slope rasters are written without this exclusion "
+        "(so a saved raster does not depend on it); "
+        "<write_fname>_conditioned_pixels.tif shows the excluded pixels. false "
+        "keeps them, as runs before 2026-11-18 did (set it to reproduce those "
+        "runs).",
         "DEM preparation", "switch", ""};
-    bool_default_map["write_filled_pixels_raster"] = true;
-    help_map["write_filled_pixels_raster"] = {"bool","true",
-        "Write the filled-pixels raster.",
-        "1 where the routing surface is above the input DEM (the conditioning "
-        "raised the pixel), 0 elsewhere. Output: <write_fname>_filled_pixels.tif.",
+    bool_default_map["write_conditioned_pixels_raster"] = true;
+    help_map["write_conditioned_pixels_raster"] = {"bool","true",
+        "Write the conditioned-pixels raster.",
+        "0 untouched, 1 filled (the routing surface is above the input DEM), 2 "
+        "carved (below it). Output: <write_fname>_conditioned_pixels.tif.",
         "DEM preparation", "switch", ""};
     bool_default_map["polyfit_on_routing_surface"] = false;
     help_map["polyfit_on_routing_surface"] = {"bool","false",
@@ -485,8 +488,10 @@ int main(int argc, char* argv[])
         "upstream along the D8 donor of largest drainage area "
         "(drainage_area_algorithm_choice), on the routing surface; outputs "
         "<write_fname>_d8window_XXm* and the summary "
-        "<write_fname>_maximum_d50_slope_area_d8window.csv. Filled pixels are "
-        "left out of the D8 fits when exclude_filled_pixels is true.",
+        "<write_fname>_maximum_d50_slope_area_d8window.csv. Carved and filled "
+        "pixels are left out of the D8 fits when exclude_carved_and_filled_pixels "
+        "is true. The valid cells must span half the window less one diagonal "
+        "step.",
         "Slope-area analysis", "param", ""};
     string_default_map["d8_gradient_window_metres_list"] = "150";
     help_map["d8_gradient_window_metres_list"] = {"string", "150",
@@ -685,32 +690,38 @@ int main(int argc, char* argv[])
                 ii.at("n_threads"));
         }
 
-        // Filled pixels: raised by the conditioning (plan 3A).
-        const std::vector<std::uint8_t> filled = lsdtt::filled_pixel_mask(input_dem, dem);
+        // Conditioned pixels: filled (raised) or carved (lowered) by the
+        // conditioning (plan 3A, section 10 F2). Both are excluded.
+        const std::vector<std::uint8_t> conditioned = lsdtt::conditioned_pixel_mask(input_dem, dem);
         {
-            std::size_t n_filled = 0, n_valid = 0;
-            for (std::size_t i = 0; i < filled.size(); ++i)
+            std::size_t n_filled = 0, n_carved = 0, n_valid = 0;
+            for (std::size_t i = 0; i < conditioned.size(); ++i)
             {
-                n_filled += filled[i];
+                n_filled += conditioned[i] == lsdtt::k_pixel_filled ? 1 : 0;
+                n_carved += conditioned[i] == lsdtt::k_pixel_carved ? 1 : 0;
                 n_valid += input_dem.get_mask()[i] ? 1 : 0;
             }
-            const double fraction = n_valid ? static_cast<double>(n_filled) / static_cast<double>(n_valid) : 0.0;
-            std::cout << "Filled pixels (raised by the conditioning): " << n_filled << " of " << n_valid
-                      << " (" << number_string(100.0 * fraction) << "%), "
-                      << (bf.at("exclude_filled_pixels") ? "excluded from the bins" : "kept in the bins")
+            auto pct = [&](std::size_t k) {
+                return number_string(n_valid ? 100.0 * static_cast<double>(k) / static_cast<double>(n_valid) : 0.0);
+            };
+            std::cout << "Conditioned pixels: " << n_filled << " filled (" << pct(n_filled) << "%), "
+                      << n_carved << " carved (" << pct(n_carved) << "%) of " << n_valid << "; "
+                      << (bf.at("exclude_carved_and_filled_pixels") ? "excluded from the measurements"
+                                                                     : "kept in the measurements")
                       << "\n";
             lsdtt::lsdtt_run_record::add_provenance("n_filled_pixels", std::to_string(n_filled));
-            lsdtt::lsdtt_run_record::add_provenance("filled_fraction", number_string(fraction));
-            if (bf.at("write_filled_pixels_raster"))
+            lsdtt::lsdtt_run_record::add_provenance("n_carved_pixels", std::to_string(n_carved));
+            if (bf.at("write_conditioned_pixels_raster"))
             {
-                std::vector<float> fv(filled.begin(), filled.end());
+                std::vector<float> fv(conditioned.begin(), conditioned.end());
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(fv, dem.get_meta(),
                                   parser.get_write_path() + "/" + parser.get_write_fname() +
-                                  "_filled_pixels.tif");
+                                  "_conditioned_pixels.tif");
             }
         }
-        const std::vector<std::uint8_t>* exclude = bf.at("exclude_filled_pixels") ? &filled : nullptr;
+        const std::vector<std::uint8_t>* exclude =
+            bf.at("exclude_carved_and_filled_pixels") ? &conditioned : nullptr;
         const bool polyfit_routing = bf.at("polyfit_on_routing_surface");
 
         // ---------------------------------------------------------------------

@@ -1,5 +1,5 @@
 # lsdtt-slope-area with the fill alone (breach_before_fill: false): the fill
-# raises 7459 of the 40000 cells, which are excluded from the bins. The polyfit
+# raises 7459 of the 40000 cells (none carved), which are excluded from the bins. The polyfit
 # slope raster is fitted to the INPUT DEM, so it is byte-identical to that of
 # the default (carve then fill) run, smoke_slope_area: both tests pin the same
 # sha256.

@@ -2513,8 +2513,9 @@ add_lsdtt_cli_smoke_test(
     --expect sa_lambda_90m_input_dem_slope.tif
     --expect sa_lambda_150m_input_dem_slope.tif
     --expect-absent sa_lambda_90m_slope.tif
-    --expect sa_filled_pixels.tif
-    --stdout-contains "Filled pixels (raised by the conditioning): 1646 of 40000"
+    --expect sa_conditioned_pixels.tif
+    --stdout-contains "Conditioned pixels: 1646 filled (4.115%), 2492 carved (6.23%) of 40000"
+    --stdout-contains "excluded from the measurements"
     # The least-cost breach raises 1646 single-cell pits itself (to just below
     # their lowest neighbour; median 1.6 m), so they count as filled although
     # the fill after it changes nothing. The input-DEM polyfit raster is the
@@ -2530,8 +2531,11 @@ add_lsdtt_cli_smoke_test(
     # filled pixels excluded) changes the bins but not these peak bins.
     # Fill-only pins were: 90,3962.762065
     # and 150,3952.876248.
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,10429.1897"
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3914.495107
+    # and 150,10429.1897.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3887.373015"
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,10310.15877"
     --expect-valid-percent sa_lambda_90m_input_dem_slope.tif:96.04
 )
 lsdtt_set_tests_properties(smoke_slope_area PROPERTIES
@@ -2553,7 +2557,10 @@ add_lsdtt_cli_smoke_test(
     # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
     # filled pixels excluded) changes the bins but not these peak bins.
     # Fill-only pins were: 90,3965.578391.
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3911.546956"
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3911.546956 (the peak moves up two bins: the d50
+    # curve is nearly flat around its maximum here).
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,10296.3157"
 )
 lsdtt_set_tests_properties(smoke_slope_area_d8 PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2573,7 +2580,9 @@ add_lsdtt_cli_smoke_test(
     # filled pixels excluded) changes the bins but not these peak bins.
     # Fill-only pins were: 90,3962.762065
     # (the same row as smoke_slope_area, with the flow rasters off).
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3914.495107.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3887.373015"
 )
 lsdtt_set_tests_properties(smoke_slope_area_no_flowinfo PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2592,7 +2601,9 @@ add_lsdtt_cli_smoke_test(
     # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
     # filled pixels excluded) changes the bins but not these peak bins.
     # Fill-only pins were: 90,3906.624295.
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3836.11712"
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3836.11712 (the peak moves up two bins).
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,10057.4503"
 )
 lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
     FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
@@ -2611,7 +2622,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_area_lindsay2016 PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
-# Fill alone: 7459 filled pixels excluded; the input-DEM polyfit raster equals
+# Fill alone: 7459 filled pixels (and no carved ones) excluded; the input-DEM polyfit raster equals
 # the default run's (same sha256 as in smoke_slope_area), so the polyfit does
 # not depend on the conditioning (plan Q12).
 add_lsdtt_cli_smoke_test(
@@ -2620,9 +2631,9 @@ add_lsdtt_cli_smoke_test(
     slope_area_fill_only.param.in
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
-    --stdout-contains "Filled pixels (raised by the conditioning): 7459 of 40000"
-    --stdout-contains "excluded from the bins"
-    --expect sa_filled_pixels.tif
+    --stdout-contains "Conditioned pixels: 7459 filled (18.6475%), 0 carved (0%) of 40000"
+    --stdout-contains "excluded from the measurements"
+    --expect sa_conditioned_pixels.tif
     --expect-sha256 sa_lambda_90m_input_dem_slope.tif:4ea18f716e55bb400359fb88c64ba27d8ed4e17993fb3c2d8046fbe0ab4003d4
 )
 lsdtt_set_tests_properties(smoke_slope_area_fill_only PROPERTIES

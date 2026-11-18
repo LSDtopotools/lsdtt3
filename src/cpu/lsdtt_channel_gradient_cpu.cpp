@@ -32,7 +32,8 @@ bool fit_along_path_slope(
     std::size_t                      idx,
     double                           half_length_m,
     double&                          slope,
-    double*                          fitted_z)
+    double*                          fitted_z,
+    double                           min_span_m)
 {
     const double d0 = d[idx];
 
@@ -58,7 +59,7 @@ bool fit_along_path_slope(
     }
 
     if (n < 3) return false;
-    if ((d_max - d_min) < half_length_m) return false;
+    if ((d_max - d_min) < (min_span_m < 0.0 ? half_length_m : min_span_m)) return false;
 
     const double mean_d = sum_d / static_cast<double>(n);
     const double mean_z = sum_z / static_cast<double>(n);
@@ -219,7 +220,8 @@ lsdtt_channel_slope_result channel_slope_at(
     }
     if (out.n_cells > 0) out.window_length_m = d_max - d_min;
     double slope = 0.0, zfit = 0.0;
-    out.slope_valid = fit_along_path_slope(d, z, ok, idx, half_length_m, slope, &zfit);
+    out.slope_valid = fit_along_path_slope(d, z, ok, idx, half_length_m, slope, &zfit,
+                                           options.min_span_metres);
     if (out.slope_valid)
     {
         out.slope_m_per_m = slope;

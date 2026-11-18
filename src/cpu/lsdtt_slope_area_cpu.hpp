@@ -19,12 +19,14 @@
 //     choice; ties: the smaller flat index), to window/2 or a divide;
 //   - the slope is the least-squares fit of z against flow distance
 //     (fit_along_path_slope, via channel_slope_at, so lsdtt3 has one
-//     definition): at least 3 valid cells, spanning at least window/2, slope
-//     > 0. A one-sided window (outlet, divide) is used if it alone spans
-//     window/2;
-//   - exclude (optional, 1 = excluded, e.g. cells a pit fill raised): those
-//     cells are walked through but not fitted, and their own gradient is
-//     nodata.
+//     definition): at least 3 valid cells, spanning at least window/2 less
+//     one diagonal step (each side's walk stops before passing window/2, so
+//     on coarse cells window/2 itself is out of reach; plan section 10, F1),
+//     slope > 0. A one-sided window (outlet, divide) is used if it alone
+//     spans that;
+//   - exclude (optional, nonzero = excluded, e.g. cells the conditioning
+//     carved or filled): those cells are walked through but not fitted, and
+//     their own gradient is nodata.
 // Pixels without a usable fit are nodata. The window must be at least four
 // cell sizes (channel_slope_at needs a half-length of two). Parallel over
 // pixels; the result does not depend on n_threads.
@@ -46,7 +48,7 @@ namespace lsdtt
 struct lsdtt_d8_flow_path_gradient_options
 {
     double                           window_metres = 150.0;
-    const std::vector<std::uint8_t>* exclude = nullptr;   // one byte per cell; 1 = excluded
+    const std::vector<std::uint8_t>* exclude = nullptr;   // one byte per cell; nonzero = excluded
     int                              n_threads = 0;       // 0 = OpenMP default
 };
 
@@ -60,14 +62,19 @@ struct lsdtt_d8_flow_path_gradient_options
     const lsdtt_raster_cpu&                    drainage_area,
     const lsdtt_d8_flow_path_gradient_options& options);
 
-// FILLED pixels (plan 3A): cells whose routing-surface elevation is ABOVE
-// the input DEM's, i.e. the conditioning raised them (a pit fill, or the
-// fill of the pits a carve left). Cells a carve lowered are not filled.
-// Strict comparison: the cells of a resolved flat, raised by fill_min_slope
-// steps, are part of the filled area. Cells invalid in either raster are 0.
-// Returns one byte per cell (1 = filled). Throws std::invalid_argument if
-// the grids differ.
-[[nodiscard]] std::vector<std::uint8_t> filled_pixel_mask(
+// CONDITIONED pixels (plan 3A, section 10 F2): the cells the conditioning
+// changed. FILLED (k_pixel_filled = 1): the routing surface is above the
+// input DEM (a pit fill, or a single-cell pit the least-cost breach raised);
+// CARVED (k_pixel_carved = 2): below it (a breach channel). Both are excluded
+// from lsdtt-slope-area's measurements (Simon, 2026-11-18): a carved reach
+// has the breach's own slope, not the landscape's. Strict comparisons; cells
+// invalid in either raster are 0. One byte per cell. Throws
+// std::invalid_argument if the grids differ.
+inline constexpr std::uint8_t k_pixel_untouched = 0;
+inline constexpr std::uint8_t k_pixel_filled = 1;
+inline constexpr std::uint8_t k_pixel_carved = 2;
+
+[[nodiscard]] std::vector<std::uint8_t> conditioned_pixel_mask(
     const lsdtt_raster_cpu& input_dem,
     const lsdtt_raster_cpu& routing_dem);
 

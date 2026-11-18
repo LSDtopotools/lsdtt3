@@ -6,7 +6,7 @@
 # carve-then-fill, filled-pixel exclusion and polyfit on the input DEM, this
 # file is updated ONLY to the new parameter names plus the three switches
 # that restore the old behaviour (breach_before_fill: false,
-# exclude_filled_pixels: false, polyfit_on_routing_surface: true); the hashes
+# exclude_carved_and_filled_pixels: false, polyfit_on_routing_surface: true); the hashes
 # must not change. Never re-pin without Simon.
 #
 # The fixture DEM has pits: the fill raises 7459 of its 40000 cells (18.6%),
@@ -22,9 +22,9 @@ fill_min_slope: 0.0001
 # 2026-11-18 step 2a: the carve-before-fill default is new; the old
 # routing surface is fill alone.
 breach_before_fill: false
-# 2026-11-18 step 2b: filled pixels are now excluded from the bins and
+# 2026-11-18 step 2b: carved and filled pixels are now excluded from the bins and
 # polyfit runs on the input DEM by default; the old behaviour is:
-exclude_filled_pixels: false
+exclude_carved_and_filled_pixels: false
 polyfit_on_routing_surface: true
 boundary_conditions: oooo
 # 2026-11-18 step 2c: flow_algorithm renamed drainage_area_algorithm_choice.

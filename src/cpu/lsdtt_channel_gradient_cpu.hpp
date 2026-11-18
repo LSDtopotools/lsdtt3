@@ -47,6 +47,11 @@ namespace lsdtt
 //   - the fitted slope is not finite or not strictly positive.
 // fitted_z, if given, receives the fitted line's elevation at idx (the
 // smoothed elevation), only when the fit is usable.
+// min_span_m: the span the valid cells must reach; < 0 (default) means
+// half_length_m, as above. lsdtt-slope-area's D8 flow-path gradient passes
+// half_length_m minus one diagonal step, since a walk that stops before
+// passing half_length_m can never reach it on coarse cells (plan section 10,
+// F1).
 bool fit_along_path_slope(
     const std::vector<double>&       d,
     const std::vector<double>&       z,
@@ -54,7 +59,8 @@ bool fit_along_path_slope(
     std::size_t                      idx,
     double                           half_length_m,
     double&                          slope,
-    double*                          fitted_z = nullptr);
+    double*                          fitted_z = nullptr,
+    double                           min_span_m = -1.0);
 
 struct lsdtt_channel_slope_result
 {
@@ -93,13 +99,17 @@ struct lsdtt_channel_slope_result
 //     with the LARGEST value of this raster (e.g. a D-infinity drainage area)
 //     instead of the most contributing pixels; nodata / NaN ranks lowest;
 //     ties: the smaller flat index. The walk itself is still along D8 donors;
-//   - exclude: if given (one byte per cell, 1 = excluded), excluded cells are
-//     walked through but left out of the fit (e.g. pixels a pit fill raised).
+//   - exclude: if given (one byte per cell, nonzero = excluded), excluded
+//     cells are walked through but left out of the fit (e.g. pixels the
+//     conditioning carved or filled);
+//   - min_span_metres: the span the valid cells must reach; < 0 (default)
+//     means half_length_m (see fit_along_path_slope).
 struct lsdtt_channel_slope_options
 {
     std::uint64_t                    min_contributing_pixels = 0;
     const lsdtt_raster_cpu*          donor_rank = nullptr;
     const std::vector<std::uint8_t>* exclude = nullptr;
+    double                           min_span_metres = -1.0;
 };
 
 [[nodiscard]] lsdtt_channel_slope_result channel_slope_at(
