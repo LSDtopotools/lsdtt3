@@ -21,7 +21,7 @@ n_basins : int
 
 Methods
 -------
-fit(dem: Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> ChiFit
+fit(dem: Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95', run_step_change_detection: bool = False, step_change_min_gradient: float = 0.4, step_change_max_window_length_metres: float = 90.0, step_change_min_drop_metres: float = 5.0) -> ChiFit
     Fit piecewise-linear channel profiles in chi-elevation space.
 nodes() -> object
     Return extracted channel chi nodes as a pandas DataFrame.
@@ -36,7 +36,7 @@ B. Gailleton
 
 #### `fit`
 
-fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> lsdtt3.ChiFit
+fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95', run_step_change_detection: bool = False, step_change_min_gradient: float = 0.4000000059604645, step_change_max_window_length_metres: float = 90.0, step_change_min_drop_metres: float = 5.0) -> lsdtt3.ChiFit
 
 Fit piecewise-linear channel profiles in chi-elevation space.
 
@@ -57,6 +57,37 @@ critical_divergence_metres : float, default=5.0
 mainstem : {"max_flow_length", "max_chi"}, default="max_flow_length"
     How the main stem of each basin is chosen: the longest D8 flow path,
     or the path reaching the largest chi.
+knickpoint_threshold_algorithm_choice : {"p90", "p95", "median_plus_3mad", "otsu"}, default="p95"
+    Threshold for a major knickpoint on |split_delta_ksn_normalised|,
+    computed over every within-branch split of the fit (main stems and
+    tributaries pooled). Sets ``is_major`` in ``ChiFit.knickpoints`` and
+    which splits are paired into ``ChiFit.knickzones``; as
+    lsdtt-chi-analysis ``knickpoint_threshold_algorithm_choice``.
+run_step_change_detection : bool, default=False
+    Find step changes (waterfalls, dams, steep gorge reaches) on the fitted
+    branches and fit the profiles a second time, step-aware, as
+    lsdtt-chi-analysis ``run_step_change_detection``. On the longitudinal
+    profile (not in chi), every window of consecutive pixel pairs up to
+    ``step_change_max_window_length_metres`` of flow length whose gradient
+    (drop / flow length) is at least ``step_change_min_gradient`` marks its
+    pairs; consecutive marked pairs form a reach, its gentle end pairs are
+    trimmed, and it is kept if it drops at least
+    ``step_change_min_drop_metres``. The step-aware fit cuts each branch at
+    its steps: each step is one fixed segment between its ends pinned to the
+    DEM and the recursive fit runs only between steps, so k_sn either side
+    of a waterfall is not bent by the chord across it. Gives
+    ``ChiFit.steps``, ``ChiFit.step_aware_fit`` and the step columns of
+    ``ChiFit.knickpoints``.
+step_change_min_gradient : float, default=0.40
+    Gradient (m/m) at or above which a window is steep (> 0). Resolution
+    dependent: at 30 m, 0.40 also marks steep gorge reaches.
+step_change_max_window_length_metres : float, default=90.0
+    Longest window, as flow length (m) (> 0). A single pixel pair is always a
+    window. Also the distance from a branch's base within which a step is
+    flagged ``at_basin_outlet`` or ``at_tributary_mouth``.
+step_change_min_drop_metres : float, default=5.0
+    Smallest drop (m) of a reported step (>= 0). The default equals the
+    default ``critical_divergence_metres`` but does not follow it.
 
 Returns
 -------
@@ -64,7 +95,7 @@ ChiFit
     Fitted nodes, segments and per-basin k_sn summaries.
 
 ```python
-def fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length') -> lsdtt3.ChiFit
+def fit(self, dem: lsdtt3.Raster, critical_divergence_metres: float = 5.0, mainstem: str = 'max_flow_length', knickpoint_threshold_algorithm_choice: str = 'p95', run_step_change_detection: bool = False, step_change_min_gradient: float = 0.4000000059604645, step_change_max_window_length_metres: float = 90.0, step_change_min_drop_metres: float = 5.0) -> lsdtt3.ChiFit
 ```
 
 #### `n_basins`
@@ -119,7 +150,7 @@ or ``FlowInfo.row_col(flat)``). lsdviztools3 chi plots expect the column
 names ``basin_index`` and ``k_sn``: rename with
 ``df.rename(columns={"basin_id": "basin_index", "ksn": "k_sn"})``.
 
-Returned by ``ChiCollection.fit()``; not constructible directly.
+Returned by ``ChiCollection.fit()``, ``ChiFit.step_aware_fit``; not constructible directly.
 
 Attributes
 ----------
@@ -156,10 +187,40 @@ knickpoints : pandas.DataFrame
     ``flat``, ``x``, ``y``, ``chi``, ``elevation``, ``flow_distance_m``,
     ``drainage_area_m2``, ``ksn_upstream``, ``ksn_downstream``, ``delta_ksn``
     (upstream minus downstream), ``log_ratio_ksn``, ``at_junction`` (1 at a
-    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``.
+    tributary mouth), ``chi_from_branch_head``, ``chi_normalised``; and how
+    the recursive fit split the profile there (empty / -1 at junctions):
+    ``split_rank`` (order within the branch), ``split_depth`` (0 = the
+    branch's first split), ``split_divergence_metres`` (observed minus the
+    chord), ``split_dchi_below``, ``split_dchi_above`` (chi spans of the two
+    child chords), ``split_ksn_below``, ``split_ksn_above`` (their slopes),
+    ``split_delta_ksn`` (above minus below), ``split_delta_ksn_metres``
+    (that change / sqrt(1/dchi_below^2 + 1/dchi_above^2)),
+    ``split_delta_ksn_normalised`` (the same / the branch's chi span: the
+    ranking measure), ``split_clamped``, ``is_major`` (|normalised| above the
+    ``knickpoint_threshold_algorithm_choice`` threshold).
+knickzones : pandas.DataFrame
+    Steep reaches. The lip is a major shallowing split (the largest of
+    consecutive ones); the foot is the largest steepening split below it
+    that is major or whose ``|split_delta_ksn_metres|`` passes that
+    measure's p95. A branch that starts steep (no such foot) has a
+    knickzone from its base to the lip. As lsdtt-chi-analysis
+    ``_chi_knickzones_mn_*.csv``: ``knickzone_id``, ``basin_id``,
+    ``basin_key``, ``source_key``, ``branch_id``, ``foot_type``
+    (``split``, or ``basin_outlet`` / ``tributary_junction`` for a
+    knickzone from the branch base; then ``ksn_below`` and the foot split
+    fields are NaN), ``foot_flat``,
+    ``lip_flat``, ``foot_x``, ``foot_y``, ``lip_x``, ``lip_y``,
+    ``foot_chi``, ``lip_chi``, ``foot_elevation``, ``lip_elevation``,
+    ``relief_m``, ``chi_span``, ``flow_length_m``, ``ksn_below``,
+    ``ksn_inside`` (relief / chi span), ``ksn_above``,
+    ``foot_split_delta_ksn_metres``, ``lip_split_delta_ksn_metres``,
+    ``foot_split_delta_ksn_normalised``, ``lip_split_delta_ksn_normalised``,
+    ``threshold_method``, ``threshold`` (the lip's),
+    ``foot_threshold_split_delta_ksn_metres`` (the foot's p95).
 knickpoint_thresholds : pandas.DataFrame
     Suggested thresholds for a major knickpoint, over the rows with
-    ``at_junction`` 0: ``measure`` (``abs_delta_ksn``,
+    ``at_junction`` 0: ``measure`` (``abs_split_delta_ksn_metres``,
+    ``abs_split_delta_ksn_normalised``, ``abs_delta_ksn``,
     ``abs_log_ratio_ksn``, ``ksn``), ``method`` (``p90``, ``p95``,
     ``median_plus_3mad``, ``otsu``; ``q3_plus_3iqr`` for ``ksn``),
     ``threshold``, ``n_above``, ``n_total``.
@@ -168,6 +229,33 @@ summary : pandas.DataFrame
     ``n_main_stem_segments``, ``total_chi_length`` (m), ``mean_ksn``,
     ``median_ksn``, ``min_ksn``, ``max_ksn``, ``chi_weighted_mean_ksn``,
     ``main_stem_mean_ksn``, ``main_stem_median_ksn``.
+steps : pandas.DataFrame
+    With ``run_step_change_detection``: one row per step reach, as
+    lsdtt-chi-analysis ``_chi_steps_mn_*.csv``: ``step_id``, ``basin_id``,
+    ``basin_key``, ``source_key`` (of the branch head), ``branch_id``,
+    ``bottom_flat``, ``top_flat``, ``bottom_x``, ``bottom_y``, ``top_x``,
+    ``top_y``, ``bottom_elevation``, ``top_elevation``, ``drop_m``,
+    ``flow_length_m``, ``mean_gradient``, ``max_window_gradient``,
+    ``n_pairs``, ``bottom_chi``, ``top_chi``, ``bottom_flow_distance_m``,
+    ``bottom_drainage_area_m2``, ``distance_to_branch_base_m``,
+    ``at_tributary_mouth``, ``at_basin_outlet``, ``contains_uphill_pairs``.
+    Empty without it.
+step_aware_fit : ChiFit or None
+    With ``run_step_change_detection``: the step-aware (stage 2) fit, as the
+    lsdtt-chi-analysis ``_stepaware`` files. Its ``nodes`` and ``segments``
+    gain ``is_step`` (1 on a step segment and its nodes); its tributary k_sn
+    leaves the step segments out (the steps are in ``steps``). Knickpoints,
+    knickzones and their thresholds are ranked on the ordinary fit only: on
+    the step-aware fit those properties raise ``ValueError`` (cutting a
+    branch at its steps breaks the split hierarchy, so a plateau rim above a
+    waterfall would lose its rank). ``None`` without step detection, and on
+    the step-aware fit itself.
+
+With ``run_step_change_detection``, ``knickpoints`` (of this, the stage 1
+fit) also has ``nearest_step_id`` and ``nearest_step_chi_distance`` (the
+nearest step on the same branch by chi, 0 inside it; -1 / NaN if none) and
+``step_in_adjacent_segments`` (1 if a step lies on the two segments either
+side of the boundary), to tell step-driven knickpoints from k_sn changes.
 
 Methods
 -------
@@ -319,6 +407,10 @@ Suggested major-knickpoint thresholds (pandas.DataFrame); see the class document
 
 Knickpoint candidates (pandas.DataFrame), one per node where two fitted segments meet; see the class documentation for columns.
 
+#### `knickzones`
+
+Knickzones (pandas.DataFrame): major shallowing splits (lips) with the strongest steepening split below them or the branch base; see the class documentation for columns.
+
 #### `nodes`
 
 Per-pixel fitted profile table (pandas.DataFrame); see the class documentation for columns.
@@ -326,6 +418,14 @@ Per-pixel fitted profile table (pandas.DataFrame); see the class documentation f
 #### `segments`
 
 Per-segment k_sn table (pandas.DataFrame); see the class documentation for columns.
+
+#### `step_aware_fit`
+
+The step-aware (stage 2) ChiFit with run_step_change_detection; None otherwise.
+
+#### `steps`
+
+Step reaches (pandas.DataFrame) with run_step_change_detection; empty otherwise. See the class documentation for columns.
 
 #### `summary`
 

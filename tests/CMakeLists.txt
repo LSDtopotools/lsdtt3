@@ -4596,8 +4596,10 @@ add_lsdtt_cli_smoke_test(
 )
 
 # Tributary and knickpoint tables (write_chi_tributary_table,
-# write_chi_knickpoint_table, both on by default): the three files and their
-# headers. The values are tested in unit_chi_knickpoints.
+# write_chi_knickpoint_table, both on by default): the four files (tributaries,
+# knickpoints with the split-hierarchy columns, thresholds, knickzones) and
+# their headers. The values are tested in unit_chi_knickpoints and
+# unit_chi_split_hierarchy.
 add_lsdtt_cli_smoke_test(
     smoke_chi_tributaries_knickpoints
     lsdtt-chi-analysis
@@ -4605,13 +4607,47 @@ add_lsdtt_cli_smoke_test(
     tiny_chi_tributaries_mn_0p500.csv
     --expect tiny_chi_knickpoints_mn_0p500.csv
     --expect tiny_chi_knickpoint_thresholds_mn_0p500.csv
+    --expect tiny_chi_knickzones_mn_0p500.csv
+    --expect-file-contains "tiny_chi_knickzones_mn_0p500.csv:knickzone_id,basin_index,basin_key,source_key,branch_id,foot_type,foot_flat,lip_flat,foot_x,foot_y,lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,foot_split_delta_ksn_normalised,lip_split_delta_ksn_normalised,threshold_method,threshold,foot_threshold_split_delta_ksn_metres"
+    --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:chi_normalised,split_rank,split_depth,split_divergence_metres,split_dchi_below,split_dchi_above,split_ksn_below,split_ksn_above,split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major"
+    --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_split_delta_ksn_metres,p95,"
+    --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_split_delta_ksn_normalised,p95,"
     --expect-file-contains "tiny_chi_tributaries_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,parent_branch_id,branch_order,head_flat,junction_flat,head_x,head_y,junction_x,junction_y,junction_drainage_area_m2,basin_drainage_area_m2,area_fraction,area_rank_in_basin,length_m,chi_span,n_segments,ksn_min,ksn_median,ksn_max,ksn_max_segment_id,ksn_max_chi,n_descendants"
     --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:basin_index,basin_key,source_key,branch_id,upstream_segment_id,downstream_segment_id,flat,x,y,chi,elevation,flow_distance_m,drainage_area_m2,ksn_upstream,ksn_downstream,delta_ksn,log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised"
     --expect-file-contains "tiny_chi_knickpoint_thresholds_mn_0p500.csv:abs_delta_ksn,otsu,"
     --expect-file-contains "tiny_chi_fit_segments_mn_0p500.csv:n_nodes,source_key"
     --stdout-contains "Knickpoint candidates:"
+    --stdout-contains "knickzones:"
 )
 lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
+
+# Step changes and the step-aware fit (run_step_change_detection,
+# plan_chi_knickpoints.md Parts B and C): the steps file, the stage 2
+# (_stepaware) fit and knickpoint files with their is_step columns, the stage 1
+# knickpoint cross-reference columns and the summary lines, with a low
+# gradient threshold so the tiny DEM has reaches. The values are tested in
+# unit_chi_step_changes.
+add_lsdtt_cli_smoke_test(
+    smoke_chi_step_changes
+    lsdtt-chi-analysis
+    chi_analysis_step_changes_smoke.param.in
+    tiny_chi_steps_mn_0p500.csv
+    --expect-file-contains "tiny_chi_steps_mn_0p500.csv:step_id,basin_index,basin_key,source_key,branch_id,bottom_flat,top_flat,bottom_x,bottom_y,top_x,top_y,bottom_elevation,top_elevation,drop_m,flow_length_m,mean_gradient,max_window_gradient,n_pairs,bottom_chi,top_chi,bottom_flow_distance_m,bottom_drainage_area_m2,distance_to_branch_base_m,at_tributary_mouth,at_basin_outlet,contains_uphill_pairs"
+    --stdout-contains "Step changes (gradient >= 0.05"
+    --expect tiny_chi_fit_nodes_stepaware_mn_0p500.csv
+    --expect tiny_chi_tributaries_stepaware_mn_0p500.csv
+    # knickpoints are ranked on stage 1 only (2026-11-18)
+    --expect-absent tiny_chi_knickpoints_stepaware_mn_0p500.csv
+    --expect-absent tiny_chi_knickzones_stepaware_mn_0p500.csv
+    --expect-absent tiny_chi_knickpoint_thresholds_stepaware_mn_0p500.csv
+    --expect-file-contains "tiny_chi_fit_segments_stepaware_mn_0p500.csv:n_nodes,source_key,is_step"
+    --expect-file-contains "tiny_chi_fit_nodes_stepaware_mn_0p500.csv:is_split_point,source_key,is_step"
+    --expect-file-contains "tiny_chi_knickpoints_mn_0p500.csv:is_major,nearest_step_id,nearest_step_chi_distance,step_in_adjacent_segments"
+    --stdout-contains "Step-aware fit:"
+    --expect tiny_chi_step_lines_mn_0p500.fgb
+    --stdout-contains "Writing step lines:"
+)
+lsdtt_set_tests_properties(smoke_chi_step_changes PROPERTIES LABELS "chi")
 
 # The chi fit nodes of the tiny DEM at m/n 0.5 match their pinned sha256
 # (re-pinned when chi moved to the trapezoidal rule, verified against
@@ -6718,6 +6754,38 @@ target_link_libraries(lsdtt-test-chi-knickpoints PRIVATE lsdtt3_cpu)
 # segment at its junction, and the threshold methods.
 add_test(NAME unit_chi_knickpoints COMMAND lsdtt-test-chi-knickpoints)
 lsdtt_set_tests_properties(unit_chi_knickpoints PROPERTIES LABELS "chi")
+
+# The split hierarchy of the chi fit (plan_chi_knickpoints.md, Part A), on
+# synthetic one-row channels fitted by fit_chi_network: a reach change with
+# one-node steps below must be the first split and rank first by the
+# scale-weighted k_sn change (while a step has the larger raw change); a
+# gentle-steep-gentle profile gives one knickzone with the right foot, lip and
+# k_sn; is_major is exactly the rows whose |split_delta_ksn_normalised| exceeds
+# the chosen threshold; an unknown threshold method throws.
+add_executable(lsdtt-test-chi-split-hierarchy cpp/test_chi_split_hierarchy.cpp)
+target_link_libraries(lsdtt-test-chi-split-hierarchy PRIVATE lsdtt3_cpu)
+# Split hierarchy and knickzones on synthetic channels: the reach change is
+# the first split and ranks first by split_delta_ksn_metres; one knickzone;
+# is_major is set on the normalised measure.
+add_test(NAME unit_chi_split_hierarchy COMMAND lsdtt-test-chi-split-hierarchy)
+lsdtt_set_tests_properties(unit_chi_split_hierarchy PROPERTIES LABELS "chi")
+
+# Step-change (waterfall) detection on chi network branches and the
+# step-aware fit (plan_chi_knickpoints.md, Parts B and C): window gradients up
+# to the maximum window length, reach trimming, the minimum drop, uphill pairs
+# bridged and flagged, 10 m and 30 m pixels, bad options; on a fitted network
+# a diagonal tributary mouth step, the outlet and mouth flags, distance to
+# the base. Part C: a step under the critical divergence bends the stage 1
+# fit, stage 2 recovers k_sn 50 either side with one step segment and exact
+# elevations; is_step only on step-aware tables; stage 2 knickpoints leave
+# out the step ends; stage 1 knickpoints are cross-referenced to the step; a
+# tributary anchored inside a step takes the step line's elevation.
+add_executable(lsdtt-test-chi-step-changes cpp/test_chi_step_changes.cpp)
+target_link_libraries(lsdtt-test-chi-step-changes PRIVATE lsdtt3_cpu)
+# Step reaches on synthetic paths and a fitted network: the planned window,
+# trim and minimum-drop cases, and the outlet / tributary-mouth flags.
+add_test(NAME unit_chi_step_changes COMMAND lsdtt-test-chi-step-changes)
+lsdtt_set_tests_properties(unit_chi_step_changes PROPERTIES LABELS "chi")
 
 # Erodibility calibration from basin erosion rates: the York regression
 # (Pearson's data with York's weights), the erosion-rate sample reader and its

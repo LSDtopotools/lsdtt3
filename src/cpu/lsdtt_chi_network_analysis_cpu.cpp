@@ -191,6 +191,10 @@ private:
     int                                   root_local_index_ = -1;
     int                                   next_branch_id_   = 1;
     int                                   next_segment_id_  = 0;
+    int                                   split_rank_in_branch_ = 0;
+    // step-aware fit: step reach bottom flat -> top flats (a junction node can
+    // be the bottom of a parent-branch step and of a tributary-mouth step)
+    std::unordered_map<std::int64_t, std::vector<std::int64_t>> step_top_of_bottom_;
 
     // -------------------------------------------------------------------------
     // output
@@ -280,9 +284,17 @@ private:
         result_.is_junction.assign(chi_network_.flats.size(), std::uint8_t{0});
 
         result_.is_split_point.assign(chi_network_.flats.size(), std::uint8_t{0});
+        result_.split_records.assign(chi_network_.flats.size(), lsdtt_chi_split_record{});
 
         result_.split_flats.clear();
         result_.segments.clear();
+
+        result_.step_aware = options_.step_aware;
+        result_.is_step.assign(options_.step_aware ? chi_network_.flats.size() : 0, std::uint8_t{0});
+        step_top_of_bottom_.clear();
+        if (options_.step_aware)
+            for (const auto& st : options_.step_reaches)
+                step_top_of_bottom_[st.first].push_back(st.second);
 
         fitted_assigned_.assign(chi_network_.flats.size(), std::uint8_t{0});
     }
@@ -694,12 +706,23 @@ private:
 
         if (path.size() >= 2)
         {
-            fit_path_recursive(
-                path,
-                0,
-                static_cast<int>(path.size()) - 1,
-                branch_id
-            );
+            // Tributaries are processed after this branch is fitted, so the
+            // counter belongs to this branch alone.
+            split_rank_in_branch_ = 0;
+            if (options_.step_aware)
+            {
+                fit_path_with_steps(path, branch_id);
+            }
+            else
+            {
+                fit_path_recursive(
+                    path,
+                    0,
+                    static_cast<int>(path.size()) - 1,
+                    branch_id,
+                    0
+                );
+            }
         }
 
         // Now process all side tributaries off this fitted path, walking
@@ -750,11 +773,63 @@ private:
         }
     }
 
+    // Part C: cut the path at the step reaches on it. Each step is one fixed
+    // segment between its pinned ends; the sub-paths between are fitted
+    // recursively, each from depth 0.
+    void fit_path_with_steps(const std::vector<int>& path, int branch_id)
+    {
+        std::unordered_map<std::int64_t, int> pos_of_flat;
+        pos_of_flat.reserve(path.size());
+        for (std::size_t q = 0; q < path.size(); ++q)
+            pos_of_flat[result_.flats[static_cast<std::size_t>(path[q])]] = static_cast<int>(q);
+
+        std::vector<std::pair<int, int>> steps;   // path positions, bottom < top
+        for (std::size_t q = 0; q < path.size(); ++q)
+        {
+            const auto it = step_top_of_bottom_.find(result_.flats[static_cast<std::size_t>(path[q])]);
+            if (it == step_top_of_bottom_.end()) continue;
+            for (const std::int64_t top_flat : it->second)
+            {
+                const auto top = pos_of_flat.find(top_flat);
+                if (top == pos_of_flat.end() || top->second <= static_cast<int>(q)) continue;
+                steps.emplace_back(static_cast<int>(q), top->second);
+            }
+        }
+        std::sort(steps.begin(), steps.end());
+
+        auto pin = [&](int pos)
+        {
+            const std::size_t i = static_cast<std::size_t>(path[static_cast<std::size_t>(pos)]);
+            if (!fitted_assigned_[i])
+            {
+                result_.fitted_elevation[i] = result_.observed_elevation[i];
+                fitted_assigned_[i] = 1u;
+            }
+        };
+
+        const int last = static_cast<int>(path.size()) - 1;
+        int from = 0;
+        for (const auto& [bottom, top] : steps)
+        {
+            if (bottom < from) continue;    // overlaps the previous step
+            pin(bottom);
+            pin(top);
+            fit_path_recursive(path, from, bottom, branch_id, 0);
+            const std::size_t b = static_cast<std::size_t>(path[static_cast<std::size_t>(bottom)]);
+            const std::size_t t = static_cast<std::size_t>(path[static_cast<std::size_t>(top)]);
+            accept_segment(path, bottom, top, branch_id,
+                           result_.fitted_elevation[b], result_.fitted_elevation[t], true);
+            from = top;
+        }
+        fit_path_recursive(path, from, last, branch_id, 0);
+    }
+
     void fit_path_recursive(
         const std::vector<int>& path,
         int down_pos,
         int up_pos,
-        int branch_id)
+        int branch_id,
+        int depth)
     {
         if (down_pos < 0 || up_pos < 0 || down_pos >= up_pos)
         {
@@ -790,9 +865,11 @@ private:
         // different value in accept_segment and trip the consistency check. A
         // segment that must descend to honour such a constraint (because the
         // downstream anchor's fitted elevation overshoots it) is accepted as-is.
+        bool clamped = false;
         if (!up_already_assigned && z_up < z_down)
         {
             z_up = z_down;
+            clamped = true;
         }
 
         const double chi_down =
@@ -871,13 +948,36 @@ private:
             }
 
             result_.is_split_point[static_cast<std::size_t>(split_local)] = 1u;
+            record_split(split_local, chi_down, chi_up, z_down, z_up, depth, clamped);
 
-            fit_path_recursive(path, down_pos, split_pos, branch_id);
-            fit_path_recursive(path, split_pos, up_pos, branch_id);
+            fit_path_recursive(path, down_pos, split_pos, branch_id, depth + 1);
+            fit_path_recursive(path, split_pos, up_pos, branch_id, depth + 1);
             return;
         }
 
         accept_segment(path, down_pos, up_pos, branch_id, z_down, z_up);
+    }
+
+    // The split's place in the hierarchy and the two child chords' slopes
+    // (bookkeeping only: the fit does not use them).
+    void record_split(int split_local, double chi_down, double chi_up,
+                      float z_down, float z_up, int depth, bool clamped)
+    {
+        const std::size_t i = static_cast<std::size_t>(split_local);
+        const double chi_s = static_cast<double>(result_.chi[i]);
+        const double z_s   = static_cast<double>(result_.observed_elevation[i]);
+        lsdtt_chi_split_record& rec = result_.split_records[i];
+        rec.rank  = split_rank_in_branch_++;
+        rec.depth = depth;
+        rec.divergence_m = static_cast<float>(
+            z_s - static_cast<double>(line_elevation(chi_down, chi_up, z_down, z_up, chi_s)));
+        const double db = chi_s - chi_down;
+        const double da = chi_up - chi_s;
+        rec.dchi_below = static_cast<float>(db);
+        rec.dchi_above = static_cast<float>(da);
+        if (db > 0.0) rec.ksn_below = static_cast<float>((z_s - static_cast<double>(z_down)) / db);
+        if (da > 0.0) rec.ksn_above = static_cast<float>((static_cast<double>(z_up) - z_s) / da);
+        rec.clamped = clamped ? std::uint8_t{1} : std::uint8_t{0};
     }
 
     float line_elevation(
@@ -906,7 +1006,8 @@ private:
         int up_pos,
         int branch_id,
         float z_down,
-        float z_up)
+        float z_up,
+        bool is_step = false)
     {
         const int down_local = path[static_cast<std::size_t>(down_pos)];
         const int up_local   = path[static_cast<std::size_t>(up_pos)];
@@ -957,6 +1058,7 @@ private:
                 result_.fitted_elevation[static_cast<std::size_t>(local_idx)] = z_fit;
                 fitted_assigned_[static_cast<std::size_t>(local_idx)] = 1u;
             }
+            if (is_step) result_.is_step[static_cast<std::size_t>(local_idx)] = 1u;
         }
 
         lsdtt_chi_network_fit_segment segment;
@@ -987,6 +1089,7 @@ private:
 
         segment.max_abs_residual = max_abs_residual;
         segment.n_nodes = static_cast<std::int32_t>(up_pos - down_pos + 1);
+        segment.is_step = is_step ? std::uint8_t{1} : std::uint8_t{0};
 
         result_.segments.push_back(segment);
     }
@@ -1210,7 +1313,9 @@ void append_fit_result_to_segment_table(
 
         table.max_abs_residual.push_back(seg.max_abs_residual);
         table.n_nodes.push_back(seg.n_nodes);
+        if (fit_result.step_aware) table.is_step.push_back(seg.is_step);
     }
+    if (fit_result.step_aware) table.step_aware = true;
 }
 
 
@@ -1274,7 +1379,10 @@ void append_fit_result_to_node_table(
         table.is_source.push_back(fit_result.is_source[i]);
         table.is_junction.push_back(fit_result.is_junction[i]);
         table.is_split_point.push_back(fit_result.is_split_point[i]);
+        if (fit_result.step_aware)
+            table.is_step.push_back(i < fit_result.is_step.size() ? fit_result.is_step[i] : std::uint8_t{0});
     }
+    if (fit_result.step_aware) table.step_aware = true;
 }
 
 } // anonymous namespace
@@ -1290,7 +1398,8 @@ void write_chi_network_fit_nodes_csv(
            "fitted_elevation,residual_elevation,abs_residual_elevation,branch_id,"
            "is_main_stem,is_source,is_junction,is_split_point";
     const bool with_keys = table.source_key.size() == table.flat.size() && !table.flat.empty();
-    out << (with_keys ? ",source_key\n" : "\n");
+    const bool with_step = table.step_aware && table.is_step.size() == table.flat.size();
+    out << (with_keys ? ",source_key" : "") << (with_step ? ",is_step\n" : "\n");
 
     const std::size_t n = table.flat.size();
     for (std::size_t i = 0; i < n; ++i)
@@ -1310,6 +1419,7 @@ void write_chi_network_fit_nodes_csv(
             << static_cast<int>(table.is_junction[i]) << ','
             << static_cast<int>(table.is_split_point[i]);
         if (with_keys) out << ',' << table.source_key[i];
+        if (with_step) out << ',' << static_cast<int>(table.is_step[i]);
         out << '\n';
     }
 }
@@ -1350,7 +1460,8 @@ void write_chi_network_fit_segments_csv(
            "downstream_flat,upstream_flat,downstream_chi,upstream_chi,"
            "downstream_elevation,upstream_elevation,k_sn,max_abs_residual,n_nodes";
     const bool with_keys = table.source_key.size() == table.segment_id.size() && !table.segment_id.empty();
-    out << (with_keys ? ",source_key\n" : "\n");
+    const bool with_step = table.step_aware && table.is_step.size() == table.segment_id.size();
+    out << (with_keys ? ",source_key" : "") << (with_step ? ",is_step\n" : "\n");
 
     const std::size_t n = table.segment_id.size();
     for (std::size_t i = 0; i < n; ++i)
@@ -1370,6 +1481,7 @@ void write_chi_network_fit_segments_csv(
             << table.max_abs_residual[i] << ','
             << table.n_nodes[i];
         if (with_keys) out << ',' << table.source_key[i];
+        if (with_step) out << ',' << static_cast<int>(table.is_step[i]);
         out << '\n';
     }
 }
@@ -1514,6 +1626,13 @@ void write_chi_network_fit_segments_vector(
         schema.field_names.push_back("source_key");
         schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
     }
+    bool step_aware = false;
+    for (const auto& b : fit_results.basins) step_aware = step_aware || b.step_aware;
+    if (step_aware)
+    {
+        schema.field_names.push_back("is_step");
+        schema.field_types.push_back(lsdtt_vector_field_type::int64_type);
+    }
 
     const int    n_cols    = meta.n_cols;
     const int    n_rows    = meta.n_rows;
@@ -1584,6 +1703,7 @@ void write_chi_network_fit_segments_vector(
                 }
                 attrs.push_back(k);
             }
+            if (step_aware) attrs.push_back(static_cast<std::int64_t>(seg.is_step));
             writer.write_line(pts, attrs);
         }
     }

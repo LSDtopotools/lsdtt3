@@ -20,6 +20,7 @@
 #include <cpu/lsdtt_chi_network_analysis_cpu.hpp>
 #include <cpu/lsdtt_chi_data_maps_cpu.hpp>
 #include <cpu/lsdtt_chi_ksn_inversion_cpu.hpp>
+#include <cpu/lsdtt_chi_step_changes_cpu.hpp>
 #include <utils/lsdtt_histogram.hpp>
 namespace nb = nanobind;
 namespace lsdtt3_python {
@@ -68,7 +69,21 @@ class ChiCollection { public: ChiCollection(lsdtt::lsdtt_chi_collection_result r
 // A chi fit, with the chi network it was fitted from and that network's
 // channel keys (assign_chi_source_keys, as lsdtt-chi-analysis), for the
 // source_key columns and the tributary / knickpoint tables.
-class ChiFit { public: ChiFit(lsdtt::lsdtt_chi_network_fit_collection_result result, std::shared_ptr<lsdtt::lsdtt_flowinfo> flow, lsdtt::lsdtt_chi_collection_result chi, std::vector<lsdtt::lsdtt_chi_basin_source_keys> keys): result_(std::move(result)), flow_(std::move(flow)), chi_(std::move(chi)), keys_(std::move(keys)), key_map_(lsdtt::build_chi_fit_source_key_map(chi_, keys_)) {} const lsdtt::lsdtt_chi_network_fit_collection_result& native() const noexcept { return result_; } const lsdtt::lsdtt_flowinfo& flow() const noexcept { return *flow_; } const lsdtt::lsdtt_chi_collection_result& chi() const noexcept { return chi_; } const std::vector<lsdtt::lsdtt_chi_basin_source_keys>& keys() const noexcept { return keys_; } const lsdtt::lsdtt_chi_fit_source_key_map& key_map() const noexcept { return key_map_; } private: lsdtt::lsdtt_chi_network_fit_collection_result result_; std::shared_ptr<lsdtt::lsdtt_flowinfo> flow_; lsdtt::lsdtt_chi_collection_result chi_; std::vector<lsdtt::lsdtt_chi_basin_source_keys> keys_; lsdtt::lsdtt_chi_fit_source_key_map key_map_; };
+//
+// With step-change detection (Parts B and C, as lsdtt-chi-analysis
+// run_step_change_detection) a stage 1 fit also holds the step reaches and the
+// step-aware (stage 2) fit; its knickpoints then carry the step
+// cross-reference columns. The stage 2 fit holds the same steps (for
+// ChiFit.steps) but no further stage and no cross-reference.
+class ChiFit { public: ChiFit(lsdtt::lsdtt_chi_network_fit_collection_result result, std::shared_ptr<lsdtt::lsdtt_flowinfo> flow, lsdtt::lsdtt_chi_collection_result chi, std::vector<lsdtt::lsdtt_chi_basin_source_keys> keys, std::string knickpoint_threshold_algorithm_choice = "p95"): result_(std::move(result)), flow_(std::move(flow)), chi_(std::move(chi)), keys_(std::move(keys)), key_map_(lsdtt::build_chi_fit_source_key_map(chi_, keys_)), knickpoint_threshold_algorithm_choice_(std::move(knickpoint_threshold_algorithm_choice)) {} const std::string& knickpoint_threshold_algorithm_choice() const noexcept { return knickpoint_threshold_algorithm_choice_; } const lsdtt::lsdtt_chi_network_fit_collection_result& native() const noexcept { return result_; } const lsdtt::lsdtt_flowinfo& flow() const noexcept { return *flow_; } std::shared_ptr<lsdtt::lsdtt_flowinfo> shared_flow() const noexcept { return flow_; } const lsdtt::lsdtt_chi_collection_result& chi() const noexcept { return chi_; } const std::vector<lsdtt::lsdtt_chi_basin_source_keys>& keys() const noexcept { return keys_; } const lsdtt::lsdtt_chi_fit_source_key_map& key_map() const noexcept { return key_map_; }
+    void set_steps(std::vector<lsdtt::lsdtt_chi_step_row> steps, std::shared_ptr<ChiFit> step_aware_fit) { steps_ = std::move(steps); has_steps_ = true; step_aware_fit_ = std::move(step_aware_fit); }
+    bool has_steps() const noexcept { return has_steps_; }
+    const std::vector<lsdtt::lsdtt_chi_step_row>& steps() const noexcept { return steps_; }
+    const ChiFit* step_aware_fit() const noexcept { return step_aware_fit_.get(); }
+    bool cross_reference_steps() const noexcept { return has_steps_ && step_aware_fit_ != nullptr; }
+    // the step-aware (stage 2) fit: it holds the steps but no further stage
+    bool is_step_aware() const noexcept { return has_steps_ && step_aware_fit_ == nullptr; }
+private: lsdtt::lsdtt_chi_network_fit_collection_result result_; std::shared_ptr<lsdtt::lsdtt_flowinfo> flow_; lsdtt::lsdtt_chi_collection_result chi_; std::vector<lsdtt::lsdtt_chi_basin_source_keys> keys_; lsdtt::lsdtt_chi_fit_source_key_map key_map_; std::string knickpoint_threshold_algorithm_choice_; std::vector<lsdtt::lsdtt_chi_step_row> steps_; bool has_steps_ = false; std::shared_ptr<ChiFit> step_aware_fit_; };
 class ChiInversion { public: ChiInversion(lsdtt::lsdtt_chi_ksn_inversion_collection_result result): result_(std::move(result)) {} const lsdtt::lsdtt_chi_ksn_inversion_collection_result& native() const noexcept { return result_; } private: lsdtt::lsdtt_chi_ksn_inversion_collection_result result_; };
 class FlowGraph { public: FlowGraph(const Raster& dem, const std::string& method, const std::string& boundary_conditions, bool interior_nodata_is_outlet, float mfd_exponent, int n_threads); const lsdtt::lsdtt_flowgraph_cpu& native() const noexcept { return graph_; } private: lsdtt::lsdtt_flowgraph_cpu graph_; };
 void bind_raster_types(nb::module_&); void bind_raster_basic_ops(nb::module_&); void bind_raster_conditioning(nb::module_&); void bind_raster_resampling(nb::module_&); void bind_raster_hierarchy(nb::module_&); void bind_raster_pit_processing(nb::module_&); void bind_raster_surface_metrics(nb::module_&); void bind_raster_spectral(nb::module_&); void bind_raster_swath(nb::module_&); void bind_raster_mountain_front(nb::module_&); void bind_raster_feature_finder(nb::module_&); void bind_raster_flat_surfaces(nb::module_&); void bind_fluvial_surfaces(nb::module_&); void bind_raster_marsh(nb::module_&); void bind_raster_ridgeline(nb::module_&); void bind_valley_helpers(nb::module_&); void bind_flow_info(nb::module_&); void bind_channel_heads(nb::module_&, nb::class_<FlowInfo>&); void bind_flow_graph(nb::module_&); void bind_hydraulic_routing(nb::module_&); void bind_flow_indices(nb::module_&); void bind_basins(nb::module_&, nb::class_<FlowInfo>&); void bind_divide_migration(nb::module_&); void bind_raster_geospatial(nb::module_&); void bind_geospatial_runtime(nb::module_&); void bind_raster_fetch(nb::module_&); void bind_rotation_frames(nb::module_&);

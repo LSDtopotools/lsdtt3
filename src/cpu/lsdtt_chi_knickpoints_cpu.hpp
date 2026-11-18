@@ -23,10 +23,41 @@
 // (upstream - downstream: positive where the channel steepens upstream) and
 // log10 ratio are reported.
 //
+// SPLIT HIERARCHY (plan_chi_knickpoints.md, Part A). Every within-branch
+// boundary is a split point of the recursive fit. Its row carries how the fit
+// made it (rank, depth, divergence from the chord, clamped) and the slopes of
+// the two child chords at that moment, split_ksn_below / split_ksn_above: a
+// k_sn change measured at the scale the split was resolved at. That change
+// weighted by its scale is
+//   split_delta_ksn_metres = split_delta_ksn / sqrt(1/dchi_below^2 + 1/dchi_above^2)
+// (in metres: the elevation misfit the change makes over its own chords, so
+// a change across long chords outranks the same change across short, noisy
+// ones). The RANKING measure is split_delta_ksn_normalised, the same divided
+// by the branch's chi span (head to junction or outlet), so long channels do
+// not dominate the pooled ranking (Simon, R6, 2026-11-17). delta_ksn of the
+// final segments is kept for comparison; it ranks short-segment noise highest.
+//
 // Thresholds for a "major" knickpoint are suggested from the distribution of
-// |delta_ksn| and |log_ratio_ksn| over the within-branch rows (p90, p95,
-// median + 3 MAD with the MAD scaled by 1.4826, and Otsu's two-class split),
-// plus an outlier value for segment k_sn itself (Q3 + 3 IQR).
+// |split_delta_ksn_metres|, |split_delta_ksn_normalised|, |delta_ksn| and
+// |log_ratio_ksn| over the within-branch rows (p90, p95, median + 3 MAD with
+// the MAD scaled by 1.4826, and Otsu's two-class split), plus an outlier
+// value for segment k_sn itself (Q3 + 3 IQR). is_major marks the rows above
+// the chosen method's threshold on |split_delta_ksn_normalised|.
+//
+// KNICKZONES: lips are the shallowing major rows (split_delta_ksn < 0). Foot
+// candidates are the steepening rows (> 0) that are major or whose
+// |split_delta_ksn_metres| passes its p95 (the normalised ranking rarely
+// passes two splits on one branch, so the foot has the weaker, unnormalised
+// test). Walking upstream on each branch these form alternating runs of feet
+// and lips. Each run of lips is one knickzone: the lip is the run's strongest
+// (largest |split_delta_ksn_normalised|, so small major splits inside the
+// steep reach do not cut it short), the foot the strongest of the run of
+// feet just below (foot_type split). A run of lips with no feet below it
+// means the branch starts on the knickzone (typically a basin whose outlet
+// is on it): the knickzone runs down to the branch base, the basin outlet on
+// the trunk or the junction on a tributary (foot_type basin_outlet /
+// tributary_junction). Feet with no lip above them (steep to the channel
+// head) make no knickzone.
 //
 // GDAL-free; the CSV writers use std::ofstream.
 // -----------------------------------------------------------------------------
@@ -94,11 +125,59 @@ struct lsdtt_chi_knickpoint_row
     std::uint8_t at_junction = 0;
     double chi_from_branch_head = k_chi_nan;
     double chi_normalised = k_chi_nan;    // chi / the basin's maximum chi
+    // split hierarchy (empty / -1 on junction rows)
+    std::int32_t split_rank = -1;
+    std::int32_t split_depth = -1;
+    double split_divergence_metres = k_chi_nan;
+    double split_dchi_below = k_chi_nan, split_dchi_above = k_chi_nan;
+    double split_ksn_below = k_chi_nan, split_ksn_above = k_chi_nan;
+    double split_delta_ksn = k_chi_nan;              // above - below
+    double split_delta_ksn_metres = k_chi_nan;       // scale-weighted
+    double split_delta_ksn_normalised = k_chi_nan;   // / the branch's chi span (the ranking measure)
+    std::uint8_t split_clamped = 0;
+    std::uint8_t is_major = 0;            // |split_delta_ksn_normalised| above the chosen threshold
+    // Cross-reference to the step reaches (Part C; cross_reference_chi_knickpoints_with_steps,
+    // lsdtt_chi_step_changes_cpu): the nearest step on the same branch and its
+    // chi distance (0 if the boundary is inside it), and 1 if a step lies on
+    // the two segments either side of the boundary. Written with with_steps.
+    std::int32_t nearest_step_id = -1;
+    double nearest_step_chi_distance = k_chi_nan;
+    std::uint8_t step_in_adjacent_segments = 0;
+};
+
+struct lsdtt_chi_knickzone_row
+{
+    std::int32_t knickzone_id = -1;
+    std::int32_t basin_index = -1;
+    std::int32_t basin_key = -1;
+    std::int32_t source_key = -1;
+    std::int32_t branch_id = -1;
+    // split, or where the branch starts on the knickzone (no foot candidate
+    // below the lip): basin_outlet (trunk) or tributary_junction, and then
+    // the foot is the branch base and ksn_below and the foot split fields are
+    // NaN.
+    std::string foot_type;
+    std::int64_t foot_flat = -1, lip_flat = -1;
+    double foot_x = k_chi_nan, foot_y = k_chi_nan, lip_x = k_chi_nan, lip_y = k_chi_nan;
+    double foot_chi = k_chi_nan, lip_chi = k_chi_nan;
+    double foot_elevation = k_chi_nan, lip_elevation = k_chi_nan;
+    double relief_m = k_chi_nan;          // lip - foot elevation
+    double chi_span = k_chi_nan;
+    double flow_length_m = k_chi_nan;
+    double ksn_below = k_chi_nan;         // fitted segment below the foot
+    double ksn_inside = k_chi_nan;        // relief / chi span
+    double ksn_above = k_chi_nan;         // fitted segment above the lip
+    double foot_split_delta_ksn_metres = k_chi_nan, lip_split_delta_ksn_metres = k_chi_nan;
+    double foot_split_delta_ksn_normalised = k_chi_nan, lip_split_delta_ksn_normalised = k_chi_nan;
+    std::string threshold_method;          // on |split_delta_ksn_normalised|
+    double threshold = k_chi_nan;          // the lip's (and is_major's) threshold
+    double foot_threshold_split_delta_ksn_metres = k_chi_nan;  // p95 of |split_delta_ksn_metres|
 };
 
 struct lsdtt_chi_threshold_row
 {
-    std::string measure;                  // abs_delta_ksn, abs_log_ratio_ksn, ksn
+    std::string measure;                  // abs_split_delta_ksn_metres, abs_split_delta_ksn_normalised,
+                                          // abs_delta_ksn, abs_log_ratio_ksn, ksn
     std::string method;                   // p90, p95, median_plus_3mad, otsu, q3_plus_3iqr
     double threshold = k_chi_nan;
     long n_above = 0;
@@ -110,7 +189,15 @@ struct lsdtt_chi_tributary_knickpoint_tables
     std::vector<lsdtt_chi_tributary_row> tributaries;
     std::vector<lsdtt_chi_knickpoint_row> knickpoints;
     std::vector<lsdtt_chi_threshold_row> thresholds;
+    std::vector<lsdtt_chi_knickzone_row> knickzones;
 };
+
+// The methods accepted by knickpoint_threshold_algorithm_choice.
+inline const std::vector<std::string>& chi_knickpoint_threshold_methods()
+{
+    static const std::vector<std::string> m = {"p90", "p95", "median_plus_3mad", "otsu"};
+    return m;
+}
 
 // Build the tables. fits.basins[i] must have been fitted from
 // chi_networks.basins[i]; keys from assign_chi_source_keys(chi_networks, ...).
@@ -118,7 +205,8 @@ struct lsdtt_chi_tributary_knickpoint_tables
     const lsdtt_chi_network_fit_collection_result& fits,
     const lsdtt_chi_collection_result&             chi_networks,
     const std::vector<lsdtt_chi_basin_source_keys>& keys,
-    const lsdtt_raster_meta&                       meta
+    const lsdtt_raster_meta&                       meta,
+    const std::string&                             threshold_method = "p95"
 );
 
 // Threshold suggestions (exposed for testing). NaN thresholds when fewer than
@@ -133,9 +221,14 @@ struct lsdtt_chi_tributary_knickpoint_tables
 
 void write_chi_tributaries_csv(const std::string& filename,
                                const std::vector<lsdtt_chi_tributary_row>& rows);
+// with_steps appends nearest_step_id, nearest_step_chi_distance and
+// step_in_adjacent_segments.
 void write_chi_knickpoints_csv(const std::string& filename,
-                               const std::vector<lsdtt_chi_knickpoint_row>& rows);
+                               const std::vector<lsdtt_chi_knickpoint_row>& rows,
+                               bool with_steps = false);
 void write_chi_knickpoint_thresholds_csv(const std::string& filename,
                                          const std::vector<lsdtt_chi_threshold_row>& rows);
+void write_chi_knickzones_csv(const std::string& filename,
+                              const std::vector<lsdtt_chi_knickzone_row>& rows);
 
 } // namespace lsdtt

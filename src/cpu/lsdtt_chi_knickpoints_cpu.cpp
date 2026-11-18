@@ -116,12 +116,15 @@ std::vector<lsdtt_chi_threshold_row> chi_knickpoint_thresholds(
     const std::vector<lsdtt_chi_knickpoint_row>& knickpoints,
     const std::vector<double>&                   segment_ksn)
 {
-    std::vector<double> abs_delta, abs_log;
+    std::vector<double> abs_delta, abs_log, abs_split, abs_split_norm;
     for (const auto& k : knickpoints)
     {
         if (k.at_junction) continue;
         if (std::isfinite(k.delta_ksn)) abs_delta.push_back(std::fabs(k.delta_ksn));
         if (std::isfinite(k.log_ratio_ksn)) abs_log.push_back(std::fabs(k.log_ratio_ksn));
+        if (std::isfinite(k.split_delta_ksn_metres)) abs_split.push_back(std::fabs(k.split_delta_ksn_metres));
+        if (std::isfinite(k.split_delta_ksn_normalised))
+            abs_split_norm.push_back(std::fabs(k.split_delta_ksn_normalised));
     }
     std::vector<lsdtt_chi_threshold_row> rows;
     auto add = [&](const std::string& measure, const std::string& method, double thr,
@@ -136,7 +139,9 @@ std::vector<lsdtt_chi_threshold_row> chi_knickpoint_thresholds(
             for (const double x : values) if (x > thr) ++r.n_above;
         rows.push_back(r);
     };
-    for (const auto& [measure, values] : {std::make_pair(std::string("abs_delta_ksn"), abs_delta),
+    for (const auto& [measure, values] : {std::make_pair(std::string("abs_split_delta_ksn_metres"), abs_split),
+                                          std::make_pair(std::string("abs_split_delta_ksn_normalised"), abs_split_norm),
+                                          std::make_pair(std::string("abs_delta_ksn"), abs_delta),
                                           std::make_pair(std::string("abs_log_ratio_ksn"), abs_log)})
     {
         add(measure, "p90", chi_percentile_linear(values, 90.0), values);
@@ -162,14 +167,32 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
     const lsdtt_chi_network_fit_collection_result& fits,
     const lsdtt_chi_collection_result&             chi_networks,
     const std::vector<lsdtt_chi_basin_source_keys>& keys,
-    const lsdtt_raster_meta&                       meta)
+    const lsdtt_raster_meta&                       meta,
+    const std::string&                             threshold_method)
 {
+    {
+        const auto& ok = chi_knickpoint_threshold_methods();
+        if (std::find(ok.begin(), ok.end(), threshold_method) == ok.end())
+            throw std::invalid_argument("knickpoint_threshold_algorithm_choice must be p90, p95, "
+                                        "median_plus_3mad or otsu, got " + threshold_method);
+    }
     lsdtt_chi_tributary_knickpoint_tables out;
     const int nc = meta.n_cols, nr = meta.n_rows;
     const double cs = meta.cell_size;
     auto x_of = [&](std::int64_t f) { return meta.x_min + (static_cast<double>(f % nc) + 0.5) * cs; };
     auto y_of = [&](std::int64_t f) { return meta.y_min + (nr - static_cast<double>(f / nc) - 0.5) * cs; };
     std::vector<double> all_ksn;
+    // The downstream end of each branch: the basin outlet for the trunk, the
+    // junction on the parent for a tributary. An unpaired lip's knickzone
+    // starts here.
+    struct branch_base
+    {
+        std::int64_t flat = -1;
+        double x = k_chi_nan, y = k_chi_nan, chi = k_chi_nan, elevation = k_chi_nan;
+        double flow_distance_m = k_chi_nan;
+        bool is_outlet = false;
+    };
+    std::map<std::pair<std::int32_t, std::int32_t>, branch_base> base_of;
 
     for (std::size_t bi = 0; bi < fits.basins.size(); ++bi)
     {
@@ -223,7 +246,8 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
             t.head_flat = r.flats[head];
             t.head_x = x_of(t.head_flat);
             t.head_y = y_of(t.head_flat);
-            t.source_key = static_cast<std::int32_t>(from_keys(t.head_flat, 2));
+            const double sk = from_keys(t.head_flat, 2);
+            t.source_key = std::isfinite(sk) ? static_cast<std::int32_t>(sk) : -1;
             const std::int64_t rec = r.receiver_flats[low];
             const auto jt = fit_idx.find(rec);
             double chi_down = r.chi[low], fd_down = from_keys(r.flats[low], 1);
@@ -244,16 +268,30 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
             t.chi_span = static_cast<double>(r.chi[head]) - chi_down;
             t.length_m = from_keys(t.head_flat, 1) - fd_down;
             trib[b] = t;
+            branch_base bb;
+            const bool at_junction = b != 0 && jt != fit_idx.end();
+            const std::size_t bn = at_junction ? jt->second : low;
+            bb.flat = r.flats[bn];
+            bb.x = x_of(bb.flat);
+            bb.y = y_of(bb.flat);
+            bb.chi = r.chi[bn];
+            bb.elevation = r.observed_elevation[bn];
+            bb.flow_distance_m = fd_down;
+            bb.is_outlet = !at_junction;
+            base_of[{static_cast<std::int32_t>(bi), b}] = bb;
         }
         const auto oit = fit_idx.find(r.outlet_flat);
         const double basin_area = from_keys(oit != fit_idx.end() ? r.outlet_flat : r.flats[0], 0);
         // segments per branch
         std::map<std::int32_t, std::vector<const lsdtt_chi_network_fit_segment*>> segs_of;
         std::unordered_map<std::int32_t, const lsdtt_chi_network_fit_segment*> seg_by_id;
+        // Step segments of a step-aware fit (Part C) are in the steps table:
+        // they take no part in the k_sn statistics or the knickpoints.
         for (const auto& s : r.segments)
         {
-            segs_of[s.branch_id].push_back(&s);
             seg_by_id[s.segment_id] = &s;
+            if (s.is_step) continue;
+            segs_of[s.branch_id].push_back(&s);
             all_ksn.push_back(s.k_sn);
         }
         for (auto& [b, t] : trib)
@@ -334,7 +372,7 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
                     junction = true;
                 }
             }
-            if (!p) continue;
+            if (!p || s.is_step || p->is_step) continue;
             lsdtt_chi_knickpoint_row k;
             k.basin_index = static_cast<std::int32_t>(bi);
             k.basin_key = basin_key;
@@ -363,10 +401,143 @@ lsdtt_chi_tributary_knickpoint_tables build_chi_tributaries_and_knickpoints(
             if (hit != head_of.end() && std::isfinite(k.chi))
                 k.chi_from_branch_head = static_cast<double>(r.chi[hit->second]) - k.chi;
             if (chi_max > 0.0 && std::isfinite(k.chi)) k.chi_normalised = k.chi / chi_max;
+            // the split that made this boundary (within a branch only)
+            if (!junction && nit != fit_idx.end() && nit->second < r.split_records.size())
+            {
+                const lsdtt_chi_split_record& sr = r.split_records[nit->second];
+                if (sr.rank >= 0)
+                {
+                    k.split_rank = sr.rank;
+                    k.split_depth = sr.depth;
+                    k.split_divergence_metres = sr.divergence_m;
+                    k.split_dchi_below = sr.dchi_below;
+                    k.split_dchi_above = sr.dchi_above;
+                    k.split_ksn_below = sr.ksn_below;
+                    k.split_ksn_above = sr.ksn_above;
+                    k.split_clamped = sr.clamped;
+                    k.split_delta_ksn = k.split_ksn_above - k.split_ksn_below;
+                    if (k.split_dchi_below > 0.0 && k.split_dchi_above > 0.0)
+                        k.split_delta_ksn_metres = k.split_delta_ksn /
+                            std::sqrt(1.0 / (k.split_dchi_below * k.split_dchi_below) +
+                                      1.0 / (k.split_dchi_above * k.split_dchi_above));
+                    const auto tit = trib.find(s.branch_id);
+                    if (tit != trib.end() && tit->second.chi_span > 0.0)
+                        k.split_delta_ksn_normalised = k.split_delta_ksn_metres / tit->second.chi_span;
+                }
+            }
             out.knickpoints.push_back(k);
         }
     }
     out.thresholds = chi_knickpoint_thresholds(out.knickpoints, all_ksn);
+
+    // ---- major rows and knickzones --------------------------------------------
+    double thr = k_chi_nan;
+    for (const auto& t : out.thresholds)
+        if (t.measure == "abs_split_delta_ksn_normalised" && t.method == threshold_method) thr = t.threshold;
+    // Foot candidates: steepening within-branch splits that are major or whose
+    // |split_delta_ksn_metres| passes the unnormalised p95 (the normalised
+    // ranking rarely passes two splits on one branch, so the lip is chosen by
+    // it and the foot by the weaker, unnormalised test).
+    double foot_thr = k_chi_nan;
+    for (const auto& t : out.thresholds)
+        if (t.measure == "abs_split_delta_ksn_metres" && t.method == "p95") foot_thr = t.threshold;
+    std::map<std::pair<std::int32_t, std::int32_t>, std::vector<std::size_t>> events;  // lips and feet
+    for (std::size_t i = 0; i < out.knickpoints.size(); ++i)
+    {
+        auto& k = out.knickpoints[i];
+        if (k.at_junction || !std::isfinite(k.split_delta_ksn_normalised)) continue;
+        if (std::isfinite(thr) && std::fabs(k.split_delta_ksn_normalised) > thr) k.is_major = 1;
+        const bool lip = k.is_major && k.split_delta_ksn < 0.0;
+        const bool foot = k.split_delta_ksn > 0.0 &&
+                          (k.is_major || (std::isfinite(foot_thr) && std::isfinite(k.split_delta_ksn_metres) &&
+                                          std::fabs(k.split_delta_ksn_metres) > foot_thr));
+        if (lip || foot) events[{k.basin_index, k.branch_id}].push_back(i);
+    }
+    for (auto& [key, idx] : events)
+    {
+        std::sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b)
+                  { return out.knickpoints[a].chi < out.knickpoints[b].chi; });
+        // Walking upstream the events form alternating runs of feet
+        // (steepening) and lips (shallowing). Each run of lips is one
+        // knickzone: its lip is the strongest of the run (so small major
+        // splits inside the steep reach do not cut it short) and its foot the
+        // strongest of the run of feet just below. A run of lips with no feet
+        // below it (the branch starts steep, often a basin whose outlet is on
+        // a knickzone) runs down to the branch base: the basin outlet on the
+        // trunk, the junction on a tributary. A run of feet with no lips above
+        // it (steep to the channel head) is no knickzone.
+        auto push_zone = [&](const lsdtt_chi_knickpoint_row* foot, const branch_base* base,
+                             const lsdtt_chi_knickpoint_row& lip)
+        {
+            lsdtt_chi_knickzone_row z;
+            z.knickzone_id = static_cast<std::int32_t>(out.knickzones.size());
+            z.basin_index = lip.basin_index;
+            z.basin_key = lip.basin_key;
+            z.source_key = lip.source_key;
+            z.branch_id = lip.branch_id;
+            if (foot)
+            {
+                z.foot_type = "split";
+                z.foot_flat = foot->flat;
+                z.foot_x = foot->x; z.foot_y = foot->y;
+                z.foot_chi = foot->chi;
+                z.foot_elevation = foot->elevation;
+                z.flow_length_m = lip.flow_distance_m - foot->flow_distance_m;
+                z.ksn_below = foot->ksn_downstream;
+                z.foot_split_delta_ksn_metres = foot->split_delta_ksn_metres;
+                z.foot_split_delta_ksn_normalised = foot->split_delta_ksn_normalised;
+            }
+            else
+            {
+                z.foot_type = base->is_outlet ? "basin_outlet" : "tributary_junction";
+                z.foot_flat = base->flat;
+                z.foot_x = base->x; z.foot_y = base->y;
+                z.foot_chi = base->chi;
+                z.foot_elevation = base->elevation;
+                z.flow_length_m = lip.flow_distance_m - base->flow_distance_m;
+            }
+            z.lip_flat = lip.flat;
+            z.lip_x = lip.x; z.lip_y = lip.y;
+            z.lip_chi = lip.chi;
+            z.lip_elevation = lip.elevation;
+            z.relief_m = z.lip_elevation - z.foot_elevation;
+            z.chi_span = z.lip_chi - z.foot_chi;
+            z.ksn_inside = z.chi_span > 0.0 ? z.relief_m / z.chi_span : k_chi_nan;
+            z.ksn_above = lip.ksn_upstream;
+            z.lip_split_delta_ksn_metres = lip.split_delta_ksn_metres;
+            z.lip_split_delta_ksn_normalised = lip.split_delta_ksn_normalised;
+            z.threshold_method = threshold_method;
+            z.threshold = thr;
+            z.foot_threshold_split_delta_ksn_metres = foot_thr;
+            out.knickzones.push_back(z);
+        };
+        auto stronger = [&](std::size_t a, std::size_t b)
+        {
+            return std::fabs(out.knickpoints[idx[a]].split_delta_ksn_normalised) >
+                   std::fabs(out.knickpoints[idx[b]].split_delta_ksn_normalised);
+        };
+        const auto bit = base_of.find(key);
+        std::size_t best_foot = idx.size();
+        for (std::size_t q = 0; q < idx.size();)
+        {
+            if (out.knickpoints[idx[q]].split_delta_ksn > 0.0)
+            {
+                best_foot = q;
+                for (++q; q < idx.size() && out.knickpoints[idx[q]].split_delta_ksn > 0.0; ++q)
+                    if (stronger(q, best_foot)) best_foot = q;
+                continue;
+            }
+            std::size_t best_lip = q;
+            for (++q; q < idx.size() && !(out.knickpoints[idx[q]].split_delta_ksn > 0.0); ++q)
+                if (stronger(q, best_lip)) best_lip = q;
+            const auto& lip = out.knickpoints[idx[best_lip]];
+            if (best_foot != idx.size())
+                push_zone(&out.knickpoints[idx[best_foot]], nullptr, lip);
+            else if (bit != base_of.end())
+                push_zone(nullptr, &bit->second, lip);
+            best_foot = idx.size();
+        }
+    }
     return out;
 }
 
@@ -393,12 +564,16 @@ void write_chi_tributaries_csv(const std::string& filename,
 }
 
 void write_chi_knickpoints_csv(const std::string& filename,
-                               const std::vector<lsdtt_chi_knickpoint_row>& rows)
+                               const std::vector<lsdtt_chi_knickpoint_row>& rows,
+                               bool with_steps)
 {
     std::ofstream out = open_csv(filename);
     out << "basin_index,basin_key,source_key,branch_id,upstream_segment_id,downstream_segment_id,flat,"
            "x,y,chi,elevation,flow_distance_m,drainage_area_m2,ksn_upstream,ksn_downstream,delta_ksn,"
-           "log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised\n";
+           "log_ratio_ksn,at_junction,chi_from_branch_head,chi_normalised,split_rank,split_depth,"
+           "split_divergence_metres,split_dchi_below,split_dchi_above,split_ksn_below,split_ksn_above,"
+           "split_delta_ksn,split_delta_ksn_metres,split_delta_ksn_normalised,split_clamped,is_major"
+        << (with_steps ? ",nearest_step_id,nearest_step_chi_distance,step_in_adjacent_segments\n" : "\n");
     for (const auto& k : rows)
         out << k.basin_index << ',' << k.basin_key << ',' << k.source_key << ',' << k.branch_id << ','
             << k.upstream_segment_id << ',' << k.downstream_segment_id << ',' << k.flat << ','
@@ -406,7 +581,16 @@ void write_chi_knickpoints_csv(const std::string& filename,
             << num(k.flow_distance_m) << ',' << num(k.drainage_area_m2) << ',' << num(k.ksn_upstream) << ','
             << num(k.ksn_downstream) << ',' << num(k.delta_ksn) << ',' << num(k.log_ratio_ksn) << ','
             << static_cast<int>(k.at_junction) << ',' << num(k.chi_from_branch_head) << ','
-            << num(k.chi_normalised) << '\n';
+            << num(k.chi_normalised) << ',' << k.split_rank << ',' << k.split_depth << ','
+            << num(k.split_divergence_metres) << ',' << num(k.split_dchi_below) << ','
+            << num(k.split_dchi_above) << ',' << num(k.split_ksn_below) << ',' << num(k.split_ksn_above) << ','
+            << num(k.split_delta_ksn) << ',' << num(k.split_delta_ksn_metres) << ','
+            << num(k.split_delta_ksn_normalised) << ',' << static_cast<int>(k.split_clamped) << ','
+            << static_cast<int>(k.is_major)
+            << (with_steps ? "," + std::to_string(k.nearest_step_id) + "," + num(k.nearest_step_chi_distance) +
+                                 "," + std::to_string(static_cast<int>(k.step_in_adjacent_segments))
+                           : std::string())
+            << '\n';
 }
 
 void write_chi_knickpoint_thresholds_csv(const std::string& filename,
@@ -417,6 +601,28 @@ void write_chi_knickpoint_thresholds_csv(const std::string& filename,
     for (const auto& r : rows)
         out << r.measure << ',' << r.method << ',' << num(r.threshold) << ',' << r.n_above << ','
             << r.n_total << '\n';
+}
+
+void write_chi_knickzones_csv(const std::string& filename,
+                              const std::vector<lsdtt_chi_knickzone_row>& rows)
+{
+    std::ofstream out = open_csv(filename);
+    out << "knickzone_id,basin_index,basin_key,source_key,branch_id,foot_type,foot_flat,lip_flat,foot_x,foot_y,"
+           "lip_x,lip_y,foot_chi,lip_chi,foot_elevation,lip_elevation,relief_m,chi_span,flow_length_m,"
+           "ksn_below,ksn_inside,ksn_above,foot_split_delta_ksn_metres,lip_split_delta_ksn_metres,"
+           "foot_split_delta_ksn_normalised,lip_split_delta_ksn_normalised,threshold_method,threshold,"
+           "foot_threshold_split_delta_ksn_metres\n";
+    for (const auto& z : rows)
+        out << z.knickzone_id << ',' << z.basin_index << ',' << z.basin_key << ',' << z.source_key << ','
+            << z.branch_id << ',' << z.foot_type << ',' << z.foot_flat << ',' << z.lip_flat << ',' << num(z.foot_x) << ','
+            << num(z.foot_y) << ',' << num(z.lip_x) << ',' << num(z.lip_y) << ',' << num(z.foot_chi) << ','
+            << num(z.lip_chi) << ',' << num(z.foot_elevation) << ',' << num(z.lip_elevation) << ','
+            << num(z.relief_m) << ',' << num(z.chi_span) << ',' << num(z.flow_length_m) << ','
+            << num(z.ksn_below) << ',' << num(z.ksn_inside) << ',' << num(z.ksn_above) << ','
+            << num(z.foot_split_delta_ksn_metres) << ',' << num(z.lip_split_delta_ksn_metres) << ','
+            << num(z.foot_split_delta_ksn_normalised) << ',' << num(z.lip_split_delta_ksn_normalised) << ','
+            << z.threshold_method << ',' << num(z.threshold) << ','
+            << num(z.foot_threshold_split_delta_ksn_metres) << '\n';
 }
 
 } // namespace lsdtt

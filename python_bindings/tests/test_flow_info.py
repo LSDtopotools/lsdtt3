@@ -77,8 +77,13 @@ class FlowInfoTest(unittest.TestCase):
         and junction angles; chi gives basins, nodes and a raster; the chi fit has k_sn
         and source keys, one tributary row per branch with the trunk ranked 0, one
         knickpoint per segment boundary away from junctions with delta k_sn = upstream
-        minus downstream, the 9 suggested knickpoint thresholds of 5 methods, and a
-        disorder table.
+        minus downstream, split fields on within-branch rows with is_major set exactly
+        where |split_delta_ksn_normalised| exceeds the chosen method's threshold, a
+        knickzones table, the 17 suggested knickpoint thresholds (4 measures x 4 methods
+        plus the k_sn outlier), a refused unknown threshold choice, a disorder table, and
+        with run_step_change_detection the steps table, a step-aware fit whose step segments
+        are exactly the steps and which refuses knickpoint tables (stage 1 only), the stage 1 step
+        cross-reference columns, an unchanged stage 1, and a refused bad gradient.
         """
         scope = self.flow.channel_scope(3)
         self.assertEqual(scope.mode, "all_channels_threshold")
@@ -116,12 +121,62 @@ class FlowInfoTest(unittest.TestCase):
         within = knickpoints[knickpoints.at_junction == 0]
         self.assertEqual(len(within), int((segments.parent_segment_id >= 0).sum()))
         self.assertTrue(np.allclose(within.delta_ksn, within.ksn_upstream - within.ksn_downstream))
+        self.assertTrue((within.split_rank >= 0).all())
+        self.assertTrue((knickpoints.loc[knickpoints.at_junction == 1, "split_rank"] == -1).all())
         thresholds = fit.knickpoint_thresholds
-        self.assertEqual(len(thresholds), 9)
+        self.assertEqual(len(thresholds), 17)
         self.assertEqual(set(thresholds.method),
                          {"p90", "p95", "median_plus_3mad", "otsu", "q3_plus_3iqr"})
+        self.assertIn("abs_split_delta_ksn_normalised", set(thresholds.measure))
+        for choice in ("p95", "otsu"):
+            chosen = chi.fit(self.dem, knickpoint_threshold_algorithm_choice=choice)
+            rows = chosen.knickpoints
+            limit = chosen.knickpoint_thresholds.query(
+                "measure == 'abs_split_delta_ksn_normalised' and method == @choice").threshold.iloc[0]
+            expected = (rows.at_junction == 0) & (rows.split_delta_ksn_normalised.abs() > limit)
+            self.assertTrue((rows.is_major.astype(bool) == expected).all())
+        self.assertIn("lip_split_delta_ksn_normalised", fit.knickzones.columns)
+        self.assertIn("foot_type", fit.knickzones.columns)
+        with self.assertRaises(ValueError):
+            chi.fit(self.dem, knickpoint_threshold_algorithm_choice="p99")
         self.assertIn("disorder", fit.disorder().columns)
         self.assertEqual(self.flow.chi_from_outlets().shape, self.dem.shape)
+
+        # Step changes and the step-aware fit (run_step_change_detection, as
+        # lsdtt-chi-analysis). Off by default: no steps, no stage 2, no step columns.
+        self.assertIsNone(fit.step_aware_fit)
+        self.assertEqual(len(fit.steps), 0)
+        self.assertNotIn("is_step", fit.segments.columns)
+        self.assertNotIn("nearest_step_id", fit.knickpoints.columns)
+        stepped = chi.fit(self.dem, run_step_change_detection=True, step_change_min_gradient=0.05,
+                          step_change_min_drop_metres=0.5)
+        steps = stepped.steps
+        self.assertGreater(len(steps), 0)
+        self.assertTrue((steps.top_elevation - steps.bottom_elevation >= 0.5 - 1e-6).all())
+        self.assertTrue(np.allclose(steps.drop_m, steps.top_elevation - steps.bottom_elevation, atol=1e-4))
+        stage2 = stepped.step_aware_fit
+        self.assertIsNotNone(stage2)
+        self.assertIsNone(stage2.step_aware_fit)
+        self.assertEqual(len(stage2.steps), len(steps))
+        seg2 = stage2.segments
+        self.assertIn("is_step", seg2.columns)
+        self.assertIn("is_step", stage2.nodes.columns)
+        self.assertEqual(int(seg2.is_step.sum()), len(steps))
+        self.assertEqual(
+            set(zip(seg2.loc[seg2.is_step == 1, "downstream_flat"], seg2.loc[seg2.is_step == 1, "upstream_flat"])),
+            set(zip(steps.bottom_flat, steps.top_flat)))
+        # knickpoints are ranked on stage 1 only, as in the CLI
+        for name in ("knickpoints", "knickzones", "knickpoint_thresholds"):
+            with self.assertRaisesRegex(ValueError, "stage 1"):
+                getattr(stage2, name)
+        self.assertGreater(len(stage2.tributaries), 0)
+        kp1 = stepped.knickpoints
+        for column in ("nearest_step_id", "nearest_step_chi_distance", "step_in_adjacent_segments"):
+            self.assertIn(column, kp1.columns)
+        # stage 1 is the ordinary fit
+        self.assertTrue(np.array_equal(stepped.segments.ksn.to_numpy(), fit.segments.ksn.to_numpy()))
+        with self.assertRaises(ValueError):
+            chi.fit(self.dem, run_step_change_detection=True, step_change_min_gradient=0.0)
 
     @pytest.mark.property
     @pytest.mark.smoke

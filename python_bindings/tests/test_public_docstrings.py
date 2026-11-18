@@ -242,7 +242,8 @@ def test_classes_say_how_to_get_an_instance_and_list_members():
     assert not problems, problems
 
     chi_fit = inspect.getdoc(lsdtt3.ChiFit)
-    assert "Returned by ``ChiCollection.fit()``; not constructible directly." in chi_fit
+    assert ("Returned by ``ChiCollection.fit()``, ``ChiFit.step_aware_fit``; not constructible directly."
+            in chi_fit)
     for member in ("nodes", "segments", "summary"):
         assert re.search(rf"^{member} : ", _section(chi_fit, "Attributes"), re.MULTILINE)
     assert "invert_ksn(m_over_n_values: object" in _section(chi_fit, "Methods")
