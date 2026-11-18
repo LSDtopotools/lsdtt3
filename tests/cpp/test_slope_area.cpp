@@ -31,6 +31,10 @@
 //      up the tributary and the gradient is steeper.
 //   6. Refusals: a window under four cell sizes; a raster off the grid.
 //   7. n_threads 1 and 4 give bit-identical rasters.
+//   8. filled_pixel_mask: on a plane with a 3 x 3 depression, a pit fill
+//      marks exactly the cells it raised (the depression); a least-cost
+//      breach marks none of the cells it lowered; equal surfaces mark
+//      nothing; a raster off the grid is refused.
 //
 // Usage: lsdtt-test-slope-area
 // Prints one line per check and a final "RESULT: PASS|FAIL".
@@ -46,7 +50,9 @@
 
 #include "../../src/cpu/lsdtt_channel_gradient_cpu.hpp"
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
+#include "../../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../../src/cpu/lsdtt_slope_area_cpu.hpp"
 
 namespace
@@ -286,6 +292,55 @@ int main()
         const auto by_trib = channel_slope_at(*flow, dem, F(10, 32), 6 * k_cs, so);
         check("rank raster favouring the tributary: the walk goes up it and the gradient is steeper",
               by_trib.slope_valid && by_trib.slope_m_per_m > Sf + 1e-3, s(by_trib.slope_m_per_m));
+    }
+
+    // ---- 8. filled_pixel_mask ----------------------------------------------------
+    {
+        const int nr = 15, nc = 15;
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+                z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(100.0 - 0.5 * c);
+        for (int r = 6; r <= 8; ++r)
+            for (int c = 6; c <= 8; ++c) z[static_cast<std::size_t>(r * nc + c)] -= 5.0f;   // depression
+        const auto input = make_raster(nr, nc, z);
+        const auto filled = fill_pits(input, 0.0001f, "oooo", 1);
+        const auto m = filled_pixel_mask(input, filled);
+        bool exact = true;
+        int n = 0;
+        for (std::size_t i = 0; i < m.size(); ++i)
+        {
+            const bool raised = filled.get_data()[i] > input.get_data()[i];
+            exact = exact && (m[i] == (raised ? 1 : 0));
+            n += m[i];
+        }
+        bool depression_marked = true;
+        for (int r = 6; r <= 8; ++r)
+            for (int c = 6; c <= 8; ++c) depression_marked = depression_marked && m[static_cast<std::size_t>(r * nc + c)];
+        check("fill: the mask is exactly the raised cells, and covers the depression",
+              exact && depression_marked && n >= 9, std::to_string(n) + " marked");
+        breach_least_cost_options bo;
+        bo.fill_remainder = false;
+        const auto breached = breach_depressions_least_cost(input, bo);
+        const auto mb = filled_pixel_mask(input, breached);
+        bool lowered_unmarked = true;
+        int n_lowered = 0;
+        for (std::size_t i = 0; i < mb.size(); ++i)
+            if (breached.get_data()[i] < input.get_data()[i])
+            {
+                ++n_lowered;
+                lowered_unmarked = lowered_unmarked && mb[i] == 0;
+            }
+        check("least-cost breach: no cell it lowered is marked", n_lowered > 0 && lowered_unmarked,
+              std::to_string(n_lowered) + " lowered");
+        const auto same = filled_pixel_mask(input, input);
+        bool none = true;
+        for (const auto v : same) none = none && v == 0;
+        check("equal surfaces: nothing marked", none);
+        bool threw = false;
+        try { (void)filled_pixel_mask(input, make_raster(3, 3, std::vector<float>(9, 1.0f))); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check("filled_pixel_mask: a raster off the grid is refused", threw);
     }
 
     std::cout << "RESULT: " << (g_fail == 0 ? "PASS" : "FAIL") << " (" << g_n << " checks)\n";

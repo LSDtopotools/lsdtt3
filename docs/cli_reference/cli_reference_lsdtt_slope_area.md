@@ -160,12 +160,25 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `breach_lc_minimize_dist` | `bool` | `false` | `param` | `breach_before_fill` | Weight least-cost breach paths by their length. | false: a path costs the total depth lowered (m), so the search prefers shallow cuts however long. true: each step is weighted by its length in cells, favouring shorter paths; breach_lc_max_cost is then in metres x cells. Only used when breach_algorithm_choice is least_cost. |
 | `breach_lc_edge_policy` | `string` | `outlet` | `param` | `breach_before_fill` | Whether a least-cost breach may drain off the raster edge. | outlet: the raster edge is an outlet, like a nodata cell, so a pit near the edge can breach straight off the grid. whitebox: the edge is not an outlet (as in WhiteboxTools), so a breach must reach an edge cell that is already low enough, which can carve deep cuts across divides near the edge. Only used when breach_algorithm_choice is least_cost. |
 | `breach_lc_flat_increment` | `float` | `0.0` | `param` | `breach_before_fill` | Elevation drop (m) per cell along a least-cost breach channel. | 0 or less selects the automatic value: twice the float32 spacing at the largest absolute elevation in the DEM (e.g. 2.4e-4 m for elevations of 1024-2047 m), the smallest drop that keeps the channel strictly downhill. Only used when breach_algorithm_choice is least_cost. |
+| `exclude_filled_pixels` | `bool` | `true` | `switch` | - | Leave filled pixels out of the slope-area bins. | A pixel is filled if the routing surface (after breach_before_fill and fill_before_routing) is above the input DEM there. Drainage area is still routed through filled pixels; they are only left out of the measurements. The slope rasters are written without this exclusion (so a saved raster does not depend on it); &lt;write_fname&gt;_filled_pixels.tif shows the excluded pixels. false keeps them, as runs before 2026-11-18 did (set it to reproduce those runs). |
+| `write_filled_pixels_raster` | `bool` | `true` | `switch` | - | Write the filled-pixels raster. | 1 where the routing surface is above the input DEM (the conditioning raised the pixel), 0 elsewhere. Output: &lt;write_fname&gt;_filled_pixels.tif. |
+
+### Slope-area analysis
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `polyfit_on_routing_surface` | `bool` | `false` | `switch` | - | Fit the polyfit slope to the routing surface instead of the input DEM. | By default polyfit runs on the input DEM (after interior-nodata handling, before any carve or fill), since the conditioning is for routing only; its slope raster is &lt;write_fname&gt;_lambda_XXm_input_dem_slope.tif. true fits the carved / filled routing surface, as runs before 2026-11-18 did (set it to reproduce those runs); its raster keeps the old name &lt;write_fname&gt;_lambda_XXm_slope.tif. Each mode reuses only its own saved raster. |
+| `slope_algorithm_choice` | `string` | `polyfit` | `param` | - | Gradient method: polyfit or d8_flow_path. | polyfit: direct polynomial fit over each lambda in polyfit_lambda_metres_list (outputs &lt;write_fname&gt;_lambda_XXm*). d8_flow_path: the least-squares gradient along the D8 flow path, over a window centred on each pixel of each length in d8_gradient_window_metres_list: downstream along the D8 receivers, upstream along the D8 donor of largest drainage area (drainage_area_algorithm_choice), on the routing surface; outputs &lt;write_fname&gt;_d8window_XXm* and the summary &lt;write_fname&gt;_maximum_d50_slope_area_d8window.csv. Filled pixels are left out of the D8 fits when exclude_filled_pixels is true. |
+| `d8_gradient_window_metres_list` | `string` | `150` | `param` | `slope_algorithm_choice=d8_flow_path` | Comma-separated total lengths (m) of the D8 flow-path gradient window. | The window is centred on the pixel (half downstream, half upstream). Each must be at least four cell sizes (120 m on 30 m data). A pixel whose valid cells span less than half the window (e.g. near a divide and an outlet at once) is nodata. D8 gradient rasters are always recomputed, never read back. Example: 90,150,300. |
+| `polyfit_lambda_metres_list` | `string` | `15` | `param` | - | Comma-separated direct-polyfit lambdas in metres. | Example: 3,5,7,15,30. Decimal filename labels use _ instead of . |
+| `n_log_bins` | `int` | `20` | `param` | - | Number of logarithmic drainage-area bins. | Only non-empty bins are written to each lambda CSV. |
+| `write_slope_rasters` | `bool` | `true` | `switch` | - | Write each slope raster, after optional clipping. | Files are named &lt;write_fname&gt;_lambda_XXm_input_dem_slope.tif (polyfit on the input DEM, the default) or &lt;write_fname&gt;_lambda_XXm_slope.tif (polyfit_on_routing_surface). An existing file of that name is reused. |
 
 ### Flow information
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `flow_algorithm` | `string` | `dinf` | `param` | - | Flow-routing algorithm. | Allowed values are dinf or d8. |
+| `drainage_area_algorithm_choice` | `string` | `dinf` | `param` | - | Drainage-area method: dinf (D-infinity, Tarboton 1997) or d8. | Area is routed on the routing surface (after breach_before_fill and fill_before_routing). Independent of slope_algorithm_choice: the D8 flow-path gradient walks D8 receivers whichever area is chosen, and uses this area to pick the upstream path. Renamed from flow_algorithm on 2026-11-18 (same values; an old file must be edited). |
 | `write_flowinfo_rasters` | `bool` | `true` | `switch` | - | Write the drainage-area and flow-direction rasters. | The drainage-area raster is used by the slope-area analysis. |
 | `write_log10_drainage_area_raster` | `bool` | `false` | `switch` | - | Write the base-10 logarithm of the drainage-area raster. | Values are log10 of each positive drainage-area pixel; non-positive and nodata pixels remain nodata. |
 | `boundary_conditions` | `string` | `oooo` | `param` | - | Boundary conditions for flow routing. | Four characters in north, east, south, west order. |
@@ -175,14 +188,6 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `n_threads` | `int` | `0` | `io` | - | Number of OpenMP threads. | 0 uses the runtime default. |
-
-### Slope-area analysis
-
-| Parameter | Type | Default | Role | Parent | Description | Guidance |
-|---|---|---|---|---|---|---|
-| `polyfit_lambda_metres_list` | `string` | `15` | `param` | - | Comma-separated direct-polyfit lambdas in metres. | Example: 3,5,7,15,30. Decimal filename labels use _ instead of . |
-| `n_log_bins` | `int` | `20` | `param` | - | Number of logarithmic drainage-area bins. | Only non-empty bins are written to each lambda CSV. |
-| `write_slope_rasters` | `bool` | `true` | `switch` | - | Write each slope raster, after optional clipping. | Files are named &lt;write_fname&gt;_lambda_XXm_slope.tif. |
 
 ### Basin clipping
 

@@ -22,8 +22,13 @@ fill_min_slope: 0.0001
 # 2026-11-18 step 2a: the carve-before-fill default is new; the old
 # routing surface is fill alone.
 breach_before_fill: false
+# 2026-11-18 step 2b: filled pixels are now excluded from the bins and
+# polyfit runs on the input DEM by default; the old behaviour is:
+exclude_filled_pixels: false
+polyfit_on_routing_surface: true
 boundary_conditions: oooo
-flow_algorithm: d8
+# 2026-11-18 step 2c: flow_algorithm renamed drainage_area_algorithm_choice.
+drainage_area_algorithm_choice: d8
 write_flowinfo_rasters: true
 write_slope_rasters: true
 polyfit_lambda_metres_list: 90,150

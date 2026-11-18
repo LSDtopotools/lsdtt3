@@ -75,4 +75,21 @@ lsdtt_raster_cpu d8_flow_path_gradient(
                             lsdtt_array2d_u8(meta.n_rows, meta.n_cols, std::move(out_mask)), meta);
 }
 
+std::vector<std::uint8_t> filled_pixel_mask(
+    const lsdtt_raster_cpu& input_dem,
+    const lsdtt_raster_cpu& routing_dem)
+{
+    const auto& a = input_dem.get_data();
+    const auto& b = routing_dem.get_data();
+    const auto& am = input_dem.get_mask();
+    const auto& bm = routing_dem.get_mask();
+    if (a.size() != b.size() || input_dem.get_meta().n_rows != routing_dem.get_meta().n_rows ||
+        input_dem.get_meta().n_cols != routing_dem.get_meta().n_cols)
+        throw std::invalid_argument("filled_pixel_mask: the two DEMs are not on the same grid.");
+    std::vector<std::uint8_t> out(a.size(), 0);
+    for (std::size_t i = 0; i < a.size(); ++i)
+        out[i] = (am[i] && bm[i] && std::isfinite(a[i]) && std::isfinite(b[i]) && b[i] > a[i]) ? 1 : 0;
+    return out;
+}
+
 } // namespace lsdtt

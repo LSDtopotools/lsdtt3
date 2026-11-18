@@ -1,4 +1,4 @@
-# lsdtt-slope-area with flow_algorithm: d8, the only path that also writes a
+# lsdtt-slope-area with drainage_area_algorithm_choice: d8, the only path that also writes a
 # flow-direction raster.
 read_path: __READ_PATH__
 read_fname: basin_stats_diamond_square.tif
@@ -7,4 +7,4 @@ write_fname: sa
 n_threads: 1
 polyfit_lambda_metres_list: 90,150
 n_log_bins: 10
-flow_algorithm: d8
+drainage_area_algorithm_choice: d8

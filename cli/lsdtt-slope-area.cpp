@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +44,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
@@ -54,6 +56,7 @@
 #include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_status  = "stable";
@@ -93,6 +96,32 @@ static std::vector<std::string> split_csv(const std::string& text)
     {
         if (!value.empty()) values.push_back(value);
     }
+    return values;
+}
+
+// A comma-separated list of positive lengths (m); `what` names the list in
+// the error messages.
+static std::vector<double> parse_positive_lengths(const std::string& text,
+                                                  const std::string& key,
+                                                  const std::string& what)
+{
+    std::vector<double> values;
+    for (const std::string& token : split_csv(text))
+    {
+        try
+        {
+            const double v = std::stod(token);
+            if (!(v > 0.0) || !std::isfinite(v))
+                throw std::runtime_error("must be positive and finite");
+            values.push_back(v);
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error("Invalid " + what + ": " + token);
+        }
+    }
+    if (values.empty())
+        throw std::runtime_error(key + " cannot be empty");
     return values;
 }
 
@@ -208,7 +237,8 @@ struct BinRow
 static std::vector<BinRow> make_bins(
     const lsdtt::lsdtt_raster_cpu& area,
     const lsdtt::lsdtt_raster_cpu& slope,
-    int n_bins)
+    int n_bins,
+    const std::vector<std::uint8_t>* exclude = nullptr)
 {
     const auto& area_data = area.get_data();
     const auto& slope_data = slope.get_data();
@@ -223,6 +253,7 @@ static std::vector<BinRow> make_bins(
         if (!area_mask[i] || !slope_mask[i] || area_data[i] <= 0.0 ||
             !std::isfinite(area_data[i]) || !std::isfinite(slope_data[i]))
             continue;
+        if (exclude && (*exclude)[i]) continue;     // filled pixels (exclude_filled_pixels)
         guide.push_back(area_data[i]);
         values.push_back(slope_data[i]);
         minimum = std::min(minimum, area_data[i]);
@@ -268,13 +299,16 @@ static std::string write_bins(
     return path;
 }
 
+// first_column: polyfit_lambda for the polyfit summary (its format is frozen:
+// a paper's scripts may read it), d8_gradient_window_metres for the D8 one.
 static void write_summary(
     const std::string& path,
-    const std::vector<std::pair<double, std::string>>& lambda_files)
+    const std::vector<std::pair<double, std::string>>& lambda_files,
+    const std::string& first_column = "polyfit_lambda")
 {
     std::ofstream output(path);
     if (!output) throw std::runtime_error("Cannot write " + path);
-    output << "polyfit_lambda,drainage_area_with_max_d50_slope\n";
+    output << first_column << ",drainage_area_with_max_d50_slope\n";
     for (const auto& entry : lambda_files)
     {
         std::ifstream input(entry.second);
@@ -401,10 +435,68 @@ int main(int argc, char* argv[])
         "least_cost.",
         "DEM preparation", "param", "breach_before_fill"};
 
-    string_default_map["flow_algorithm"] = "dinf";
-    help_map["flow_algorithm"] = {"string", "dinf",
-        "Flow-routing algorithm.", "Allowed values are dinf or d8.",
+    bool_default_map["exclude_filled_pixels"] = true;
+    help_map["exclude_filled_pixels"] = {"bool","true",
+        "Leave filled pixels out of the slope-area bins.",
+        "A pixel is filled if the routing surface (after breach_before_fill and "
+        "fill_before_routing) is above the input DEM there. Drainage area is "
+        "still routed through filled pixels; they are only left out of the "
+        "measurements. The slope rasters are written without this exclusion "
+        "(so a saved raster does not depend on it); <write_fname>_filled_pixels.tif "
+        "shows the excluded pixels. false keeps them, as runs before "
+        "2026-11-18 did (set it to reproduce those runs).",
+        "DEM preparation", "switch", ""};
+    bool_default_map["write_filled_pixels_raster"] = true;
+    help_map["write_filled_pixels_raster"] = {"bool","true",
+        "Write the filled-pixels raster.",
+        "1 where the routing surface is above the input DEM (the conditioning "
+        "raised the pixel), 0 elsewhere. Output: <write_fname>_filled_pixels.tif.",
+        "DEM preparation", "switch", ""};
+    bool_default_map["polyfit_on_routing_surface"] = false;
+    help_map["polyfit_on_routing_surface"] = {"bool","false",
+        "Fit the polyfit slope to the routing surface instead of the input DEM.",
+        "By default polyfit runs on the input DEM (after interior-nodata "
+        "handling, before any carve or fill), since the conditioning is for "
+        "routing only; its slope raster is <write_fname>_lambda_XXm_input_dem_slope.tif. "
+        "true fits the carved / filled routing surface, as runs before "
+        "2026-11-18 did (set it to reproduce those runs); its raster keeps the "
+        "old name <write_fname>_lambda_XXm_slope.tif. Each mode reuses only its "
+        "own saved raster.",
+        "Slope-area analysis", "switch", ""};
+
+    string_default_map["drainage_area_algorithm_choice"] = "dinf";
+    help_map["drainage_area_algorithm_choice"] = {"string", "dinf",
+        "Drainage-area method: dinf (D-infinity, Tarboton 1997) or d8.",
+        "Area is routed on the routing surface (after breach_before_fill and "
+        "fill_before_routing). Independent of slope_algorithm_choice: the D8 "
+        "flow-path gradient walks D8 receivers whichever area is chosen, and "
+        "uses this area to pick the upstream path. Renamed from flow_algorithm "
+        "on 2026-11-18 (same values; an old file must be edited).",
         "Flow information", "param", ""};
+
+    string_default_map["slope_algorithm_choice"] = "polyfit";
+    help_map["slope_algorithm_choice"] = {"string", "polyfit",
+        "Gradient method: polyfit or d8_flow_path.",
+        "polyfit: direct polynomial fit over each lambda in "
+        "polyfit_lambda_metres_list (outputs <write_fname>_lambda_XXm*). "
+        "d8_flow_path: the least-squares gradient along the D8 flow path, over a "
+        "window centred on each pixel of each length in "
+        "d8_gradient_window_metres_list: downstream along the D8 receivers, "
+        "upstream along the D8 donor of largest drainage area "
+        "(drainage_area_algorithm_choice), on the routing surface; outputs "
+        "<write_fname>_d8window_XXm* and the summary "
+        "<write_fname>_maximum_d50_slope_area_d8window.csv. Filled pixels are "
+        "left out of the D8 fits when exclude_filled_pixels is true.",
+        "Slope-area analysis", "param", ""};
+    string_default_map["d8_gradient_window_metres_list"] = "150";
+    help_map["d8_gradient_window_metres_list"] = {"string", "150",
+        "Comma-separated total lengths (m) of the D8 flow-path gradient window.",
+        "The window is centred on the pixel (half downstream, half upstream). "
+        "Each must be at least four cell sizes (120 m on 30 m data). A pixel "
+        "whose valid cells span less than half the window (e.g. near a divide "
+        "and an outlet at once) is nodata. D8 gradient rasters are always "
+        "recomputed, never read back. Example: 90,150,300.",
+        "Slope-area analysis", "param", "slope_algorithm_choice=d8_flow_path"};
     bool_default_map["write_flowinfo_rasters"] = true;
     help_map["write_flowinfo_rasters"] = {"bool", "true",
         "Write the drainage-area and flow-direction rasters.",
@@ -439,7 +531,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_slope_rasters"] = true;
     help_map["write_slope_rasters"] = {"bool", "true",
         "Write each slope raster, after optional clipping.",
-        "Files are named <write_fname>_lambda_XXm_slope.tif.",
+        "Files are named <write_fname>_lambda_XXm_input_dem_slope.tif (polyfit "
+        "on the input DEM, the default) or <write_fname>_lambda_XXm_slope.tif "
+        "(polyfit_on_routing_surface). An existing file of that name is reused.",
         "Slope-area analysis", "switch", ""};
     string_default_map["basin_clip_mode"] = "none";
     help_map["basin_clip_mode"] = {"string", "none",
@@ -484,6 +578,13 @@ int main(int argc, char* argv[])
     try
     {
         lsdtt::lsdtt_param_parser parser(cli_args.path, cli_args.fname);
+        // Renamed 2026-11-18 without an alias (plan Q1): an old file stops here
+        // with the new name, instead of the generic unknown-key error.
+        parser.set_removed_keys({
+            {"flow_algorithm",
+             "flow_algorithm has been renamed drainage_area_algorithm_choice "
+             "(same values: dinf or d8); rename it in the parameter file"},
+        });
         parser.parse_all_parameters(
             float_default_map, int_default_map, bool_default_map,
             string_default_map);
@@ -496,6 +597,16 @@ int main(int argc, char* argv[])
             throw std::runtime_error("n_log_bins must be at least 1");
         const std::vector<double> lambdas =
             parse_lambdas(sf.at("polyfit_lambda_metres_list"));
+        const std::string slope_choice = sf.at("slope_algorithm_choice");
+        if (slope_choice != "polyfit" && slope_choice != "d8_flow_path")
+            throw std::runtime_error("slope_algorithm_choice must be polyfit or d8_flow_path");
+        const bool use_d8_gradient = slope_choice == "d8_flow_path";
+        const std::vector<double> d8_windows = parse_positive_lengths(
+            sf.at("d8_gradient_window_metres_list"), "d8_gradient_window_metres_list",
+            "D8 gradient window");
+        const std::string area_choice = sf.at("drainage_area_algorithm_choice");
+        if (area_choice != "dinf" && area_choice != "d8")
+            throw std::runtime_error("drainage_area_algorithm_choice must be dinf or d8");
         const std::string breach_choice = sf.at("breach_algorithm_choice");
         if (breach_choice != "least_cost" && breach_choice != "lindsay2016")
             throw std::runtime_error("breach_algorithm_choice must be least_cost or lindsay2016");
@@ -545,6 +656,9 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
             return 1;
         }
+        // The input DEM, before any carve or fill: the polyfit surface by
+        // default (Q12), and the reference for the filled pixels.
+        const lsdtt::lsdtt_raster_cpu input_dem = dem;
         if (bf.at("breach_before_fill"))
         {
             if (breach_choice == "least_cost")
@@ -571,10 +685,38 @@ int main(int argc, char* argv[])
                 ii.at("n_threads"));
         }
 
+        // Filled pixels: raised by the conditioning (plan 3A).
+        const std::vector<std::uint8_t> filled = lsdtt::filled_pixel_mask(input_dem, dem);
+        {
+            std::size_t n_filled = 0, n_valid = 0;
+            for (std::size_t i = 0; i < filled.size(); ++i)
+            {
+                n_filled += filled[i];
+                n_valid += input_dem.get_mask()[i] ? 1 : 0;
+            }
+            const double fraction = n_valid ? static_cast<double>(n_filled) / static_cast<double>(n_valid) : 0.0;
+            std::cout << "Filled pixels (raised by the conditioning): " << n_filled << " of " << n_valid
+                      << " (" << number_string(100.0 * fraction) << "%), "
+                      << (bf.at("exclude_filled_pixels") ? "excluded from the bins" : "kept in the bins")
+                      << "\n";
+            lsdtt::lsdtt_run_record::add_provenance("n_filled_pixels", std::to_string(n_filled));
+            lsdtt::lsdtt_run_record::add_provenance("filled_fraction", number_string(fraction));
+            if (bf.at("write_filled_pixels_raster"))
+            {
+                std::vector<float> fv(filled.begin(), filled.end());
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(fv, dem.get_meta(),
+                                  parser.get_write_path() + "/" + parser.get_write_fname() +
+                                  "_filled_pixels.tif");
+            }
+        }
+        const std::vector<std::uint8_t>* exclude = bf.at("exclude_filled_pixels") ? &filled : nullptr;
+        const bool polyfit_routing = bf.at("polyfit_on_routing_surface");
+
         // ---------------------------------------------------------------------
         // Step 2: Build flow information and drainage area.
         // ---------------------------------------------------------------------
-        const std::string flow_algorithm = sf.at("flow_algorithm");
+        const std::string flow_algorithm = area_choice;
         lsdtt::lsdtt_raster_cpu drainage_area;
         if (flow_algorithm == "d8")
         {
@@ -666,7 +808,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            throw std::runtime_error("flow_algorithm must be dinf or d8");
+            throw std::runtime_error("drainage_area_algorithm_choice must be dinf or d8");
         }
 
         // ---------------------------------------------------------------------
@@ -690,11 +832,13 @@ int main(int argc, char* argv[])
         // Step 3: Fit, optionally clip, bin, write, and release each lambda.
         // ---------------------------------------------------------------------
         std::vector<std::pair<double, std::string>> lambda_files;
-        for (const double lambda : lambdas)
+        for (const double lambda : (use_d8_gradient ? std::vector<double>{} : lambdas))
         {
             const std::string stem = parser.get_write_path() + "/" +
                 parser.get_write_fname() + "_lambda_" + lambda_label(lambda) + "m";
-            const std::string slope_path = stem + "_slope.tif";
+            // One file name per polyfit surface, so a saved raster is only
+            // reused by a run that fits the same surface.
+            const std::string slope_path = stem + (polyfit_routing ? "_slope.tif" : "_input_dem_slope.tif");
             lsdtt::lsdtt_raster_cpu slope;
             if (bf.at("write_slope_rasters") &&
                 std::filesystem::exists(slope_path))
@@ -708,7 +852,7 @@ int main(int argc, char* argv[])
             else
             {
                 lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
-                    dem, lambda, ii.at("n_threads"));
+                    polyfit_routing ? dem : input_dem, lambda, ii.at("n_threads"));
                 lsdtt::polyfit_metric_request request;
                 request.metrics = {lsdtt::polyfit_metric::slope};
                 request.n_threads = ii.at("n_threads");
@@ -725,7 +869,7 @@ int main(int argc, char* argv[])
                 }
             }
             const std::vector<BinRow> rows = make_bins(
-                drainage_area, slope, ii.at("n_log_bins"));
+                drainage_area, slope, ii.at("n_log_bins"), exclude);
             const std::string csv_path = stem + ".csv";
             write_bins(csv_path, rows);
             lambda_files.emplace_back(lambda, csv_path);
@@ -735,11 +879,64 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 4: Read all lambda CSVs and write the maximum-d50 summary.
         // ---------------------------------------------------------------------
-        const std::string summary_name = sf.at("summary_csv_fname").empty()
-            ? parser.get_write_fname() + "_maximum_d50_slope_area.csv"
-            : sf.at("summary_csv_fname");
-        write_summary(parser.get_write_path() + "/" + summary_name,
-                      lambda_files);
+        if (!use_d8_gradient)
+        {
+            const std::string summary_name = sf.at("summary_csv_fname").empty()
+                ? parser.get_write_fname() + "_maximum_d50_slope_area.csv"
+                : sf.at("summary_csv_fname");
+            write_summary(parser.get_write_path() + "/" + summary_name,
+                          lambda_files);
+        }
+
+        // ---------------------------------------------------------------------
+        // Step 3b (slope_algorithm_choice: d8_flow_path): the centred D8
+        // flow-path gradient for each window, on the routing surface, with
+        // the upstream path chosen by the run's drainage area. Always
+        // recomputed (it depends on the conditioning and the area method,
+        // which its file name does not show).
+        // ---------------------------------------------------------------------
+        if (use_d8_gradient)
+        {
+            const double cs = dem.get_meta().cell_size;
+            for (const double w : d8_windows)
+                if (!(w >= 4.0 * cs))
+                    throw std::runtime_error(
+                        "d8_gradient_window_metres_list: a window of " + number_string(w) +
+                        " m is under four cell sizes (" + number_string(4.0 * cs) + " m)");
+            lsdtt::lsdtt_flowinfo_options d8o;
+            d8o.boundary_conditions = sf.at("boundary_conditions");
+            d8o.build_s_vector = false;
+            d8o.n_threads = ii.at("n_threads");
+            const auto d8_flow = lsdtt::make_flow_base(
+                dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
+            std::vector<std::pair<double, std::string>> window_files;
+            for (const double w : d8_windows)
+            {
+                const std::string stem = parser.get_write_path() + "/" +
+                    parser.get_write_fname() + "_d8window_" + lambda_label(w) + "m";
+                lsdtt::lsdtt_d8_flow_path_gradient_options go;
+                go.window_metres = w;
+                go.exclude = exclude;
+                go.n_threads = ii.at("n_threads");
+                std::cout << "D8 flow-path gradient, window " << number_string(w) << " m\n";
+                lsdtt::lsdtt_raster_cpu slope =
+                    lsdtt::d8_flow_path_gradient(*d8_flow, dem, drainage_area, go);
+                if (has_clip) slope = apply_mask(slope, clip);
+                if (bf.at("write_slope_rasters"))
+                {
+                    lsdtt::lsdtt_data_loader loader;
+                    loader.write_full(slope.get_data(), slope.get_meta(), stem + "_slope.tif");
+                }
+                const std::vector<BinRow> rows = make_bins(
+                    drainage_area, slope, ii.at("n_log_bins"), exclude);
+                const std::string csv_path = stem + ".csv";
+                write_bins(csv_path, rows);
+                window_files.emplace_back(w, csv_path);
+            }
+            write_summary(parser.get_write_path() + "/" + parser.get_write_fname() +
+                              "_maximum_d50_slope_area_d8window.csv",
+                          window_files, "d8_gradient_window_metres");
+        }
         parser.print_parameters();
     }
     catch (const std::exception& error)

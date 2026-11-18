@@ -60,4 +60,15 @@ struct lsdtt_d8_flow_path_gradient_options
     const lsdtt_raster_cpu&                    drainage_area,
     const lsdtt_d8_flow_path_gradient_options& options);
 
+// FILLED pixels (plan 3A): cells whose routing-surface elevation is ABOVE
+// the input DEM's, i.e. the conditioning raised them (a pit fill, or the
+// fill of the pits a carve left). Cells a carve lowered are not filled.
+// Strict comparison: the cells of a resolved flat, raised by fill_min_slope
+// steps, are part of the filled area. Cells invalid in either raster are 0.
+// Returns one byte per cell (1 = filled). Throws std::invalid_argument if
+// the grids differ.
+[[nodiscard]] std::vector<std::uint8_t> filled_pixel_mask(
+    const lsdtt_raster_cpu& input_dem,
+    const lsdtt_raster_cpu& routing_dem);
+
 } // namespace lsdtt

@@ -2506,19 +2506,33 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect sa_lambda_90m.csv
     --expect sa_lambda_150m.csv
-    --expect sa_lambda_90m_slope.tif
-    --expect sa_lambda_150m_slope.tif
+    # The default polyfit runs on the input DEM (2026-11-18, step 2b), and
+    # its slope rasters are named _input_dem_slope.tif; the old name
+    # _slope.tif belongs to polyfit_on_routing_surface (see the
+    # smoke_slope_area_reproduce_* tests).
+    --expect sa_lambda_90m_input_dem_slope.tif
+    --expect sa_lambda_150m_input_dem_slope.tif
+    --expect-absent sa_lambda_90m_slope.tif
+    --expect sa_filled_pixels.tif
+    --stdout-contains "Filled pixels (raised by the conditioning): 1646 of 40000"
+    # The least-cost breach raises 1646 single-cell pits itself (to just below
+    # their lowest neighbour; median 1.6 m), so they count as filled although
+    # the fill after it changes nothing. The input-DEM polyfit raster is the
+    # same as in the fill-only run (smoke_slope_area_fill_only pins this hash).
+    --expect-sha256 sa_lambda_90m_input_dem_slope.tif:4ea18f716e55bb400359fb88c64ba27d8ed4e17993fb3c2d8046fbe0ab4003d4
     --expect sa_dinf_drainage_area.tif
     --expect-absent sa_d8_flow_direction.tif
     # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
     # now carved (least-cost breach) before the fill by default; on this DEM
     # the carve solves all 1484 pits it searches, so nothing is filled. The
     # fill-only values of before are kept by the smoke_slope_area_reproduce_*
-    # tests (breach_before_fill: false). Fill-only pins were: 90,3962.762065
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3962.762065
     # and 150,3952.876248.
     --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
     --expect-file-contains "sa_maximum_d50_slope_area.csv:150,10429.1897"
-    --expect-valid-percent sa_lambda_90m_slope.tif:96.04
+    --expect-valid-percent sa_lambda_90m_input_dem_slope.tif:96.04
 )
 lsdtt_set_tests_properties(smoke_slope_area PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2536,7 +2550,9 @@ add_lsdtt_cli_smoke_test(
     # now carved (least-cost breach) before the fill by default; on this DEM
     # the carve solves all 1484 pits it searches, so nothing is filled. The
     # fill-only values of before are kept by the smoke_slope_area_reproduce_*
-    # tests (breach_before_fill: false). Fill-only pins were: 90,3965.578391.
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3965.578391.
     --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3911.546956"
 )
 lsdtt_set_tests_properties(smoke_slope_area_d8 PROPERTIES
@@ -2553,7 +2569,9 @@ add_lsdtt_cli_smoke_test(
     # now carved (least-cost breach) before the fill by default; on this DEM
     # the carve solves all 1484 pits it searches, so nothing is filled. The
     # fill-only values of before are kept by the smoke_slope_area_reproduce_*
-    # tests (breach_before_fill: false). Fill-only pins were: 90,3962.762065
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3962.762065
     # (the same row as smoke_slope_area, with the flow rasters off).
     --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3914.495107"
 )
@@ -2566,12 +2584,14 @@ add_lsdtt_cli_smoke_test(
     slope_area_clip.param.in
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
-    --expect-valid-percent sa_lambda_90m_slope.tif:53.79
+    --expect-valid-percent sa_lambda_90m_input_dem_slope.tif:53.79
     # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
     # now carved (least-cost breach) before the fill by default; on this DEM
     # the carve solves all 1484 pits it searches, so nothing is filled. The
     # fill-only values of before are kept by the smoke_slope_area_reproduce_*
-    # tests (breach_before_fill: false). Fill-only pins were: 90,3906.624295.
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3906.624295.
     --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3836.11712"
 )
 lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
@@ -2589,6 +2609,59 @@ add_lsdtt_cli_smoke_test(
     --stdout-contains "Breaching (Lindsay 2016 efficient breaching)"
 )
 lsdtt_set_tests_properties(smoke_slope_area_lindsay2016 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# Fill alone: 7459 filled pixels excluded; the input-DEM polyfit raster equals
+# the default run's (same sha256 as in smoke_slope_area), so the polyfit does
+# not depend on the conditioning (plan Q12).
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_fill_only
+    lsdtt-slope-area
+    slope_area_fill_only.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --stdout-contains "Filled pixels (raised by the conditioning): 7459 of 40000"
+    --stdout-contains "excluded from the bins"
+    --expect sa_filled_pixels.tif
+    --expect-sha256 sa_lambda_90m_input_dem_slope.tif:4ea18f716e55bb400359fb88c64ba27d8ed4e17993fb3c2d8046fbe0ab4003d4
+)
+lsdtt_set_tests_properties(smoke_slope_area_fill_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# The D8 flow-path gradient (slope_algorithm_choice: d8_flow_path): the window
+# rasters, CSVs (same columns as the lambda CSVs) and their own summary; no
+# polyfit outputs and no polyfit summary.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_d8_flow_path
+    lsdtt-slope-area
+    slope_area_d8_flow_path.param.in
+    sa_maximum_d50_slope_area_d8window.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_d8window_150m.csv
+    --expect sa_d8window_300m.csv
+    --expect sa_d8window_150m_slope.tif
+    --expect sa_d8window_300m_slope.tif
+    --expect-file-contains "sa_d8window_150m.csv:drainage_area,d05_slope,d25_slope,d50_slope,d75_slope,d95_slope,number_of_pixels"
+    --expect-file-contains "sa_maximum_d50_slope_area_d8window.csv:d8_gradient_window_metres,drainage_area_with_max_d50_slope"
+    --expect-absent sa_maximum_d50_slope_area.csv
+    --expect-absent sa_lambda_15m.csv
+    --stdout-contains "D8 flow-path gradient, window 300 m"
+)
+lsdtt_set_tests_properties(smoke_slope_area_d8_flow_path PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# flow_algorithm was renamed without an alias: an old file stops with a
+# message naming drainage_area_algorithm_choice.
+add_lsdtt_cli_smoke_test(
+    failure_slope_area_removed_flow_algorithm
+    lsdtt-slope-area
+    slope_area_removed_flow_algorithm.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "flow_algorithm has been renamed drainage_area_algorithm_choice"
+)
+lsdtt_set_tests_properties(failure_slope_area_removed_flow_algorithm PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
 # -----------------------------------------------------------------------------
@@ -2671,7 +2744,9 @@ lsdtt_set_tests_properties(smoke_slope_area_reproduce_d8_clip PROPERTIES
     FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
 
 foreach(_sa_bad
-        "bad_flow_algorithm|flow_algorithm must be dinf or d8"
+        "bad_drainage_area_algorithm|drainage_area_algorithm_choice must be dinf or d8"
+        "bad_slope_algorithm|slope_algorithm_choice must be polyfit or d8_flow_path"
+        "d8_window_too_short|d8_gradient_window_metres_list: a window of 100 m is under four cell sizes (120 m)"
         "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
         "empty_lambdas|polyfit_lambda_metres_list cannot be empty"
         "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM"
