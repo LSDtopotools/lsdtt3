@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // d8_flow_path_gradient (lsdtt_slope_area_cpu) and the options form of
-// channel_slope_at it uses (plan_slope_area_gradient_and_low_concavity.md,
-// step 1b).
+// channel_slope_at it uses (the method: docs/design_and_algorithms/slope_area_and_low_concavity.md, section 3).
 //
 // Cases:
 //   1. A plane falling east at S = 0.05 (0.5 m per 10 m cell, exact in float):

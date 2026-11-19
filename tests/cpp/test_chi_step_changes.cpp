@@ -7,8 +7,7 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// Step-change detection on chi network branches (lsdtt_chi_step_changes_cpu;
-// docs/plan_docs/plan_chi_knickpoints.md, Part B).
+// Step-change detection on chi network branches (lsdtt_chi_step_changes_cpu).
 //
 // Path cases (gradient threshold 0.40, minimum drop 5 m, pairs given as
 // gradients on a background of 0.01):

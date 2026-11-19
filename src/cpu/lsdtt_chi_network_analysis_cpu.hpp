@@ -48,7 +48,7 @@ struct lsdtt_chi_network_fit_options
     lsdtt_chi_mainstem_choice mainstem_choice =
         lsdtt_chi_mainstem_choice::max_flow_length;
 
-    // STEP-AWARE FIT (docs/plan_docs/plan_chi_knickpoints.md, Part C). With
+    // STEP-AWARE FIT. With
     // step_aware, each branch path is cut at the step reaches that lie on it,
     // given as (bottom_flat, top_flat) pairs (lsdtt_chi_step_changes_cpu; any
     // basin's: a basin uses those on its own paths). A step reach becomes one
@@ -95,8 +95,7 @@ struct lsdtt_chi_network_fit_segment
 // at the node furthest from it, if that is further than the critical
 // divergence, and the halves are fitted the same way. Early splits are where
 // the profile departs most from a straight line at the scale of the whole
-// channel; late, deep ones are small corrections. See
-// docs/plan_docs/plan_chi_knickpoints.md (Part A).
+// channel; late, deep ones are small corrections.
 struct lsdtt_chi_split_record
 {
     std::int32_t rank  = -1;    // order of the split within its branch (the recursion sequence)

@@ -343,8 +343,8 @@ int main(int argc, char* argv[])
         "Used when fill_before_routing is true.",
         "DEM preparation", "param", "fill_before_routing"};
 
-    // Carve before the fill (plan_slope_area_gradient_and_low_concavity.md,
-    // 3A): the names and help of lsdtt-raster-preprocessing, with this CLI's
+    // Carve before the fill (docs/design_and_algorithms/slope_area_and_low_concavity.md,
+    // section 1): the names and help of lsdtt-raster-preprocessing, with this CLI's
     // defaults (carve by default, least cost), so large filled areas are
     // avoided. breach_before_fill: false gives the fill-only surface of runs
     // before 2026-11-18 (see the reproduction note in the help).

@@ -2700,8 +2700,10 @@ lsdtt_set_tests_properties(failure_slope_area_removed_flow_algorithm PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
 # -----------------------------------------------------------------------------
-# REPRODUCTION GUARD for lsdtt-slope-area (pinned 2026-11-18, before any of the
-# changes in docs/plan_docs/plan_slope_area_gradient_and_low_concavity.md).
+# REPRODUCTION GUARD for lsdtt-slope-area (pinned 2026-11-18, before the
+# carve-then-fill, exclusion and input-DEM polyfit changes of that date; see
+# the "Reproducing runs made before 2026-11-18" section of
+# docs/cli_reference/cli_reference_lsdtt_slope_area.md).
 # A ridgeline paper in review uses the lambda CSVs and the summary CSV of this
 # CLI. These four runs (dinf / d8, with and without the basin mask) pin, by
 # sha256, every output that code wrote on a DEM whose fill raises 18.6% of the
@@ -4848,8 +4850,7 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(smoke_chi_tributaries_knickpoints PROPERTIES LABELS "chi")
 
-# Step changes and the step-aware fit (run_step_change_detection,
-# plan_chi_knickpoints.md Parts B and C): the steps file, the stage 2
+# Step changes and the step-aware fit (run_step_change_detection): the steps file, the stage 2
 # (_stepaware) fit and knickpoint files with their is_step columns, the stage 1
 # knickpoint cross-reference columns and the summary lines, with a low
 # gradient threshold so the tiny DEM has reaches. The values are tested in
@@ -7005,7 +7006,7 @@ target_link_libraries(lsdtt-test-chi-knickpoints PRIVATE lsdtt3_cpu)
 add_test(NAME unit_chi_knickpoints COMMAND lsdtt-test-chi-knickpoints)
 lsdtt_set_tests_properties(unit_chi_knickpoints PROPERTIES LABELS "chi")
 
-# The split hierarchy of the chi fit (plan_chi_knickpoints.md, Part A), on
+# The split hierarchy of the chi fit, on
 # synthetic one-row channels fitted by fit_chi_network: a reach change with
 # one-node steps below must be the first split and rank first by the
 # scale-weighted k_sn change (while a step has the larger raw change); a
@@ -7021,7 +7022,7 @@ add_test(NAME unit_chi_split_hierarchy COMMAND lsdtt-test-chi-split-hierarchy)
 lsdtt_set_tests_properties(unit_chi_split_hierarchy PROPERTIES LABELS "chi")
 
 # Step-change (waterfall) detection on chi network branches and the
-# step-aware fit (plan_chi_knickpoints.md, Parts B and C): window gradients up
+# step-aware fit: window gradients up
 # to the maximum window length, reach trimming, the minimum drop, uphill pairs
 # bridged and flagged, 10 m and 30 m pixels, bad options; on a fitted network
 # a diagonal tributary mouth step, the outlet and mouth flags, distance to

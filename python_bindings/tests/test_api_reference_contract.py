@@ -39,8 +39,8 @@ def test_generated_reference_assigns_every_export_exactly_once():
 
 def test_package_and_reference_share_one_topic_rule():
     """lsdtt3._topics is the one domain rule: the API reference generator uses it, and
-    the installed package's copy gives every export the same domain (plan_llm_guide_restructure.md,
-    step 1).
+    the installed package's copy gives every export the same domain
+    (docs/developer_notes/python_bindings_architecture.md, "The guide for AI assistants").
     """
     import lsdtt3
     from lsdtt3 import _topics

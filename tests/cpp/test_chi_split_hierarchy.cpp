@@ -7,8 +7,8 @@
 // Released under the GNU Affero General Public Licence v3 or later (AGPL-3.0-or-later)
 //
 // -----------------------------------------------------------------------------
-// The split hierarchy of the chi fit and the knickpoint measures built on it
-// (docs/plan_docs/plan_chi_knickpoints.md, Part A), on synthetic one-row
+// The split hierarchy of the chi fit and the knickpoint measures built on it,
+// on synthetic one-row
 // channels fitted by fit_chi_network.
 //
 // 1. Reach change with noise: chi = 0.02 i (i = 0..300), k_sn 100 up to

@@ -8,7 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Slope-area routines for lsdtt-slope-area
-// (docs/plan_docs/plan_slope_area_gradient_and_low_concavity.md).
+// (the method: docs/design_and_algorithms/slope_area_and_low_concavity.md).
 //
 // d8_flow_path_gradient: the gradient at EVERY valid pixel (hillslopes too)
 // along its D8 flow path, over a window CENTRED on the pixel of total flow

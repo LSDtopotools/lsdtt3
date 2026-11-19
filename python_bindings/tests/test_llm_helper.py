@@ -110,7 +110,7 @@ def test_workflow_and_gotchas_topics():
         assert topic in everything
     assert everything.index("@workflow") < everything.index("@terrain")
     # Kept small enough to paste into an assistant along with a question
-    # (limit 40000, Simon 2026-11-19, plan_llm_guide_restructure.md).
+    # (limit 40000, Simon 2026-11-19; docs/developer_notes/python_bindings_architecture.md).
     assert len(everything) < 40_000
 
 

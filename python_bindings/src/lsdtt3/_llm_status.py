@@ -13,7 +13,8 @@ cards used then (146, found with tools/check_llm_cards.py's parser, plus
 ``burn_to_corridor``, which its regex misses), and the two slope-area functions
 ``conditioned_pixel_mask`` and ``slope_area_bins``: 149 of 242 exports. The other
 exports were not classified; they are experimental by default, not by review
-(plan_llm_guide_restructure.md, section 6d). To promote an export, add its name.
+(docs/developer_notes/python_bindings_architecture.md, "The guide for AI
+assistants"). To promote an export, add its name.
 
 Promoted since (Simon): 2026-11-19 ``fill_interior_nodata``,
 ``make_boundary_conditions``.

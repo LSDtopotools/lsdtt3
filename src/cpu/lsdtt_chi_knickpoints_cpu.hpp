@@ -23,7 +23,7 @@
 // (upstream - downstream: positive where the channel steepens upstream) and
 // log10 ratio are reported.
 //
-// SPLIT HIERARCHY (plan_chi_knickpoints.md, Part A). Every within-branch
+// SPLIT HIERARCHY. Every within-branch
 // boundary is a split point of the recursive fit. Its row carries how the fit
 // made it (rank, depth, divergence from the chord, clamped) and the slopes of
 // the two child chords at that moment, split_ksn_below / split_ksn_above: a

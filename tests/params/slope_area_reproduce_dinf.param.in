@@ -1,4 +1,5 @@
-# REPRODUCTION GUARD (plan_slope_area_gradient_and_low_concavity.md, 3B).
+# REPRODUCTION GUARD (docs/cli_reference/cli_reference_lsdtt_slope_area.md,
+# "Reproducing runs made before 2026-11-18").
 # A ridgeline paper in review uses lsdtt-slope-area's lambda CSVs as they are
 # written by the code of 2026-11-18. This run, in the parameter syntax of that
 # date, pins (sha256, in tests/CMakeLists.txt) the lambda CSVs, slope rasters,

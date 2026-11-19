@@ -1,5 +1,5 @@
-"""lsdtt-slope-area's routines in Python (plan_slope_area_gradient_and_low_concavity.md,
-step 7): conditioned_pixel_mask, slope_area_bins, FlowInfo.d8_flow_path_gradient,
+"""lsdtt-slope-area's routines in Python (docs/python/slope_area.md):
+conditioned_pixel_mask, slope_area_bins, FlowInfo.d8_flow_path_gradient,
 FlowInfo.low_concavity and FlowInfo.low_concavity_segments. The cases mirror the
 C++ driver tests/cpp/test_slope_area.cpp; the column names are the CLI's."""
 
