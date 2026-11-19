@@ -500,8 +500,10 @@ To use the Python package from unreleased code, build it from a clone; see
 [Building the Python wheels](../developer_notes/building_python_wheels.md).
 The [Python guide](../python/index.md) shows what to do once it is installed.
 Every function is documented in the package itself (`help(lsdtt3.FlowInfo)`),
-and `print(lsdtt3.helper_for_llm("all"))` prints a compact guide written for
-you or for an AI assistant such as Gemini in Colab.
+and `print(lsdtt3.helper_for_llm())` prints a compact guide written for you
+or for an AI assistant such as Gemini in Colab. It lists topics, and
+`helper_for_llm("symbol:<name>")` gives the exact arguments of one function.
+To paste the whole guide into a chat, use `print(lsdtt3.helper_for_llm("all"))`.
 
 ---
 

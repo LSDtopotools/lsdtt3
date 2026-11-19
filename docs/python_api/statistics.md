@@ -42,19 +42,24 @@ Return a compact API guide for AI assistants (and for people in a hurry).
 Parameters
 ----------
 topic : str, default="index"
-    ``"index"`` (the default) lists the topics and the notation;
-    ``"workflow"`` is a runnable core analysis; ``"gotchas"`` lists common
-    mistakes; ``"all"`` is every topic, sized for pasting into an
-    assistant. ``"symbol:<name>"`` gives the documentation of one public
-    symbol and ``"search:<words>"`` ranks public symbols by how many of
-    the words their names and docstrings contain.
+    ``"index"`` (the default) says how to use the guide and lists the
+    topics, the notation and the rules; ``"workflow"`` is a runnable core
+    analysis; ``"gotchas"`` lists common mistakes; a topic name gives its
+    guidance and one line per export. ``"symbol:<name>"`` (or
+    ``"symbol:<Class>.<method>"``) gives one symbol's documentation and
+    ``"search:<words>"`` ranks exports and methods by the words in their
+    names and docstrings. ``"all"`` is the index, every topic's guidance and
+    every export's name in one text, for pasting into an assistant;
+    ``"catalogue"`` is one line per export. Experimental exports are left
+    out of the topics, ``all`` and ``catalogue``, and marked by ``symbol``
+    and ``search``.
 
 Returns
 -------
 str
     Plain text with exact public identifiers. It is a ``str`` subclass
     that notebooks display as text rather than as an escaped literal, so
-    ``lsdtt3.helper_for_llm("all")`` as the last line of a cell reads
+    ``lsdtt3.helper_for_llm()`` as the last line of a cell reads
     well; ``print()`` works too.
 
 Authors

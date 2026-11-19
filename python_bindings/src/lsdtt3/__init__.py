@@ -110,13 +110,15 @@ profiles for ksn::
 
 Help for AI assistants
 ----------------------
-For a compact guide with exact signatures, this workflow and the common
-mistakes, run print(lsdtt3.helper_for_llm("all")). Single topics:
-helper_for_llm("workflow"), and likewise "gotchas", "terrain", "fetch",
-"flow", "channel", "basin", "chi", "vector", "hydraulic", "landscape",
-"cosmo", "drainage", "synthetic" and "stats"; helper_for_llm("symbol:ChiFit")
-gives one symbol's documentation and helper_for_llm("search:chi ksn")
-searches names and docstrings.
+Start with print(lsdtt3.helper_for_llm()), the "index": how to use the guide,
+the notation and rules, and the topics: "workflow", "gotchas", "terrain",
+"fetch", "flow", "channel", "basin", "chi", "vector", "water", "hydraulic",
+"landscape", "sediment", "cosmo", "drainage", "synthetic" and "stats". Each
+topic gives guidance and one line per export. helper_for_llm("symbol:ChiFit")
+or helper_for_llm("symbol:FlowInfo.basins") gives one symbol's documentation,
+and helper_for_llm("search:chi ksn") searches names and docstrings.
+helper_for_llm("all") puts the guidance and the name of every export in one
+text for pasting into a chat; helper_for_llm("catalogue") lists every export.
 
 Authors
 -------
@@ -726,19 +728,24 @@ def helper_for_llm(topic="index"):
     Parameters
     ----------
     topic : str, default="index"
-        ``"index"`` (the default) lists the topics and the notation;
-        ``"workflow"`` is a runnable core analysis; ``"gotchas"`` lists common
-        mistakes; ``"all"`` is every topic, sized for pasting into an
-        assistant. ``"symbol:<name>"`` gives the documentation of one public
-        symbol and ``"search:<words>"`` ranks public symbols by how many of
-        the words their names and docstrings contain.
+        ``"index"`` (the default) says how to use the guide and lists the
+        topics, the notation and the rules; ``"workflow"`` is a runnable core
+        analysis; ``"gotchas"`` lists common mistakes; a topic name gives its
+        guidance and one line per export. ``"symbol:<name>"`` (or
+        ``"symbol:<Class>.<method>"``) gives one symbol's documentation and
+        ``"search:<words>"`` ranks exports and methods by the words in their
+        names and docstrings. ``"all"`` is the index, every topic's guidance and
+        every export's name in one text, for pasting into an assistant;
+        ``"catalogue"`` is one line per export. Experimental exports are left
+        out of the topics, ``all`` and ``catalogue``, and marked by ``symbol``
+        and ``search``.
 
     Returns
     -------
     str
         Plain text with exact public identifiers. It is a ``str`` subclass
         that notebooks display as text rather than as an escaped literal, so
-        ``lsdtt3.helper_for_llm("all")`` as the last line of a cell reads
+        ``lsdtt3.helper_for_llm()`` as the last line of a cell reads
         well; ``print()`` works too.
 
     Authors
