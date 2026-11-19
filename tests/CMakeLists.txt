@@ -2506,13 +2506,37 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect sa_lambda_90m.csv
     --expect sa_lambda_150m.csv
-    --expect sa_lambda_90m_slope.tif
-    --expect sa_lambda_150m_slope.tif
+    # The default polyfit runs on the input DEM (2026-11-18, step 2b), and
+    # its slope rasters are named _input_dem_slope.tif; the old name
+    # _slope.tif belongs to polyfit_on_routing_surface (see the
+    # smoke_slope_area_reproduce_* tests).
+    --expect sa_lambda_90m_input_dem_slope.tif
+    --expect sa_lambda_150m_input_dem_slope.tif
+    --expect-absent sa_lambda_90m_slope.tif
+    --expect sa_conditioned_pixels.tif
+    --stdout-contains "Conditioned pixels: 1646 filled (4.115%), 2492 carved (6.23%) of 40000"
+    --stdout-contains "excluded from the measurements"
+    # The least-cost breach raises 1646 single-cell pits itself (to just below
+    # their lowest neighbour; median 1.6 m), so they count as filled although
+    # the fill after it changes nothing. The input-DEM polyfit raster is the
+    # same as in the fill-only run (smoke_slope_area_fill_only pins this hash).
+    --expect-sha256 sa_lambda_90m_input_dem_slope.tif:4ea18f716e55bb400359fb88c64ba27d8ed4e17993fb3c2d8046fbe0ab4003d4
     --expect sa_dinf_drainage_area.tif
     --expect-absent sa_d8_flow_direction.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,3952.876248"
-    --expect-valid-percent sa_lambda_90m_slope.tif:96.04
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3962.762065
+    # and 150,3952.876248.
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3914.495107
+    # and 150,10429.1897.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3887.373015"
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:150,10310.15877"
+    --expect-valid-percent sa_lambda_90m_input_dem_slope.tif:96.04
 )
 lsdtt_set_tests_properties(smoke_slope_area PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2526,7 +2550,17 @@ add_lsdtt_cli_smoke_test(
     --expect sa_d8_drainage_area.tif
     --expect sa_d8_flow_direction.tif
     --expect-absent sa_dinf_drainage_area.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3965.578391"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3965.578391.
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3911.546956 (the peak moves up two bins: the d50
+    # curve is nearly flat around its maximum here).
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,10296.3157"
 )
 lsdtt_set_tests_properties(smoke_slope_area_d8 PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2538,7 +2572,17 @@ add_lsdtt_cli_smoke_test(
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect-absent sa_dinf_drainage_area.tif
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3962.762065"
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3962.762065
+    # (the same row as smoke_slope_area, with the flow rasters off).
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3914.495107.
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3887.373015"
 )
 lsdtt_set_tests_properties(smoke_slope_area_no_flowinfo PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
@@ -2549,17 +2593,200 @@ add_lsdtt_cli_smoke_test(
     slope_area_clip.param.in
     sa_maximum_d50_slope_area.csv
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
-    --expect-valid-percent sa_lambda_90m_slope.tif:53.79
-    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,3906.624295"
+    --expect-valid-percent sa_lambda_90m_input_dem_slope.tif:53.79
+    # Re-pinned 2026-11-18 (slope-area plan, step 2a): the routing surface is
+    # now carved (least-cost breach) before the fill by default; on this DEM
+    # the carve solves all 1484 pits it searches, so nothing is filled. The
+    # fill-only values of before are kept by the smoke_slope_area_reproduce_*
+    # tests (breach_before_fill: false). Step 2b (polyfit on the input DEM,
+    # filled pixels excluded) changes the bins but not these peak bins.
+    # Fill-only pins were: 90,3906.624295.
+    # Re-pinned again 2026-11-18 (step 2c, plan section 10 F2): carved pixels
+    # (2492 here) are excluded as well as filled ones. 2a/2b pins were: 90,3836.11712 (the peak moves up two bins).
+    --expect-file-contains "sa_maximum_d50_slope_area.csv:90,10057.4503"
 )
 lsdtt_set_tests_properties(smoke_slope_area_clip PROPERTIES
     FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
 
+# The Lindsay (2016) breach path (breach_algorithm_choice: lindsay2016): runs,
+# says so, and writes the summary.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_lindsay2016
+    lsdtt-slope-area
+    slope_area_lindsay2016.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_lambda_90m.csv
+    --stdout-contains "Breaching (Lindsay 2016 efficient breaching)"
+)
+lsdtt_set_tests_properties(smoke_slope_area_lindsay2016 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# Fill alone: 7459 filled pixels (and no carved ones) excluded; the input-DEM polyfit raster equals
+# the default run's (same sha256 as in smoke_slope_area), so the polyfit does
+# not depend on the conditioning (plan Q12).
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_fill_only
+    lsdtt-slope-area
+    slope_area_fill_only.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --stdout-contains "Conditioned pixels: 7459 filled (18.6475%), 0 carved (0%) of 40000"
+    --stdout-contains "excluded from the measurements"
+    --expect sa_conditioned_pixels.tif
+    --expect-sha256 sa_lambda_90m_input_dem_slope.tif:4ea18f716e55bb400359fb88c64ba27d8ed4e17993fb3c2d8046fbe0ab4003d4
+)
+lsdtt_set_tests_properties(smoke_slope_area_fill_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# The D8 flow-path gradient (slope_algorithm_choice: d8_flow_path): the window
+# rasters, CSVs (same columns as the lambda CSVs) and their own summary; no
+# polyfit outputs and no polyfit summary.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_d8_flow_path
+    lsdtt-slope-area
+    slope_area_d8_flow_path.param.in
+    sa_maximum_d50_slope_area_d8window.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_d8window_150m.csv
+    --expect sa_d8window_300m.csv
+    --expect sa_d8window_150m_slope.tif
+    --expect sa_d8window_300m_slope.tif
+    --expect-file-contains "sa_d8window_150m.csv:drainage_area,d05_slope,d25_slope,d50_slope,d75_slope,d95_slope,number_of_pixels"
+    --expect-file-contains "sa_maximum_d50_slope_area_d8window.csv:d8_gradient_window_metres,drainage_area_with_max_d50_slope"
+    --expect-absent sa_maximum_d50_slope_area.csv
+    --expect-absent sa_lambda_15m.csv
+    --stdout-contains "D8 flow-path gradient, window 300 m"
+)
+lsdtt_set_tests_properties(smoke_slope_area_d8_flow_path PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# The low-concavity finder (step 3 of the slope-area plan): runs, writes the
+# theta and flag rasters and the point table, and reports its counts. On this
+# pitty fixture 1457 of the 2320 channel pixels were carved or filled and are
+# excluded, and 602 more have too few usable pairs in their window; the fit
+# itself is tested in unit_slope_area_d8_flow_path_gradient.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_low_concavity
+    lsdtt-slope-area
+    slope_area_low_concavity.param.in
+    sa_low_concavity_points.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sa_low_concavity_theta.tif
+    --expect sa_low_concavity_flag.tif
+    --expect-file-contains "sa_low_concavity_points.csv:flat,x,y,drainage_area_m2,slope,theta,theta_se,r2,n_pixels,log10_area_range,n_junctions_in_window,low_concavity"
+    --expect sa_low_concavity_theta_se.tif
+    --stdout-contains "Low concavity (|theta| < 0.15, window 10 pixels, gradient window 150 m): 29 low-concavity, 232 not, 2059 without a valid fit, of 2320 channel pixels"
+    # step 4: the segments file (it partitions the 2320 channel pixels; the
+    # partition and the flags are tested in unit_slope_area_d8_flow_path_gradient)
+    --expect sa_low_concavity_segments.fgb
+    --stdout-contains "Low-concavity segments: 367 segments, 19 low concavity"
+)
+lsdtt_set_tests_properties(smoke_slope_area_low_concavity PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# flow_algorithm was renamed without an alias: an old file stops with a
+# message naming drainage_area_algorithm_choice.
+add_lsdtt_cli_smoke_test(
+    failure_slope_area_removed_flow_algorithm
+    lsdtt-slope-area
+    slope_area_removed_flow_algorithm.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-failure
+    --stderr-contains "flow_algorithm has been renamed drainage_area_algorithm_choice"
+)
+lsdtt_set_tests_properties(failure_slope_area_removed_flow_algorithm PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# -----------------------------------------------------------------------------
+# REPRODUCTION GUARD for lsdtt-slope-area (pinned 2026-11-18, before any of the
+# changes in docs/plan_docs/plan_slope_area_gradient_and_low_concavity.md).
+# A ridgeline paper in review uses the lambda CSVs and the summary CSV of this
+# CLI. These four runs (dinf / d8, with and without the basin mask) pin, by
+# sha256, every output that code wrote on a DEM whose fill raises 18.6% of the
+# cells: lambda CSVs, summary CSV, slope rasters, drainage-area raster (and the
+# D8 flow direction). Pinned from the code of commit 14c2ce5; repeat runs are
+# byte-identical, and turning the fill off changes the CSVs and rasters, so
+# the pins see the fill path. Later steps may change the param files ONLY to
+# the new parameter names plus the switches that restore the old behaviour;
+# the hashes must not change. NEVER re-pin without Simon.
+# -----------------------------------------------------------------------------
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_dinf
+    lsdtt-slope-area
+    slope_area_reproduce_dinf.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:2b663b68924de1571c98e20fce5aad4c7ebd868c6c6f5a07aade4982d46d2d5f
+    --expect-sha256 sa_lambda_150m.csv:a507f79fcc82d0565e2f5e3a72162c9ff8bf4f032c43459c452e21af6d741b2d
+    --expect-sha256 sa_maximum_d50_slope_area.csv:8fcdf1f4071a4af0961d489fc6fb67913dd1b5b3263a2bf365dcc8eada067031
+    --expect-sha256 sa_lambda_90m_slope.tif:778526faa752b2cdf672b20e4d92f455584d285f06e6eaa7793e8adf56c9e28c
+    --expect-sha256 sa_lambda_150m_slope.tif:3f927f8f339b367cb7c282a3388dc00e33914d7ac1c692d0a1fb15ad9b4cdcb1
+    --expect-sha256 sa_dinf_drainage_area.tif:126729beb6384b9a32fa8fa91ac45fd548b9bef01849a5824ba948fff0208a0e
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_dinf PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_d8
+    lsdtt-slope-area
+    slope_area_reproduce_d8.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:9403d586fd0ec2d5213802af9fffcf9f56b2ce0059e0141acb3a1e12c9aad91d
+    --expect-sha256 sa_lambda_150m.csv:d7201d507a27b695cde9697a5f9c28ccb98b2f12e633ee99be411202cba38011
+    --expect-sha256 sa_maximum_d50_slope_area.csv:f13341f3a6b887ad22292ae7b512bf95dca3298956da67a8dd80d18e10a0c4fc
+    --expect-sha256 sa_lambda_90m_slope.tif:778526faa752b2cdf672b20e4d92f455584d285f06e6eaa7793e8adf56c9e28c
+    --expect-sha256 sa_lambda_150m_slope.tif:3f927f8f339b367cb7c282a3388dc00e33914d7ac1c692d0a1fb15ad9b4cdcb1
+    --expect-sha256 sa_d8_drainage_area.tif:0a8ceb9e6a2784e590e6606c4cf95846adc101c26ca49bf09751e61ff21c6c9e
+    --expect-sha256 sa_d8_flow_direction.tif:5f5647a86f1ca70b131a893450ed4f50976b56b599082a7e23ee2aab82cd1e8f
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_d8 PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_dinf_clip
+    lsdtt-slope-area
+    slope_area_reproduce_dinf_clip.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:5986906d7e73faca8251a2008905ab55e2548f68821d8f793505cb7c9d5bc737
+    --expect-sha256 sa_lambda_150m.csv:0fd800718f1024fa33cf9dac1144650b865a65cc15f45ad9f40ea07d36b88ae4
+    --expect-sha256 sa_maximum_d50_slope_area.csv:a021d79f2ed7b0650a7b4959ca44947215ba96ef7eb8ab254d6e2911fbe58f8b
+    --expect-sha256 sa_lambda_90m_slope.tif:4b03eda663a75fc804deef393a543e066e6ecd6d2b16727ec90fcf0ab5533ced
+    --expect-sha256 sa_lambda_150m_slope.tif:e834417bb14b9e8bfeadbc66dbe23a1bb8b875c915fa8b600b763fff549c311a
+    --expect-sha256 sa_dinf_drainage_area.tif:126729beb6384b9a32fa8fa91ac45fd548b9bef01849a5824ba948fff0208a0e
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_dinf_clip PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_area_reproduce_d8_clip
+    lsdtt-slope-area
+    slope_area_reproduce_d8_clip.param.in
+    sa_maximum_d50_slope_area.csv
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-sha256 sa_lambda_90m.csv:0a070ac018febd15f9129f06fbbf42e45cbf4e5408b11906a0c306dc8e342afb
+    --expect-sha256 sa_lambda_150m.csv:6854e673b345d252e779abf90491603251213a1fea83ced4294ecebee138401a
+    --expect-sha256 sa_maximum_d50_slope_area.csv:0ed17b8c5d29022e17e95aa00a578c6effec3ffe8cd8424c742771f076682b42
+    --expect-sha256 sa_lambda_90m_slope.tif:4b03eda663a75fc804deef393a543e066e6ecd6d2b16727ec90fcf0ab5533ced
+    --expect-sha256 sa_lambda_150m_slope.tif:e834417bb14b9e8bfeadbc66dbe23a1bb8b875c915fa8b600b763fff549c311a
+    --expect-sha256 sa_d8_drainage_area.tif:0a8ceb9e6a2784e590e6606c4cf95846adc101c26ca49bf09751e61ff21c6c9e
+    --expect-sha256 sa_d8_flow_direction.tif:5f5647a86f1ca70b131a893450ed4f50976b56b599082a7e23ee2aab82cd1e8f
+)
+lsdtt_set_tests_properties(smoke_slope_area_reproduce_d8_clip PROPERTIES
+    FIXTURES_REQUIRED "basin_stats_fixture;slope_area_mask")
+
 foreach(_sa_bad
-        "bad_flow_algorithm|flow_algorithm must be dinf or d8"
+        "bad_drainage_area_algorithm|drainage_area_algorithm_choice must be dinf or d8"
+        "bad_slope_algorithm|slope_algorithm_choice must be polyfit or d8_flow_path"
+        "d8_window_too_short|d8_gradient_window_metres_list: a window of 100 m is under four cell sizes (120 m)"
+        "low_concavity_bad_min_pixels|low_concavity_min_pixels must be at least 3 and at most low_concavity_window_pixels"
         "bad_clip_mode|basin_clip_mode must be none, mask, or polygon"
         "empty_lambdas|polyfit_lambda_metres_list cannot be empty"
-        "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM")
+        "mask_grid_mismatch|Basin clip does not have exactly the same grid settings as the DEM"
+        "bad_breach_algorithm|breach_algorithm_choice must be least_cost or lindsay2016")
     string(REPLACE "|" ";" _sa_bad "${_sa_bad}")
     list(GET _sa_bad 0 _sa_case)
     list(GET _sa_bad 1 _sa_message)
@@ -6028,6 +6255,29 @@ target_link_libraries(lsdtt-test-order-statistics PRIVATE lsdtt3_cpu)
 add_test(NAME unit_order_statistics COMMAND lsdtt-test-order-statistics)
 lsdtt_set_tests_properties(unit_order_statistics PROPERTIES
     LABELS "statistics")
+
+# compute_log_binned_quantiles (src/utils/lsdtt_histogram): the slope-area
+# binning moved out of cli/lsdtt-slope-area.cpp, compared bit for bit with the
+# CLI's removed make_bins / percentile, kept verbatim in the driver (a
+# ridgeline paper in review reads the CSVs these numbers go into).
+add_executable(lsdtt-test-log-binned-quantiles cpp/test_log_binned_quantiles.cpp)
+target_link_libraries(lsdtt-test-log-binned-quantiles PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned-quantiles)
+lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
+    LABELS "statistics;slope_area")
+
+# lsdtt_slope_area_cpu: d8_flow_path_gradient and the options form of
+# channel_slope_at (exact gradients on planes, row and diagonal paths;
+# one-sided windows incl. 30 m cells; exclusion; donor ranking by an area
+# raster), conditioned_pixel_mask codes, and the low-concavity fit
+# (fit_log_slope_area exact on arrays; find_low_concavity flag rule, outlet
+# cut, exclusion, junction count; theta recovered within 0.05 on a valley
+# built with S = k A^-theta); refusals; thread independence.
+add_executable(lsdtt-test-slope-area cpp/test_slope_area.cpp)
+target_link_libraries(lsdtt-test-slope-area PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_area_d8_flow_path_gradient COMMAND lsdtt-test-slope-area)
+lsdtt_set_tests_properties(unit_slope_area_d8_flow_path_gradient PROPERTIES
+    LABELS "slope_area")
 
 # Stage 2 part B: records the D7 change from the private ols_fit to
 # compute_linear_regression in the drainage-area exceedance scaling.

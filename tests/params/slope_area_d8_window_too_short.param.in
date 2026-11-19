@@ -1,0 +1,10 @@
+# A D8 gradient window under four cell sizes (100 m < 120 m on the 30 m
+# fixture) must be refused.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sa
+n_threads: 1
+n_log_bins: 10
+slope_algorithm_choice: d8_flow_path
+d8_gradient_window_metres_list: 150,100

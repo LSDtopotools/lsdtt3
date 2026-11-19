@@ -32,7 +32,8 @@ bool fit_along_path_slope(
     std::size_t                      idx,
     double                           half_length_m,
     double&                          slope,
-    double*                          fitted_z)
+    double*                          fitted_z,
+    double                           min_span_m)
 {
     const double d0 = d[idx];
 
@@ -58,7 +59,7 @@ bool fit_along_path_slope(
     }
 
     if (n < 3) return false;
-    if ((d_max - d_min) < half_length_m) return false;
+    if ((d_max - d_min) < (min_span_m < 0.0 ? half_length_m : min_span_m)) return false;
 
     const double mean_d = sum_d / static_cast<double>(n);
     const double mean_z = sum_z / static_cast<double>(n);
@@ -90,6 +91,25 @@ lsdtt_channel_slope_result channel_slope_at(
     double                  half_length_m,
     std::uint64_t           min_contributing_pixels)
 {
+    lsdtt_channel_slope_options options;
+    options.min_contributing_pixels = min_contributing_pixels;
+    return channel_slope_at(flow, filled_dem, flat, half_length_m, options);
+}
+
+lsdtt_channel_slope_result channel_slope_at(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_raster_cpu&            filled_dem,
+    std::int64_t                       flat,
+    double                             half_length_m,
+    const lsdtt_channel_slope_options& options)
+{
+    const std::uint64_t min_contributing_pixels = options.min_contributing_pixels;
+    const std::vector<float>* rank_data = options.donor_rank ? &options.donor_rank->get_data() : nullptr;
+    const std::vector<std::uint8_t>* rank_mask = options.donor_rank ? &options.donor_rank->get_mask() : nullptr;
+    if (rank_data && rank_data->size() != filled_dem.get_data().size())
+        throw std::invalid_argument("channel_slope_at: donor_rank is not on the DEM's grid.");
+    if (options.exclude && options.exclude->size() != filled_dem.get_data().size())
+        throw std::invalid_argument("channel_slope_at: exclude is not on the DEM's grid.");
     const double cs = flow.cell_size();
     if (!(half_length_m >= 2.0 * cs))
         throw std::invalid_argument(
@@ -101,7 +121,8 @@ lsdtt_channel_slope_result channel_slope_at(
     const int nc = flow.n_cols();
     const int nr = flow.n_rows();
 
-    // Upstream: the largest-area donor at or above the threshold.
+    // Upstream: the largest-area donor at or above the threshold (or, with
+    // donor_rank, the donor of largest rank value).
     std::vector<std::int64_t> up;          // upstream cells, nearest first
     std::vector<double> up_dist;           // distance upstream from `flat`
     {
@@ -112,6 +133,7 @@ lsdtt_channel_slope_result channel_slope_at(
             const int r = static_cast<int>(cur / nc), c = static_cast<int>(cur % nc);
             std::int64_t best = -1;
             std::uint64_t best_n = 0;
+            double best_rank = 0.0;
             for (int dr = -1; dr <= 1; ++dr)
                 for (int dc = -1; dc <= 1; ++dc)
                 {
@@ -120,6 +142,16 @@ lsdtt_channel_slope_result channel_slope_at(
                     if (rr < 0 || rr >= nr || cc < 0 || cc >= nc) continue;
                     const std::int64_t v = static_cast<std::int64_t>(rr) * nc + cc;
                     if (!flow.is_valid_cell(v) || flow.is_outlet(v) || flow.receiver_of(v) != cur) continue;
+                    if (rank_data)
+                    {
+                        if (min_contributing_pixels > 0 && flow.s_vector_size(v) < min_contributing_pixels) continue;
+                        const std::size_t vi = static_cast<std::size_t>(v);
+                        const double rv = ((*rank_mask)[vi] && std::isfinite((*rank_data)[vi]))
+                                              ? static_cast<double>((*rank_data)[vi])
+                                              : -std::numeric_limits<double>::infinity();
+                        if (best < 0 || rv > best_rank || (rv == best_rank && v < best)) { best = v; best_rank = rv; }
+                        continue;
+                    }
                     const std::uint64_t n = flow.s_vector_size(v);
                     if (n < min_contributing_pixels) continue;
                     if (best < 0 || n > best_n || (n == best_n && v < best)) { best = v; best_n = n; }
@@ -179,6 +211,7 @@ lsdtt_channel_slope_result channel_slope_at(
     {
         const std::size_t f = static_cast<std::size_t>(path[i]);
         if (f >= zd.size() || !md[f] || !std::isfinite(zd[f])) continue;
+        if (options.exclude && (*options.exclude)[f]) continue;
         z[i] = zd[f];
         ok[i] = 1;
         ++out.n_cells;
@@ -187,7 +220,8 @@ lsdtt_channel_slope_result channel_slope_at(
     }
     if (out.n_cells > 0) out.window_length_m = d_max - d_min;
     double slope = 0.0, zfit = 0.0;
-    out.slope_valid = fit_along_path_slope(d, z, ok, idx, half_length_m, slope, &zfit);
+    out.slope_valid = fit_along_path_slope(d, z, ok, idx, half_length_m, slope, &zfit,
+                                           options.min_span_metres);
     if (out.slope_valid)
     {
         out.slope_m_per_m = slope;

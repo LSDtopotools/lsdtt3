@@ -458,6 +458,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_knickpoints_cpu.cpp
     src/cpu/lsdtt_chi_step_changes_cpu.cpp
     src/cpu/lsdtt_channel_gradient_cpu.cpp
+    src/cpu/lsdtt_slope_area_cpu.cpp
     src/cpu/lsdtt_channel_point_attributes_cpu.cpp
     src/cpu/lsdtt_sea_mask_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp

@@ -242,6 +242,67 @@ lsdtt_binned_data bin_values_natural_breaks(
 );
 
 // =============================================================================
+// Log-binned quantiles (slope-area binning)
+//
+// compute_log_binned_quantiles bins values_to_bin by guide_values into n_bins
+// bins equally spaced in ln(guide) between the smallest and largest guide, and
+// returns, for each NON-EMPTY bin in ascending order, its edges, its geometric
+// centre sqrt(left x right), its count and the requested quantiles of its
+// values. It is the binning of lsdtt-slope-area (guide = drainage area, values
+// = slope), moved here from the CLI so the CLI and the Python binding share it.
+//
+// Its arithmetic is the CLI's, operation for operation, so the CLI's CSVs are
+// byte-identical (a ridgeline paper in review reads them):
+//   - bin index = min(n-1, max(0, int((ln g - ln min) / (ln max - ln min) * n)));
+//     not bin_values_log, whose edge fix-ups and upper_bound search can put a
+//     value on an edge in the neighbouring bin;
+//   - edges exp(ln min + (ln max - ln min) * i / n), centre sqrt(left * right);
+//   - quantile q at position q (n - 1), interpolated as lo + (hi - lo) * frac
+//     (two nth_element selections); compute_quantile_interpolated_in_place
+//     computes (1 - w) lo + w hi, the same value up to the last bit.
+// tests/cpp/test_log_binned_quantiles.cpp keeps the CLI's removed code
+// verbatim and compares bit for bit.
+//
+// Contract (as the rest of this module): the caller passes valid pairs only.
+// Throws std::invalid_argument if the sizes differ, n_bins is 0, there are no
+// values, a guide value is not finite and > 0, a quantile level is outside
+// [0, 1], or all guide values are equal (no log range).
+// =============================================================================
+struct lsdtt_log_binned_quantiles
+{
+    std::size_t n_input_values = 0;
+    std::size_t n_bins_requested = 0;
+
+    std::vector<double> quantile_levels;          // as requested, in [0, 1]
+
+    // One entry per non-empty bin, in ascending order of guide value.
+    std::vector<std::size_t> bin_index;           // 0 .. n_bins_requested - 1
+    std::vector<double> left_edge;
+    std::vector<double> right_edge;
+    std::vector<double> geometric_centre;         // sqrt(left_edge * right_edge)
+    std::vector<std::size_t> counts;
+    // quantiles[k][j]: quantile_levels[k] of the values in non-empty bin j.
+    std::vector<std::vector<double>> quantiles;
+};
+
+lsdtt_log_binned_quantiles compute_log_binned_quantiles(
+    const std::vector<double>& guide_values,
+    const std::vector<double>& values_to_bin,
+    std::size_t n_bins,
+    const std::vector<double>& quantile_levels
+);
+
+// Float form, for float rasters: ln of each guide value is taken in FLOAT
+// precision (std::log(float)), as lsdtt-slope-area did; the min / max logs and
+// everything after are double. Use this one to reproduce the CLI's bins.
+lsdtt_log_binned_quantiles compute_log_binned_quantiles(
+    const std::vector<float>& guide_values,
+    const std::vector<float>& values_to_bin,
+    std::size_t n_bins,
+    const std::vector<double>& quantile_levels
+);
+
+// =============================================================================
 // lsdtt_smoothed_pdf
 //
 // Result of compute_smoothed_pdf().

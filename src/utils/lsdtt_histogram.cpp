@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace lsdtt {
@@ -1035,6 +1036,112 @@ lsdtt_qq_data compute_qq(
     }
 
     return out;
+}
+
+// -----------------------------------------------------------------------------
+// compute_log_binned_quantiles: see the header. The arithmetic below is
+// lsdtt-slope-area's make_bins / percentile, kept operation for operation.
+// -----------------------------------------------------------------------------
+namespace {
+
+// lsdtt-slope-area's percentile(): two nth_element selections and
+// lo + (hi - lo) * frac. Reorders `values`.
+double slope_area_interpolated_quantile(std::vector<double>& values, double fraction)
+{
+    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
+    const double position = fraction * static_cast<double>(values.size() - 1);
+    const std::size_t lower = static_cast<std::size_t>(std::floor(position));
+    const std::size_t upper = static_cast<std::size_t>(std::ceil(position));
+    std::nth_element(values.begin(), values.begin() + lower, values.end());
+    const double low = values[lower];
+    if (upper == lower) return low;
+    std::nth_element(values.begin(), values.begin() + upper, values.end());
+    return low + (values[upper] - low) * (position - lower);
+}
+
+// The guide's type matters: the CLI bins float rasters and takes std::log of
+// the FLOAT value (float precision), while its minimum and maximum are logged
+// as doubles. GuideT = float reproduces that; GuideT = double logs in double.
+template<typename GuideT, typename ValueT>
+lsdtt_log_binned_quantiles compute_log_binned_quantiles_impl(
+    const std::vector<GuideT>& guide_values,
+    const std::vector<ValueT>& values_to_bin,
+    std::size_t n_bins,
+    const std::vector<double>& quantile_levels)
+{
+    const char* fn = "compute_log_binned_quantiles";
+    if (guide_values.size() != values_to_bin.size())
+        throw std::invalid_argument(std::string(fn) + ": guide_values and values_to_bin must have the same size");
+    require_positive_bin_count(n_bins, fn);
+    if (guide_values.empty())
+        throw std::invalid_argument(std::string(fn) + ": no values");
+    for (const double q : quantile_levels)
+        if (!(q >= 0.0 && q <= 1.0))
+            throw std::invalid_argument(std::string(fn) + ": quantile levels must be in [0, 1]");
+
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = 0.0;
+    for (const GuideT g : guide_values)
+    {
+        if (!(g > 0) || !std::isfinite(g))
+            throw std::invalid_argument(std::string(fn) + ": guide values must be finite and > 0");
+        minimum = std::min(minimum, static_cast<double>(g));
+        maximum = std::max(maximum, static_cast<double>(g));
+    }
+    if (!(maximum > minimum))
+        throw std::invalid_argument(std::string(fn) + ": all guide values are equal (no log range)");
+
+    const int n = static_cast<int>(n_bins);
+    const double log_min = std::log(minimum);
+    const double log_max = std::log(maximum);
+    std::vector<std::vector<double>> per_bin(n_bins);
+    for (std::size_t i = 0; i < guide_values.size(); ++i)
+    {
+        const double fraction = (std::log(guide_values[i]) - log_min) / (log_max - log_min);
+        const int bin = std::min(n - 1, std::max(0, static_cast<int>(fraction * n)));
+        per_bin[static_cast<std::size_t>(bin)].push_back(static_cast<double>(values_to_bin[i]));
+    }
+
+    lsdtt_log_binned_quantiles out;
+    out.n_input_values = guide_values.size();
+    out.n_bins_requested = n_bins;
+    out.quantile_levels = quantile_levels;
+    out.quantiles.assign(quantile_levels.size(), {});
+    for (int bin = 0; bin < n; ++bin)
+    {
+        std::vector<double>& values = per_bin[static_cast<std::size_t>(bin)];
+        if (values.empty()) continue;
+        const double left = std::exp(log_min + (log_max - log_min) * bin / n);
+        const double right = std::exp(log_min + (log_max - log_min) * (bin + 1) / n);
+        out.bin_index.push_back(static_cast<std::size_t>(bin));
+        out.left_edge.push_back(left);
+        out.right_edge.push_back(right);
+        out.geometric_centre.push_back(std::sqrt(left * right));
+        out.counts.push_back(values.size());
+        for (std::size_t k = 0; k < quantile_levels.size(); ++k)
+            out.quantiles[k].push_back(slope_area_interpolated_quantile(values, quantile_levels[k]));
+    }
+    return out;
+}
+
+} // namespace
+
+lsdtt_log_binned_quantiles compute_log_binned_quantiles(
+    const std::vector<double>& guide_values,
+    const std::vector<double>& values_to_bin,
+    std::size_t n_bins,
+    const std::vector<double>& quantile_levels)
+{
+    return compute_log_binned_quantiles_impl(guide_values, values_to_bin, n_bins, quantile_levels);
+}
+
+lsdtt_log_binned_quantiles compute_log_binned_quantiles(
+    const std::vector<float>& guide_values,
+    const std::vector<float>& values_to_bin,
+    std::size_t n_bins,
+    const std::vector<double>& quantile_levels)
+{
+    return compute_log_binned_quantiles_impl(guide_values, values_to_bin, n_bins, quantile_levels);
 }
 
 } // namespace lsdtt

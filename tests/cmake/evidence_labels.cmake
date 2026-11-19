@@ -236,6 +236,14 @@ lsdtt_evidence(smoke_slope_area system smoke characterisation metamorphic)
 lsdtt_evidence(smoke_slope_area_d8 system smoke characterisation)
 lsdtt_evidence(smoke_slope_area_no_flowinfo system smoke characterisation metamorphic)    # same row, flowinfo off
 lsdtt_evidence(smoke_slope_area_clip system smoke characterisation)
+lsdtt_evidence(smoke_slope_area_lindsay2016 system smoke)
+lsdtt_evidence(smoke_slope_area_d8_flow_path system smoke)
+lsdtt_evidence(smoke_slope_area_low_concavity system smoke characterisation)
+lsdtt_evidence(smoke_slope_area_fill_only system smoke characterisation metamorphic)  # same polyfit raster as the carve run
+lsdtt_evidence(smoke_slope_area_reproduce_dinf system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_d8 system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_dinf_clip system smoke characterisation)    # pinned outputs, ridgeline paper
+lsdtt_evidence(smoke_slope_area_reproduce_d8_clip system smoke characterisation)    # pinned outputs, ridgeline paper
 lsdtt_evidence(smoke_outlet_matching_identity system smoke property characterisation metamorphic)
 lsdtt_evidence(smoke_outlet_matching_resampled system smoke characterisation)
 lsdtt_evidence(smoke_outlet_matching_edge_only system smoke characterisation)
@@ -556,6 +564,8 @@ foreach(_t IN ITEMS raster_cell_predicates raster_sampling grid_neighbours
                     order_statistics)
     lsdtt_evidence(unit_${_t} unit characterisation)
 endforeach()
+lsdtt_evidence(unit_slope_area_log_binned_quantiles unit characterisation exact_solution)  # bit-identical to lsdtt-slope-area's removed make_bins (kept verbatim); hand cases
+lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4
 lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)
 lsdtt_evidence(unit_raster_resampling unit exact_solution property)
 lsdtt_evidence(unit_raster_hierarchy unit exact_solution)  # dyadic layout and activation cases

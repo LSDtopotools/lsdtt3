@@ -12,7 +12,8 @@
 //
 // This CLI calculates slope-area statistics from a DEM. Its workflow is:
 //
-//   1. Read the DEM, optionally pit-fill it, and build D-infinity (default) or
+//   1. Read the DEM, carve it (least-cost breach, default) and pit-fill what
+//      the carve leaves, and build D-infinity (default) or
 //      D8 flow information. Write the drainage-area and flow-direction rasters
 //      when requested.
 //   2. For every polyfit lambda, calculate direct-polyfit slope.
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +36,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -42,6 +45,7 @@
 #include <vector>
 
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
@@ -50,8 +54,11 @@
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
 #include "../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_surface_metrics_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_area_cpu.hpp"
+#include "../src/utils/lsdtt_histogram.hpp"
 
 static const std::string k_status  = "stable";
 static const std::string k_citation =
@@ -90,6 +97,32 @@ static std::vector<std::string> split_csv(const std::string& text)
     {
         if (!value.empty()) values.push_back(value);
     }
+    return values;
+}
+
+// A comma-separated list of positive lengths (m); `what` names the list in
+// the error messages.
+static std::vector<double> parse_positive_lengths(const std::string& text,
+                                                  const std::string& key,
+                                                  const std::string& what)
+{
+    std::vector<double> values;
+    for (const std::string& token : split_csv(text))
+    {
+        try
+        {
+            const double v = std::stod(token);
+            if (!(v > 0.0) || !std::isfinite(v))
+                throw std::runtime_error("must be positive and finite");
+            values.push_back(v);
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error("Invalid " + what + ": " + token);
+        }
+    }
+    if (values.empty())
+        throw std::runtime_error(key + " cannot be empty");
     return values;
 }
 
@@ -197,75 +230,33 @@ struct BinRow
     std::size_t count = 0;
 };
 
-static double percentile(std::vector<double>& values, double fraction)
-{
-    if (values.empty()) return std::numeric_limits<double>::quiet_NaN();
-    const double position = fraction * static_cast<double>(values.size() - 1);
-    const std::size_t lower = static_cast<std::size_t>(std::floor(position));
-    const std::size_t upper = static_cast<std::size_t>(std::ceil(position));
-    std::nth_element(values.begin(), values.begin() + lower, values.end());
-    const double low = values[lower];
-    if (upper == lower) return low;
-    std::nth_element(values.begin(), values.begin() + upper, values.end());
-    return low + (values[upper] - low) * (position - lower);
-}
-
+// Bin the valid (area, slope) pixels with the shared utility
+// (src/utils/lsdtt_histogram, compute_log_binned_quantiles). Its float form
+// keeps this CLI's arithmetic exactly (float-precision ln of each area), so the
+// lambda CSVs are byte-identical to those written before the move (pinned by
+// the smoke_slope_area_reproduce_* tests).
 static std::vector<BinRow> make_bins(
     const lsdtt::lsdtt_raster_cpu& area,
     const lsdtt::lsdtt_raster_cpu& slope,
-    int n_bins)
+    int n_bins,
+    const std::vector<std::uint8_t>* exclude = nullptr)
 {
-    const auto& area_data = area.get_data();
-    const auto& slope_data = slope.get_data();
-    const auto& area_mask = area.get_mask();
-    const auto& slope_mask = slope.get_mask();
-    double minimum = std::numeric_limits<double>::infinity();
-    double maximum = 0.0;
-    for (std::size_t i = 0; i < area_data.size(); ++i)
-    {
-        if (area_mask[i] && slope_mask[i] && area_data[i] > 0.0 &&
-            std::isfinite(area_data[i]) && std::isfinite(slope_data[i]))
-        {
-            minimum = std::min(minimum, static_cast<double>(area_data[i]));
-            maximum = std::max(maximum, static_cast<double>(area_data[i]));
-        }
-    }
-    if (!std::isfinite(minimum) || maximum <= minimum)
-        throw std::runtime_error("No valid slope-area pixels were found");
-
-    const double log_min = std::log(minimum);
-    const double log_max = std::log(maximum);
-    std::vector<std::vector<double>> slopes(static_cast<std::size_t>(n_bins));
-    for (std::size_t i = 0; i < area_data.size(); ++i)
-    {
-        if (!area_mask[i] || !slope_mask[i] || area_data[i] <= 0.0 ||
-            !std::isfinite(area_data[i]) || !std::isfinite(slope_data[i]))
-            continue;
-        const double fraction =
-            (std::log(area_data[i]) - log_min) / (log_max - log_min);
-        const int bin = std::min(n_bins - 1,
-            std::max(0, static_cast<int>(fraction * n_bins)));
-        slopes[static_cast<std::size_t>(bin)].push_back(slope_data[i]);
-    }
-
+    // The shared routine (lsdtt_slope_area_cpu, also called by the Python
+    // binding): carved / filled pixels excluded when exclude is given.
+    const lsdtt::lsdtt_log_binned_quantiles binned =
+        lsdtt::slope_area_log_bins(area, slope, n_bins, exclude);
     std::vector<BinRow> rows;
-    rows.reserve(static_cast<std::size_t>(n_bins));
-    for (int bin = 0; bin < n_bins; ++bin)
+    rows.reserve(binned.counts.size());
+    for (std::size_t j = 0; j < binned.counts.size(); ++j)
     {
-        const double left = std::exp(log_min +
-            (log_max - log_min) * bin / n_bins);
-        const double right = std::exp(log_min +
-            (log_max - log_min) * (bin + 1) / n_bins);
-        std::vector<double>& values = slopes[static_cast<std::size_t>(bin)];
-        if (values.empty()) continue;
         BinRow row;
-        row.area = std::sqrt(left * right);
-        row.count = values.size();
-        row.d05 = percentile(values, 0.05);
-        row.d25 = percentile(values, 0.25);
-        row.d50 = percentile(values, 0.50);
-        row.d75 = percentile(values, 0.75);
-        row.d95 = percentile(values, 0.95);
+        row.area = binned.geometric_centre[j];
+        row.count = binned.counts[j];
+        row.d05 = binned.quantiles[0][j];
+        row.d25 = binned.quantiles[1][j];
+        row.d50 = binned.quantiles[2][j];
+        row.d75 = binned.quantiles[3][j];
+        row.d95 = binned.quantiles[4][j];
         rows.push_back(row);
     }
     return rows;
@@ -289,13 +280,16 @@ static std::string write_bins(
     return path;
 }
 
+// first_column: polyfit_lambda for the polyfit summary (its format is frozen:
+// a paper's scripts may read it), d8_gradient_window_metres for the D8 one.
 static void write_summary(
     const std::string& path,
-    const std::vector<std::pair<double, std::string>>& lambda_files)
+    const std::vector<std::pair<double, std::string>>& lambda_files,
+    const std::string& first_column = "polyfit_lambda")
 {
     std::ofstream output(path);
     if (!output) throw std::runtime_error("Cannot write " + path);
-    output << "polyfit_lambda,drainage_area_with_max_d50_slope\n";
+    output << first_column << ",drainage_area_with_max_d50_slope\n";
     for (const auto& entry : lambda_files)
     {
         std::ifstream input(entry.second);
@@ -348,10 +342,147 @@ int main(int argc, char* argv[])
         "Minimum slope imposed during pit filling.",
         "Used when fill_before_routing is true.",
         "DEM preparation", "param", "fill_before_routing"};
-    string_default_map["flow_algorithm"] = "dinf";
-    help_map["flow_algorithm"] = {"string", "dinf",
-        "Flow-routing algorithm.", "Allowed values are dinf or d8.",
+
+    // Carve before the fill (plan_slope_area_gradient_and_low_concavity.md,
+    // 3A): the names and help of lsdtt-raster-preprocessing, with this CLI's
+    // defaults (carve by default, least cost), so large filled areas are
+    // avoided. breach_before_fill: false gives the fill-only surface of runs
+    // before 2026-11-18 (see the reproduction note in the help).
+    bool_default_map["breach_before_fill"] = true;
+    help_map["breach_before_fill"] = {"bool","true",
+        "Breach (carve) depressions before filling pits.",
+        "The carve comes first, then the fill (fill_before_routing) takes only "
+        "the pits the carve could not solve, so large filled areas are avoided. "
+        "false = fill alone, the routing surface of lsdtt-slope-area before "
+        "2026-11-18 (set it to reproduce those runs).",
+        "DEM preparation", "switch", ""};
+    string_default_map["breach_algorithm_choice"] = "least_cost";
+    help_map["breach_algorithm_choice"] = {"string","least_cost",
+        "Algorithm for depression breaching.",
+        "lindsay2016: Lindsay (2016) efficient breaching. "
+        "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
+        "DEM preparation", "param", "breach_before_fill"};
+    // The declared default is the outlet-mode one; when the file does not set
+    // the key, the whitebox edge policy uses 100 instead (as in
+    // lsdtt-raster-preprocessing; see default_breach_lc_max_dist).
+    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
+    help_map["breach_lc_max_dist"] = {"int","1000 (outlet) / 100 (whitebox)",
+        "Maximum breach path length in cells for least-cost breaching.",
+        "Counted in steps from the pit (a diagonal step counts as one), not "
+        "as a radius. Pits that need a longer path are left unbreached (and "
+        "filled if fill_before_routing is true). 1 to 32767. If not set, 1000 "
+        "with breach_lc_edge_policy outlet (long enough to bridge large water "
+        "bodies, so a far-off pit is not carved to the nearest raster edge "
+        "instead) and 100 with whitebox (the WhiteboxTools default; longer "
+        "paths there can carve across divides). Only used when "
+        "breach_algorithm_choice is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
+    help_map["breach_lc_max_cost"] = {"float","unlimited",
+        "Maximum cost of a least-cost breach path.",
+        "The cost of a path is the depth each cell on it is lowered, summed: "
+        "metres when breach_lc_minimize_dist is false; with "
+        "breach_lc_minimize_dist true each step is weighted by its length in "
+        "cells (1 or 1.414), so the units are metres x cells. A pit whose "
+        "cheapest path costs more is left unbreached. Only used when "
+        "breach_algorithm_choice is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    bool_default_map["breach_lc_minimize_dist"] = false;
+    help_map["breach_lc_minimize_dist"] = {"bool","false",
+        "Weight least-cost breach paths by their length.",
+        "false: a path costs the total depth lowered (m), so the search "
+        "prefers shallow cuts however long. true: each step is weighted by "
+        "its length in cells, favouring shorter paths; breach_lc_max_cost is "
+        "then in metres x cells. Only used when breach_algorithm_choice is "
+        "least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    string_default_map["breach_lc_edge_policy"] = "outlet";
+    help_map["breach_lc_edge_policy"] = {"string","outlet",
+        "Whether a least-cost breach may drain off the raster edge.",
+        "outlet: the raster edge is an outlet, like a nodata cell, so a pit "
+        "near the edge can breach straight off the grid. whitebox: the edge "
+        "is not an outlet (as in WhiteboxTools), so a breach must reach an "
+        "edge cell that is already low enough, which can carve deep cuts "
+        "across divides near the edge. Only used when breach_algorithm_choice "
+        "is least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+    float_default_map["breach_lc_flat_increment"] = 0.0f;
+    help_map["breach_lc_flat_increment"] = {"float","0.0",
+        "Elevation drop (m) per cell along a least-cost breach channel.",
+        "0 or less selects the automatic value: twice the float32 spacing at "
+        "the largest absolute elevation in the DEM (e.g. 2.4e-4 m for "
+        "elevations of 1024-2047 m), the smallest drop that keeps the channel "
+        "strictly downhill. Only used when breach_algorithm_choice is "
+        "least_cost.",
+        "DEM preparation", "param", "breach_before_fill"};
+
+    bool_default_map["exclude_carved_and_filled_pixels"] = true;
+    help_map["exclude_carved_and_filled_pixels"] = {"bool","true",
+        "Leave carved and filled pixels out of the slope-area measurements.",
+        "A pixel is filled where the routing surface (after breach_before_fill "
+        "and fill_before_routing) is above the input DEM, carved where it is "
+        "below. Their gradient is the conditioning's, not the landscape's (a "
+        "carved reach has the breach's own tiny slope), so they are left out of "
+        "the bins and of the D8 flow-path fits. Drainage area is still routed "
+        "through them. Polyfit slope rasters are written without this exclusion "
+        "(so a saved raster does not depend on it); "
+        "<write_fname>_conditioned_pixels.tif shows the excluded pixels. false "
+        "keeps them, as runs before 2026-11-18 did (set it to reproduce those "
+        "runs).",
+        "DEM preparation", "switch", ""};
+    bool_default_map["write_conditioned_pixels_raster"] = true;
+    help_map["write_conditioned_pixels_raster"] = {"bool","true",
+        "Write the conditioned-pixels raster.",
+        "0 untouched, 1 filled (the routing surface is above the input DEM), 2 "
+        "carved (below it). Output: <write_fname>_conditioned_pixels.tif.",
+        "DEM preparation", "switch", ""};
+    bool_default_map["polyfit_on_routing_surface"] = false;
+    help_map["polyfit_on_routing_surface"] = {"bool","false",
+        "Fit the polyfit slope to the routing surface instead of the input DEM.",
+        "By default polyfit runs on the input DEM (after interior-nodata "
+        "handling, before any carve or fill), since the conditioning is for "
+        "routing only; its slope raster is <write_fname>_lambda_XXm_input_dem_slope.tif. "
+        "true fits the carved / filled routing surface, as runs before "
+        "2026-11-18 did (set it to reproduce those runs); its raster keeps the "
+        "old name <write_fname>_lambda_XXm_slope.tif. Each mode reuses only its "
+        "own saved raster.",
+        "Slope-area analysis", "switch", ""};
+
+    string_default_map["drainage_area_algorithm_choice"] = "dinf";
+    help_map["drainage_area_algorithm_choice"] = {"string", "dinf",
+        "Drainage-area method: dinf (D-infinity, Tarboton 1997) or d8.",
+        "Area is routed on the routing surface (after breach_before_fill and "
+        "fill_before_routing). Independent of slope_algorithm_choice: the D8 "
+        "flow-path gradient walks D8 receivers whichever area is chosen, and "
+        "uses this area to pick the upstream path. Renamed from flow_algorithm "
+        "on 2026-11-18 (same values; an old file must be edited).",
         "Flow information", "param", ""};
+
+    string_default_map["slope_algorithm_choice"] = "polyfit";
+    help_map["slope_algorithm_choice"] = {"string", "polyfit",
+        "Gradient method: polyfit or d8_flow_path.",
+        "polyfit: direct polynomial fit over each lambda in "
+        "polyfit_lambda_metres_list (outputs <write_fname>_lambda_XXm*). "
+        "d8_flow_path: the least-squares gradient along the D8 flow path, over a "
+        "window centred on each pixel of each length in "
+        "d8_gradient_window_metres_list: downstream along the D8 receivers, "
+        "upstream along the D8 donor of largest drainage area "
+        "(drainage_area_algorithm_choice), on the routing surface; outputs "
+        "<write_fname>_d8window_XXm* and the summary "
+        "<write_fname>_maximum_d50_slope_area_d8window.csv. Carved and filled "
+        "pixels are left out of the D8 fits when exclude_carved_and_filled_pixels "
+        "is true. The valid cells must span half the window less one diagonal "
+        "step.",
+        "Slope-area analysis", "param", ""};
+    string_default_map["d8_gradient_window_metres_list"] = "150";
+    help_map["d8_gradient_window_metres_list"] = {"string", "150",
+        "Comma-separated total lengths (m) of the D8 flow-path gradient window.",
+        "The window is centred on the pixel (half downstream, half upstream). "
+        "Each must be at least four cell sizes (120 m on 30 m data). A pixel "
+        "whose valid cells span less than half the window (e.g. near a divide "
+        "and an outlet at once) is nodata. D8 gradient rasters are always "
+        "recomputed, never read back. Example: 90,150,300.",
+        "Slope-area analysis", "param", "slope_algorithm_choice=d8_flow_path"};
     bool_default_map["write_flowinfo_rasters"] = true;
     help_map["write_flowinfo_rasters"] = {"bool", "true",
         "Write the drainage-area and flow-direction rasters.",
@@ -386,7 +517,9 @@ int main(int argc, char* argv[])
     bool_default_map["write_slope_rasters"] = true;
     help_map["write_slope_rasters"] = {"bool", "true",
         "Write each slope raster, after optional clipping.",
-        "Files are named <write_fname>_lambda_XXm_slope.tif.",
+        "Files are named <write_fname>_lambda_XXm_input_dem_slope.tif (polyfit "
+        "on the input DEM, the default) or <write_fname>_lambda_XXm_slope.tif "
+        "(polyfit_on_routing_surface). An existing file of that name is reused.",
         "Slope-area analysis", "switch", ""};
     string_default_map["basin_clip_mode"] = "none";
     help_map["basin_clip_mode"] = {"string", "none",
@@ -415,6 +548,87 @@ int main(int argc, char* argv[])
         "Empty uses <write_fname>_maximum_d50_slope_area.csv.",
         "Output", "param", ""};
 
+    // --- Low-concavity finder (plan section 4) -------------------------------
+    bool_default_map["run_low_concavity_detection"] = false;
+    help_map["run_low_concavity_detection"] = {"bool", "false",
+        "Find channel reaches whose gradient changes little with drainage area.",
+        "At each channel pixel (threshold_contributing_pixels), take it and the "
+        "next low_concavity_window_pixels - 1 pixels DOWNSTREAM along the D8 "
+        "receivers (downstream because the path upstream branches; the window "
+        "runs through tributary junctions), and fit log10 S = a + b log10 A "
+        "over those with a gradient that are not carved or filled "
+        "(exclude_carved_and_filled_pixels). The concavity is theta = -b "
+        "(S ~ A^-theta). A pixel is low concavity if |theta| < "
+        "low_concavity_max_abs_concavity, so a weakly convex reach counts too. "
+        "S is always the centred D8 flow-path gradient over "
+        "low_concavity_gradient_window_metres, whatever slope_algorithm_choice "
+        "is; A is the drainage_area_algorithm_choice area. Aimed at threshold "
+        "slopes, debris-flow channels and alluvial fans. Outputs: "
+        "<write_fname>_low_concavity_theta.tif and _low_concavity_flag.tif "
+        "(write_low_concavity_rasters) and _low_concavity_points.csv "
+        "(write_low_concavity_point_table).",
+        "Low concavity", "switch", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
+    float_default_map["low_concavity_gradient_window_metres"] = 150.0f;
+    help_map["low_concavity_gradient_window_metres"] = {"float", "150",
+        "Total length (m) of the centred D8 flow-path gradient window used by the low-concavity fit.",
+        "As d8_gradient_window_metres_list, but one value, and used whatever "
+        "slope_algorithm_choice is. At least four cell sizes.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    int_default_map["low_concavity_window_pixels"] = 10;
+    help_map["low_concavity_window_pixels"] = {"int", "10",
+        "Pixels in the downstream fit window (the pixel and the next ones down).",
+        "Fewer at an outlet. At least 2.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    int_default_map["low_concavity_min_pixels"] = 5;
+    help_map["low_concavity_min_pixels"] = {"int", "5",
+        "Fewest (area, gradient) pairs for a valid fit.",
+        "Carved, filled and gradient-less pixels in the window do not count. At "
+        "least 3 and at most low_concavity_window_pixels. A pixel without a "
+        "valid fit has flag -1.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    float_default_map["low_concavity_max_abs_concavity"] = 0.15f;
+    help_map["low_concavity_max_abs_concavity"] = {"float", "0.15",
+        "Threshold on |theta| below which a channel pixel is low concavity.",
+        "Fluvial channels are typically 0.35-0.6. Must be >= 0.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_rasters"] = true;
+    help_map["write_low_concavity_rasters"] = {"bool", "true",
+        "Write the low-concavity theta and flag rasters.",
+        "<write_fname>_low_concavity_theta.tif (theta where the fit is valid), "
+        "_low_concavity_theta_se.tif (its standard error) and "
+        "_low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; "
+        "nodata off the channel network or outside the basin clip).",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_point_table"] = false;
+    help_map["write_low_concavity_point_table"] = {"bool", "false",
+        "Write one CSV row per channel pixel with its low-concavity fit.",
+        "<write_fname>_low_concavity_points.csv: flat, x, y, drainage_area_m2, "
+        "slope, theta, theta_se (standard error of theta), r2, n_pixels, "
+        "log10_area_range, n_junctions_in_window, low_concavity.",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+
+    int_default_map["low_concavity_min_run_pixels"] = 1;
+    help_map["low_concavity_min_run_pixels"] = {"int", "1",
+        "Shortest run of low-concavity pixels kept as a low-concavity segment.",
+        "A shorter flagged run (along one channel link) is relabelled 0 and merged "
+        "with its neighbours in the segments file; the rasters and point table "
+        "keep every pixel's own flag. 1 (default) keeps all runs.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_segments"] = true;
+    help_map["write_low_concavity_segments"] = {"bool", "true",
+        "Write the channel network as segments marked low concavity or not.",
+        "<write_fname>_low_concavity_segments (format from write_vector_format): "
+        "each channel link (source or junction to the next junction or outlet) "
+        "is split where the flag changes; attributes segment_id, link_id, "
+        "low_concavity (1, 0, -1 no valid fit), n_pixels, length_m, median_theta, "
+        "median_theta_se, "
+        "median_slope, min_area_m2, max_area_m2, stream_order (Strahler), "
+        "upstream_flat, downstream_flat. Each line ends at the first pixel "
+        "below its last, so the lines join.",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
+
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
 
@@ -431,6 +645,13 @@ int main(int argc, char* argv[])
     try
     {
         lsdtt::lsdtt_param_parser parser(cli_args.path, cli_args.fname);
+        // Renamed 2026-11-18 without an alias (plan Q1): an old file stops here
+        // with the new name, instead of the generic unknown-key error.
+        parser.set_removed_keys({
+            {"flow_algorithm",
+             "flow_algorithm has been renamed drainage_area_algorithm_choice "
+             "(same values: dinf or d8); rename it in the parameter file"},
+        });
         parser.parse_all_parameters(
             float_default_map, int_default_map, bool_default_map,
             string_default_map);
@@ -443,13 +664,59 @@ int main(int argc, char* argv[])
             throw std::runtime_error("n_log_bins must be at least 1");
         const std::vector<double> lambdas =
             parse_lambdas(sf.at("polyfit_lambda_metres_list"));
+        const std::string slope_choice = sf.at("slope_algorithm_choice");
+        if (slope_choice != "polyfit" && slope_choice != "d8_flow_path")
+            throw std::runtime_error("slope_algorithm_choice must be polyfit or d8_flow_path");
+        const bool use_d8_gradient = slope_choice == "d8_flow_path";
+        const std::vector<double> d8_windows = parse_positive_lengths(
+            sf.at("d8_gradient_window_metres_list"), "d8_gradient_window_metres_list",
+            "D8 gradient window");
+        const bool run_low_concavity = bf.at("run_low_concavity_detection");
+        if (run_low_concavity)
+        {
+            if (ii.at("low_concavity_window_pixels") < 2)
+                throw std::runtime_error("low_concavity_window_pixels must be at least 2");
+            if (ii.at("low_concavity_min_pixels") < 3 ||
+                ii.at("low_concavity_min_pixels") > ii.at("low_concavity_window_pixels"))
+                throw std::runtime_error("low_concavity_min_pixels must be at least 3 and at most low_concavity_window_pixels");
+            if (!(ff.at("low_concavity_max_abs_concavity") >= 0.0f))
+                throw std::runtime_error("low_concavity_max_abs_concavity must be >= 0");
+            if (ii.at("threshold_contributing_pixels") < 1)
+                throw std::runtime_error("threshold_contributing_pixels must be at least 1");
+        }
+        const std::string area_choice = sf.at("drainage_area_algorithm_choice");
+        if (area_choice != "dinf" && area_choice != "d8")
+            throw std::runtime_error("drainage_area_algorithm_choice must be dinf or d8");
+        const std::string breach_choice = sf.at("breach_algorithm_choice");
+        if (breach_choice != "least_cost" && breach_choice != "lindsay2016")
+            throw std::runtime_error("breach_algorithm_choice must be least_cost or lindsay2016");
+        // Least-cost options, built and validated before any raster work. The
+        // breach's own remainder fill is OFF: the fill below (fill_pits) is
+        // the same call whether or not the DEM was carved first.
+        lsdtt::breach_least_cost_options breach_lc_options;
+        if (bf.at("breach_before_fill") && breach_choice == "least_cost")
+        {
+            breach_lc_options.max_cost =
+                (ff.at("breach_lc_max_cost") >= std::numeric_limits<float>::max())
+                    ? std::numeric_limits<double>::infinity()
+                    : static_cast<double>(ff.at("breach_lc_max_cost"));
+            breach_lc_options.minimize_dist  = bf.at("breach_lc_minimize_dist");
+            breach_lc_options.flat_increment = static_cast<double>(ff.at("breach_lc_flat_increment"));
+            breach_lc_options.fill_remainder = false;
+            breach_lc_options.edge_policy    = lsdtt::parse_breach_lc_edge_policy(
+                sf.at("breach_lc_edge_policy"), "breach_lc_edge_policy");
+            breach_lc_options.max_dist = parser.parameter_supplied("breach_lc_max_dist")
+                ? ii.at("breach_lc_max_dist")
+                : lsdtt::default_breach_lc_max_dist(breach_lc_options.edge_policy);
+            lsdtt::validate_breach_least_cost_options(breach_lc_options);
+        }
         const std::string clip_mode = sf.at("basin_clip_mode");
         if (clip_mode != "none" && clip_mode != "mask" &&
             clip_mode != "polygon")
             throw std::runtime_error("basin_clip_mode must be none, mask, or polygon");
 
         // ---------------------------------------------------------------------
-        // Step 1: Read the DEM and optionally pit-fill it.
+        // Step 1: Read the DEM; carve (breach_before_fill) and pit-fill it.
         // ---------------------------------------------------------------------
         const std::string dem_path = parser.get_read_path() + "/" +
                                      parser.get_read_fname() +
@@ -469,6 +736,28 @@ int main(int argc, char* argv[])
             std::cerr << "FATAL: interior nodata: " << e.what() << "\n";
             return 1;
         }
+        // The input DEM, before any carve or fill: the polyfit surface by
+        // default (Q12), and the reference for the filled pixels.
+        const lsdtt::lsdtt_raster_cpu input_dem = dem;
+        if (bf.at("breach_before_fill"))
+        {
+            if (breach_choice == "least_cost")
+            {
+                lsdtt::breach_least_cost_diagnostics diag;
+                dem = lsdtt::breach_depressions_least_cost(dem, breach_lc_options, &diag);
+                std::cout << "Least-cost breaching (Lindsay 2020): max_dist "
+                          << breach_lc_options.max_dist << ", edge policy "
+                          << lsdtt::breach_lc_edge_policy_name(breach_lc_options.edge_policy)
+                          << "; pits " << diag.pits_detected << ", solved " << diag.pits_solved
+                          << ", unsolved " << (diag.pits_unsolved_exhausted + diag.pits_unsolved_max_cost)
+                          << " (left for the fill)\n";
+            }
+            else
+            {
+                dem = lsdtt::breach_depressions(dem, ii.at("n_threads"));
+                std::cout << "Breaching (Lindsay 2016 efficient breaching)\n";
+            }
+        }
         if (bf.at("fill_before_routing"))
         {
             dem = lsdtt::fill_pits(
@@ -476,10 +765,44 @@ int main(int argc, char* argv[])
                 ii.at("n_threads"));
         }
 
+        // Conditioned pixels: filled (raised) or carved (lowered) by the
+        // conditioning (plan 3A, section 10 F2). Both are excluded.
+        const std::vector<std::uint8_t> conditioned = lsdtt::conditioned_pixel_mask(input_dem, dem);
+        {
+            std::size_t n_filled = 0, n_carved = 0, n_valid = 0;
+            for (std::size_t i = 0; i < conditioned.size(); ++i)
+            {
+                n_filled += conditioned[i] == lsdtt::k_pixel_filled ? 1 : 0;
+                n_carved += conditioned[i] == lsdtt::k_pixel_carved ? 1 : 0;
+                n_valid += input_dem.get_mask()[i] ? 1 : 0;
+            }
+            auto pct = [&](std::size_t k) {
+                return number_string(n_valid ? 100.0 * static_cast<double>(k) / static_cast<double>(n_valid) : 0.0);
+            };
+            std::cout << "Conditioned pixels: " << n_filled << " filled (" << pct(n_filled) << "%), "
+                      << n_carved << " carved (" << pct(n_carved) << "%) of " << n_valid << "; "
+                      << (bf.at("exclude_carved_and_filled_pixels") ? "excluded from the measurements"
+                                                                     : "kept in the measurements")
+                      << "\n";
+            lsdtt::lsdtt_run_record::add_provenance("n_filled_pixels", std::to_string(n_filled));
+            lsdtt::lsdtt_run_record::add_provenance("n_carved_pixels", std::to_string(n_carved));
+            if (bf.at("write_conditioned_pixels_raster"))
+            {
+                std::vector<float> fv(conditioned.begin(), conditioned.end());
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(fv, dem.get_meta(),
+                                  parser.get_write_path() + "/" + parser.get_write_fname() +
+                                  "_conditioned_pixels.tif");
+            }
+        }
+        const std::vector<std::uint8_t>* exclude =
+            bf.at("exclude_carved_and_filled_pixels") ? &conditioned : nullptr;
+        const bool polyfit_routing = bf.at("polyfit_on_routing_surface");
+
         // ---------------------------------------------------------------------
         // Step 2: Build flow information and drainage area.
         // ---------------------------------------------------------------------
-        const std::string flow_algorithm = sf.at("flow_algorithm");
+        const std::string flow_algorithm = area_choice;
         lsdtt::lsdtt_raster_cpu drainage_area;
         if (flow_algorithm == "d8")
         {
@@ -571,7 +894,7 @@ int main(int argc, char* argv[])
         }
         else
         {
-            throw std::runtime_error("flow_algorithm must be dinf or d8");
+            throw std::runtime_error("drainage_area_algorithm_choice must be dinf or d8");
         }
 
         // ---------------------------------------------------------------------
@@ -595,11 +918,13 @@ int main(int argc, char* argv[])
         // Step 3: Fit, optionally clip, bin, write, and release each lambda.
         // ---------------------------------------------------------------------
         std::vector<std::pair<double, std::string>> lambda_files;
-        for (const double lambda : lambdas)
+        for (const double lambda : (use_d8_gradient ? std::vector<double>{} : lambdas))
         {
             const std::string stem = parser.get_write_path() + "/" +
                 parser.get_write_fname() + "_lambda_" + lambda_label(lambda) + "m";
-            const std::string slope_path = stem + "_slope.tif";
+            // One file name per polyfit surface, so a saved raster is only
+            // reused by a run that fits the same surface.
+            const std::string slope_path = stem + (polyfit_routing ? "_slope.tif" : "_input_dem_slope.tif");
             lsdtt::lsdtt_raster_cpu slope;
             if (bf.at("write_slope_rasters") &&
                 std::filesystem::exists(slope_path))
@@ -613,7 +938,7 @@ int main(int argc, char* argv[])
             else
             {
                 lsdtt::poly_fit_coeffs coefficients = lsdtt::direct_polyfit(
-                    dem, lambda, ii.at("n_threads"));
+                    polyfit_routing ? dem : input_dem, lambda, ii.at("n_threads"));
                 lsdtt::polyfit_metric_request request;
                 request.metrics = {lsdtt::polyfit_metric::slope};
                 request.n_threads = ii.at("n_threads");
@@ -630,7 +955,7 @@ int main(int argc, char* argv[])
                 }
             }
             const std::vector<BinRow> rows = make_bins(
-                drainage_area, slope, ii.at("n_log_bins"));
+                drainage_area, slope, ii.at("n_log_bins"), exclude);
             const std::string csv_path = stem + ".csv";
             write_bins(csv_path, rows);
             lambda_files.emplace_back(lambda, csv_path);
@@ -640,11 +965,201 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 4: Read all lambda CSVs and write the maximum-d50 summary.
         // ---------------------------------------------------------------------
-        const std::string summary_name = sf.at("summary_csv_fname").empty()
-            ? parser.get_write_fname() + "_maximum_d50_slope_area.csv"
-            : sf.at("summary_csv_fname");
-        write_summary(parser.get_write_path() + "/" + summary_name,
-                      lambda_files);
+        if (!use_d8_gradient)
+        {
+            const std::string summary_name = sf.at("summary_csv_fname").empty()
+                ? parser.get_write_fname() + "_maximum_d50_slope_area.csv"
+                : sf.at("summary_csv_fname");
+            write_summary(parser.get_write_path() + "/" + summary_name,
+                          lambda_files);
+        }
+
+        // One D8 flow on the routing surface, built when a D8 path is needed
+        // (with its s-vector when the low-concavity finder needs contributing
+        // pixels).
+        std::unique_ptr<lsdtt::lsdtt_flow_base> d8_flow_holder;
+        auto get_d8_flow = [&]() -> std::unique_ptr<lsdtt::lsdtt_flow_base>& {
+            if (!d8_flow_holder)
+            {
+                lsdtt::lsdtt_flowinfo_options d8o;
+                d8o.boundary_conditions = sf.at("boundary_conditions");
+                d8o.build_s_vector = run_low_concavity;
+                d8o.n_threads = ii.at("n_threads");
+                d8_flow_holder = lsdtt::make_flow_base(
+                    dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
+            }
+            return d8_flow_holder;
+        };
+
+        // ---------------------------------------------------------------------
+        // Step 3b (slope_algorithm_choice: d8_flow_path): the centred D8
+        // flow-path gradient for each window, on the routing surface, with
+        // the upstream path chosen by the run's drainage area. Always
+        // recomputed (it depends on the conditioning and the area method,
+        // which its file name does not show).
+        // ---------------------------------------------------------------------
+        if (use_d8_gradient)
+        {
+            const double cs = dem.get_meta().cell_size;
+            for (const double w : d8_windows)
+                if (!(w >= 4.0 * cs))
+                    throw std::runtime_error(
+                        "d8_gradient_window_metres_list: a window of " + number_string(w) +
+                        " m is under four cell sizes (" + number_string(4.0 * cs) + " m)");
+            const auto& d8_flow = get_d8_flow();
+            std::vector<std::pair<double, std::string>> window_files;
+            for (const double w : d8_windows)
+            {
+                const std::string stem = parser.get_write_path() + "/" +
+                    parser.get_write_fname() + "_d8window_" + lambda_label(w) + "m";
+                lsdtt::lsdtt_d8_flow_path_gradient_options go;
+                go.window_metres = w;
+                go.exclude = exclude;
+                go.n_threads = ii.at("n_threads");
+                std::cout << "D8 flow-path gradient, window " << number_string(w) << " m\n";
+                lsdtt::lsdtt_raster_cpu slope =
+                    lsdtt::d8_flow_path_gradient(*d8_flow, dem, drainage_area, go);
+                if (has_clip) slope = apply_mask(slope, clip);
+                if (bf.at("write_slope_rasters"))
+                {
+                    lsdtt::lsdtt_data_loader loader;
+                    loader.write_full(slope.get_data(), slope.get_meta(), stem + "_slope.tif");
+                }
+                const std::vector<BinRow> rows = make_bins(
+                    drainage_area, slope, ii.at("n_log_bins"), exclude);
+                const std::string csv_path = stem + ".csv";
+                write_bins(csv_path, rows);
+                window_files.emplace_back(w, csv_path);
+            }
+            write_summary(parser.get_write_path() + "/" + parser.get_write_fname() +
+                              "_maximum_d50_slope_area_d8window.csv",
+                          window_files, "d8_gradient_window_metres");
+        }
+        // ---------------------------------------------------------------------
+        // Step 5 (run_low_concavity_detection): the downstream log S - log A
+        // fit at each channel pixel (plan section 4).
+        // ---------------------------------------------------------------------
+        if (run_low_concavity)
+        {
+            const double cs = dem.get_meta().cell_size;
+            const double gw = ff.at("low_concavity_gradient_window_metres");
+            if (!(gw >= 4.0 * cs))
+                throw std::runtime_error(
+                    "low_concavity_gradient_window_metres (" + number_string(gw) +
+                    " m) is under four cell sizes (" + number_string(4.0 * cs) + " m)");
+            const auto& d8_flow = get_d8_flow();
+            lsdtt::lsdtt_d8_flow_path_gradient_options go;
+            go.window_metres = gw;
+            go.exclude = exclude;
+            go.n_threads = ii.at("n_threads");
+            const lsdtt::lsdtt_raster_cpu lc_gradient =
+                lsdtt::d8_flow_path_gradient(*d8_flow, dem, drainage_area, go);
+            lsdtt::lsdtt_low_concavity_options lo;
+            lo.threshold_contributing_pixels =
+                static_cast<std::uint64_t>(ii.at("threshold_contributing_pixels"));
+            lo.window_pixels = ii.at("low_concavity_window_pixels");
+            lo.min_pixels = ii.at("low_concavity_min_pixels");
+            lo.max_abs_concavity = ff.at("low_concavity_max_abs_concavity");
+            lo.exclude = exclude;
+            lo.n_threads = ii.at("n_threads");
+            const lsdtt::lsdtt_low_concavity_result lc =
+                lsdtt::find_low_concavity(*d8_flow, drainage_area, lc_gradient, lo);
+
+            // Report only pixels inside the basin clip (the fits use the whole
+            // DEM, since a window may run past the clip's edge).
+            const auto& meta = dem.get_meta();
+            auto inside = [&](std::int64_t f) {
+                if (!has_clip) return true;
+                const std::size_t i = static_cast<std::size_t>(f);
+                return clip.get_mask()[i] != 0 && clip.get_data()[i] != 0.0f;
+            };
+            std::size_t n_low = 0, n_not = 0, n_none = 0;
+            for (std::size_t k = 0; k < lc.flat.size(); ++k)
+            {
+                if (!inside(lc.flat[k])) continue;
+                if (lc.flag[k] == 1) ++n_low;
+                else if (lc.flag[k] == 0) ++n_not;
+                else ++n_none;
+            }
+            std::cout << "Low concavity (|theta| < " << ff.at("low_concavity_max_abs_concavity") << ", window "
+                      << lo.window_pixels << " pixels, gradient window " << number_string(gw) << " m): "
+                      << n_low << " low-concavity, " << n_not << " not, " << n_none
+                      << " without a valid fit, of " << (n_low + n_not + n_none) << " channel pixels\n";
+
+            const std::string base = parser.get_write_path() + "/" + parser.get_write_fname();
+            if (bf.at("write_low_concavity_rasters"))
+            {
+                const float nodata = static_cast<float>(meta.no_data_value);
+                std::vector<float> th(dem.get_data().size(), nodata), se(dem.get_data().size(), nodata),
+                    fl(dem.get_data().size(), nodata);
+                for (std::size_t k = 0; k < lc.flat.size(); ++k)
+                {
+                    if (!inside(lc.flat[k])) continue;
+                    const std::size_t i = static_cast<std::size_t>(lc.flat[k]);
+                    fl[i] = static_cast<float>(lc.flag[k]);
+                    if (lc.flag[k] >= 0)
+                    {
+                        th[i] = static_cast<float>(lc.theta[k]);
+                        if (std::isfinite(lc.theta_se[k])) se[i] = static_cast<float>(lc.theta_se[k]);
+                    }
+                }
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(th, meta, base + "_low_concavity_theta.tif");
+                loader.write_full(se, meta, base + "_low_concavity_theta_se.tif");
+                loader.write_full(fl, meta, base + "_low_concavity_flag.tif");
+            }
+            if (bf.at("write_low_concavity_segments"))
+            {
+                if (ii.at("low_concavity_min_run_pixels") < 1)
+                    throw std::runtime_error("low_concavity_min_run_pixels must be at least 1");
+                std::vector<std::uint8_t> include;
+                if (has_clip)
+                {
+                    include.assign(dem.get_data().size(), 0);
+                    for (std::size_t i = 0; i < include.size(); ++i)
+                        include[i] = (clip.get_mask()[i] && clip.get_data()[i] != 0.0f) ? 1 : 0;
+                }
+                const auto segments = lsdtt::build_low_concavity_segments(
+                    *d8_flow, lc, ii.at("low_concavity_min_run_pixels"), has_clip ? &include : nullptr);
+                lsdtt::vector_output_format vfmt =
+                    lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
+                const std::string seg_path = base + "_low_concavity_segments" + lsdtt::output_extension(vfmt);
+                lsdtt::write_low_concavity_segments(seg_path, segments, meta, vfmt);
+                std::size_t n_seg_low = 0;
+                double len_low = 0.0, len_all = 0.0;
+                for (const auto& sg : segments)
+                {
+                    len_all += sg.length_m;
+                    if (sg.flag == 1) { ++n_seg_low; len_low += sg.length_m; }
+                }
+                std::cout << "Low-concavity segments: " << segments.size() << " segments, " << n_seg_low
+                          << " low concavity (" << number_string(len_low) << " of " << number_string(len_all)
+                          << " m of channel) -> " << seg_path << "\n";
+            }
+            if (bf.at("write_low_concavity_point_table"))
+            {
+                const std::string path = base + "_low_concavity_points.csv";
+                std::ofstream out(path);
+                if (!out) throw std::runtime_error("Cannot write " + path);
+                out << "flat,x,y,drainage_area_m2,slope,theta,theta_se,r2,n_pixels,log10_area_range,"
+                       "n_junctions_in_window,low_concavity\n";
+                for (std::size_t k = 0; k < lc.flat.size(); ++k)
+                {
+                    if (!inside(lc.flat[k])) continue;
+                    const std::int64_t f = lc.flat[k];
+                    const std::int64_t row = f / meta.n_cols, col = f % meta.n_cols;
+                    const double x = meta.x_min + (static_cast<double>(col) + 0.5) * meta.cell_size;
+                    const double y = meta.y_min + (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size;
+                    out << f << ',' << number_string(x) << ',' << number_string(y) << ','
+                        << number_string(lc.area_m2[k]) << ',' << number_string(lc.slope[k]) << ','
+                        << number_string(lc.theta[k]) << ',' << number_string(lc.theta_se[k]) << ','
+                        << number_string(lc.r2[k]) << ','
+                        << lc.n_pixels[k] << ',' << number_string(lc.log10_area_range[k]) << ','
+                        << lc.n_junctions[k] << ',' << static_cast<int>(lc.flag[k]) << '\n';
+                }
+            }
+        }
+
         parser.print_parameters();
     }
     catch (const std::exception& error)

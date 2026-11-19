@@ -1,0 +1,10 @@
+# lsdtt-slope-area with the Lindsay (2016) efficient breach before the fill
+# (breach_algorithm_choice: lindsay2016) instead of the least-cost default.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sa
+n_threads: 1
+polyfit_lambda_metres_list: 90
+n_log_bins: 10
+breach_algorithm_choice: lindsay2016

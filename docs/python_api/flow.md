@@ -1198,6 +1198,8 @@ chi_from_outlets_inherited(outlets: object, seed_chi: Raster, m_over_n: float = 
     Integrate chi from supplied outlets using seed-raster base values.
 contributing_pixels() -> Raster
     Return the number of pixels draining through each pixel, including itself.
+d8_flow_path_gradient(routing_dem: Raster, drainage_area: Raster, *, window_metres: float = 150.0, exclude: Raster | None = None, n_threads: int = 0) -> Raster
+    Gradient at every pixel along its D8 flow path, over a window centred on it.
 distance_to_channel(threshold_contributing_pixels: int) -> Raster
     Return the D8 flow-path length from each pixel to the nearest downstream channel.
 distance_to_farthest_ridge() -> Raster
@@ -1224,6 +1226,10 @@ is_outlet(row: int, col: int) -> bool
     Return True if the pixel is an outlet (has no downstream receiver).
 is_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool
     Return True if the candidate pixel drains through the target pixel.
+low_concavity(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, exclude: Raster | None = None, n_threads: int = 0) -> pandas.DataFrame
+    Fit log S against log A downstream of every channel pixel: the low-concavity finder.
+low_concavity_segments(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, min_run_pixels: int = 1, exclude: Raster | None = None, include: Raster | None = None, n_threads: int = 0) -> geopandas.GeoDataFrame
+    The channel network as segments marked low concavity or not: the CLI's segments file.
 receiver_of(row: int, col: int) -> object
     Return the pixel this pixel drains to.
 row_col(flat_index: int) -> tuple
@@ -1554,6 +1560,42 @@ Raster
 def contributing_pixels(self) -> lsdtt3.Raster
 ```
 
+#### `d8_flow_path_gradient`
+
+d8_flow_path_gradient(self, routing_dem: Raster, drainage_area: Raster, *, window_metres: float = 150.0, exclude: Raster | None = None, n_threads: int = 0) -> Raster
+
+Gradient at every pixel along its D8 flow path, over a window centred on it.
+
+lsdtt-slope-area ``slope_algorithm_choice: d8_flow_path``, same routine. The
+window of total flow length ``window_metres`` runs downstream along this
+FlowInfo's receivers and upstream along the D8 donor of largest
+``drainage_area``. The gradient is the least-squares slope of elevation
+against flow distance; the valid cells must span half the window less one
+diagonal step, so a one-sided window (divide, outlet) can qualify.
+
+Parameters
+----------
+routing_dem : Raster
+    The DEM this FlowInfo was built on.
+drainage_area : Raster
+    Drainage area (m^2) used to pick the upstream path (D-infinity or D8).
+window_metres : float, default=150.0, keyword-only
+    Total window length (m), at least four cell sizes.
+exclude : Raster or None, default=None, keyword-only
+    Nonzero pixels (e.g. carved / filled) are walked through but not fitted,
+    and their own gradient is nodata.
+n_threads : int, default=0, keyword-only
+    OpenMP threads (0 = default); the result does not depend on it.
+
+Returns
+-------
+Raster
+    Gradient (m/m); nodata where the fit is not usable.
+
+```python
+def d8_flow_path_gradient(self, routing_dem: Raster, drainage_area: Raster, *, window_metres: float = 150.0, exclude: Raster | None = None, n_threads: int = 0) -> Raster
+```
+
 #### `direction`
 
 Uint8 array (n_rows, n_cols) of internal D8 direction codes; see flow_direction() for a raster.
@@ -1824,6 +1866,84 @@ bool
 
 ```python
 def is_upslope(self, candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool
+```
+
+#### `low_concavity`
+
+low_concavity(self, drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, exclude: Raster | None = None, n_threads: int = 0) -> pandas.DataFrame
+
+Fit log S against log A downstream of every channel pixel: the low-concavity finder.
+
+lsdtt-slope-area ``run_low_concavity_detection``, same routine and names
+(``low_concavity_window_pixels`` -> ``window_pixels`` etc.). At each channel
+pixel (``threshold_contributing_pixels``) the pixel and the next ones down
+the D8 receivers (``window_pixels`` in all; through junctions) are fitted as
+log10 S = a + b log10 A; theta = -b. A pixel is low concavity if
+|theta| < ``max_abs_concavity``.
+
+Parameters
+----------
+drainage_area : Raster
+    Drainage area (m^2).
+gradient : Raster
+    The D8 flow-path gradient (``d8_flow_path_gradient``), as the CLI uses.
+threshold_contributing_pixels : int, default=1000, keyword-only
+    Channel pixels have at least this many D8 contributing pixels.
+window_pixels : int, default=10, keyword-only
+    Pixels in the downstream window (>= 2).
+min_pixels : int, default=5, keyword-only
+    Fewest usable (area, gradient) pairs for a valid fit (3 to window_pixels).
+max_abs_concavity : float, default=0.15, keyword-only
+    Threshold on |theta|.
+exclude : Raster or None, default=None, keyword-only
+    Nonzero pixels (carved / filled) are left out of the fits; an excluded
+    channel pixel gets no fit.
+n_threads : int, default=0, keyword-only
+    OpenMP threads.
+
+Returns
+-------
+pandas.DataFrame
+    One row per channel pixel, the columns of the CLI's point table:
+    ``flat, x, y, drainage_area_m2, slope, theta, theta_se, r2, n_pixels,
+    log10_area_range, n_junctions_in_window, low_concavity`` (1, 0, or -1 for
+    no valid fit). ``theta_se`` is the standard error of theta.
+
+```python
+def low_concavity(self, drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, exclude: Raster | None = None, n_threads: int = 0) -> pandas.DataFrame
+```
+
+#### `low_concavity_segments`
+
+low_concavity_segments(self, drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, min_run_pixels: int = 1, exclude: Raster | None = None, include: Raster | None = None, n_threads: int = 0) -> geopandas.GeoDataFrame
+
+The channel network as segments marked low concavity or not: the CLI's segments file.
+
+Runs ``low_concavity`` with the same arguments, then cuts the channel network
+into links (source or junction to the next junction or outlet) and splits
+each where the flag changes. A flagged run shorter than ``min_run_pixels`` is
+relabelled 0 and merged. Pixels outside ``include`` (nonzero = inside, e.g. a
+basin mask) are left out. Each line ends at the first pixel below its last.
+
+Parameters
+----------
+drainage_area, gradient, threshold_contributing_pixels, window_pixels, min_pixels, max_abs_concavity, exclude, n_threads
+    As ``low_concavity``.
+min_run_pixels : int, default=1, keyword-only
+    Shortest flagged run kept as a low-concavity segment (>= 1).
+include : Raster or None, default=None, keyword-only
+    Nonzero pixels are included; None includes all.
+
+Returns
+-------
+geopandas.GeoDataFrame
+    LineStrings with ``segment_id, link_id, low_concavity, n_pixels,
+    length_m, median_theta, median_theta_se, median_slope, min_area_m2,
+    max_area_m2, stream_order`` (Strahler), ``upstream_flat,
+    downstream_flat``.
+
+```python
+def low_concavity_segments(self, drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, min_run_pixels: int = 1, exclude: Raster | None = None, include: Raster | None = None, n_threads: int = 0) -> geopandas.GeoDataFrame
 ```
 
 #### `metadata`

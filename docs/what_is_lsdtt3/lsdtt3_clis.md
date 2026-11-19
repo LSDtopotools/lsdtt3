@@ -40,7 +40,7 @@ list, and the same content is on this site under
 | `lsdtt-feature-finder` | Experimental terrain-feature detection for LiDAR-derived DEMs. |
 | `lsdtt-mountain-front` | Identifies mountain masses via adaptive relief thresholding. |
 | `lsdtt-linear-stats` | Statistics of a raster sampled along linear vector features. |
-| `lsdtt-slope-area` | Slope–area statistics for one or more polynomial-fit smoothing lengths, binned by logarithmic drainage area. |
+| `lsdtt-slope-area` | Slope–area statistics binned by logarithmic drainage area, with polynomial-fit or D8 flow-path gradient and D-infinity or D8 area; optionally finds low-concavity channel reaches (debris-flow channels, threshold slopes, fans). |
 | `lsdtt-swath-profile` | Swath profile along an ordered polyline baseline. |
 | `lsdtt-cross-sections` | Channel network from supplied source points, with extracted cross sections. |
 | `lsdtt-bankfull-width` | Bankfull channel width and depth per cross section from Manning's equation, on a high-resolution DEM. Needs source points and a reach table of Manning's *n* and target discharge. |

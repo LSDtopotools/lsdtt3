@@ -581,5 +581,6 @@ Examples
     bind_flow_network(module, flow);
     bind_basins(module, flow);
     bind_channel_heads(module, flow);
+    bind_slope_area(module, flow);
 }
 } // namespace lsdtt3_python

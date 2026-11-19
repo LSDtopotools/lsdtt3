@@ -1,0 +1,10 @@
+# low_concavity_min_pixels above low_concavity_window_pixels must be refused.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: sa
+n_threads: 1
+polyfit_lambda_metres_list: 90
+run_low_concavity_detection: true
+low_concavity_window_pixels: 6
+low_concavity_min_pixels: 8
