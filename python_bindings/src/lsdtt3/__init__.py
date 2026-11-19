@@ -24,6 +24,10 @@ Flow, channels,       FlowInfo (D8), FlowGraph (MFD, D-infinity),
 basins, outlets       FlowInfo.channel_scope, FlowInfo.channel_network,
                       FlowInfo.snap_points (lat/lon or x/y to (row, col)),
                       FlowInfo.basins, junction_basins, extract_channel_heads
+Slope-area            slope_area_bins, FlowInfo.d8_flow_path_gradient,
+                      conditioned_pixel_mask, FlowInfo.low_concavity
+                      (threshold slopes, debris-flow channels, fans),
+                      FlowInfo.low_concavity_segments
 Chi and ksn           ChannelNetwork.chi -> ChiCollection.fit -> ChiFit
                       (nodes, segments, summary), ChiFit.invert_ksn,
                       ChannelNetwork.chi_sweep
@@ -310,6 +314,8 @@ from ._core import (
     fill_depth,
     fill_hydraulic_surface,
     fill_pits,
+    conditioned_pixel_mask,
+    slope_area_bins,
     fill_pits_priority_flood,
     fill_pits_boundary_aware,
     fill_pits_with_outlets,
@@ -569,6 +575,8 @@ __all__ = [
     "fill_depth",
     "fill_hydraulic_surface",
     "fill_pits",
+    "conditioned_pixel_mask",
+    "slope_area_bins",
     "fill_pits_priority_flood",
     "fill_pits_boundary_aware",
     "fill_pits_with_outlets",

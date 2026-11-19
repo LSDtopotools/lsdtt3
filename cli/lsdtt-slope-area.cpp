@@ -241,30 +241,10 @@ static std::vector<BinRow> make_bins(
     int n_bins,
     const std::vector<std::uint8_t>* exclude = nullptr)
 {
-    const auto& area_data = area.get_data();
-    const auto& slope_data = slope.get_data();
-    const auto& area_mask = area.get_mask();
-    const auto& slope_mask = slope.get_mask();
-    std::vector<float> guide;
-    std::vector<float> values;
-    float minimum = std::numeric_limits<float>::infinity();
-    float maximum = 0.0f;
-    for (std::size_t i = 0; i < area_data.size(); ++i)
-    {
-        if (!area_mask[i] || !slope_mask[i] || area_data[i] <= 0.0 ||
-            !std::isfinite(area_data[i]) || !std::isfinite(slope_data[i]))
-            continue;
-        if (exclude && (*exclude)[i]) continue;     // carved / filled pixels (exclude_carved_and_filled_pixels)
-        guide.push_back(area_data[i]);
-        values.push_back(slope_data[i]);
-        minimum = std::min(minimum, area_data[i]);
-        maximum = std::max(maximum, area_data[i]);
-    }
-    if (guide.empty() || !(maximum > minimum))
-        throw std::runtime_error("No valid slope-area pixels were found");
-
-    const lsdtt::lsdtt_log_binned_quantiles binned = lsdtt::compute_log_binned_quantiles(
-        guide, values, static_cast<std::size_t>(n_bins), {0.05, 0.25, 0.50, 0.75, 0.95});
+    // The shared routine (lsdtt_slope_area_cpu, also called by the Python
+    // binding): carved / filled pixels excluded when exclude is given.
+    const lsdtt::lsdtt_log_binned_quantiles binned =
+        lsdtt::slope_area_log_bins(area, slope, n_bins, exclude);
     std::vector<BinRow> rows;
     rows.reserve(binned.counts.size());
     for (std::size_t j = 0; j < binned.counts.size(); ++j)
@@ -615,7 +595,8 @@ int main(int argc, char* argv[])
     bool_default_map["write_low_concavity_rasters"] = true;
     help_map["write_low_concavity_rasters"] = {"bool", "true",
         "Write the low-concavity theta and flag rasters.",
-        "<write_fname>_low_concavity_theta.tif (theta where the fit is valid) and "
+        "<write_fname>_low_concavity_theta.tif (theta where the fit is valid), "
+        "_low_concavity_theta_se.tif (its standard error) and "
         "_low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; "
         "nodata off the channel network or outside the basin clip).",
         "Low concavity", "switch", "run_low_concavity_detection"};
@@ -623,9 +604,30 @@ int main(int argc, char* argv[])
     help_map["write_low_concavity_point_table"] = {"bool", "false",
         "Write one CSV row per channel pixel with its low-concavity fit.",
         "<write_fname>_low_concavity_points.csv: flat, x, y, drainage_area_m2, "
-        "slope, theta, r2, n_pixels, log10_area_range, n_junctions_in_window, "
-        "low_concavity.",
+        "slope, theta, theta_se (standard error of theta), r2, n_pixels, "
+        "log10_area_range, n_junctions_in_window, low_concavity.",
         "Low concavity", "switch", "run_low_concavity_detection"};
+
+    int_default_map["low_concavity_min_run_pixels"] = 1;
+    help_map["low_concavity_min_run_pixels"] = {"int", "1",
+        "Shortest run of low-concavity pixels kept as a low-concavity segment.",
+        "A shorter flagged run (along one channel link) is relabelled 0 and merged "
+        "with its neighbours in the segments file; the rasters and point table "
+        "keep every pixel's own flag. 1 (default) keeps all runs.",
+        "Low concavity", "param", "run_low_concavity_detection"};
+    bool_default_map["write_low_concavity_segments"] = true;
+    help_map["write_low_concavity_segments"] = {"bool", "true",
+        "Write the channel network as segments marked low concavity or not.",
+        "<write_fname>_low_concavity_segments (format from write_vector_format): "
+        "each channel link (source or junction to the next junction or outlet) "
+        "is split where the flag changes; attributes segment_id, link_id, "
+        "low_concavity (1, 0, -1 no valid fit), n_pixels, length_m, median_theta, "
+        "median_theta_se, "
+        "median_slope, min_area_m2, max_area_m2, stream_order (Strahler), "
+        "upstream_flat, downstream_flat. Each line ends at the first pixel "
+        "below its last, so the lines join.",
+        "Low concavity", "switch", "run_low_concavity_detection"};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     // interior_nodata_method, nodata_fill_method_choice, nodata_fill_max_iter
     lsdtt::declare_interior_nodata_parameters(int_default_map, string_default_map, help_map);
@@ -1088,24 +1090,58 @@ int main(int argc, char* argv[])
             if (bf.at("write_low_concavity_rasters"))
             {
                 const float nodata = static_cast<float>(meta.no_data_value);
-                std::vector<float> th(dem.get_data().size(), nodata), fl(dem.get_data().size(), nodata);
+                std::vector<float> th(dem.get_data().size(), nodata), se(dem.get_data().size(), nodata),
+                    fl(dem.get_data().size(), nodata);
                 for (std::size_t k = 0; k < lc.flat.size(); ++k)
                 {
                     if (!inside(lc.flat[k])) continue;
                     const std::size_t i = static_cast<std::size_t>(lc.flat[k]);
                     fl[i] = static_cast<float>(lc.flag[k]);
-                    if (lc.flag[k] >= 0) th[i] = static_cast<float>(lc.theta[k]);
+                    if (lc.flag[k] >= 0)
+                    {
+                        th[i] = static_cast<float>(lc.theta[k]);
+                        if (std::isfinite(lc.theta_se[k])) se[i] = static_cast<float>(lc.theta_se[k]);
+                    }
                 }
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(th, meta, base + "_low_concavity_theta.tif");
+                loader.write_full(se, meta, base + "_low_concavity_theta_se.tif");
                 loader.write_full(fl, meta, base + "_low_concavity_flag.tif");
+            }
+            if (bf.at("write_low_concavity_segments"))
+            {
+                if (ii.at("low_concavity_min_run_pixels") < 1)
+                    throw std::runtime_error("low_concavity_min_run_pixels must be at least 1");
+                std::vector<std::uint8_t> include;
+                if (has_clip)
+                {
+                    include.assign(dem.get_data().size(), 0);
+                    for (std::size_t i = 0; i < include.size(); ++i)
+                        include[i] = (clip.get_mask()[i] && clip.get_data()[i] != 0.0f) ? 1 : 0;
+                }
+                const auto segments = lsdtt::build_low_concavity_segments(
+                    *d8_flow, lc, ii.at("low_concavity_min_run_pixels"), has_clip ? &include : nullptr);
+                lsdtt::vector_output_format vfmt =
+                    lsdtt::resolve_vector_output_format(sf.at("write_vector_format"));
+                const std::string seg_path = base + "_low_concavity_segments" + lsdtt::output_extension(vfmt);
+                lsdtt::write_low_concavity_segments(seg_path, segments, meta, vfmt);
+                std::size_t n_seg_low = 0;
+                double len_low = 0.0, len_all = 0.0;
+                for (const auto& sg : segments)
+                {
+                    len_all += sg.length_m;
+                    if (sg.flag == 1) { ++n_seg_low; len_low += sg.length_m; }
+                }
+                std::cout << "Low-concavity segments: " << segments.size() << " segments, " << n_seg_low
+                          << " low concavity (" << number_string(len_low) << " of " << number_string(len_all)
+                          << " m of channel) -> " << seg_path << "\n";
             }
             if (bf.at("write_low_concavity_point_table"))
             {
                 const std::string path = base + "_low_concavity_points.csv";
                 std::ofstream out(path);
                 if (!out) throw std::runtime_error("Cannot write " + path);
-                out << "flat,x,y,drainage_area_m2,slope,theta,r2,n_pixels,log10_area_range,"
+                out << "flat,x,y,drainage_area_m2,slope,theta,theta_se,r2,n_pixels,log10_area_range,"
                        "n_junctions_in_window,low_concavity\n";
                 for (std::size_t k = 0; k < lc.flat.size(); ++k)
                 {
@@ -1116,7 +1152,8 @@ int main(int argc, char* argv[])
                     const double y = meta.y_min + (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size;
                     out << f << ',' << number_string(x) << ',' << number_string(y) << ','
                         << number_string(lc.area_m2[k]) << ',' << number_string(lc.slope[k]) << ','
-                        << number_string(lc.theta[k]) << ',' << number_string(lc.r2[k]) << ','
+                        << number_string(lc.theta[k]) << ',' << number_string(lc.theta_se[k]) << ','
+                        << number_string(lc.r2[k]) << ','
                         << lc.n_pixels[k] << ',' << number_string(lc.log10_area_range[k]) << ','
                         << lc.n_junctions[k] << ',' << static_cast<int>(lc.flag[k]) << '\n';
                 }

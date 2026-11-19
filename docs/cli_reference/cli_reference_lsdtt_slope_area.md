@@ -1,10 +1,22 @@
 # CLI reference: lsdtt-slope-area
 
-`lsdtt-slope-area` calculates slope–area statistics from a DEM for one or more
-direct-polynomial-fit smoothing lengths. It can route flow with D-infinity or
-D8, optionally clip the analysis with a same-grid basin mask, write per-lambda
-slope rasters, and write quantile statistics in logarithmic drainage-area
-bins.
+`lsdtt-slope-area` measures how channel and hillslope gradient change with
+drainage area. It:
+
+- conditions the DEM for routing (least-cost carve, then fill), and leaves the
+  carved and filled pixels out of the measurements;
+- routes drainage area with D-infinity or D8;
+- computes gradient by a direct polynomial fit (one or more smoothing lengths)
+  or along the D8 flow path (one or more window lengths);
+- writes quantiles of gradient in logarithmic drainage-area bins;
+- optionally finds **low-concavity reaches**: channel pixels where gradient
+  changes little with area. It writes them as rasters, a point table and a
+  segments vector layer.
+
+The methods, and why the defaults are what they are, are in
+[Slope-area analysis and low-concavity reaches](../design_and_algorithms/slope_area_and_low_concavity.md).
+The figures are drawn by `lsdviz3-slope-area` in lsdviztools3. The same
+routines are in Python (see [the Python guide](../python/slope_area.md)).
 
 ## Usage
 
@@ -16,6 +28,8 @@ lsdtt-slope-area -v
 lsdtt-slope-area -c
 ```
 
+`-h` prints every parameter; `-h json` prints them as JSON.
+
 ## Parameter file format
 
 ```text
@@ -23,107 +37,156 @@ lsdtt-slope-area -c
 key: value
 ```
 
-## Pipeline overview
+An unknown key stops the run. The removed key `flow_algorithm` stops it with a
+message naming the new key, `drainage_area_algorithm_choice` (same values).
 
-1. Parse the parameter file and load the DEM.
-2. Optionally fill pits using the configured minimum slope and boundaries.
-3. Build D-infinity or D8 flow information and drainage area.
-4. Optionally write flow-information and drainage-area products.
-5. For each requested polynomial-fit length, calculate slope.
-6. Apply the optional basin mask and logarithmic drainage-area bins.
-7. Write per-lambda statistics, slope rasters, and summary results.
+## Pipeline
 
-## Input/output parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `read_path` | string | parameter-file directory | Directory containing the DEM. |
-| `read_fname` | string | — | Input DEM filename. |
-| `write_path` | string | `read_path` | Output directory. |
-| `write_fname` | string | DEM stem | Output filename prefix. |
-| `write_flowinfo_rasters` | bool | `true` | Write the drainage-area (and, for d8, flow-direction) rasters. |
-| `write_slope_rasters` | bool | `true` | Write one slope raster per lambda. |
-| `summary_csv_fname` | string | automatic | Summary CSV filename. |
-
-## Routing and pit filling parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `fill_before_routing` | bool | `true` | Fill pits before routing. |
-| `fill_min_slope` | float | `0.0001` | Minimum slope used during pit filling. |
-| `flow_algorithm` | string | `dinf` | `dinf` or `d8`. |
-| `boundary_conditions` | string | `oooo` | Four-character boundary code, in `N,E,S,W` order. |
-
-## Polynomial-fit and binning parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `polyfit_lambda_metres_list` | list | — | Comma-separated smoothing lengths in metres. |
-| `n_log_bins` | int | — | Number of logarithmic drainage-area bins. |
-
-## Basin clipping parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `basin_clip_mode` | string | `none` | `none` or `mask`. |
-| `basin_mask_fname` | string | — | Same-grid raster mask when mode is `mask`. |
-
-The basin mask must have exactly the same rows, columns, cell size, origin, and
-coordinate reference system as the DEM. Nonzero values are inside the basin.
-This CLI does not rasterize vector polygons; use `lsdtt-basin-extraction` first.
-
-## Threading
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `n_threads` | int | `0` | Number of worker threads; `0` uses the implementation default. |
+1. Read the DEM and treat interior nodata (`interior_nodata_method`).
+2. Build the routing surface:
+   - carve depressions (`breach_before_fill`, default true;
+     `breach_algorithm_choice`, default `least_cost`);
+   - fill what is left (`fill_before_routing`, default true).
+3. Compare the routing surface with the input DEM: a pixel above it is
+   **filled**, below it **carved**. These pixels are left out of the bins and
+   the fits (`exclude_carved_and_filled_pixels`, default true) and written to
+   `_conditioned_pixels.tif`.
+4. Route drainage area on the routing surface (`drainage_area_algorithm_choice`:
+   `dinf` or `d8`).
+5. Compute gradient (`slope_algorithm_choice`):
+   - `polyfit`: a direct polynomial fit for each length in
+     `polyfit_lambda_metres_list`, on the **input DEM** by default;
+   - `d8_flow_path`: a least-squares line along the D8 flow path, centred on
+     each pixel, for each length in `d8_gradient_window_metres_list`.
+6. Apply the optional basin clip, bin by log drainage area, and write the
+   quantiles and the summary.
+7. With `run_low_concavity_detection: true`, fit log S against log A along a
+   short window downstream of each channel pixel and flag the pixels with a
+   small concavity.
 
 ## Outputs
 
-For each lambda, the tool writes:
+`<write_fname>` is the prefix. `XX` is the lambda or window length in metres;
+a decimal uses `_` (`lambda_12_5m`).
 
-```text
-<write_fname>_lambda_XXm.csv
-<write_fname>_lambda_XXm_slope.tif
-```
+| File | When | Contents |
+|---|---|---|
+| `_conditioned_pixels.tif` | `write_conditioned_pixels_raster` (default) | 0 untouched, 1 filled, 2 carved |
+| `_dinf_drainage_area.tif` or `_d8_drainage_area.tif`, `_d8_flow_direction.tif` | `write_flowinfo_rasters` (default) | drainage area (m²); the D8 receivers |
+| `_lambda_XXm.csv` | polyfit | binned quantiles (below) |
+| `_lambda_XXm_input_dem_slope.tif` | polyfit, `write_slope_rasters` | polyfit gradient of the input DEM (the default) |
+| `_lambda_XXm_slope.tif` | polyfit, `polyfit_on_routing_surface: true` | polyfit gradient of the routing surface |
+| `_maximum_d50_slope_area.csv` | polyfit | `polyfit_lambda,drainage_area_with_max_d50_slope` |
+| `_d8window_XXm.csv` | `d8_flow_path` | binned quantiles |
+| `_d8window_XXm_slope.tif` | `d8_flow_path` | D8 flow-path gradient (always recomputed) |
+| `_maximum_d50_slope_area_d8window.csv` | `d8_flow_path` | as the polyfit summary, one row per window |
+| `_low_concavity_theta.tif`, `_low_concavity_theta_se.tif`, `_low_concavity_flag.tif` | low concavity, `write_low_concavity_rasters` (default) | concavity of the window fit; its standard error; flag 1 low concavity, 0 not, -1 no valid fit |
+| `_low_concavity_points.csv` | low concavity, `write_low_concavity_point_table` | one row per channel pixel (below) |
+| `_low_concavity_segments.fgb` (or `.gpkg`) | low concavity, `write_low_concavity_segments` (default) | the channel network split into runs of one flag (below) |
+| `_run_summary.json`, `_ingested_params.param` | always | run record; the parameters as read, re-runnable |
 
-The per-lambda CSV columns are:
+**Binned quantile CSVs** (`_lambda_XXm.csv`, `_d8window_XXm.csv`):
 
 ```text
 drainage_area,d05_slope,d25_slope,d50_slope,d75_slope,d95_slope,number_of_pixels
 ```
 
-The summary CSV columns are:
+`drainage_area` is the geometric centre of the bin (m²); only bins with
+pixels are written. Gradient is dimensionless (m/m).
+
+**Point table** (`_low_concavity_points.csv`):
 
 ```text
-polyfit_lambda,drainage_area_with_max_d50_slope
+flat,x,y,drainage_area_m2,slope,theta,theta_se,r2,n_pixels,log10_area_range,n_junctions_in_window,low_concavity
 ```
 
-Decimal lambda values use underscores in filenames, for example
-`lambda_12_5m`.
+- `slope` is the pixel's own D8 flow-path gradient.
+- `theta`, `theta_se` and `r2` come from the fit over the window below the pixel.
+- `n_pixels` is the number of pairs fitted.
+- `log10_area_range` is the spread of log10 A in the window.
+- `n_junctions_in_window` is the number of confluences the window crosses.
 
-When `write_slope_rasters: true`, an existing expected slope raster is opened
-and reused instead of recalculating polynomial-fit slope. The raster is
-validated against the DEM grid, after which CSV statistics are regenerated with
-the current bin count and basin mask.
+**Segments.** Each channel link (from a source or junction to the next junction
+or outlet) is split where the flag changes. The attributes are `segment_id`, `link_id`,
+`low_concavity`, `n_pixels`, `length_m`, `median_theta`, `median_theta_se`,
+`median_slope`, `min_area_m2`, `max_area_m2`, `stream_order` (Strahler),
+`upstream_flat` and `downstream_flat`. The segments partition the channel
+network: every channel pixel is in exactly one.
 
-## Example parameter file
+**Reuse of polyfit rasters.** With `write_slope_rasters: true`, an existing
+polyfit slope raster of the expected name is read back instead of being
+recomputed, after checking that it is on the DEM's grid. The two polyfit modes
+use different names, so a raster made in one mode is never reused in the
+other. Delete the raster to force a recomputation.
+
+## Choosing the methods
+
+- **Gradient.**
+  - `polyfit` measures the local surface gradient everywhere, hillslopes
+    included. Use it for the hillslope-to-channel transition on a slope-area
+    plot.
+  - `d8_flow_path` measures gradient along the channel, averaged over the
+    window, and is valid on fewer pixels (a pixel needs a long enough D8 path
+    around it). Use it for channel slope-area plots.
+- **Drainage area.**
+  - `dinf` spreads flow over hillslopes and gives area that grows smoothly down
+    a channel.
+  - `d8` gives area that jumps at each confluence.
+
+  For the low-concavity finder this matters; see the algorithms page.
+- **Window lengths** (`d8_gradient_window_metres_list`,
+  `low_concavity_gradient_window_metres`). These must be at least four cell
+  sizes. The default of 150 m is five cells on 30 m data.
+
+## Reproducing runs made before 2026-11-18
+
+Runs before 2026-11-18 filled the DEM without carving, kept the filled pixels,
+and fitted polyfit to the filled DEM. To get their lambda CSVs, slope rasters,
+drainage area and summary CSV byte for byte, edit the old parameter file:
 
 ```text
-read_path: /data/Moreno
-read_fname: Moreno.tif
-write_path: /results/Moreno/slope_area
-write_fname: Moreno_slope_area
-n_threads: 4
-boundary_conditions: opop
-fill_before_routing: true
-fill_min_slope: 0.0001
-flow_algorithm: dinf
-write_flowinfo_rasters: true
-polyfit_lambda_metres_list: 3,15,21
-n_log_bins: 200
-write_slope_rasters: true
-basin_clip_mode: none
+# was: flow_algorithm: dinf
+drainage_area_algorithm_choice: dinf
+breach_before_fill: false
+exclude_carved_and_filled_pixels: false
+polyfit_on_routing_surface: true
+```
+
+A regression test pins these outputs by sha256.
+
+## Example parameter files
+
+Binned slope-area on a 30 m DEM with three polyfit lengths and the default
+conditioning:
+
+```text
+read_path: /data/my_site
+read_fname: my_site_DEM.tif
+write_path: /data/my_site/slope_area
+write_fname: my_site
+polyfit_lambda_metres_list: 90,150,300
+n_log_bins: 30
+```
+
+The D8 flow-path gradient with D8 area, two windows:
+
+```text
+read_fname: my_site_DEM.tif
+write_fname: my_site
+slope_algorithm_choice: d8_flow_path
+d8_gradient_window_metres_list: 150,300
+drainage_area_algorithm_choice: d8
+```
+
+Low-concavity reaches on channels from 100 contributing pixels, with the point
+table:
+
+```text
+read_fname: my_site_DEM.tif
+write_fname: my_site
+threshold_contributing_pixels: 100
+run_low_concavity_detection: true
+write_low_concavity_point_table: true
 ```
 
 <!-- BEGIN GENERATED CLI PARAMETERS -->
@@ -202,6 +265,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `summary_csv_fname` | `string` | - | `param` | - | Summary CSV filename. | Empty uses &lt;write_fname&gt;_maximum_d50_slope_area.csv. |
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
 
 ### Low concavity
 
@@ -212,8 +276,10 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `low_concavity_window_pixels` | `int` | `10` | `param` | `run_low_concavity_detection` | Pixels in the downstream fit window (the pixel and the next ones down). | Fewer at an outlet. At least 2. |
 | `low_concavity_min_pixels` | `int` | `5` | `param` | `run_low_concavity_detection` | Fewest (area, gradient) pairs for a valid fit. | Carved, filled and gradient-less pixels in the window do not count. At least 3 and at most low_concavity_window_pixels. A pixel without a valid fit has flag -1. |
 | `low_concavity_max_abs_concavity` | `float` | `0.15` | `param` | `run_low_concavity_detection` | Threshold on \|theta\| below which a channel pixel is low concavity. | Fluvial channels are typically 0.35-0.6. Must be &gt;= 0. |
-| `write_low_concavity_rasters` | `bool` | `true` | `switch` | `run_low_concavity_detection` | Write the low-concavity theta and flag rasters. | &lt;write_fname&gt;_low_concavity_theta.tif (theta where the fit is valid) and _low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; nodata off the channel network or outside the basin clip). |
-| `write_low_concavity_point_table` | `bool` | `false` | `switch` | `run_low_concavity_detection` | Write one CSV row per channel pixel with its low-concavity fit. | &lt;write_fname&gt;_low_concavity_points.csv: flat, x, y, drainage_area_m2, slope, theta, r2, n_pixels, log10_area_range, n_junctions_in_window, low_concavity. |
+| `write_low_concavity_rasters` | `bool` | `true` | `switch` | `run_low_concavity_detection` | Write the low-concavity theta and flag rasters. | &lt;write_fname&gt;_low_concavity_theta.tif (theta where the fit is valid), _low_concavity_theta_se.tif (its standard error) and _low_concavity_flag.tif (1 low concavity, 0 not, -1 no valid fit; nodata off the channel network or outside the basin clip). |
+| `write_low_concavity_point_table` | `bool` | `false` | `switch` | `run_low_concavity_detection` | Write one CSV row per channel pixel with its low-concavity fit. | &lt;write_fname&gt;_low_concavity_points.csv: flat, x, y, drainage_area_m2, slope, theta, theta_se (standard error of theta), r2, n_pixels, log10_area_range, n_junctions_in_window, low_concavity. |
+| `low_concavity_min_run_pixels` | `int` | `1` | `param` | `run_low_concavity_detection` | Shortest run of low-concavity pixels kept as a low-concavity segment. | A shorter flagged run (along one channel link) is relabelled 0 and merged with its neighbours in the segments file; the rasters and point table keep every pixel's own flag. 1 (default) keeps all runs. |
+| `write_low_concavity_segments` | `bool` | `true` | `switch` | `run_low_concavity_detection` | Write the channel network as segments marked low concavity or not. | &lt;write_fname&gt;_low_concavity_segments (format from write_vector_format): each channel link (source or junction to the next junction or outlet) is split where the flag changes; attributes segment_id, link_id, low_concavity (1, 0, -1 no valid fit), n_pixels, length_m, median_theta, median_theta_se, median_slope, min_area_m2, max_area_m2, stream_order (Strahler), upstream_flat, downstream_flat. Each line ends at the first pixel below its last, so the lines join. |
 
 ### Channel network
 

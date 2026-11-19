@@ -90,6 +90,7 @@ nav:
     - Spectral analysis: design_and_algorithms/spectral_analysis.md
     - Analysing along a feature (oblique frames): design_and_algorithms/oblique_frames.md
     - Field points on the channel network: design_and_algorithms/channel_points.md
+    - Slope-area and low-concavity reaches: design_and_algorithms/slope_area_and_low_concavity.md
     - Burning mapped rivers into a DEM: design_and_algorithms/burning_river_lines.md
   - Command-line reference:
     - DEM preparation:
@@ -158,6 +159,7 @@ nav:
       - Channel-head extraction: python/channel_extraction.md
       - Floodplains, terraces, and valleys: python/fluvial_surfaces.md
       - Ridgeline profiles: python/ridgelines.md
+      - Slope-area and low concavity: python/slope_area.md
       - Cosmogenic erosion: python/cosmogenic.md
       - GraphFlood: python/graphflood.md
     - API reference:

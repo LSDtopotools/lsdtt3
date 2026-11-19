@@ -2674,8 +2674,13 @@ add_lsdtt_cli_smoke_test(
     --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
     --expect sa_low_concavity_theta.tif
     --expect sa_low_concavity_flag.tif
-    --expect-file-contains "sa_low_concavity_points.csv:flat,x,y,drainage_area_m2,slope,theta,r2,n_pixels,log10_area_range,n_junctions_in_window,low_concavity"
+    --expect-file-contains "sa_low_concavity_points.csv:flat,x,y,drainage_area_m2,slope,theta,theta_se,r2,n_pixels,log10_area_range,n_junctions_in_window,low_concavity"
+    --expect sa_low_concavity_theta_se.tif
     --stdout-contains "Low concavity (|theta| < 0.15, window 10 pixels, gradient window 150 m): 29 low-concavity, 232 not, 2059 without a valid fit, of 2320 channel pixels"
+    # step 4: the segments file (it partitions the 2320 channel pixels; the
+    # partition and the flags are tested in unit_slope_area_d8_flow_path_gradient)
+    --expect sa_low_concavity_segments.fgb
+    --stdout-contains "Low-concavity segments: 367 segments, 19 low concavity"
 )
 lsdtt_set_tests_properties(smoke_slope_area_low_concavity PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)

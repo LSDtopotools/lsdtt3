@@ -283,7 +283,7 @@ edge (see ``RasterMeta``). Typical round trip::
     out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)
     out.write("doubled.tif")
 
-Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 260 more.
+Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 262 more.
 
 Attributes
 ----------
@@ -1784,6 +1784,44 @@ B. Gailleton
 
 ```python
 def coherence_diffusion(raster: lsdtt3.Raster, n_iterations: int = 10, time_step: float = 0.15, derivative_radius_metres: float = 0.0, integration_radius_metres: float = 0.0, contrast: float = 0.2, min_diffusivity: float = 0.001, n_threads: int = 0) -> lsdtt3.Raster
+```
+
+---
+
+## `conditioned_pixel_mask`
+
+Mark the pixels a DEM conditioning changed: 0 untouched, 1 filled, 2 carved.
+
+lsdtt-slope-area's conditioned-pixel mask. A pixel is filled where
+``routing_dem`` (the carved and / or filled surface flow is routed on) is
+above ``input_dem``, and carved where it is below. lsdtt-slope-area leaves
+both out of its measurements (``exclude_carved_and_filled_pixels``); pass the
+result as ``exclude`` to ``slope_area_bins``, ``FlowInfo.d8_flow_path_gradient``
+and ``FlowInfo.low_concavity`` to do the same.
+
+Parameters
+----------
+input_dem : Raster
+    The DEM before any carve or fill.
+routing_dem : Raster
+    The conditioned DEM, on the same grid.
+
+Returns
+-------
+Raster
+    Codes 0, 1, 2 (float), every pixel valid.
+
+Examples
+--------
+>>> routed = lsdtt3.fill_pits(lsdtt3.breach_least_cost(dem))
+>>> conditioned = lsdtt3.conditioned_pixel_mask(dem, routed)
+
+Authors
+-------
+B. Gailleton
+
+```python
+def conditioned_pixel_mask(input_dem: Raster, routing_dem: Raster) -> Raster
 ```
 
 ---
@@ -3294,6 +3332,42 @@ B. Gailleton
 
 ```python
 def slope(raster: lsdtt3.Raster) -> lsdtt3.Raster
+```
+
+---
+
+## `slope_area_bins`
+
+Bin slope by drainage area in logarithmic bins: the lsdtt-slope-area lambda CSV.
+
+The same routine as lsdtt-slope-area. Pixels valid in both rasters with area
+> 0 are binned in ``n_log_bins`` bins of equal width in ln(area); empty bins
+are dropped. ``drainage_area`` in the result is the geometric bin centre.
+
+Parameters
+----------
+drainage_area : Raster
+    Drainage area (m^2), e.g. from ``FlowGraph`` (D-infinity) or ``FlowInfo``.
+slope : Raster
+    Gradient (m/m) on the same grid, e.g. polyfit slope or
+    ``FlowInfo.d8_flow_path_gradient``.
+n_log_bins : int, default=20, keyword-only
+    Number of bins (>= 1).
+exclude : Raster or None, default=None, keyword-only
+    Pixels with a nonzero value are left out, e.g. ``conditioned_pixel_mask``.
+
+Returns
+-------
+pandas.DataFrame
+    ``drainage_area, d05_slope, d25_slope, d50_slope, d75_slope, d95_slope,
+    number_of_pixels``, one row per non-empty bin.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def slope_area_bins(drainage_area: Raster, slope: Raster, *, n_log_bins: int = 20, exclude: Raster | None = None) -> pandas.DataFrame
 ```
 
 ---

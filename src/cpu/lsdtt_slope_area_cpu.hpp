@@ -31,20 +31,40 @@
 // cell sizes (channel_slope_at needs a half-length of two). Parallel over
 // pixels; the result does not depend on n_threads.
 //
-// GDAL-free.
+// GDAL-free, except write_low_concavity_segments (lsdtt_data_loader).
 // -----------------------------------------------------------------------------
 
 #pragma once
 
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
+#include "../core/lsdtt_data_loader.hpp"
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_histogram.hpp"
 
 namespace lsdtt
 {
+
+// slope_area_log_bins: lsdtt-slope-area's binning of a slope raster by a
+// drainage-area raster (same grid). The pixels used are valid in both, with
+// area > 0 and both finite, and not excluded (exclude: nonzero = excluded,
+// e.g. carved / filled pixels). They are binned in n_bins bins of equal width
+// in ln(area) with the d05, d25, d50, d75 and d95 slope quantiles
+// (compute_log_binned_quantiles, float form, so the CLI's lambda CSVs stay
+// byte-identical). Throws std::runtime_error("No valid slope-area pixels were
+// found") if no pixel is usable or all areas are equal, and
+// std::invalid_argument if the grids differ or n_bins < 1.
+inline const std::vector<double> k_slope_area_quantile_levels{0.05, 0.25, 0.50, 0.75, 0.95};
+
+[[nodiscard]] lsdtt_log_binned_quantiles slope_area_log_bins(
+    const lsdtt_raster_cpu&          drainage_area,
+    const lsdtt_raster_cpu&          slope,
+    int                              n_bins,
+    const std::vector<std::uint8_t>* exclude = nullptr);
 
 struct lsdtt_d8_flow_path_gradient_options
 {
@@ -88,10 +108,14 @@ inline constexpr std::uint8_t k_pixel_carved = 2;
 //   valid: at least min_pixels pairs and the log10 A values not all equal;
 //   r2: 1 - SS_res / SS_tot of log10 S (NaN when log10 S is constant, as for
 //       a constant gradient, where theta = 0 exactly);
-//   log10_area_range: max - min log10 A of the pairs used.
+//   log10_area_range: max - min log10 A of the pairs used;
+//   theta_se: the standard error of theta (of the fitted slope b),
+//       sqrt(SS_res / (n - 2) / sum (x - mean x)^2) with x = log10 A; 0 for a
+//       constant gradient. Reported, not used by the flag (Simon 2026-11-18).
 struct lsdtt_log_slope_area_fit
 {
     double       theta = std::numeric_limits<double>::quiet_NaN();
+    double       theta_se = std::numeric_limits<double>::quiet_NaN();
     double       r2 = std::numeric_limits<double>::quiet_NaN();
     double       log10_area_range = std::numeric_limits<double>::quiet_NaN();
     std::int32_t n_pixels = 0;
@@ -130,6 +154,7 @@ struct lsdtt_low_concavity_result
     std::vector<double>       area_m2;
     std::vector<double>       slope;               // the pixel's own gradient (NaN if none)
     std::vector<double>       theta;
+    std::vector<double>       theta_se;            // standard error of theta
     std::vector<double>       r2;
     std::vector<double>       log10_area_range;
     std::vector<std::int32_t> n_pixels;            // pairs in the fit
@@ -147,5 +172,59 @@ struct lsdtt_low_concavity_result
     const lsdtt_raster_cpu&            drainage_area,
     const lsdtt_raster_cpu&            gradient,
     const lsdtt_low_concavity_options& options);
+
+// -----------------------------------------------------------------------------
+// LOW-CONCAVITY SEGMENTS (plan section 4, step 4).
+//
+// The channel pixels of `result` are cut into LINKS: a link starts at a
+// source (no channel donor) or just below a junction (a pixel with two or
+// more channel donors starts its own link) and runs down the D8 receivers to
+// the pixel above the next junction, or an outlet. Every channel pixel is in
+// exactly one link. Each link is then split where the flag changes, so each
+// segment is a run of consecutive pixels with one flag (1, 0 or -1). Before
+// splitting, a run of flag 1 shorter than min_run_pixels is relabelled 0
+// (merged with its neighbours, not dropped). Pixels with include[f] == 0
+// (e.g. outside a basin clip) are left out and break runs.
+//
+// Per segment: its pixels in downstream order; flag; Strahler order of its
+// pixels (the largest; computed over the channel network, from the smallest
+// contributing area up); median theta (valid fits only, NaN if none) and
+// median slope; min / max area; length_m (D8 steps from the first pixel to
+// the receiver of the last, so a one-pixel segment has a length);
+// upstream_flat / downstream_flat (first / last pixel).
+struct lsdtt_low_concavity_segment
+{
+    std::int32_t              segment_id = -1;
+    std::int32_t              link_id = -1;
+    std::int8_t               flag = -1;
+    std::int32_t              stream_order = 0;
+    std::vector<std::int64_t> flats;           // downstream order
+    std::int64_t              end_flat = -1;   // receiver of the last pixel (-1 at an outlet)
+    double                    length_m = 0.0;
+    double                    median_theta = std::numeric_limits<double>::quiet_NaN();
+    double                    median_theta_se = std::numeric_limits<double>::quiet_NaN();
+    double                    median_slope = std::numeric_limits<double>::quiet_NaN();
+    double                    min_area_m2 = std::numeric_limits<double>::quiet_NaN();
+    double                    max_area_m2 = std::numeric_limits<double>::quiet_NaN();
+};
+
+[[nodiscard]] std::vector<lsdtt_low_concavity_segment> build_low_concavity_segments(
+    const lsdtt_flow_base&             flow,
+    const lsdtt_low_concavity_result&  result,
+    int                                min_run_pixels = 1,
+    const std::vector<std::uint8_t>*   include = nullptr);
+
+// One polyline per segment through the pixel centres (and the receiver of the
+// last pixel), attributes: segment_id, link_id, low_concavity (the flag),
+// n_pixels, length_m, median_theta, median_theta_se, median_slope, min_area_m2, max_area_m2,
+// stream_order, upstream_flat, downstream_flat. fmt: flatgeobuf or gpkg.
+// (This writer goes through lsdtt_data_loader; the rest of the module is
+// GDAL-free.)
+void write_low_concavity_segments(
+    const std::string&                              filename,
+    const std::vector<lsdtt_low_concavity_segment>& segments,
+    const lsdtt_raster_meta&                        meta,
+    vector_output_format                            fmt,
+    bool                                            spatial_index = false);
 
 } // namespace lsdtt

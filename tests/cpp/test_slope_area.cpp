@@ -55,6 +55,13 @@
 //      the floor.
 //  14. refusals: window_pixels < 2, min_pixels < 3 or > window, negative
 //      threshold, rasters off the grid.
+//  15. segments (build_low_concavity_segments) on the valley with a
+//      tributary, flags set by hand: the segments partition the channel
+//      pixels; three links (floor above the confluence, tributary, floor
+//      below); a flag change splits a link; a flagged run shorter than
+//      min_run_pixels is relabelled 0 and merged; Strahler order 1 above
+//      and 2 below the confluence; pixels outside `include` are left out;
+//      a segment's length counts the step to the next pixel down.
 //
 // Usage: lsdtt-test-slope-area
 // Prints one line per check and a final "RESULT: PASS|FAIL".
@@ -74,6 +81,7 @@
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../../src/cpu/lsdtt_slope_area_cpu.hpp"
+#include "../../src/utils/lsdtt_regression.hpp"
 
 namespace
 {
@@ -415,6 +423,22 @@ int main()
         check("constant S: theta 0, r2 NaN", f0.valid && f0.theta == 0.0 && std::isnan(f0.r2), s(f0.theta));
         const auto fm = fit_log_slope_area(A, Sm, 5);
         check("S = A^0.1: theta -0.1", fm.valid && near(fm.theta, -0.1, 1e-9), s(fm.theta));
+        check("exact power law: theta_se 0; constant S: theta_se 0",
+              near(f5.theta_se, 0.0, 1e-9) && f0.theta_se == 0.0, s(f5.theta_se));
+        // log10 A = 0, 1, 2, 3 and log10 S = 0, -1, -1, -3: b = -0.9, SS_res = 0.7,
+        // Sxx = 5, so theta 0.9 and theta_se = sqrt(0.7 / 2 / 5) = 0.264575...
+        const auto fse = fit_log_slope_area(std::vector<double>{1, 10, 100, 1000},
+                                            std::vector<double>{1, 0.1, 0.1, 0.001}, 3);
+        // the same case straight through the shared regression utility
+        const auto reg = compute_linear_regression(std::vector<double>{0, 1, 2, 3}, std::vector<double>{0, -1, -1, -3});
+        check("compute_linear_regression: slope -0.9, slope_standard_error sqrt(0.07)",
+              near(reg.slope, -0.9, 1e-12) && near(reg.slope_standard_error, std::sqrt(0.07), 1e-12),
+              s(reg.slope_standard_error));
+        const auto reg2 = compute_linear_regression(std::vector<double>{0, 1}, std::vector<double>{0, 1});
+        check("compute_linear_regression: two points, slope_standard_error NaN", std::isnan(reg2.slope_standard_error));
+        check("hand case: theta 0.9, theta_se sqrt(0.07)",
+              fse.valid && near(fse.theta, 0.9, 1e-12) && near(fse.theta_se, std::sqrt(0.07), 1e-12),
+              s(fse.theta) + ", " + s(fse.theta_se));
         const auto feq = fit_log_slope_area(std::vector<double>(6, 500.0), std::vector<double>{1, 2, 3, 4, 5, 6}, 5);
         check("equal areas: invalid", !feq.valid && feq.n_pixels == 6);
         const auto ffew = fit_log_slope_area(std::vector<double>{1, 10, 100, 1000}, std::vector<double>{1, 1, 1, 1}, 5);
@@ -594,6 +618,94 @@ int main()
         std::cout << "  (valley floor, theta " << th << ": max |error| " << worst << ")\n";
         check("valley floor built with theta " + s(th) + ": fitted theta within 0.05 on columns 20-60",
               n_mid == 41 && worst < 0.05, "max |theta - " + s(th) + "| = " + s(worst) + ", n " + std::to_string(n_mid));
+    }
+
+    // ---- 15. segments --------------------------------------------------------------------
+    {
+        const int nr = 21, nc = 60;
+        auto floor_z = [&](int c) { return 100.0 - 0.1 * c; };
+        std::vector<float> z(static_cast<std::size_t>(nr * nc));
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+            {
+                double h = floor_z(c) + 1.0 * std::abs(r - 10);
+                if (r < 10) h = std::min(h, floor_z(30) + 0.5 * (10 - r) + 1.0 * std::abs(c - 30));
+                z[static_cast<std::size_t>(r * nc + c)] = static_cast<float>(h);
+            }
+        const auto dem = make_raster(nr, nc, z);
+        const auto flow = route(dem);
+        const auto area = d8_area(*flow, dem);
+        auto F = [&](int r, int c) { return static_cast<std::int64_t>(r) * nc + c; };
+        lsdtt_d8_flow_path_gradient_options go;
+        go.window_metres = 4 * k_cs;
+        go.n_threads = 1;
+        const auto g = d8_flow_path_gradient(*flow, dem, area, go);
+        lsdtt_low_concavity_options lo;
+        lo.threshold_contributing_pixels = flow->s_vector_size(F(9, 30));
+        lo.n_threads = 1;
+        auto res = find_low_concavity(*flow, area, g, lo);
+        // flags by hand: floor columns 40-44 flagged (a run of 5), column 50
+        // flagged alone, everything else 0
+        for (std::size_t k = 0; k < res.flat.size(); ++k)
+        {
+            const int r = static_cast<int>(res.flat[k] / nc), c = static_cast<int>(res.flat[k] % nc);
+            res.flag[k] = (r == 10 && ((c >= 40 && c <= 44) || c == 50)) ? 1 : 0;
+        }
+        const auto segs = build_low_concavity_segments(*flow, res, 1);
+        std::size_t total = 0;
+        std::vector<int> seen(res.flat.size(), 0);
+        std::int32_t max_link = -1;
+        for (const auto& sg : segs)
+        {
+            total += sg.flats.size();
+            max_link = std::max(max_link, sg.link_id);
+            for (const auto f : sg.flats)
+                for (std::size_t k = 0; k < res.flat.size(); ++k)
+                    if (res.flat[k] == f) ++seen[k];
+        }
+        bool once = true;
+        for (const int v : seen) once = once && v == 1;
+        check("segments partition the channel pixels (each exactly once)", total == res.flat.size() && once,
+              std::to_string(total) + " vs " + std::to_string(res.flat.size()));
+        check("three links: floor above the confluence, tributary, floor below", max_link == 2,
+              std::to_string(max_link + 1));
+        auto seg_of = [&](std::int64_t f) -> const lsdtt_low_concavity_segment* {
+            for (const auto& sg : segs)
+                for (const auto q : sg.flats)
+                    if (q == f) return &sg;
+            return nullptr;
+        };
+        const auto* run = seg_of(F(10, 42));
+        check("the flagged run 40-44 is one segment of 5 pixels, flag 1",
+              run && run->flag == 1 && run->flats.size() == 5 && run->flats.front() == F(10, 40),
+              run ? std::to_string(run->flats.size()) : "missing");
+        const auto* lone = seg_of(F(10, 50));
+        check("the lone flagged pixel is its own flag-1 segment", lone && lone->flag == 1 && lone->flats.size() == 1);
+        check("a one-pixel segment's length is the step to the next pixel down",
+              lone && near(lone->length_m, k_cs, 1e-9) && lone->end_flat == F(10, 51));
+        const auto* above = seg_of(F(10, 20));
+        const auto* trib = seg_of(F(9, 30));
+        const auto* below = seg_of(F(10, 35));
+        check("Strahler: floor above and tributary 1, floor below the confluence 2",
+              above && trib && below && above->stream_order == 1 && trib->stream_order == 1 &&
+                  below->stream_order == 2);
+        check("the confluence pixel starts the link below it",
+              seg_of(F(10, 30)) && seg_of(F(10, 30))->link_id == below->link_id &&
+                  seg_of(F(10, 29))->link_id != below->link_id);
+        const auto merged = build_low_concavity_segments(*flow, res, 3);
+        const lsdtt_low_concavity_segment* lone3 = nullptr;
+        for (const auto& sg : merged)
+            for (const auto q : sg.flats)
+                if (q == F(10, 50)) lone3 = &sg;
+        check("min_run_pixels 3: the lone flagged pixel is relabelled 0 and merged",
+              lone3 && lone3->flag == 0 && lone3->flats.size() > 1);
+        std::vector<std::uint8_t> inc(z.size(), 1);
+        for (int c = 0; c < 25; ++c) inc[static_cast<std::size_t>(F(10, c))] = 0;
+        const auto clipped = build_low_concavity_segments(*flow, res, 1, &inc);
+        bool none_outside = true;
+        for (const auto& sg : clipped)
+            for (const auto q : sg.flats) none_outside = none_outside && inc[static_cast<std::size_t>(q)];
+        check("pixels outside include are left out of every segment", none_outside);
     }
 
     std::cout << "RESULT: " << (g_fail == 0 ? "PASS" : "FAIL") << " (" << g_n << " checks)\n";

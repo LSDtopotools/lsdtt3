@@ -36,7 +36,8 @@ For development from a clone, see
 3. Build a [flow, channel, and basin workflow](flow_networks.md).
 4. Continue with [chi and ksn](chi_ksn.md), channel-head extraction,
    [floodplains, terraces and valleys](fluvial_surfaces.md),
-   [ridgeline profiles](ridgelines.md), or the cosmogenic
+   [ridgeline profiles](ridgelines.md),
+   [slope-area and low-concavity reaches](slope_area.md), or the cosmogenic
    and GraphFlood tools as needed.
 
 ## Core ideas

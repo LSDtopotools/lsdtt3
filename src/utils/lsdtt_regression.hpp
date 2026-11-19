@@ -87,6 +87,10 @@ struct lsdtt_linear_regression_result
     double rmse = std::numeric_limits<double>::quiet_NaN(); // sqrt(sse / n)
     double residual_variance_sample =
         std::numeric_limits<double>::quiet_NaN();           // sse / (n - 2)
+    // Standard error of the slope, sqrt(residual_variance_sample / sxx)
+    // (n > 2 and sxx > 0); 0 for an exact fit.
+    double slope_standard_error =
+        std::numeric_limits<double>::quiet_NaN();
 
     bool empty() const noexcept
     {
@@ -368,6 +372,8 @@ make_linear_regression_result_from_accumulator(
         {
             out.residual_variance_sample =
                 sse / static_cast<double>(acc.n - 2);
+            out.slope_standard_error =
+                std::sqrt(out.residual_variance_sample / acc.sxx);
         }
     }
 
