@@ -76,7 +76,10 @@ Python modules in the package have separate roles:
 - `_graphflood_accelerators.py` composes native GraphFlood backends;
 - `_compat.py` contains private keyword-migration plumbing;
 - `_cli.py` forwards installed console scripts to bundled executables;
-- `_llm.py` provides compact, checked API cards;
+- `_llm.py` builds the guide for AI assistants, `helper_for_llm` (see below);
+- `_topics.py` assigns each export to an API reference page (`domain`) and to a
+  guide topic (`guide_topic`);
+- `_llm_status.py` lists the exports the guide presents (`READY`);
 - `generate_api_reference.py` renders API pages from the committed runtime manifest.
 
 Runtime nanobind signatures and Python functions are authoritative. MkDocs reads
@@ -190,6 +193,46 @@ temporary files.
 Do not add a second Python implementation of a native algorithm to avoid writing
 a binding. Python composition is appropriate; duplicated scientific numerics
 are not.
+
+## The guide for AI assistants (`helper_for_llm`)
+
+`helper_for_llm()` is what an assistant reads when it has only the installed
+package. It has three tiers:
+
+- `index` (the default): how to use the guide, the notation and rules, and the
+  topics.
+- **Topics:** hand-written guidance (`_GUIDANCE` in `_llm.py`: chaining, order of
+  calls, traps) followed by a catalogue generated at run time, one line per
+  export and per class member.
+- `symbol:<name>` or `symbol:<Class>.<method>` for one docstring, and
+  `search:<words>` over exports and members.
+
+`all` (the index, all guidance, and every export's name) is for pasting into a
+chat; `catalogue` joins every catalogue.
+
+**When you add an export:**
+
+1. It gets an API reference page and a guide topic from the rules in
+   `_topics.py`. Check where it lands, and add a `domain` rule or a
+   `GUIDE_TOPIC_PLACEMENTS` entry if it is wrong.
+2. It is **experimental** until its name is added to `READY` in
+   `_llm_status.py`:
+   - an experimental export is left out of the topics, `all` and `catalogue`;
+   - `symbol:` and `search:` still find it and mark it `[experimental]`;
+   - it stays public and on the API reference pages.
+
+   Add its name when it is tested and should be taught. A single method of a
+   ready class can be held back with `EXPERIMENTAL_OVERRIDES`.
+3. If it needs explaining (chaining, traps, the CLI equivalent), add lines to
+   its topic's `_GUIDANCE`. Do not repeat its signature, which the catalogue
+   already gives. `tools/check_llm_cards.py` checks every name and argument
+   there, and fails if the guidance uses an export that is not `READY`.
+
+**Limits** (`tests/test_llm_helper.py`): `index` < 2500 characters, each topic
+< 8000, `all` < 40000. A topic over its limit is split in `_topics.py` (a new
+topic needs a `_GUIDANCE` entry and a line in the index), never trimmed by
+dropping catalogue lines. `flow` is mostly `FlowInfo`'s methods (about 7000
+of its 8000), so `FlowGraph` is in `drainage`.
 
 ## Changing A Public Signature Or Default
 

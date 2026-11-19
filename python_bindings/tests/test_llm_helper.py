@@ -15,20 +15,24 @@ import textwrap
 import pytest
 
 import lsdtt3
-from lsdtt3._llm import _TOPICS, WORKFLOW_CODE
+from lsdtt3._llm import _GUIDANCE, WORKFLOW_CODE
 
 pytestmark = [pytest.mark.conformance, pytest.mark.unit]
 
 
 def test_index_is_small_and_exposes_retrieval_protocol():
-    """The starter card stays small enough for routine prompt injection."""
+    """The starter card stays small, says how to work, and lists every topic once."""
     card = lsdtt3.helper_for_llm()
-    assert card.startswith("LSDTT3/API2")
-    assert "'symbol:<exact name>'" in card and "'search:<words>'" in card and "'all'" in card
-    topics = re.search(r"^Topics: (.*)$", card, re.MULTILINE).group(1).split()
-    assert sorted(topics) == sorted(_TOPICS)
+    assert card.startswith("LSDTT3/API3")
+    for text in ("How to work:", "helper_for_llm('gotchas')", "'symbol:<name>'",
+                 "'symbol:<Class>.<method>'", "'search:<words>'", "'all'", "'catalogue'",
+                 "[experimental]"):
+        assert text in card, text
+    block = card.split("\nTopics:\n", 1)[1].split("\nAlso:", 1)[0]
+    topics = [re.match(r"  (\w+): ", line).group(1) for line in block.splitlines()]
+    assert sorted(topics) == sorted(_GUIDANCE)
     assert topics[:2] == ["workflow", "gotchas"]
-    assert len(card.split()) < 160
+    assert len(card) < 2500
 
 
 def test_helper_returns_text_that_displays_as_text():
@@ -102,11 +106,12 @@ def test_workflow_and_gotchas_topics():
     for text in ("Transformer", "// meta.cell_size", "receiver_of"):
         assert text not in code, text
     everything = lsdtt3.helper_for_llm("all")
-    for topic in _TOPICS.values():
+    for topic in _GUIDANCE.values():
         assert topic in everything
     assert everything.index("@workflow") < everything.index("@terrain")
-    # Kept small enough to paste into an assistant along with a question.
-    assert len(everything) < 25_000
+    # Kept small enough to paste into an assistant along with a question
+    # (limit 40000, Simon 2026-11-19, plan_llm_guide_restructure.md).
+    assert len(everything) < 40_000
 
 
 def test_module_docstring_is_a_task_oriented_entry_point():
@@ -119,7 +124,7 @@ def test_module_docstring_is_a_task_oriented_entry_point():
                  "FlowInfo.snap_points", "meta.xy_to_row_col(x, y)",
                  "Authors\n-------\nB. Gailleton"):
         assert text in doc, text
-    for topic in _TOPICS:
+    for topic in _GUIDANCE:
         assert f'"{topic}"' in doc, topic
     code = doc.split("ksn::\n\n", 1)[1].split("\nHelp for AI assistants", 1)[0]
     assert textwrap.dedent(code).strip() == WORKFLOW_CODE.strip()
@@ -152,3 +157,212 @@ def test_high_risk_cards_match_runtime_contracts():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.main() == 0
+
+
+def test_guide_status_lists_name_real_exports():
+    """READY and EXPERIMENTAL_OVERRIDES name only public exports and their members."""
+    from lsdtt3._llm_status import EXPERIMENTAL_OVERRIDES, READY
+
+    public = set(lsdtt3.__all__)
+    assert READY <= public, sorted(READY - public)
+    for name in EXPERIMENTAL_OVERRIDES:
+        owner, _, member = name.partition(".")
+        assert owner in public, name
+        assert not member or hasattr(getattr(lsdtt3, owner), member), name
+
+
+def test_guide_status_resolution(monkeypatch):
+    """Ready if listed, experimental otherwise; methods inherit; overrides demote."""
+    from lsdtt3 import _llm
+    from lsdtt3._llm import _guide_status
+
+    namespace = vars(lsdtt3)
+    assert _guide_status("fill_pits", namespace) == "ready"
+    assert _guide_status("FlowInfo", namespace) == "ready"
+    assert _guide_status("FlowInfo.low_concavity", namespace) == "ready"
+    assert _guide_status("slope_area_bins", namespace) == "ready"
+    # mentioned only as a polyfit metric string in the cards, so not frozen as ready
+    assert _guide_status("plan_curvature", namespace) == "experimental"
+    statuses = {name: _guide_status(name, namespace) for name in lsdtt3.__all__}
+    assert set(statuses.values()) == {"ready", "experimental"}
+    assert sum(value == "ready" for value in statuses.values()) == len(_llm.READY)
+    with pytest.raises(ValueError, match="Unknown lsdtt3 public symbol"):
+        _guide_status("no_such_export", namespace)
+    with pytest.raises(ValueError, match="has no member"):
+        _guide_status("FlowInfo.no_such_method", namespace)
+    monkeypatch.setattr(_llm, "EXPERIMENTAL_OVERRIDES", frozenset({"FlowInfo.low_concavity", "fill_pits"}))
+    assert _guide_status("FlowInfo.low_concavity", namespace) == "experimental"
+    assert _guide_status("FlowInfo.d8_flow_path_gradient", namespace) == "ready"
+    assert _guide_status("fill_pits", namespace) == "experimental"
+
+
+def _manifest_exports():
+    path = Path(__file__).parents[1] / "api" / "public_api.json"
+    import json
+    return {entry["name"]: entry for entry in json.loads(path.read_text(encoding="utf-8"))["exports"]}
+
+
+def test_every_export_has_one_guide_topic():
+    """guide_topic gives every export one catalogue topic, and the placements are not stale."""
+    from lsdtt3._topics import GUIDE_TOPIC_PLACEMENTS, GUIDE_TOPICS, guide_topic
+
+    assert set(GUIDE_TOPICS) == set(_GUIDANCE) - {"workflow", "gotchas"}
+    assert set(GUIDE_TOPIC_PLACEMENTS) <= set(lsdtt3.__all__), sorted(
+        set(GUIDE_TOPIC_PLACEMENTS) - set(lsdtt3.__all__))
+    assert set(GUIDE_TOPIC_PLACEMENTS.values()) <= set(GUIDE_TOPICS)
+    for name in lsdtt3.__all__:
+        assert guide_topic(name) in GUIDE_TOPICS, name
+
+
+def _catalogue_heads(topic):
+    """Export names catalogued in a topic, and the member names under each class."""
+    text = lsdtt3.helper_for_llm(topic).split(f"@catalogue {topic}:", 1)[1].splitlines()[1:]
+    heads, members, current = [], {}, None
+    for line in text:
+        if line.startswith("  ."):
+            members[current].append(re.match(r"  \.(\w+)", line).group(1))
+        elif line.strip():
+            current = re.match(r"(\w+)", line).group(1)
+            heads.append(current)
+            members[current] = []
+    return heads, members
+
+
+def test_catalogues_list_every_ready_export_once_and_no_experimental_one():
+    """Coverage (plan 5.1): each ready export is in its topic's catalogue, once;
+    experimental exports are in none."""
+    from lsdtt3._llm import _guide_status
+    from lsdtt3._topics import GUIDE_TOPICS, guide_topic
+
+    namespace = vars(lsdtt3)
+    seen = {}
+    for topic in GUIDE_TOPICS:
+        heads, _members = _catalogue_heads(topic)
+        for name in heads:
+            assert name not in seen, f"{name} in {seen.get(name)} and {topic}"
+            seen[name] = topic
+    ready = {name for name in lsdtt3.__all__ if _guide_status(name, namespace) == "ready"}
+    assert set(seen) == ready, (sorted(ready - set(seen)), sorted(set(seen) - ready))
+    assert all(seen[name] == guide_topic(name) for name in seen)
+
+
+def test_catalogues_list_every_public_member_of_a_ready_class():
+    """Methods (plan 5.2): a ready class lists the members the API manifest has
+    (except __init__), unless one is demoted on its own."""
+    from lsdtt3._topics import GUIDE_TOPICS
+
+    exports = _manifest_exports()
+    for topic in GUIDE_TOPICS:
+        _heads, members = _catalogue_heads(topic)
+        for name, listed in members.items():
+            if exports[name]["kind"] != "class":
+                assert not listed, name
+                continue
+            expected = sorted(member["name"] for member in exports[name]["members"]
+                              if member["name"] != "__init__")
+            assert sorted(listed) == expected, name
+
+
+def test_catalogue_lines_carry_argument_names_and_a_summary():
+    """A catalogue line is name(args): summary; ? marks a parameter with a default."""
+    channel = lsdtt3.helper_for_llm("channel")
+    assert "slope_area_bins(drainage_area,slope,*,n_log_bins?,exclude?): Bin slope by drainage area" in channel
+    flow = lsdtt3.helper_for_llm("flow")
+    assert "  .low_concavity(drainage_area,gradient,*,threshold_contributing_pixels?," in flow
+    assert "\nChannelScope: " in channel and "ChannelScope(*args" not in channel
+    assert "FlowInfo(dem,boundary_conditions?," in flow
+    # experimental exports are left out (aspect is not READY)
+    assert "\naspect(" not in lsdtt3.helper_for_llm("terrain")
+
+
+def test_symbol_works_for_every_export_and_public_member():
+    """Lookup (plan 5.5): symbol: gives a card for every export and every member
+    the manifest lists; an experimental one says so; unknown names raise."""
+    from lsdtt3._llm import _EXPERIMENTAL_NOTE, _guide_status
+
+    namespace = vars(lsdtt3)
+    for name, entry in _manifest_exports().items():
+        names = [name] + [f"{name}.{member['name']}" for member in entry["members"]
+                          if member["name"] != "__init__"]
+        for symbol in names:
+            card = lsdtt3.helper_for_llm(f"symbol:{symbol}")
+            assert card.startswith(f"@{symbol}\n"), symbol
+            experimental = _guide_status(symbol, namespace) == "experimental"
+            assert (_EXPERIMENTAL_NOTE in card) == experimental, symbol
+    method = lsdtt3.helper_for_llm("symbol:FlowInfo.low_concavity")
+    assert method.startswith("@FlowInfo.low_concavity\nlow_concavity(self, drainage_area: Raster,")
+    assert "run_low_concavity_detection" in method
+    assert "Authors" not in method
+    assert lsdtt3.helper_for_llm("symbol:BasinCollection.table").startswith(
+        "@BasinCollection.table\nOne row per basin")
+    with pytest.raises(ValueError, match="has no public member"):
+        lsdtt3.helper_for_llm("symbol:FlowInfo.no_such_method")
+    with pytest.raises(ValueError, match="Unknown lsdtt3 public symbol"):
+        lsdtt3.helper_for_llm("symbol:no_such_export.table")
+
+
+@pytest.mark.parametrize("query, first", [
+    ("low concavity", "FlowInfo.low_concavity"),
+    ("run_low_concavity_detection", "FlowInfo.low_concavity"),
+    ("fill pits", "fill_pits"),
+    ("basins", "FlowInfo.basins"),
+    ("hillshade", "hillshade"),
+    ("burial", "[experimental] crn_burial_pair"),
+])
+def test_search_puts_the_specific_routine_first(query, first):
+    """search: indexes methods, matches CLI parameter names, and ranks the
+    specific routine above the class holding it; experimental entries are marked."""
+    lines = lsdtt3.helper_for_llm(f"search:{query}").splitlines()
+    assert lines[1].split(": ", 1)[0] == first, lines[:4]
+
+
+def test_search_finds_a_function_behind_its_result_class():
+    lines = lsdtt3.helper_for_llm("search:perimeter sources").splitlines()[1:3]
+    assert "[experimental] find_perimeter_sources" in [line.split(": ", 1)[0] for line in lines]
+
+
+def test_search_finds_the_routine_documenting_a_cli_parameter():
+    lines = lsdtt3.helper_for_llm("search:basin_outlet_snapping_method").splitlines()[1:3]
+    assert "FlowInfo.snap_points" in [line.split(": ", 1)[0] for line in lines]
+
+
+def test_sizes_stay_within_the_limits():
+    """Size (plan 5.3): index < 2500, each topic < 8000, all < 40000 characters.
+    A topic over the limit is split (or its guidance shortened), never its catalogue."""
+    assert len(lsdtt3.helper_for_llm("index")) < 2500
+    for topic in _GUIDANCE:
+        size = len(lsdtt3.helper_for_llm(topic))
+        assert size < 8000, f"topic {topic} is {size} characters: split it in lsdtt3/_topics.py"
+    size = len(lsdtt3.helper_for_llm("all"))
+    assert size < 40_000, f"all is {size} characters: shorten the hand-written guidance"
+
+
+def test_all_names_every_ready_export_and_the_key_class_methods():
+    """all = index + guidance + every ready export's name by topic + key class methods."""
+    from lsdtt3._llm import _ALL_KEY_CLASSES, _guide_status
+    from lsdtt3._topics import GUIDE_TOPICS, guide_topic
+
+    everything = lsdtt3.helper_for_llm("all")
+    assert everything.startswith(lsdtt3.helper_for_llm("index"))
+    names = everything.split("\n@names ", 1)[1].split("\n@methods ", 1)[0].splitlines()[1:]
+    listed = {line.split(": ", 1)[0]: line.split(": ", 1)[1].split() for line in names}
+    assert list(listed) == list(GUIDE_TOPICS)
+    namespace = vars(lsdtt3)
+    for name in lsdtt3.__all__:
+        ready = _guide_status(name, namespace) == "ready"
+        assert (name in listed[guide_topic(name)]) == ready, name
+    methods = everything.split("\n@methods ", 1)[1].split("\n@end ", 1)[0].splitlines()[1:]
+    assert [line.split(": ", 1)[0] for line in methods] == list(_ALL_KEY_CLASSES)
+    assert "low_concavity" in methods[0].split(": ", 1)[1].split()
+    assert everything.rstrip().endswith("paste the result.")
+    assert "@catalogue" not in everything
+
+
+def test_catalogue_mode_joins_every_topic_catalogue():
+    from lsdtt3._topics import GUIDE_TOPICS
+
+    catalogue = lsdtt3.helper_for_llm("catalogue")
+    for topic in GUIDE_TOPICS:
+        assert f"@catalogue {topic}:" in catalogue, topic
+    assert "slope_area_bins(drainage_area,slope,*,n_log_bins?,exclude?)" in catalogue
+    assert lsdtt3.helper_for_llm("catalog") == catalogue

@@ -15,7 +15,12 @@ from pathlib import Path
 import re
 
 import lsdtt3
-from lsdtt3._llm import _INDEX, _TOPICS, WORKFLOW_CODE
+from lsdtt3._llm import _INDEX, _GUIDANCE, WORKFLOW_CODE
+from lsdtt3._llm_status import EXPERIMENTAL_OVERRIDES, READY
+
+# Every export the cards and the workflow use, so that main() can check that
+# the guide teaches only READY exports (lsdtt3/_llm_status.py).
+USED = set()
 
 # Card aliases for public classes (see the notation line of the index card).
 ALIASES = {
@@ -106,10 +111,12 @@ def check_cards(cards, exports):
         for name in names.split("|"):
             assert name in exports, f"unknown LLM-card function: {name}"
             assert exports[name]["kind"] == "function", f"LLM card calls {name} as a function"
+            USED.add(name)
             check_arguments(name, arguments, exports[name]["signatures"])
     for name, arguments in CONSTRUCTOR_CALL.findall(cards):
         if name not in classes:
             continue
+        USED.add(name)
         init = member(exports, name, "__init__")
         assert init["signatures"], f"LLM card constructs {name}, which has no constructor"
         check_arguments(name, arguments, init["signatures"])
@@ -118,12 +125,15 @@ def check_cards(cards, exports):
         if class_name is None:
             continue
         item = member(exports, class_name, name)
+        USED.add(class_name)
+        USED.add(f"{class_name}.{name}")
         assert item["kind"] != "property", f"LLM card calls property as method: {alias}.{name}"
         check_arguments(f"{alias}.{name}", arguments, item["signatures"])
     for alias, name in MEMBER_ACCESS.findall(cards):
         class_name = ALIASES.get(alias, alias if alias in classes else None)
         if class_name is not None:
             member(exports, class_name, name)
+            USED.update((class_name, f"{class_name}.{name}"))
 
 
 class WorkflowChecker(ast.NodeVisitor):
@@ -150,6 +160,7 @@ class WorkflowChecker(ast.NodeVisitor):
             if isinstance(owner, ast.Name) and owner.id == "lsdtt3":
                 entry = self.exports.get(node.func.attr)
                 assert entry is not None, f"workflow calls unknown export lsdtt3.{node.func.attr}"
+                USED.add(node.func.attr)
                 if entry["kind"] == "class":
                     self.check_keywords(node.func.attr, node, member(self.exports, node.func.attr, "__init__")["signatures"])
                     return node.func.attr
@@ -198,13 +209,23 @@ def main() -> int:
     exports = {entry["name"]: entry for entry in manifest["exports"]}
 
     # Card notation everywhere except the code block, which is Python.
-    cards = "\n".join([_INDEX] + list(_TOPICS.values()))
+    cards = "\n".join([_INDEX] + list(_GUIDANCE.values()))
     cards = re.sub(r"```python\n.*?```", "", cards, flags=re.DOTALL)
     check_cards(cards, exports)
 
     tree = ast.parse(WORKFLOW_CODE)
     compile(tree, "workflow", "exec")
     WorkflowChecker(exports).visit(tree)
+    not_ready = sorted(
+        name for name in USED
+        if name in EXPERIMENTAL_OVERRIDES or name.partition(".")[0] not in READY
+        or name.partition(".")[0] in EXPERIMENTAL_OVERRIDES
+    )
+    assert not not_ready, (
+        "LLM cards use exports that are not READY (add them to READY in "
+        f"src/lsdtt3/_llm_status.py, or drop them from the cards): {not_ready}"
+    )
+
     workflow = lsdtt3.helper_for_llm("workflow")
     assert WORKFLOW_CODE in workflow, "the workflow card must carry WORKFLOW_CODE verbatim"
 
@@ -242,7 +263,7 @@ def main() -> int:
     for text in ("M.xy_to_row_col(x,y)", "M.row_col_to_xy(row,col)",
                  "M.lonlat_to_row_col(longitude,latitude,crs='EPSG:4326')"):
         assert text in terrain, text
-    assert "topographic_wetness_index(drainage_area:R,slope:R)" in flow
+    assert "topographic_wetness_index(drainage_area:R,slope:R)" in lsdtt3.helper_for_llm("drainage")
     assert "F.height_above_channel(dem:R,channels:R)" in flow
     basin = lsdtt3.helper_for_llm("basin")
     assert "B.labels->R" in basin and "B.polygons->V" in basin
@@ -251,6 +272,9 @@ def main() -> int:
     assert "list[Ridgeline]" not in basin
     channel = lsdtt3.helper_for_llm("channel")
     assert "extract_channel_heads(dem:R,flow:F," in channel
+    # slope-area: carve without the breach's own fill, then fill_pits, as the CLI does
+    assert "breach_least_cost(raster:R,fill_remainder=False)" in channel
+    assert "gradient must be the D8 flow-path gradient" in channel
     vector = lsdtt3.helper_for_llm("vector")
     assert "extract_valley_centrelines(dem:R,scope:S|channels," in vector
     chi = lsdtt3.helper_for_llm("chi")
@@ -259,7 +283,8 @@ def main() -> int:
     chi_symbol = lsdtt3.helper_for_llm("symbol:ChiCollection")
     assert "ChannelNetwork.chi()" in chi_symbol
     assert "divide_migration(flow:F,dem:R,outlets," in basin
-    assert "route_sediment(network:N,dem:R," in landscape
+    sediment = lsdtt3.helper_for_llm("sediment")
+    assert "route_sediment(network:N,dem:R," in sediment
     assert "crn_uniform_raster(R,value)->R" in cosmo
     assert "crn_uniform_raster(R,value=1)" not in cosmo
     fetch = lsdtt3.helper_for_llm("fetch")

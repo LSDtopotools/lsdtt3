@@ -35,3 +35,22 @@ def test_generated_reference_assigns_every_export_exactly_once():
     assert sorted(names) == sorted(export["name"] for export in manifest["exports"])
     assert len(names) == len(set(names))
     assert all(assignments[name] == generator.domain(name) for name in names)
+
+
+def test_package_and_reference_share_one_topic_rule():
+    """lsdtt3._topics is the one domain rule: the API reference generator uses it, and
+    the installed package's copy gives every export the same domain (plan_llm_guide_restructure.md,
+    step 1).
+    """
+    import lsdtt3
+    from lsdtt3 import _topics
+
+    repository = Path(__file__).parents[2]
+    generator_path = repository / "python_bindings/tools/generate_api_reference.py"
+    spec = importlib.util.spec_from_file_location("api_reference_generator", generator_path)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert generator.DOMAINS == _topics.DOMAINS
+    for name in lsdtt3.__all__:
+        assert generator.domain(name) == _topics.domain(name), name
+        assert _topics.domain(name) in _topics.DOMAINS, name

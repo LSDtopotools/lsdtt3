@@ -18,6 +18,9 @@ from collections.abc import Mapping
 import inspect
 import re
 
+from ._llm_status import EXPERIMENTAL_OVERRIDES, READY
+from ._topics import GUIDE_TOPICS, guide_topic
+
 
 class _PlainText(str):
     """A ``str`` that displays as its text rather than as an escaped literal.
@@ -85,11 +88,29 @@ polygons.to_file("basins.gpkg")
 '''
 
 
-_INDEX = """LSDTT3/API2 compact lsdtt3 guide for AI assistants (import lsdtt3; names below are lsdtt3.<name>)
+_INDEX = """LSDTT3/API3 compact lsdtt3 guide for AI assistants (import lsdtt3; names below are lsdtt3.<name>)
+How to work: 1. read helper_for_llm('gotchas'); 2. read the topic for the task; 3. before calling anything, get its exact arguments with helper_for_llm('symbol:<name>') or 'symbol:<Class>.<method>'; 4. if no topic fits, helper_for_llm('search:<words>') (a CLI parameter name works too). Topics list the ready exports; symbol and search also find the others, marked [experimental].
 Notation: R=Raster M=RasterMeta F=FlowInfo G=FlowGraph H=RasterHierarchy S=ChannelScope N=ChannelNetwork B=BasinCollection C=ChiCollection L=LandscapeModel Q=CRNColumn V=geopandas.GeoDataFrame D=pandas.DataFrame; name?=optional argument; ...=more optional keywords; ->=returns; a|b=either.
 Rules: projected grids in metres; slope=gradient m/m; A=R.to_numpy() is A[row,col] with row 0 at the NORTH edge; R.mask_numpy() True=valid; results are new in-memory objects, save with R.write(path); V must use R.metadata.crs_wkt; outlets are (row,col) arrays: get them from lat/lon or x/y with F.snap_points(...).
-Topics: workflow gotchas terrain fetch flow channel basin chi vector hydraulic landscape cosmo drainage synthetic stats
-Use: helper_for_llm('<topic>'); 'symbol:<exact name>' full docstring; 'search:<words>' ranked search; 'all' everything
+Topics:
+  workflow: runnable fetch DEM -> fill -> flow -> channels -> basins -> chi/ksn -> write
+  gotchas: the common mistakes (sea stored as 0 m, CRS, row/col, basin ids, column names)
+  terrain: rasters and grid metadata, conditioning (fill, breach), surface metrics, hillshade
+  fetch: DEMs and bounds from the web, UTM zones
+  flow: FlowInfo (D8 routing), drainage area, snapping points (FlowGraph: topic drainage)
+  channel: channel scope and network, channel heads, slope-area and low concavity
+  basin: basins, divides, basin metrics
+  chi: chi, ksn, segment fits, knickpoints, inversion
+  vector: GeoDataFrames: rasterize, clip, sample, swath profiles, valley centrelines and sections
+  water: river lines, burning lines into a DEM, water centrelines, line repair
+  hydraulic: GraphFlood
+  landscape: landscape evolution, hillslope transport
+  sediment: sediment routing, landslides
+  cosmo: cosmogenic nuclides
+  drainage: FlowGraph (D-infinity, MFD area), depressions, internal drainage, wetness and connectivity indices
+  synthetic: synthetic landscapes and noise
+  stats: raster arithmetic, thresholds, comparisons
+Also: 'all' = this index, the guidance of every topic and the name of every ready export, in one text for pasting into a chat; 'catalogue' = one line per ready export.
 """
 
 _WORKFLOW = (
@@ -122,7 +143,9 @@ _GOTCHAS = """@gotchas
 - Column names differ from the lsdtt-* CLI CSVs that lsdviztools3 expects: rename basin_id->basin_index, and ksn->k_sn in fit.segments, before using lsdviztools3 chi plots: fit.segments.rename(columns={'basin_id':'basin_index','ksn':'k_sn'}). fit.tributaries and fit.knickpoints need only basin_id->basin_index.
 """
 
-_TOPICS = {
+# The hand-written part of each topic. A catalogue topic (GUIDE_TOPICS) is
+# followed by its generated catalogue when rendered (_topic_card).
+_GUIDANCE = {
     "workflow": _WORKFLOW,
     "gotchas": _GOTCHAS,
     "terrain": """@terrain rasters, conditioning, surface metrics
@@ -153,17 +176,13 @@ Oblique frames (a grid aligned with a fault/river/range, feature along +x, so th
   bearings (aspect, link bearings, ...) are from GRID north (90 = along the feature) unless bearings_relative_to_true_north=True
 ! Copernicus stores the sea as 0 m: dem=mask_to_nodata(R,0.0). Save explicitly: R.write(path).
 """,
-    "flow": """@flow D8 routing (FlowInfo) and multiple-direction routing (FlowGraph)
-F=FlowInfo(dem:R,boundary_conditions='oooo',interior_nodata_is_outlet=True,forced_outlets?,allow_pits_as_outlets=False); pass a pit-filled DEM (fill_pits). F is immutable D8 topology; boundary_conditions has one character per edge, north east south west.
-F.drainage_area()->R (m^2); F.contributing_pixels()->R (pixel count); F.flow_direction()->R; F.flow_distance_to_outlet()->R (metres)
-F.receiver_of(row,col)->(row,col) or None at an outlet; F.row_col(flat_index)->(row,col); F.flat_index(row,col)->int; F.upslope_pixels(row,col); F.is_outlet(row,col)->bool
-F.snap_points(x?,y?,longitude?,latitude?,points?,crs?,method='downstream'|'expanding_square'|'largest_area',threshold_contributing_pixels?,threshold_drainage_area_m2?,min_search_radius_pixels=0,max_search_radius_pixels=25,max_search_radius_metres?)->N x 2 int64 (row,col) array for F.basins; coordinates are keyword-only except x,y; same rules as the CLIs' basin_outlet_snapping_method: 'downstream' = follow D8 receivers to the first pixel with contributing pixels >= threshold, 'expanding_square' = nearest such pixel in rings min..max radius, 'largest_area' = largest drainage area within max_search_radius_pixels (if >= threshold); threshold default 1000 contributing pixels (CLI default); threshold_drainage_area_m2 (m^2) becomes the smallest N pixels with N*pixel_area >= it; raises ValueError for points off the grid or not snapped
-F.channel_mask(threshold_contributing_pixels)->R; S=F.channel_scope(threshold_contributing_pixels=500,...); F.scope_from_heads(heads)->S; N=F.channel_network(S)
-F.basins(outlets?,min_upslope_pixels=0)->B (outlets: N x 2 int array of (row,col); None = every D8 outlet)
-F.height_above_channel(dem:R,channels:R)->R (HAND; channels is a 0/1 raster such as N.channel_mask); F.distance_to_channel(threshold_contributing_pixels)->R
-F.accumulate(weights?)->R; F.upslope_mean(values:R)->R; F.upslope_sum(values:R)->R; F.flow_lines_geodataframe()->V
-G=FlowGraph(dem:R,method='mfd'|'dinf',boundary_conditions='oooo',...); G.drainage_area()->R
-topographic_wetness_index(drainage_area:R,slope:R)->R; sediment_connectivity_index(flow:F,roughness:R,slope:R,drainage_area:R,area_threshold_m2)->ConnectivityResult; soil_topographic_index(...)->SoilTopographicIndexResult
+    "flow": """@flow D8 routing (FlowInfo); multiple-direction routing (FlowGraph) is in topic drainage
+F=FlowInfo(dem:R,...): pass a pit-filled DEM (fill_pits). F is immutable D8 topology; boundary_conditions has one character per edge, north east south west.
+Units: F.drainage_area()->R (m^2); F.contributing_pixels()->R (pixel count); F.flow_distance_to_outlet()->R (metres). Pixels are (row,col) or flat=row*n_cols+col (F.row_col, F.flat_index).
+F.receiver_of(row,col)->(row,col) or None at an outlet
+F.snap_points(x?,y?,longitude?,latitude?,points?,crs?,method='downstream'|'expanding_square'|'largest_area',threshold_contributing_pixels?,threshold_drainage_area_m2?,...)->N x 2 int64 (row,col) array for F.basins; coordinates are keyword-only except x,y; same rules as the CLIs' basin_outlet_snapping_method: 'downstream' = follow D8 receivers to the first pixel with contributing pixels >= threshold, 'expanding_square' = nearest such pixel in rings min..max radius, 'largest_area' = largest drainage area within max_search_radius_pixels; threshold default 1000 contributing pixels (CLI default); threshold_drainage_area_m2 (m^2) becomes the smallest N pixels with N*pixel_area >= it; raises ValueError for points off the grid or not snapped
+Chain: S=F.channel_scope(threshold_contributing_pixels=500,...) or F.scope_from_heads(heads); N=F.channel_network(S); F.basins(outlets?,min_upslope_pixels=0)->B (outlets: N x 2 int array of (row,col); None = every D8 outlet)
+F.height_above_channel(dem:R,channels:R)->R (HAND; channels is a 0/1 raster such as N.channel_mask)
 """,
     "channel": """@channel channel heads and networks
 S=F.channel_scope(threshold_contributing_pixels=...), or heads=extract_channel_heads(dem:R,flow:F,method='threshold'|'wiener',threshold_contributing_pixels=1000,...)->ChannelHeads then S=F.scope_from_heads(heads)
@@ -171,7 +190,10 @@ N=F.channel_network(S); N.channel_mask->R (0/1); N.n_channel_cells; N.n_junction
 N.lines_geodataframe()->V (one line per link, with stream_order); N.points_geodataframe()->V; N.junctions_geodataframe()->V; N.links()->D; N.junctions()->D; N.junction_angles()->D; N.link_profiles(values:R)->D
 C=N.chi(outlets?,m_over_n=0.45,reference_area=1.0,denominator?); N.chi_sweep(dem:R,m_over_n_values,...)->D
 F.channel_point_attributes(filled_dem:R,points:V,*,threshold_contributing_pixels,slope_window_half_length_metres=25.0,channel_points_snap_max_search_radius_pixels=10)->V (CLI run_channel_point_attributes: each point moved to the NEAREST channel cell by straight-line distance, not along D8; keeps every column, adds original_x,original_y,snap_distance_m,snap_status,snapped_flat,contributing_pixels,drainage_area_m2,flow_distance_m,elevation_m,smoothed_elevation_m,slope_m_per_m (along-channel least-squares slope over +/- the half-length),slope_valid,slope_window_length_m; geometry = snapped cell centre in the grid CRS; unsnapped points keep position with NaN; a clashing added name gets _lsdtt)
-find_channel_candidates(raster:R,...)->ChannelCandidatesResult; water_centrelines(areas:V,tributaries:V,...)->WaterCentrelineResult; repair_water_lines(water_lines:V,roads:V,...)->WaterLineRepairResult
+find_channel_candidates(raster:R,...)->ChannelCandidatesResult
+Slope-area (CLI lsdtt-slope-area; same routines, same defaults): carve then fill, and leave the changed pixels out: routing=fill_pits(breach_least_cost(raster:R,fill_remainder=False)); mask=conditioned_pixel_mask(input_dem:R,routing_dem:R) (0 untouched, 1 filled, 2 carved; pass it as exclude=mask); F=FlowInfo(dem:R) and area=FlowGraph(dem:R,method='dinf').drainage_area(), both on routing (D-infinity, the CLI default) or F.drainage_area() (D8)
+gradient: polyfit_metrics(raster:R,metrics,lambda_metres=150)['slope'] on the INPUT dem (hillslope-channel transition), or F.d8_flow_path_gradient(routing_dem:R,drainage_area:R,window_metres=150,exclude=R) (along channels; needs window >= 4 cells); slope_area_bins(drainage_area:R,slope:R,n_log_bins=20,exclude=R)->D (the CLI's lambda CSV columns)
+Low concavity: F.low_concavity(drainage_area:R,gradient:R,threshold_contributing_pixels=1000,max_abs_concavity=0.15,exclude=R)->D (one row per channel pixel; low_concavity 1, 0, or -1 for no valid fit; gradient must be the D8 flow-path gradient); F.low_concavity_segments(...,min_run_pixels=1)->V. A flag means S did not vary with A in the window, not a clean power law: check theta_se and r2. With D8 area, flags gather at confluences.
 """,
     "basin": """@basin drainage basins
 B=F.basins(outlets,min_upslope_pixels=0) (outlets: N x 2 int array of (row,col), e.g. from F.snap_points(latitude=...,longitude=...); duplicate outlets are dropped)
@@ -193,10 +215,12 @@ fit.disorder(); fit.disorder_bootstrap(replicates=1000,...); inv=fit.invert_ksn(
 N.chi_sweep(dem:R,m_over_n_values,outlets?,...)->D (disorder per basin for each m/n); F.chi_from_outlets(outlets?,m_over_n=0.45,...)->R (chi raster without a network)
 ! chi needs N built from F on the same grid as the elevation R. With reference_area=1, ksn has units of m^(2*m_over_n).
 """,
-    "vector": """@vector GeoDataFrame inputs and outputs; V must be in the raster CRS: V=V.to_crs(R.metadata.crs_wkt)
+    "water": """@water mapped water lines: fetching river lines, burning them into a DEM, water centrelines, line repair; V must be in the raster CRS
+burn_streams(dem:R,lines:V)->StreamBurnResult (.raster, .profiles); fetch_river_lines(river_line_source='gb_os_open_rivers'|'local_file',west,south,east,north or bounds_fname=dem path,...)->RiverLinesResult (.lines downstream-oriented V, .nodes, .topology, .attribution; CLI lsdtt-fetch-river-lines names); burn_to_corridor(dem:R (not filled),lines:V,*,vector_name_field='',vector_corridor_half_width_metres=0,burn_profile_max_pit_pixels=16,burn_profile_max_cut_metres=2000,burn_profile_fit_algorithm_choice='linear'|'chi',...,min_elevation=-9999)->BurnCorridorResult (.dem final conditioned R, .burned, .burn_depth, .profiles D, .channels/.exit_routes/.cross_path_receivers V, .report with downhill checks); vector is the truth: profile through the DEM minima under each line, rest of DEM carved+filled to drain to it; CLI lsdtt-stream-burning stream_burn_mode burn_to_corridor; water_centrelines(areas:V,tributaries:V,...)->WaterCentrelineResult; repair_water_lines(water_lines:V,roads:V,...)->WaterLineRepairResult
+""",
+    "vector": """@vector GeoDataFrame inputs and outputs; V must be in the raster CRS: V=V.to_crs(R.metadata.crs_wkt) (water lines and burning: topic water)
 rasterize_polygons(raster:R,polygons:V,coverage='majority')->R (0/1); clip_to_polygons(raster:R,polygons:V,coverage='majority',crop=True)->R
 sample_points(raster:R,points:V,column='raster_value')->V; linear_stats(raster:R,lines:V,spacing_metres=10)->V; mask_from_points(raster:R,points)->R
-burn_streams(dem:R,lines:V)->StreamBurnResult (.raster, .profiles); fetch_river_lines(river_line_source='gb_os_open_rivers'|'local_file',west,south,east,north or bounds_fname=dem path,...)->RiverLinesResult (.lines downstream-oriented V, .nodes, .topology, .attribution; CLI lsdtt-fetch-river-lines names); burn_to_corridor(dem:R (not filled),lines:V,*,vector_name_field='',vector_corridor_half_width_metres=0,burn_profile_max_pit_pixels=16,burn_profile_max_cut_metres=2000,burn_profile_fit_algorithm_choice='linear'|'chi',...,min_elevation=-9999)->BurnCorridorResult (.dem final conditioned R, .burned, .burn_depth, .profiles D, .channels/.exit_routes/.cross_path_receivers V, .report with downhill checks); vector is the truth: profile through the DEM minima under each line, rest of DEM carved+filled to drain to it; CLI lsdtt-stream-burning stream_burn_mode burn_to_corridor; water_centrelines(areas:V,tributaries:V,...)->WaterCentrelineResult; repair_water_lines(water_lines:V,roads:V,...)->WaterLineRepairResult
 extract_valley_centrelines(dem:R,scope:S|channels,...,valley_mask=R)->ValleyCentrelineResult (valley_mask is keyword-only and required); extract_valley_cross_sections(dem:R,centrelines,...)->ValleyCrossSections
 swath_profile(reference:R,baseline:V,...)->SwathProfile (baseline is exactly one LineString)
 bounds_from_vector(path,layer='')->VectorBounds (reads a vector FILE, not a GeoDataFrame)
@@ -211,13 +235,15 @@ run_graphflood_induced(bed:R,node_state:R,rainfall_rate:R,friction_coefficient:R
 node_state: 0=outside/nodata,1=active,2=flux-only ghost,3=outlet; ghosts route prescribed_qin but evolve depth/qout from initial depth, only 3 drains; each active component needs an outlet unless check_valid_outlet=False.
 ! hydraulic routing is on z+h; stationary workflow fills h, not bed elevation.
 """,
-    "landscape": """@landscape landscape evolution, hillslopes, sediment, landslides
+    "landscape": """@landscape landscape evolution and hillslopes (sediment routing and landslides: topic sediment)
 L=LandscapeModel(dem:R,incision_threshold_specific_area=0,fluvial_method='d8'|'dinf'|'none',hillslope_model='none'|'linear'|'roering'|'roering_implicit'|'cidre'|'adi'|'cellular',coupling_regime='automatic'|'coupled'|'channels_as_boundaries',...)
 L.step(compute_erosion_rate=False)->LandscapeStepResult; L.run(n_steps,compute_erosion_rate=False)->LandscapeStepResult; L.set_forcing(uplift_rate,baselevel_fall_rate=0); L.elevation->R; L.time_years
 erodibility>0 (K=0 raises; use fluvial_method='none'); erodibility_field=R|ndarray(n_rows,n_cols) absolute K>0 on the DEM grid; L.set_erodibility_field(R|ndarray|None) next step; L.erodibility_field->R|None
 hillslope_transport_implicit(dem:R,channels:R,duration_years,diffusivity=0.001,uplift_rate=0,critical_slope=0.8,nonlinear=True,...)->HillslopeTransportResult (channels: 0/1 mask of fixed pixels)
 hillslope_transport_explicit(dem:R,channels:R,diffusivity,duration_years,nonlinear=False,...)->R; hillslope_transport_adi(dem:R,diffusivity,duration_years)->R; hillslope_transport_cellular(dem:R,channels:R,duration_years,...)->HillslopeCellularResult
 hillslope_steady_state(dem:R,channels:R,model='roering',...)->HillslopeSteadyStateResult
+""",
+    "sediment": """@sediment sediment routing and landslides
 route_sediment(network:N,dem:R,formula='wilcock_crowe',...)->SedimentRoutingResult; trigger_landslides(dem:R,flow:F,target_volume_m3,...)->LandslideResult; run_landslide_series(dem:R,flow:F,...)->LandslideSeriesResult
 """,
     "cosmo": """@cosmo cosmogenic nuclides (Be10, Al26, C14)
@@ -227,7 +253,9 @@ crn_steady_state(erosion_rate:R,production_scaling:R,nuclide='Be10',...)->R (ato
 crn_transient_history(column,production_scaling:R,topographic_shielding:R?)->{'be10':R,'al26':R,'c14':R}
 crn_invert_basin_erosion(flow:F,samples:V,production_scaling:R,concentration_column='concentration',nuclide='Be10',...)->D; crn_outlet_concentration(concentration:R,erosion_rate:R,flow:F,row,col)->float; crn_pair_diagnostics(samples,...)
 """,
-    "drainage": """@drainage depressions and internal drainage
+    "drainage": """@drainage multiple-direction routing (FlowGraph), depressions, internal drainage, and wetness and connectivity indices
+G=FlowGraph(dem:R,method='mfd'|'dinf',...): G.drainage_area()->R spreads flow over hillslopes
+topographic_wetness_index(drainage_area:R,slope:R)->R and soil_topographic_index(...), sediment_connectivity_index(flow:F,roughness:R,slope:R,drainage_area:R,area_threshold_m2) (slope is a gradient, m/m)
 find_internal_drainage(dem:R,method='hierarchy',...)->InternalDrainageResult (.candidates D, .polygons V); depression_hierarchy(dem:R,boundary_conditions='oooo',...)->DepressionHierarchyResult (.labels R, .flow_direction R, .nodes D)
 fill_pits_boundary_aware(raster:R,boundary_conditions='oooo',...)->R; fill_pits_with_outlets(raster:R,outlet_mask:R,...)->R; fill_pits_with_sinks(raster:R,sinks:R|array,...)->R; make_outlet_mask(raster:R,north=False,...)->R
 """,
@@ -244,19 +272,47 @@ B.statistics(dem:R,...)->D; sample_points(raster:R,points:V)->V
 }
 
 # Order of topics in helper_for_llm("all"): the workflow and pitfalls first.
-_ALL_ORDER = ("workflow", "gotchas") + tuple(
-    sorted(name for name in _TOPICS if name not in ("workflow", "gotchas"))
-)
+_ALL_ORDER = ("workflow", "gotchas") + GUIDE_TOPICS
+
+#: Classes whose method names ``all`` lists, since most work is done through
+#: their methods (Simon, 2026-11-19).
+_ALL_KEY_CLASSES = ("FlowInfo", "ChannelNetwork", "BasinCollection", "ChiCollection", "Raster")
 
 _ALIASES = {
     "raster": "terrain", "surface": "terrain", "channels": "channel",
     "networks": "channel", "basins": "basin", "vectors": "vector",
     "graphflood": "hydraulic", "hydraulics": "hydraulic", "lem": "landscape",
-    "landslides": "landscape", "crn": "cosmo", "cosmogenic": "cosmo",
+    "landslides": "sediment", "landslide": "sediment", "burning": "water", "river_lines": "water", "water_lines": "water", "crn": "cosmo", "cosmogenic": "cosmo",
     "depression": "drainage", "internal": "drainage", "noise": "synthetic",
     "example": "workflow", "quickstart": "workflow", "pitfalls": "gotchas",
     "ksn": "chi", "fetching": "fetch", "statistics": "stats",
 }
+
+
+def _guide_status(name: str, namespace: Mapping[str, object]) -> str:
+    """Return ``"ready"`` or ``"experimental"`` for an export or ``"Class.method"``.
+
+    An export is ready if it is in ``READY`` and not in
+    ``EXPERIMENTAL_OVERRIDES``; a method takes its class's status unless it is
+    demoted on its own. See :mod:`lsdtt3._llm_status`.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` is not a public export, or not a member of one.
+
+    Authors
+    -------
+    S. M. Mudd
+    """
+    owner, _, member = name.partition(".")
+    if owner not in namespace["__all__"]:
+        raise ValueError(f"Unknown lsdtt3 public symbol: '{owner}'.")
+    if member and not hasattr(namespace[owner], member):
+        raise ValueError(f"'{owner}' has no member '{member}'.")
+    if name in EXPERIMENTAL_OVERRIDES or owner in EXPERIMENTAL_OVERRIDES:
+        return "experimental"
+    return "ready" if owner in READY else "experimental"
 
 
 def _without_authors(doc: str) -> str:
@@ -264,20 +320,47 @@ def _without_authors(doc: str) -> str:
     return re.sub(r"\n*Authors\n-{3,}\n(?:[^\n]+(?:\n|$))+\s*$", "", doc).rstrip()
 
 
-def _symbol_card(name: str, value: object) -> str:
-    """Render one public symbol: its whole docstring, without the authors.
+_EXPERIMENTAL_NOTE = ("[experimental] not in the guide's topics yet: it works, but its"
+                      " interface may change and the guide does not teach it")
+
+
+def _symbol_card(name: str, value: object, status: str = "ready") -> str:
+    """Render one public symbol or member: its whole docstring, without the authors.
 
     A function's card starts with its typed signature, then its docstring
     (summary, parameters, return value); a class's docstring holds its
-    constructor (or what returns it) and one line per property and method.
+    constructor (or what returns it) and one line per property and method. A
+    method (``Class.method``) or property card is that member's docstring. An
+    experimental symbol's card says so on its second line.
     """
     doc = _without_authors(inspect.getdoc(value) or "signature unavailable")
-    if not isinstance(value, type):
+    if not isinstance(value, (type, property)) and not re.match(r"^[A-Za-z_]\w*\(", doc):
         try:
-            doc = f"{name}{inspect.signature(value)}\n\n{doc}"
+            doc = f"{name.rpartition('.')[2]}{inspect.signature(value)}\n\n{doc}"
         except (TypeError, ValueError):
             pass
-    return f"@{name}\n{doc}\n"
+    note = f"{_EXPERIMENTAL_NOTE}\n" if status == "experimental" else ""
+    return f"@{name}\n{note}{doc}\n"
+
+
+def _resolve_symbol(name: str, namespace: Mapping[str, object]) -> object:
+    """The object named ``name`` or ``Class.member``; ValueError if there is none."""
+    owner, _, member = name.partition(".")
+    if owner not in namespace["__all__"]:
+        raise ValueError(
+            f"Unknown lsdtt3 public symbol: '{name}'. "
+            "Try helper_for_llm('search:<words>') to find it."
+        )
+    if not member:
+        return namespace[owner]
+    cls = namespace[owner]
+    if member.startswith("_") or not hasattr(cls, member):
+        raise ValueError(
+            f"'{owner}' has no public member '{member}'. "
+            f"Try helper_for_llm('symbol:{owner}') for its members."
+        )
+    value = inspect.getattr_static(cls, member)
+    return value if isinstance(value, property) else getattr(cls, member)
 
 
 def _words(text: str) -> list[str]:
@@ -296,29 +379,190 @@ def _first_line(value: object) -> str:
     return doc.strip().splitlines()[0].strip() if doc.strip() else ""
 
 
-def _search(query: str, namespace: Mapping[str, object], limit: int = 12) -> str:
-    """Rank public symbols by how many query words their name or docstring has.
+def _search_entries(namespace: Mapping[str, object]):
+    """Every public export and every public member of a class, as
+    (name, name words, summary, docstring)."""
+    for name in namespace["__all__"]:
+        value = namespace[name]
+        yield name, _words(name), _summary(value), inspect.getdoc(value) or ""
+        if isinstance(value, type):
+            for member, member_value, _is_property in _catalogue_members(value):
+                yield (f"{name}.{member}", _words(member), _summary(member_value),
+                       inspect.getdoc(member_value) or "")
 
-    A symbol matches if any query word is in its name or docstring. Results
-    are ordered by the number of distinct query words matched, then by the
-    number matched in the name, then alphabetically.
+
+def _search(query: str, namespace: Mapping[str, object], limit: int = 12) -> str:
+    """Rank public exports and class members (``Class.method``) for a query.
+
+    An entry matches if any query word is in its name or docstring; names are
+    split at underscores and CamelCase, so a CLI parameter name such as
+    ``run_low_concavity_detection`` matches the routine that documents it.
+    Ranking, best first: the entry's own name is exactly the query words
+    (``fill pits`` finds ``fill_pits``, ``basins`` finds ``FlowInfo.basins``);
+    more distinct query words matched; more matched in the entry's own name
+    (a method's name, not its class's); more matched in the first docstring
+    line; fewer extra words in the name; then alphabetical. Experimental
+    entries are marked.
     """
     words = {_stem(word) for word in _words(query)}
     scored = []
-    for name in namespace["__all__"]:
-        value = namespace[name]
-        name_words = {_stem(word) for word in _words(name)}
-        doc_words = {_stem(word) for word in _words(inspect.getdoc(value) or "")}
-        in_name = words & name_words
-        matched = in_name | (words & doc_words)
-        if matched:
-            scored.append((-len(matched), -len(in_name), name))
+    for name, name_words, summary, doc in _search_entries(namespace):
+        name_set = {_stem(word) for word in name_words}
+        summary_set = {_stem(word) for word in _words(summary)}
+        doc_set = {_stem(word) for word in _words(doc)} | summary_set | name_set
+        matched = words & doc_set
+        if not matched:
+            continue
+        exact = name_set == words
+        scored.append((-exact, -len(matched), -len(words & name_set),
+                       -len(words & summary_set), len(name_set - words), name.lower(),
+                       name, summary))
     if not scored:
         return f"@search {query.strip()}\nnone\n"
-    lines = [f"@search {query.strip()} ({len(scored)} matches, best {min(limit, len(scored))} shown)"]
-    for _matched, _in_name, name in sorted(scored)[:limit]:
-        lines.append(f"{name}: {_first_line(namespace[name])}")
+    lines = [f"@search {query.strip()} ({len(scored)} matches, best {min(limit, len(scored))} shown;"
+             " helper_for_llm('symbol:<name>') for one)"]
+    for *_key, name, summary in sorted(scored)[:limit]:
+        marker = "[experimental] " if _guide_status(name, namespace) == "experimental" else ""
+        lines.append(f"{marker}{name}: {summary}")
     return "\n".join(lines) + "\n"
+
+
+def _split_top_level(text: str) -> list[str]:
+    """Split at commas outside brackets."""
+    parts, depth, start = [], 0, 0
+    for index, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == "," and depth == 0:
+            parts.append(text[start:index])
+            start = index + 1
+    parts.append(text[start:])
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _parameter_list(definition: str) -> str:
+    """``a,b?,*,c?`` from ``def name(a: T, b: T = \\0, *, c=1) -> R``: names only,
+    ``?`` marking a parameter with a default."""
+    start = definition.find("(")
+    if start < 0:
+        return ""
+    depth = 0
+    for end in range(start, len(definition)):
+        depth += definition[end] in "([{"
+        depth -= definition[end] in ")]}"
+        if depth == 0:
+            break
+    names = []
+    for parameter in _split_top_level(definition[start + 1:end]):
+        name = re.split(r"[:=]", parameter, maxsplit=1)[0].strip()
+        if name in ("self", "/"):
+            continue
+        has_default = "=" in re.sub(r"\[.*?\]", "", parameter)
+        names.append(name + ("?" if has_default and not name.startswith("*") else ""))
+    return ",".join(names)
+
+
+def _definitions(value: object) -> list[str]:
+    """The signature texts of a callable: nanobind's, else inspect's."""
+    native = inspect.unwrap(value)
+    signatures = getattr(native, "__nb_signature__", None)
+    if signatures:
+        return [definition for definition, *_rest in signatures]
+    try:
+        return [f"def f{inspect.signature(value)}"]
+    except (TypeError, ValueError):
+        return []
+
+
+def _summary(value: object) -> str:
+    """The first docstring line that is not a signature."""
+    for line in (inspect.getdoc(value) or "").splitlines():
+        line = line.strip()
+        if line and not re.match(r"^[A-Za-z_][\w.]*\(.*\)(\s*->.*)?$", line):
+            return line
+    return ""
+
+
+def _catalogue_members(cls: type) -> list[tuple[str, object, bool]]:
+    """Public members of a class as (name, value, is_property), as the API
+    manifest lists them (tools/generate_public_api_manifest.py)."""
+    members = []
+    for name in sorted(name for name in dir(cls) if not name.startswith("_")):
+        try:
+            value = inspect.getattr_static(cls, name)
+        except AttributeError:
+            continue
+        if isinstance(value, property):
+            members.append((name, value, True))
+            continue
+        bound = getattr(cls, name, value)
+        if _definitions(bound):
+            members.append((name, bound, False))
+    return members
+
+
+def _catalogue_lines(name: str, value: object, namespace: Mapping[str, object]) -> list[str]:
+    """One line for an export; for a class, one more per ready public member."""
+    if not isinstance(value, type):
+        definitions = _definitions(value)
+        parameters = _parameter_list(definitions[0]) if definitions else "..."
+        return [f"{name}({parameters}): {_summary(value)}"]
+    init = _definitions(getattr(value, "__init__", None)) if "__init__" in vars(value) or \
+        hasattr(inspect.unwrap(value.__init__), "__nb_signature__") else []
+    parameters = _parameter_list(init[0]) if init else ""
+    # no public constructor (made by another call): show the bare class name
+    head = f"{name}({parameters})" if init and parameters != "*args,**kwargs" else name
+    lines = [f"{head}: {_summary(value)}"]
+    for member, member_value, is_property in _catalogue_members(value):
+        if _guide_status(f"{name}.{member}", namespace) != "ready":
+            continue
+        if is_property:
+            lines.append(f"  .{member}: {_summary(member_value)}")
+        else:
+            definitions = _definitions(member_value)
+            lines.append(f"  .{member}({_parameter_list(definitions[0])}): {_summary(member_value)}")
+    return lines
+
+
+def _catalogue(topic: str, namespace: Mapping[str, object]) -> str:
+    """The generated catalogue of a topic: every READY export whose topic it is."""
+    names = _ready_names(topic, namespace)
+    lines = [f"@catalogue {topic}: every ready export (name(args): summary; arg?=has a default;"
+             f" helper_for_llm('symbol:<name>') for types and defaults)"]
+    for name in names:
+        lines.extend(_catalogue_lines(name, namespace[name], namespace))
+    return "\n".join(lines) + "\n"
+
+
+def _ready_names(topic: str, namespace: Mapping[str, object]) -> list[str]:
+    return sorted((name for name in namespace["__all__"]
+                   if guide_topic(name) == topic and _guide_status(name, namespace) == "ready"),
+                  key=str.lower)
+
+
+def _all(namespace: Mapping[str, object]) -> str:
+    """The pasteable guide: the index, every topic's guidance, the names of all
+    ready exports by topic, and the method names of the key classes."""
+    parts = [_INDEX] + [_GUIDANCE[name] for name in _ALL_ORDER]
+    names = ["@names every ready export, by topic (arguments: helper_for_llm('symbol:<name>'))"]
+    names += [f"{topic}: {' '.join(_ready_names(topic, namespace))}" for topic in GUIDE_TOPICS]
+    methods = ["@methods of the key classes (arguments: helper_for_llm('symbol:<Class>.<method>'))"]
+    for cls in _ALL_KEY_CLASSES:
+        members = [member for member, _value, _is_property in _catalogue_members(namespace[cls])
+                   if _guide_status(f"{cls}.{member}", namespace) == "ready"]
+        methods.append(f"{cls}: {' '.join(members)}")
+    closing = ("@end Without tools, ask the user to run print(lsdtt3.helper_for_llm('symbol:<name>'))"
+               " for the exact arguments of a name above, and paste the result.\n")
+    return "".join(parts) + "\n".join(names) + "\n" + "\n".join(methods) + "\n" + closing
+
+
+def _topic_card(topic: str, namespace: Mapping[str, object]) -> str:
+    """A topic: its hand-written guidance, then its catalogue if it has one."""
+    if topic in GUIDE_TOPICS:
+        return _GUIDANCE[topic] + _catalogue(topic, namespace)
+    return _GUIDANCE[topic]
 
 
 def helper_for_llm(topic: str = "index", *, _namespace: Mapping[str, object]) -> str:
@@ -355,19 +599,18 @@ def _render(topic: str, namespace: Mapping[str, object]) -> str:
     if request in ("", "index", "help"):
         return _INDEX
     if request == "all":
-        return _INDEX + "".join(_TOPICS[name] for name in _ALL_ORDER)
+        return _all(namespace)
+    if request in ("catalogue", "catalog"):
+        return _INDEX.splitlines()[0] + "\n" + "".join(
+            _catalogue(name, namespace) for name in GUIDE_TOPICS)
     if request.startswith("symbol:"):
         name = topic.split(":", 1)[1].strip()
-        if name not in namespace["__all__"]:
-            raise ValueError(
-                f"Unknown lsdtt3 public symbol: '{name}'. "
-                "Try helper_for_llm('search:<words>') to find it."
-            )
-        return _symbol_card(name, namespace[name])
+        value = _resolve_symbol(name, namespace)
+        return _symbol_card(name, value, _guide_status(name, namespace))
     if request.startswith("search:"):
         return _search(topic.split(":", 1)[1], namespace)
     request = _ALIASES.get(request, request)
-    if request not in _TOPICS:
-        choices = ", ".join(sorted(_TOPICS))
+    if request not in _GUIDANCE:
+        choices = ", ".join(sorted(_GUIDANCE))
         raise ValueError(f"Unknown lsdtt3 LLM topic: '{topic}'. Try: {choices}.")
-    return _TOPICS[request]
+    return _topic_card(request, namespace)

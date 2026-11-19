@@ -3,74 +3,33 @@
 """Generate complete domain-grouped Markdown from the runtime API manifest."""
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
 import sys
 
 
-DOMAINS = {
-    "raster": "Raster And Terrain",
-    "flow": "Flow, Channels, And Basins",
-    "chi": "Chi And Ksn",
-    "fetch": "Fetching And Geospatial Data",
-    "cosmogenic": "Cosmogenic Nuclides",
-    "graphflood": "GraphFlood And Hydraulics",
-    "landscape": "Landscape And Hillslopes",
-    "drainage": "Drainage And Depressions",
-    "sediment": "Sediment, Landslides, And Landforms",
-    "synthetic": "Synthetic Workflows",
-    "fluvial": "Fluvial, Valley, Marsh, And Vector Hydrology",
-    "statistics": "Statistics And Utilities",
-}
+def _load_topics():
+    """Load lsdtt3/_topics.py by path: CI runs this without the extension built."""
+    path = Path(__file__).resolve().parents[1] / "src" / "lsdtt3" / "_topics.py"
+    spec = importlib.util.spec_from_file_location("lsdtt3_topics", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_topics = _load_topics()
+DOMAINS = _topics.DOMAINS
+GEOSPATIAL_RUNTIME = _topics.GEOSPATIAL_RUNTIME
+domain = _topics.domain
+
 
 DOMAIN_GUIDANCE = {
     "graphflood": "Canonical convergence names are used throughout. Legacy tol_* keywords warn and old/new conflicts fail, including accelerator backend options.",
     "landscape": "LandscapeModel thresholds use specific catchment area A/dx in metres. Flat relief windows use a full side length in pixels.",
     "fluvial": "Valley identification is upstream of centreline tracing. extract_valley_centrelines requires an explicit, co-registered valley_mask.",
 }
-
-
-# GDAL/PROJ runtime diagnostics. Matched by exact name rather than by substring:
-# a "proj" substring rule would also capture reproject / reproject_to_grid, which
-# belong with the raster operations.
-GEOSPATIAL_RUNTIME = {
-    "gdal_data_description",
-    "gdal_version",
-    "proj_data_description",
-    "proj_version",
-}
-
-
-def domain(name):
-    lower = name.lower()
-    if name in GEOSPATIAL_RUNTIME:
-        return "fetch"
-    if "synthetic" in lower:
-        return "synthetic"
-    if "graphflood" in lower or "hydraulic" in lower:
-        return "graphflood"
-    if lower.startswith("crn") or "cosmo" in lower:
-        return "cosmogenic"
-    if "chi" in lower:
-        return "chi"
-    if any(word in lower for word in ("fetch", "bounds", "cop30", "utm_epsg", "http_available", "rotat", "dem_sources")):
-        return "fetch"
-    if any(word in lower for word in ("landscape", "hillslope")):
-        return "landscape"
-    if any(word in lower for word in ("internaldrainage", "internal_drainage", "depression", "soil_topographic", "sti", "drainresult", "find_drains")):
-        return "drainage"
-    if any(word in lower for word in ("sediment", "landslide", "road", "mountainfront", "mountain_front", "ridgeline", "thinlines", "thin_lines")):
-        return "sediment"
-    if any(word in lower for word in ("valley", "tidal", "marsh", "water", "streamburn", "burn_stream", "repair_water",
-                                      "floodplain", "surface_class", "surface_levels", "riser", "relief_above",
-                                      "select_threshold", "perimeter")):
-        return "fluvial"
-    if any(word in lower for word in ("flow", "channel", "basin", "divide", "connectivity")):
-        return "flow"
-    if any(word in lower for word in ("compare", "linear_stats", "relief_ratio", "helper_for_llm")):
-        return "statistics"
-    return "raster"
 
 
 def materialize(signature):
