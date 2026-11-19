@@ -37,6 +37,8 @@ Steps are gated by booleans and run in this order:
 | 4. Chi extraction + data map | `write_chi_data_maps: true` |
 | 5. Chi coordinate raster | `write_chi_coordinate_raster: true` |
 | 6. Chi network fitting + disorder sweep | `fit_chi_networks: true` |
+| 6a. Tributary, knickpoint, threshold and knickzone tables | `write_chi_tributary_table`, `write_chi_knickpoint_table` (both on by default, with `fit_chi_networks`) |
+| 6b. Step changes and the step-aware (stage 2) fit | `run_step_change_detection: true` |
 | 7. Disorder uncertainty | `run_subset_sensitivity`, `run_jackknife`, `run_bootstrap` |
 | 8. Spatial k_sn / u* inversion | `run_inversion: true` (requires Eigen3) |
 
@@ -146,6 +148,23 @@ Behaviour:
 | `mn_max` | float | `0.6` | Maximum m/n ratio for the disorder sweep. |
 | `mn_step` | float | `0.02` | Step size for the m/n disorder sweep. Must be > 0. |
 | `fit_critical_divergence_metres` | float | `5.0` | Critical elevation divergence (m) used to split chi-elevation branches. |
+
+## Tributaries, knickpoints and step changes
+
+How the candidates are ranked, how major knickpoints and knickzones are chosen,
+and how steps are found and fitted around are explained in
+[Tributaries and knickpoints](../design_and_algorithms/chi_analysis.md#tributaries-and-knickpoints).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `write_chi_tributary_table` | bool | `true` | One row per tributary (branch of the fit), with its drainage area where it joins: `_chi_tributaries_mn_*.csv`. |
+| `write_chi_knickpoint_table` | bool | `true` | The knickpoint candidates with their split-hierarchy ranking and `is_major` (`_chi_knickpoints_mn_*.csv`), the suggested thresholds (`_chi_knickpoint_thresholds_mn_*.csv`) and the knickzones (`_chi_knickzones_mn_*.csv`). |
+| `knickpoint_threshold_algorithm_choice` | string | `p95` | Threshold on \|`split_delta_ksn_normalised`\| for `is_major` and knickzone lips: `p90`, `p95`, `median_plus_3mad` or `otsu`. |
+| `run_step_change_detection` | bool | `false` | Find steps (waterfalls, dams, steep gorge reaches) on the longitudinal profile (`_chi_steps_mn_*.csv`), and fit the profile again around them (the `_stepaware` fit tables). The knickpoint tables stay on the ordinary fit. |
+| `step_change_min_gradient` | float | `0.40` | Gradient (m/m) at or above which a window of pixel pairs is steep. Resolution dependent. |
+| `step_change_max_window_length_metres` | float | `90.0` | Longest window (flow length, m) over which the gradient is taken; also the distance from a branch's base within which a step is flagged as at the outlet or a tributary mouth. |
+| `step_change_min_drop_metres` | float | `5.0` | Smallest drop (m) of a reported step. |
+| `write_chi_step_lines` | bool | `false` | Write the steps as polylines: `_chi_step_lines_mn_*`. |
 
 ---
 

@@ -152,22 +152,68 @@ joins its parent branch. `<write_fname>_chi_tributaries_mn_*.csv` lists them,
 with their order (0 for the main stem, 1 for its tributaries, and so on) and
 the drainage area where they join.
 
+With `write_chi_knickpoint_table: true` (the default), the fit also writes
+three tables: the knickpoint candidates, suggested thresholds for a major
+knickpoint, and the knickzones.
+
+### Knickpoint candidates
+
 A **knickpoint candidate** is any pixel where two fitted segments meet:
 
 - within a branch, where one segment meets the next segment downstream;
 - at a tributary mouth (flagged `at_junction = 1`), where the tributary's
   lowest segment meets the segment of its parent branch at the junction.
 
-Each candidate in `<write_fname>_chi_knickpoints_mn_*.csv` carries the
-*k<sub>sn</sub>* above and below it, their difference `delta_ksn` (upstream
-minus downstream: positive where the channel steepens upstream) and
-`log_ratio_ksn` (the base-10 logarithm of their ratio), with its position,
-chi, elevation, flow distance and drainage area.
+Each candidate in `<write_fname>_chi_knickpoints_mn_*.csv` carries:
 
-Every segment boundary is a candidate, so most are small. To pick out the
-major ones, `<write_fname>_chi_knickpoint_thresholds_mn_*.csv` suggests
-thresholds from the distribution of |`delta_ksn`| and |`log_ratio_ksn`|
-over the within-branch candidates:
+- its position, chi, elevation, flow distance and drainage area;
+- the *k<sub>sn</sub>* of the segments above and below it, `ksn_upstream`
+  and `ksn_downstream`;
+- their difference `delta_ksn` (upstream minus downstream: positive where
+  the channel steepens upstream) and `log_ratio_ksn` (the base-10 logarithm
+  of their ratio).
+
+### Ranking them: the split hierarchy
+
+Every segment boundary is a candidate, so most are small, and `delta_ksn` is
+a poor guide to which matter. Two short segments on a noisy reach can differ
+more in *k<sub>sn</sub>* than two long ones either side of a real knickpoint.
+The fit itself gives a better ranking.
+
+The [segmentation](#dividing-chi-profiles-into-segments) splits each branch
+top-down. It splits the chord at the node furthest from it, then the halves
+the same way. Every within-branch boundary is one of these **splits**, and its
+row records how the fit made it:
+
+- `split_rank` is the order of the split within its branch, and
+  `split_depth` its level in the recursion (0 for the branch's first split);
+- `split_divergence_metres` is how far the profile was from the chord there;
+- `split_dchi_below` / `split_dchi_above` and `split_ksn_below` /
+  `split_ksn_above` are the chi spans and slopes of the two child chords at
+  that moment;
+- `split_delta_ksn` is the *k<sub>sn</sub>* change at the scale the split
+  was made, above minus below.
+
+The change is then weighted by its scale:
+
+```text
+split_delta_ksn_metres = split_delta_ksn / sqrt(1/dchi_below^2 + 1/dchi_above^2)
+```
+
+In metres, this is the elevation misfit the change makes over its own chords.
+A change across long chords outranks the same change across short, noisy
+ones. **The ranking measure is `split_delta_ksn_normalised`**: the same value
+divided by the branch's chi span (head to junction or outlet), so that the long
+channels do not dominate a ranking pooled over the whole network. Early splits
+are where the profile departs most from a straight line at the scale of the
+whole channel; late, deep ones are small corrections.
+
+### Major knickpoints
+
+`<write_fname>_chi_knickpoint_thresholds_mn_*.csv` suggests thresholds for a
+major knickpoint. They are computed over the within-branch candidates for
+|`split_delta_ksn_normalised`|, |`split_delta_ksn_metres`|, |`delta_ksn`| and
+|`log_ratio_ksn`|:
 
 - the 90th and 95th percentiles;
 - the median plus three times the median absolute deviation (scaled by
@@ -179,11 +225,111 @@ over the within-branch candidates:
 It also gives an outlier threshold for segment *k<sub>sn</sub>* itself: the
 upper quartile plus three times the interquartile range.
 
-The tool does not choose a threshold for you: filter the knickpoint table with
-the one that suits your question. The candidates depend on the segmentation,
-so `fit_critical_divergence_metres` also sets the smallest knickpoint that can
-be found: a step in the profile smaller than the tolerance does not split a
-segment.
+**`is_major`** marks the candidates whose |`split_delta_ksn_normalised`| is
+above the threshold chosen by `knickpoint_threshold_algorithm_choice` (default
+`p95`). The threshold is computed over every within-branch split of the run,
+main stems and tributaries pooled. The thresholds file lists the value of
+every method for every measure, so another one can be applied afterwards.
+
+The candidates depend on the segmentation, so `fit_critical_divergence_metres`
+also sets the smallest knickpoint that can be found: a step in the profile
+smaller than the tolerance does not split a segment.
+
+### Knickzones
+
+`<write_fname>_chi_knickzones_mn_*.csv` pairs the major knickpoints into
+**knickzones**, steep reaches from a foot up to a lip:
+
+- A **lip** is a major *shallowing* split (`split_delta_ksn < 0`: the channel
+  is gentler upstream). Where several follow one another along a branch, the
+  lip is the strongest of them, so small major splits inside a steep reach
+  do not cut it short.
+- Its **foot** is the strongest *steepening* split below it that is major or
+  whose |`split_delta_ksn_metres`| passes that measure's 95th percentile.
+  The normalised ranking rarely passes two splits on one branch, so the foot
+  has the weaker test.
+- A branch that starts steep, with no foot below its lip, gets a knickzone
+  that runs down to its base: the basin outlet on a main stem, the junction
+  on a tributary. This is typical where a basin outlet sits on the
+  knickzone. `foot_type` says which (`split`, `basin_outlet`,
+  `tributary_junction`).
+- A foot with no lip above it (steep all the way to the channel head) makes
+  no knickzone.
+
+Each knickzone has its foot and lip positions, chi and elevations, its relief,
+chi span and flow length, and the *k<sub>sn</sub>* below, inside and above it.
+
+### Step changes and the step-aware fit
+
+A waterfall, a dam or a short steep gorge is a step in the profile, not a
+change in *k<sub>sn</sub>*. A straight chord fitted across one bends the
+*k<sub>sn</sub>* of the reaches on either side. With
+`run_step_change_detection: true` the tool finds the steps, then fits the
+profile a second time around them.
+
+**Finding the steps.** This works on the longitudinal profile, not in chi, so
+it does not depend on m/n (only the chi of a step's ends does). On each branch
+of the fit (the same nodes, D8 receivers and elevations), from its base up to
+its head:
+
+1. Each node and its receiver form a pair, with a drop and a D8 step length.
+2. Every run of consecutive pairs up to `step_change_max_window_length_metres`
+   of flow length (default 90 m) is a window, and a window is steep if its
+   gradient, drop over flow length, is at least `step_change_min_gradient`
+   (default 0.40). Every window length up to the maximum is tested, so a
+   one-pixel waterfall and a step spread over several pixels are both found.
+   Flat or uphill pairs inside a window lower its gradient rather than
+   breaking it.
+3. Every pair in a steep window is marked, and consecutive marked pairs form
+   a reach. Gentle pairs at its ends are trimmed.
+4. A reach is kept if it drops at least `step_change_min_drop_metres`
+   (default 5 m, the default critical divergence), so bed roughness is not
+   reported.
+
+`<write_fname>_chi_steps_mn_*.csv` lists the reaches, with their drop, flow
+length, mean and maximum window gradient, and three flags:
+
+- `at_basin_outlet` and `at_tributary_mouth`: within the window length of
+  the branch's base;
+- `contains_uphill_pairs`.
+
+The gradient threshold depends on the resolution. Coarser pixels spread a
+waterfall over a longer flow length and lower its gradient, and on a 30 m DEM
+0.40 also marks steep gorge reaches. Dams are found too: breach them out of
+the DEM first if they are not wanted. `write_chi_step_lines` writes the steps
+as polylines.
+
+**The step-aware (stage 2) fit.** Each branch is cut at its steps:
+
+- each step becomes one fixed segment (`is_step = 1`) between its two ends,
+  pinned to the DEM;
+- the recursive fit runs only on the reaches between steps.
+
+The *k<sub>sn</sub>* either side of a waterfall is then not bent by a chord
+across it. Its tables are written with a `_stepaware` tag
+(`_chi_fit_nodes_stepaware_mn_*.csv`, `_chi_fit_segments_stepaware_mn_*.csv`,
+the tributary table and the segment lines). Its tributary table leaves the
+step segments out of the *k<sub>sn</sub>* statistics.
+
+**Knickpoints stay on the ordinary (stage 1) fit.** The knickpoint,
+threshold and knickzone tables are always ranked on the stage 1 fit. Cutting
+a branch at its steps breaks the split hierarchy: the chord below a plateau
+rim just above a waterfall stops at the step, so the rim's split loses the
+weight that ranked it. The stage 1 knickpoint table instead gains three
+columns to tell step-driven knickpoints from changes in *k<sub>sn</sub>*:
+
+- `nearest_step_id`;
+- `nearest_step_chi_distance`, which is 0 inside the step;
+- `step_in_adjacent_segments`, which is 1 if a step lies on the two segments
+  either side of the boundary.
+
+So: rank and choose knickpoints from stage 1, and read *k<sub>sn</sub>*
+between steps from stage 2.
+
+[lsdviztools3](https://lsdtopotools.github.io/lsdviztools3/chi_analysis/#knickpoints-lsdviz3-knickpoints)
+draws all of these: the knickpoint distribution with its thresholds, the major
+knickpoints on the chi profile, by elevation and on a map with the knickzones,
+and the steps on the longitudinal profiles.
 
 ---
 
