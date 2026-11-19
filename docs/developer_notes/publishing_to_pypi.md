@@ -60,9 +60,10 @@ is stored anywhere.
     | `release.yml` | `pypi` | every `vX.Y.Z` tag |
     | `python-wheels.yml` | `pypi` | manual runs (`.postN` rebuilds, a redone upload) |
 
-    Do the same on <https://test.pypi.org> with environment `testpypi`. Before
-    the first upload the project does not exist, so add them as *pending*
-    publishers. A publisher with the environment left blank accepts any
+    For rehearsals, add the `python-wheels.yml` publisher on
+    <https://test.pypi.org> too, with environment `testpypi` (tags never
+    upload there). Before the first upload the project does not exist, so add
+    them as *pending* publishers. A publisher with the environment left blank accepts any
     environment; that works too.
 
     PyPI checks the workflow that **started** the run. `release.yml` calls
@@ -71,11 +72,10 @@ is stored anywhere.
     `release.yml` itself, and `python-wheels.yml` uploads only on a manual
     run. That is why both files are registered.
 
-2. **GitHub environments** `testpypi` and `pypi` (repository *Settings →
-   Environments*). GitHub creates an environment the first time a job uses
-   it, but without rules. A **required reviewer** on `pypi` makes every PyPI
-   upload wait for approval, so the TestPyPI files can be installed and tried
-   first. Recommended at least for the first releases.
+2. **GitHub environments** `pypi` and, for rehearsals, `testpypi`
+   (repository *Settings → Environments*). GitHub creates an environment the
+   first time a job uses it, but without rules. A **required reviewer** on
+   `pypi` makes every PyPI upload wait for approval.
 
 3. **Storage.** A PyPI project may hold 10 GB by default. A release is four
    wheels of about 35–65 MB, about 200 MB, so the default holds roughly fifty
@@ -98,24 +98,25 @@ GitHub release:
    Intel, Windows x64), tests each one on Python 3.12, 3.13 and 3.14, and
    attaches them to the release;
 2. `publish-release` publishes the GitHub release as Latest;
-3. `publish-testpypi` downloads the wheels from the run, checks them, and
-   uploads them to TestPyPI;
-4. `publish-pypi` checks and uploads the same files to PyPI (after approval,
-   if the `pypi` environment requires a reviewer).
+3. `publish-pypi` downloads the wheels from the run, checks them, and
+   uploads them to PyPI (after approval, if the `pypi` environment requires a
+   reviewer).
 
-Steps 3 and 4 run **only if every wheel built**: a version reaches PyPI with
+Step 3 runs **only if every wheel built**: a version reaches PyPI with
 all four platforms or not at all, because a version cannot be added to
 cleanly afterwards. If a platform failed, fix it and publish with a manual run
 (below).
 
-Before uploading, each job runs
+Before uploading, the job runs
 `python_bindings/tools/check_dist_wheels.py`, which refuses anything but
 exactly one `cp312-abi3` wheel per platform, all carrying the tag's version
 and a repaired platform tag, each under PyPI's 100 MB file limit, and then
 `twine check --strict`. Uploads use `skip-existing`, so re-running a job that
 uploaded part-way is harmless.
 
-To check a release from TestPyPI before approving PyPI:
+A tag does not upload to TestPyPI. To try a tag's wheels there, for example
+while the PyPI upload waits for approval, upload them with a manual run
+(`publish_to` **testpypi**, below) and install from TestPyPI:
 
 ```bash
 python -m venv /tmp/tp && /tmp/tp/bin/pip install \
@@ -250,10 +251,9 @@ it exactly.
 ### Release candidates
 
 No pre-release versions are published, to PyPI or in backend bundles (the QGIS
-plugin cannot parse a suffixed `backend_version`). Every release goes to
-TestPyPI first, and a required reviewer on the `pypi` environment gives the
-chance to try it there before PyPI. A version can also be uploaded to TestPyPI
-alone with a manual run (`publish_to: testpypi`).
+plugin cannot parse a suffixed `backend_version`). Tags upload to PyPI only. A
+manual run (`publish_to: testpypi`) uploads a tag's wheels to TestPyPI, for
+example while the PyPI upload waits for its reviewer.
 
 ---
 

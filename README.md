@@ -45,7 +45,7 @@ If you use this software for research, please also cite the original LSDTopoTool
 
 Key improvements over LSDTopoTools2:
 
-- Reads any GDAL-supported format (GeoTIFF, COG, VRT, BIL, ASC, …). VRT is especially useful for large tiled datasets.
+- Reads any GDAL-supported format (GeoTIFF, COG, VRT, BIL, ASC, …). [VRT](https://gdal.org/en/stable/programs/gdalbuildvrt.html) is especially useful for large tiled datasets.
 - A command line interface for downloading data from OpenTopography.org. No additional sofware is needed to get datasets for analysis. Theer are also a number of additional download tools for lithology, erosion rates, and various vector files. 
 - Writes vector outputs (GeoPackage, FlatGeobuf, CSV) with correct georeferencing via GDAL/OGR.
 - Automatic projection handling: If input data is not projected, converts to UTM below ±75°, polar stereographic at high latitude, optional Lambert LAEA for wide-extent rasters spanning more than two UTM zones.
@@ -533,7 +533,7 @@ Its source is the `docs/` tree in this repository, organised by audience:
 | [Basin Object Architecture](https://lsdtopotools.github.io/lsdtt3/developer_notes/basin_object_architecture.html) | Design boundaries of the basin object hierarchy. |
 | [Python Bindings Architecture And API Contracts](https://lsdtopotools.github.io/lsdtt3/developer_notes/python_bindings_architecture.html) | The Python bindings: architecture and the public-API contracts (manifest, generated reference). |
 | [Building the Python wheels](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_python_wheels.html) | Building the manylinux and other Python wheels. |
-| [Publishing lsdtt3 to PyPI](https://lsdtopotools.github.io/lsdtt3/developer_notes/publishing_to_pypi.html) | How the release workflow publishes the wheels to TestPyPI and PyPI, and how to publish by hand. |
+| [Publishing lsdtt3 to PyPI](https://lsdtopotools.github.io/lsdtt3/developer_notes/publishing_to_pypi.html) | How the release workflow publishes the wheels to PyPI, and how to publish by hand (or to TestPyPI). |
 | [Backend Abstraction Rules for lsdtt3](https://lsdtopotools.github.io/lsdtt3/developer_notes/backend_abstraction_rules.html) | When to use abstract bases + factories vs. concrete CPU free functions. |
 | [Using lsdtt_flowinfo](https://lsdtopotools.github.io/lsdtt3/developer_notes/using_lsdtt_flowinfo.html) | How to use the D8 flow routing object in analysis code. |
 | [lsdtt3 utils contents](https://lsdtopotools.github.io/lsdtt3/developer_notes/lsdtt_utils_guide.html) | Guide to the `src/utils/` layer: what belongs there and the valid-data contract. |

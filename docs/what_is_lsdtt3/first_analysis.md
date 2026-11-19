@@ -1,13 +1,13 @@
 # Your first analysis
 
-This page takes you from a DEM sitting on disk to a hillshade raster and a channel
+This page takes you from a DEM sitting on your computer to a hillshade raster and a channel
 network vector file. It assumes you have lsdtt3 installed and the tools on your `PATH` —
 if not, start with [Installing lsdtt3](install_lsdtt3.md).
 
-These instricutions are for the command line tools, which is the way the developers use this software. 
+These instructions are for the command line tools, which is the way the developers use this software. 
 If you prefer python or QGIS you will need to look at those sections in the documentation. 
 
-The one thing to understand before anything else: **lsdtt3 tools are driven by
+The one thing to understand before anything else: **`lsdtt3` tools are driven by
 a parameter file, not by command-line flags.** There is no `--dem` or
 `--output-directory`. You write a short text file that says what to read, where
 to write it, and what to compute; then you hand that file to a tool. The rationale for this structure is that every `lsdtt` analysis is associated with a (semi)-permanent file, wather than an ephemeral command line flag. 
@@ -36,8 +36,7 @@ These rules cover everything:
   spaces.
 - **`#` starts a comment** anywhere on a line: on its own line, after a value,
   or even in the middle of one (`run#2` reads as `run`).
-- **A value must not contain spaces.** There is no quoting mechanism, so a path
-  containing a space will not parse; lists are comma-separated with no spaces
+- **A value must not contain spaces.** Lines with spaces will not read properly; lists are comma-separated with no spaces
   (`25,49,99`). Put your data somewhere without spaces in the path.
 - **Values are never quoted.** lsdtt3 keeps quote characters as part of the
   value, so `"my_dem.tif"` would look for a file with quotes in its name; the

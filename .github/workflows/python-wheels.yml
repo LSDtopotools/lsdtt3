@@ -11,7 +11,7 @@ name: Build Python wheels
 #   - by hand from the Actions tab, for a vX.Y.Z.postN wheel-only rebuild of
 #     the same source, or to rebuild one tag's wheels.
 #
-# PyPI: on a tag, release.yml uploads these wheels (TestPyPI, then PyPI) after
+# PyPI: on a tag, release.yml uploads these wheels to PyPI after
 # this workflow returns. A manual run uploads them itself when publish_to is
 # testpypi or pypi (the publish-pypi job below), for a .postN rebuild or to
 # redo a failed upload. PyPI's trusted publishing names the workflow that
@@ -82,8 +82,12 @@ concurrency:
 # restore lives on main (vcpkg-cache.yml): a cache saved by a tag run is
 # visible only to that tag. Keep VCPKG_TAG identical in all three workflows. The cache key is the
 # release tag + triplet + .github/vcpkg-packages.txt, so it changes only when one
-# of those is edited. A runner MSVC update can still change the ABI hash and force one
-# slow rebuild; restore-keys then reuse every archive that still matches.
+# of those is edited, or the runner's MSVC toolset changes (it is in the key too).
+# There are no restore-keys: an older key's archives were built by another
+# compiler or for another package list, vcpkg reuses none of them after an MSVC
+# change, and restoring them only adds a 1.4 GB download and stale files to the
+# next save. An MSVC change on the runner image forces one slow rebuild, which
+# is then saved under the new key (vcpkg-cache.yml also warms it on main).
 env:
   VCPKG_TAG: "2026.10.16"
   VCPKG_PINNED_ROOT: 'C:\vcpkg-pinned'
@@ -246,10 +250,6 @@ jobs:
             ~\AppData\Local\vcpkg\archives
             C:\vcpkg-pinned\downloads
           key: windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-${{ hashFiles('.github/vcpkg-packages.txt') }}
-          restore-keys: |
-            windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-msvc${{ env.MSVC_TOOLS_VERSION }}-
-            windows-vcpkg-${{ env.VCPKG_TAG }}-${{ env.VCPKG_TRIPLET }}-
-            windows-vcpkg-
 
       - name: Install Windows native dependencies
         if: runner.os == 'Windows'
@@ -374,7 +374,7 @@ jobs:
   # missing; and only for an "all" run, so a Linux-only run cannot publish a
   # version whose other wheels would then have to follow as .postN.
   publish-pypi:
-    name: Upload to ${{ inputs.publish_to }}
+    name: Upload to PyPI or TestPyPI (manual runs only)
     if: >-
       github.event_name == 'workflow_dispatch'
       && inputs.publish_to != 'none'

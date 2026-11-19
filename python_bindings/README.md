@@ -1,8 +1,12 @@
 # lsdtt3 Python bindings
 
-`lsdtt3` is a nanobind-based Python interface to LSDTopoTools3.
+`lsdtt3` is a nanobind-based Python interface to LSDTopoTools3. 
 
-**Documentation:** guides at
+It contains many of the key functions of the full `lsdtt3` topographic analysis environnment. 
+It should be noted that it does not have complete coverage of every tool in `lsdtt3`. For that you should use the command line interface, 
+which you can read about in the [installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html)
+
+**Documentation:** guides for the python bindings are at
 <https://lsdtopotools.github.io/lsdtt3/python/index.html> and the reference
 for every function at
 <https://lsdtopotools.github.io/lsdtt3/python_api/index.html>. In Python,
@@ -14,10 +18,11 @@ for every function at
 python -m pip install lsdtt3
 ```
 
-Python 3.12 or later, on Linux (x86_64), macOS (Apple Silicon and Intel,
-macOS 15 or later) and Windows (x64). Install into a virtual, conda or pixi
+`lsdtt3` python bindings are supported on Python 3.12 or later, on Linux (x86_64), macOS (Apple Silicon and Intel,
+macOS 15 or later) and Windows (x64). We strongly suggest you install it into a virtual, conda or pixi
 environment rather than your system Python. The wheels bundle GDAL and PROJ,
-so nothing else needs installing, and they also install the lsdtt3
+so nothing else needs installing. You can thank us later since GDAL and PROJ lead to the vast majority of geospatial python conflict. 
+The wheels Salso install the lsdtt3
 command-line tools (`lsdtt-*`) as commands. In Google Colab, run
 `!pip install lsdtt3` in a cell.
 

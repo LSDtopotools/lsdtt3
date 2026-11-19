@@ -7,11 +7,9 @@ repository collaborators.** The repository is set so that only collaborators
 can open them. When the code base counts as stable is decided by Simon M. Mudd
 (SMM); this page will say so when that changes.
 
-The reason is practical. lsdtt3 is large and its parts depend on each other:
-CLI parameter names, output formats, the Python API and the QGIS plugin are
-all still moving, and a change in one place often needs matching changes
-elsewhere. Reviewing outside changes against a moving target costs more than
-it gains at this stage.
+We do this because the code base is large and intertwined (despite our best efforts) and the chances of breaking things are quite high. 
+The code underlies a significant fraction of the research done by the various repository collaborators' groups, and it is essential that the code remains stable. 
+
 
 ## What you can do now
 
