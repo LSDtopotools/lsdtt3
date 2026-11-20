@@ -6267,6 +6267,31 @@ add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned
 lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
     LABELS "statistics;slope_area")
 
+# Slope stability, Phase 0 (src/utils): CDFs of sums and products of uniform
+# random variables (against their defining integrals, Monte Carlo, the SINMAP
+# manual's piecewise product CDF, and exact identities); equal-density sampling
+# (CDF levels, trapezoid weights, convergence to closed-form expectations and
+# probabilities); and the bounded Brent minimiser (known minima, NaN regions,
+# the scaLr rupture safety factor against a grid search and its closed-form
+# optimal depth).
+add_executable(lsdtt-test-uniform-combination-cdfs cpp/test_uniform_combination_cdfs.cpp)
+target_link_libraries(lsdtt-test-uniform-combination-cdfs PRIVATE lsdtt3_cpu)
+add_test(NAME unit_uniform_combination_cdfs COMMAND lsdtt-test-uniform-combination-cdfs)
+lsdtt_set_tests_properties(unit_uniform_combination_cdfs PROPERTIES
+    LABELS "statistics;slope_stability")
+
+add_executable(lsdtt-test-equal-density-sampling cpp/test_equal_density_sampling.cpp)
+target_link_libraries(lsdtt-test-equal-density-sampling PRIVATE lsdtt3_cpu)
+add_test(NAME unit_equal_density_sampling COMMAND lsdtt-test-equal-density-sampling)
+lsdtt_set_tests_properties(unit_equal_density_sampling PROPERTIES
+    LABELS "statistics;slope_stability")
+
+add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
+target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
+add_test(NAME unit_brent_minimiser COMMAND lsdtt-test-brent-minimiser)
+lsdtt_set_tests_properties(unit_brent_minimiser PROPERTIES
+    LABELS "statistics;slope_stability")
+
 # lsdtt_slope_area_cpu: d8_flow_path_gradient and the options form of
 # channel_slope_at (exact gradients on planes, row and diagonal paths;
 # one-sided windows incl. 30 m cells; exclusion; donor ranking by an area
@@ -12520,6 +12545,11 @@ set(LSDTT_DOMAIN_RULES
     "gdal_"                  "gdal"
     # Library-level statistics (src/utils/lsdtt_statistics and relatives).
     "order_statistics"       "core"
+    # Slope-stability numerics in src/utils (uniform-combination CDFs,
+    # equal-density sampling, the Brent minimiser). Library-level, so "core"
+    # like the statistics above; the tests also carry their own
+    # "slope_stability" label, so `ctest -L slope_stability` reaches them.
+    "uniform_combination|equal_density|brent_minimiser" "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The

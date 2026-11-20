@@ -565,6 +565,9 @@ foreach(_t IN ITEMS raster_cell_predicates raster_sampling grid_neighbours
     lsdtt_evidence(unit_${_t} unit characterisation)
 endforeach()
 lsdtt_evidence(unit_slope_area_log_binned_quantiles unit characterisation exact_solution)  # bit-identical to lsdtt-slope-area's removed make_bins (kept verbatim); hand cases
+lsdtt_evidence(unit_uniform_combination_cdfs unit exact_solution differential property negative)  # closed-form identities; defining integrals by quadrature, Monte Carlo and the SINMAP manual's piecewise product CDF inside the test; monotone in [0, 1]; bad bounds throw
+lsdtt_evidence(unit_equal_density_sampling unit exact_solution property negative)  # CDF levels k/(n-1), closed-form means and probabilities; weights sum to 1; bad arguments throw
+lsdtt_evidence(unit_brent_minimiser unit exact_solution differential negative)  # known minima and the scaLr closed-form depth; 2e6-point grid search inside the test; bad arguments throw
 lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4
 lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)
 lsdtt_evidence(unit_raster_resampling unit exact_solution property)
