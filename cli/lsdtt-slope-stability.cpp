@@ -970,7 +970,7 @@ int main(int argc, char* argv[])
                     surface[i] = input_dem.get_data()[i];
                     basez[i] = surface[i] - thick[i];
                 }
-                lsdtt::lsdtt_groundwater_dupuit aquifer(meta, surface, basez, valid, channel, {}, gw);
+                lsdtt::lsdtt_groundwater_dupuit aquifer(meta, surface, basez, valid, channel, {}, gw, ii.at("n_threads"));
                 const std::vector<double> f_antecedent(n, ff.at("groundwater_recharge_m_per_s"));
                 if (ff.at("groundwater_recharge_m_per_s") > 0.0f)
                 {

@@ -2815,7 +2815,7 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
-# lsdtt-slope-stability (Phase 1: SINMAP)
+# lsdtt-slope-stability: SINMAP
 #
 # The numerics are tested in the lsdtt-test-slope-stability-sinmap driver
 # (equations, Monte Carlo, analytic surfaces, regions, threads). These CLI tests
@@ -2923,7 +2923,7 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
-# Phase 4: the water table from the Dupuit - Boussinesq aquifer, steady and
+# The water table from the Dupuit - Boussinesq aquifer, steady and
 # transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
 # plumbing, output names and the time series.
 add_lsdtt_cli_smoke_test(
@@ -6464,7 +6464,7 @@ add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned
 lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
     LABELS "statistics;slope_area")
 
-# Slope stability, Phase 0 (src/utils): CDFs of sums and products of uniform
+# Slope stability (src/utils): CDFs of sums and products of uniform
 # random variables (against their defining integrals, Monte Carlo, the SINMAP
 # manual's piecewise product CDF, and exact identities); equal-density sampling
 # (CDF levels, trapezoid weights, convergence to closed-form expectations and
@@ -6483,7 +6483,7 @@ add_test(NAME unit_equal_density_sampling COMMAND lsdtt-test-equal-density-sampl
 lsdtt_set_tests_properties(unit_equal_density_sampling PROPERTIES
     LABELS "statistics;slope_stability")
 
-# Slope stability, Phase 1: the SINMAP component (src/cpu/lsdtt_slope_stability_sinmap_cpu)
+# Slope stability: the SINMAP component (src/cpu/lsdtt_slope_stability_sinmap_cpu)
 # against its own equations, Monte Carlo, and analytic surfaces (plane, cone,
 # convergent bowl); regions, exclusion, thread independence, SA-plot curves.
 add_executable(lsdtt-test-slope-stability-sinmap cpp/test_slope_stability_sinmap.cpp)
@@ -6492,7 +6492,7 @@ add_test(NAME unit_slope_stability_sinmap COMMAND lsdtt-test-slope-stability-sin
 lsdtt_set_tests_properties(unit_slope_stability_sinmap PROPERTIES
     LABELS "slope_stability")
 
-# Slope stability, Phase 2: planar rupture surfaces after scaLr
+# Slope stability: planar rupture surfaces after scaLr
 # (src/cpu/lsdtt_slope_stability_rupture_cpu): the stable optimal-depth form
 # against Brent and a dense search; planar and parabolic hillslopes against
 # their equations; channel stops, geometry checks, regions, threads.
@@ -6502,7 +6502,7 @@ add_test(NAME unit_slope_stability_rupture COMMAND lsdtt-test-slope-stability-ru
 lsdtt_set_tests_properties(unit_slope_stability_rupture PROPERTIES
     LABELS "slope_stability")
 
-# Slope stability, Phase 3: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
+# Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
 # each grouping rule on hand-built rupture results, statistics against closed
 # forms, and catalogue properties through compute_rupture_planes.
 add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
@@ -6511,7 +6511,7 @@ add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-
 lsdtt_set_tests_properties(unit_slope_stability_catalogue PROPERTIES
     LABELS "slope_stability")
 
-# Slope stability, Phase 4: the Dupuit - Boussinesq groundwater component
+# Slope stability: the Dupuit - Boussinesq groundwater component
 # (src/cpu/lsdtt_groundwater_dupuit_cpu) against Dupuit mound and divide,
 # kinematic and TOPMODEL steady states, linear transient decay, the water
 # budget and the thickness update's ODE.

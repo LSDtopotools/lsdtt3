@@ -73,9 +73,15 @@ replica:
   contributing pixels. The walk stops before the first channel cell, and
   channel cells are not sources.
 - Pore pressure is hydrostatic below a water table (`water_table_method`, see
-  below). The scaLr paper's printed eq. A2 has (h − d) where its own eq. A1
-  gives (h − d)/h; as printed, the term has units of metres. lsdtt3 uses the
-  form derived from A1. With water, the minimum is no longer closed-form: it is
+  below). **Correction to the scaLr paper:** its printed eq. A2 is missing a
+  factor 1/h. Developing its own eq. A1, with pore pressure
+  ψ = ρ_w g (h − d) for h > d, gives
+
+      F_wet(h) = F(h) − μ (ρ_w/ρ) ((h − d)/h) (Δx² + (Δz − h)²) / (Δx (Δz − h)),
+
+  whereas A2 is printed with (h − d) in place of (h − d)/h. As printed, the
+  pore-pressure term has units of metres while F is dimensionless, so A2 is
+  dimensionally inconsistent. lsdtt3 uses the form derived from A1. With water, the minimum is no longer closed-form: it is
   found numerically on each side of the water table.
 
 ## Groundwater

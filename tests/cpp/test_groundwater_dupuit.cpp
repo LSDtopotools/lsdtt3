@@ -8,8 +8,7 @@
 //
 // -----------------------------------------------------------------------------
 // Unit test for the Dupuit - Boussinesq groundwater component
-// (src/cpu/lsdtt_groundwater_dupuit_cpu), against analytic solutions
-// (plan_slope_stability.md section 5.3a):
+// (src/cpu/lsdtt_groundwater_dupuit_cpu), against analytic solutions:
 //
 //   * the semi-analytic thickness update against RK4 integration of its ODE,
 //     in both branches;

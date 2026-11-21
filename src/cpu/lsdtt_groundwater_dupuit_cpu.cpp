@@ -17,12 +17,17 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace lsdtt
 {
 
 namespace
 {
 constexpr double k_inf = std::numeric_limits<double>::infinity();
+constexpr std::size_t k_parallel_min_cells = 16384;
 }
 
 void validate_groundwater_dupuit_parameters(const groundwater_dupuit_parameters& p)
@@ -46,6 +51,9 @@ double dupuit_update_thickness(double dt, double h0, double d, double f, double 
     if (net <= 0.0) return h0 + net * dt / n;
     // Closed form of n dh/dt = net (1 - exp(-(1 - h/d)/eps)) (Landlab _update_thickness).
     const double h_plain = h0 + net * dt / n;
+    // Far below saturation (both exponents > 40) the closed form equals h_plain
+    // to within d eps 2 exp(-40) ~ 1e-17 d: skip the exp / log1p.
+    if ((d - h0) > 40.0 * d * eps && (d - h_plain) > 40.0 * d * eps) return h_plain;
     const double x = std::exp((1.0 - h_plain / d) / eps) * (1.0 - std::exp(-(d - h0) / (d * eps)));
     return d * (1.0 - eps * std::log1p(x));
 }
@@ -57,9 +65,16 @@ lsdtt_groundwater_dupuit::lsdtt_groundwater_dupuit(
     const std::vector<std::uint8_t>& valid,
     const std::vector<std::uint8_t>& fixed_head,
     const std::vector<double>& fixed_thickness,
-    const groundwater_dupuit_parameters& params)
+    const groundwater_dupuit_parameters& params,
+    int n_threads)
     : meta_(meta), p_(params)
 {
+#ifdef _OPENMP
+    n_threads_ = (n_threads > 0) ? n_threads : omp_get_max_threads();
+#else
+    (void)n_threads;
+    n_threads_ = 1;
+#endif
     validate_groundwater_dupuit_parameters(params);
     const int nr = meta.n_rows, nc = meta.n_cols;
     n_ = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
@@ -95,19 +110,25 @@ lsdtt_groundwater_dupuit::lsdtt_groundwater_dupuit(
     }
     auto in_domain = [&](std::size_t i) { return active_[i] || fixed_[i]; };
     const double cs = meta.cell_size;
+    c2_east_.assign(n_, 0.0);
+    c2_south_.assign(n_, 0.0);
+    q_east_.assign(n_, 0.0);
+    q_south_.assign(n_, 0.0);
+    seep_accum_.assign(n_, 0.0);
+    row_terms_.assign(static_cast<std::size_t>(nr) * 5, 0.0);
+    parallel_ = n_threads_ > 1 && n_ >= k_parallel_min_cells;
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc; ++c)
         {
             const std::size_t i = static_cast<std::size_t>(r) * nc + c;
             if (!in_domain(i)) continue;
-            const std::size_t right = i + 1, down = i + static_cast<std::size_t>(nc);
-            auto add = [&](std::size_t j) {
-                if (!in_domain(j) || (fixed_[i] && fixed_[j])) return;
-                links_.push_back({i, j});
-                cos_alpha_.push_back(std::cos(std::atan(std::fabs(zb_[j] - zb_[i]) / cs)));
+            auto c2 = [&](std::size_t j) {
+                if (!in_domain(j) || (fixed_[i] && fixed_[j])) return 0.0;
+                const double ca = std::cos(std::atan(std::fabs(zb_[j] - zb_[i]) / cs));
+                return ca * ca;   // > 0 always: |alpha| < pi/2
             };
-            if (c + 1 < nc) add(right);
-            if (r + 1 < nr) add(down);
+            if (c + 1 < nc) c2_east_[i] = c2(i + 1);
+            if (r + 1 < nr) c2_south_[i] = c2(i + static_cast<std::size_t>(nc));
         }
 }
 
@@ -128,50 +149,91 @@ double lsdtt_groundwater_dupuit::transmissivity(std::size_t cell, double h) cons
 }
 
 double lsdtt_groundwater_dupuit::substep(double dt_max, const std::vector<double>& f,
-                                         double& max_rate, std::vector<double>* seep_accum)
+                                         double& max_rate, seep_mode mode)
 {
+    const int nr = meta_.n_rows, nc = meta_.n_cols;
     const double cs = meta_.cell_size, area = cs * cs, n = p_.drainable_porosity;
-    std::vector<double> q(links_.size(), 0.0);
+    const double c_vn = p_.von_neumann_coefficient, c_c = p_.courant_coefficient;
+
+    // Pass 1: link fluxes (each link owned by its west / north cell) and the
+    // stability limit. min is exact, so the reduction is deterministic.
     double dt = dt_max;
-    for (std::size_t k = 0; k < links_.size(); ++k)
-    {
-        const std::size_t a = links_[k].a, b = links_[k].b;
+    auto link_flux = [&](std::size_t a, std::size_t b, double c2, double& lim) {
         const double zwa = zb_[a] + h_[a], zwb = zb_[b] + h_[b];
         const std::size_t up = (zwa >= zwb) ? a : b;
-        const double c2 = cos_alpha_[k] * cos_alpha_[k];
         const double T = transmissivity(up, h_[up]);
-        q[k] = -T * c2 * (zwb - zwa) / cs;            // positive from a to b
-        if (T > 0.0)
+        if (!(T > 0.0)) return 0.0;
+        const double q = -T * c2 * (zwb - zwa) / cs;   // positive from a to b
+        lim = std::min(lim, c_vn * n * cs * cs / (4.0 * T * c2));
+        const double v = std::fabs(q) / (n * h_[up]);
+        if (v > 0.0) lim = std::min(lim, c_c * cs / v);
+        return q;
+    };
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads_) reduction(min : dt) if (parallel_)
+#endif
+    for (int r = 0; r < nr; ++r)
+    {
+        double lim = dt_max;
+        const std::size_t row0 = static_cast<std::size_t>(r) * nc;
+        for (int c = 0; c < nc; ++c)
         {
-            dt = std::min(dt, p_.von_neumann_coefficient * n * cs * cs / (4.0 * T * c2));
-            const double v = std::fabs(q[k]) / (n * h_[up]);
-            if (v > 0.0) dt = std::min(dt, p_.courant_coefficient * cs / v);
+            const std::size_t i = row0 + c;
+            q_east_[i]  = (c2_east_[i]  > 0.0) ? link_flux(i, i + 1, c2_east_[i], lim) : 0.0;
+            q_south_[i] = (c2_south_[i] > 0.0) ? link_flux(i, i + nc, c2_south_[i], lim) : 0.0;
         }
+        dt = std::min(dt, lim);
     }
-    std::vector<double> div(n_, 0.0);
-    for (std::size_t k = 0; k < links_.size(); ++k)
+
+    // Pass 2: per-cell update from the four link fluxes. Budget terms per row.
+    double rate = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads_) reduction(max : rate) if (parallel_)
+#endif
+    for (int r = 0; r < nr; ++r)
     {
-        div[links_[k].a] += q[k] / cs;
-        div[links_[k].b] -= q[k] / cs;
-        // Flow into a fixed-head cell leaves the aquifer.
-        if (fixed_[links_[k].b]) budget_.outflow_fixed_head += q[k] * cs * dt;
-        if (fixed_[links_[k].a]) budget_.outflow_fixed_head -= q[k] * cs * dt;
+        double rech = 0.0, seep_sum = 0.0, clip = 0.0, dstore = 0.0, out_fixed = 0.0;
+        const std::size_t row0 = static_cast<std::size_t>(r) * nc;
+        for (int c = 0; c < nc; ++c)
+        {
+            const std::size_t i = row0 + c;
+            if (!active_[i] && !fixed_[i]) continue;
+            double out = q_east_[i] + q_south_[i];
+            if (c > 0) out -= q_east_[i - 1];
+            if (r > 0) out -= q_south_[i - nc];
+            const double div = out / cs;
+            if (fixed_[i])
+            {
+                // Flow into a fixed-head cell leaves the aquifer.
+                out_fixed += -out * cs * dt;
+                continue;
+            }
+            const double h0 = h_[i];
+            double h1 = dupuit_update_thickness(dt, h0, d_[i], f[i], div, n, p_.regularisation);
+            const double seep = f[i] - div - n * (h1 - h0) / dt;
+            rech += f[i] * area * dt;
+            seep_sum += seep * area * dt;
+            if (mode == seep_mode::accumulate) seep_accum_[i] += seep * dt;
+            else seepage_[i] = seep;
+            if (h1 < 0.0) { clip += -h1 * n * area; h1 = 0.0; }
+            dstore += n * (h1 - h0) * area;
+            rate = std::max(rate, std::fabs(n * (h1 - h0) / dt));
+            h_[i] = h1;
+        }
+        double* t = &row_terms_[static_cast<std::size_t>(r) * 5];
+        t[0] = rech; t[1] = seep_sum; t[2] = clip; t[3] = dstore; t[4] = out_fixed;
     }
-    max_rate = 0.0;
-    for (std::size_t i = 0; i < n_; ++i)
+    // Rows added in order: identical for any thread count.
+    for (int r = 0; r < nr; ++r)
     {
-        if (!active_[i]) continue;
-        const double h0 = h_[i];
-        double h1 = dupuit_update_thickness(dt, h0, d_[i], f[i], div[i], n, p_.regularisation);
-        const double seep = f[i] - div[i] - n * (h1 - h0) / dt;
-        budget_.recharge_in += f[i] * area * dt;
-        budget_.seepage_out += seep * area * dt;
-        if (seep_accum) (*seep_accum)[i] += seep * dt;
-        if (h1 < 0.0) { budget_.clipped_added += -h1 * n * area; h1 = 0.0; }
-        budget_.storage_change += n * (h1 - h0) * area;
-        max_rate = std::max(max_rate, std::fabs(n * (h1 - h0) / dt));
-        h_[i] = h1;
+        const double* t = &row_terms_[static_cast<std::size_t>(r) * 5];
+        budget_.recharge_in += t[0];
+        budget_.seepage_out += t[1];
+        budget_.clipped_added += t[2];
+        budget_.storage_change += t[3];
+        budget_.outflow_fixed_head += t[4];
     }
+    max_rate = rate;
     return dt;
 }
 
@@ -179,17 +241,17 @@ std::int64_t lsdtt_groundwater_dupuit::run(double duration, const std::vector<do
 {
     if (f.size() != n_) throw std::invalid_argument("groundwater: recharge must match the grid");
     if (!(duration > 0.0)) return 0;
-    std::vector<double> accum(n_, 0.0);
+    std::fill(seep_accum_.begin(), seep_accum_.end(), 0.0);
     double remaining = duration, rate = 0.0;
     std::int64_t steps = 0;
     while (remaining > 0.0)
     {
-        const double dt = substep(remaining, f, rate, &accum);
+        const double dt = substep(remaining, f, rate, seep_mode::accumulate);
         remaining -= dt;
         ++steps;
         if (remaining < 1e-12 * duration) break;
     }
-    for (std::size_t i = 0; i < n_; ++i) seepage_[i] = accum[i] / duration;
+    for (std::size_t i = 0; i < n_; ++i) seepage_[i] = seep_accum_[i] / duration;
     return steps;
 }
 
@@ -201,21 +263,24 @@ lsdtt_groundwater_dupuit::steady_report lsdtt_groundwater_dupuit::run_to_steady(
     for (std::size_t i = 0; i < n_; ++i)
         if (active_[i]) { f_max = std::max(f_max, f[i]); d_min = std::min(d_min, d_[i]); }
     if (!(f_max > 0.0)) throw std::invalid_argument("groundwater: steady state needs a positive recharge");
-    // Cap a substep at the time to fill a tenth of the thinnest regolith, so a
-    // dry start (zero transmissivity, no stability limit) still steps sensibly.
-    const double dt_cap = 0.1 * p_.drainable_porosity * d_min / f_max;
+    // Start with a cap of the time to fill a tenth of the thinnest regolith, so
+    // a dry start (zero transmissivity, no stability limit) steps sensibly; grow
+    // it while the residual falls (header).
+    const double dt_cap0 = 0.1 * p_.drainable_porosity * d_min / f_max;
+    double dt_cap = dt_cap0, prev_residual = k_inf;
     steady_report rep;
-    std::vector<double> accum(n_, 0.0);
     double rate = 0.0;
+    std::fill(seepage_.begin(), seepage_.end(), 0.0);
     while (rep.substeps < max_substeps)
     {
-        std::fill(accum.begin(), accum.end(), 0.0);
-        const double dt = substep(dt_cap, f, rate, &accum);
+        const double dt = substep(dt_cap, f, rate, seep_mode::overwrite);
         rep.time += dt;
         ++rep.substeps;
-        for (std::size_t i = 0; i < n_; ++i) seepage_[i] = accum[i] / dt;
         rep.residual = rate / f_max;
         if (rep.residual <= relative_tolerance) { rep.converged = true; break; }
+        if (rep.residual < prev_residual) dt_cap = std::min(1.5 * dt_cap, 4.0 * dt + dt_cap0);
+        else dt_cap = std::max(0.5 * dt_cap, dt_cap0);
+        prev_residual = rep.residual;
     }
     return rep;
 }

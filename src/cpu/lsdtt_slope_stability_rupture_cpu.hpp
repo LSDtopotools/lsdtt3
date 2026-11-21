@@ -65,10 +65,17 @@
 // There is no usable closed-form minimum (the authors' Maple solution runs to
 // about 200,000 characters). F_wet has a kink at h = d, so the minimum is taken
 // separately on (0, min(d, dz)), where the dry closed form applies, and on
-// (d, dz), by a 32-point scan refined with Brent's method (src/utils), and the
-// lower kept. d >= dz is the dry case exactly.
+// (d, dz) by Brent's method (src/utils; tolerance 1e-7 dz), and the lower
+// kept. d >= dz is the dry case exactly. F_wet is unimodal on (d, dz): no
+// interior local maximum in a dense check of 20,000 random cases spanning
+// c 0.1 Pa - 100 kPa (and 0), mu 0.05 - 1.5, rho 1500 - 3000, dz/dx 0.01 - 30,
+// d in (0, dz); the unit test repeats a sweep. Brent therefore needs no scan
+// (an earlier 32-point scan is no longer needed).
 //
-// Not here yet (plan_slope_stability.md): uncertainty (Phase P).
+// Speed: along a path, a pair whose wet lower bound (below) is not below the
+// best F found so far is not searched; this cannot change the result.
+//
+// Not here yet: uncertainty (probability of failure).
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -121,7 +128,23 @@ struct rupture_pair
 
 // The minimum of F_wet over 0 < h < dz (see PORE PRESSURE above). A
 // non-finite water_table_depth means dry.
+// cutoff: the wet part is searched only if its lower bound
+// (rupture_wet_lower_bound) is below min(cutoff, the dry part's minimum).
+// With a finite cutoff the result is exact whenever the true minimum is below
+// cutoff; otherwise it may be any value >= cutoff (callers keeping a running
+// minimum pass it, and discard such results anyway).
 [[nodiscard]] rupture_pair rupture_optimal_depth_wet(
+    double dx, double dz, double water_table_depth, const rupture_parameters& p,
+    double cutoff = std::numeric_limits<double>::infinity());
+
+// A lower bound on F_wet over the wet part, max(d, 0) < h < dz. Writing
+// s = dz - h, F_wet = (A + mu) dx / s + A s / dx with A(h) = k / h - mu r,
+// k = c / (rho g) + mu r d, r = rho_w / rho. If k >= 0, A >= A_min = k/dz - mu r
+// and, if A_min + mu >= 0,
+//     F_wet >= (A_min + mu) dx / s_max + min(A_min, 0) s_max / dx,  s_max = dz - max(d, 0).
+// Otherwise (F_wet unbounded below near h = dz) returns -inf; +inf if the wet
+// part is empty.
+[[nodiscard]] double rupture_wet_lower_bound(
     double dx, double dz, double water_table_depth, const rupture_parameters& p);
 
 inline constexpr std::int32_t k_rupture_region_nodata = std::numeric_limits<std::int32_t>::min();

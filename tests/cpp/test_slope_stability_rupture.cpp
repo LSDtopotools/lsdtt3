@@ -10,7 +10,7 @@
 // Unit test for the planar rupture component after scaLr
 // (src/cpu/lsdtt_slope_stability_rupture_cpu). Expected values come from the
 // model's equations evaluated independently in the test, on surfaces whose
-// geometry is known in closed form (plan section 6.10). scaLr's MATLAB is not
+// geometry is known in closed form. scaLr's MATLAB is not
 // run.
 //
 //   * optimal depth: the stable closed form against Brent and a 1e5-point
@@ -264,6 +264,66 @@ int main()
               "max relative " + num(worst_opt));
         check("pore pressure: a water table at or below dz is the dry case exactly", dry_ok);
         check("pore pressure: a shallower water table never raises F_min", mono);
+        // Speed-up guards: F_wet unimodal on the wet part (so Brent needs no scan), the
+        // wet lower bound never above the true wet minimum, and the cutoff only
+        // ever skips pairs that cannot beat it. Wide parameter ranges.
+        {
+            int interior_max = 0, bound_bad = 0, cutoff_bad = 0, opt_bad = 0, pruned = 0;
+            double worst_wide = 0.0;
+            for (int k = 0; k < 600; ++k)
+            {
+                const double dx = std::pow(10.0, 3.0 * rng.uniform01());
+                const double dz = dx * std::pow(10.0, -2.0 + 3.5 * rng.uniform01());
+                const double c = (k % 10 == 0) ? 0.0 : std::pow(10.0, -1.0 + 6.0 * rng.uniform01());
+                const rupture_parameters p{c, 0.05 + 1.45 * rng.uniform01(), 1500.0 + 1500.0 * rng.uniform01(), 9.81, 1000.0};
+                const double d = (k % 7 == 0) ? -0.2 * dz * rng.uniform01() : dz * rng.uniform01();
+                const double lo = std::max(d, 0.0);
+                const int m = 20000;
+                double best_wet = std::numeric_limits<double>::infinity(), best_all = best_wet;
+                double prev = 0.0, prev_diff = 0.0;
+                for (int i = 1; i < m; ++i)
+                {
+                    const double h = lo + (dz - lo) * i / m;
+                    const double f = rupture_safety_factor_wet(h, dx, dz, d, p);
+                    best_wet = std::min(best_wet, f);
+                    if (i > 1)
+                    {
+                        const double diff = f - prev;
+                        const double scale = 1e-12 * std::max(1.0, std::fabs(f));
+                        if (i > 2 && prev_diff > scale && diff < -scale) ++interior_max;
+                        if (std::fabs(diff) > scale) prev_diff = diff;
+                    }
+                    prev = f;
+                }
+                for (int i = 1; i < m; ++i)
+                    best_all = std::min(best_all, rupture_safety_factor_wet(dz * i / m, dx, dz, d, p));
+                if (rupture_wet_lower_bound(dx, dz, d, p) > best_wet + 1e-9 * std::max(1.0, std::fabs(best_wet))) ++bound_bad;
+                const rupture_pair full = rupture_optimal_depth_wet(dx, dz, d, p);
+                if (std::isfinite(best_all) && std::fabs(best_all) < 1e6)
+                {
+                    // One-sided: Brent may go below the grid's best (closer to h = dz,
+                    // where F_wet can fall without bound); it must never be above it.
+                    const double rel = (full.safety_factor - best_all) / std::max(1.0, std::fabs(best_all));
+                    worst_wide = std::max(worst_wide, rel);
+                    if (full.safety_factor > best_all + 1e-6 * std::max(1.0, std::fabs(best_all))) ++opt_bad;
+                }
+                for (double cut : {0.5 * full.safety_factor, full.safety_factor, 2.0 * full.safety_factor + 1.0})
+                {
+                    const rupture_pair r = rupture_optimal_depth_wet(dx, dz, d, p, cut);
+                    const bool same = r.safety_factor == full.safety_factor && r.depth == full.depth;
+                    if (!same) ++pruned;
+                    if (!same && (full.safety_factor < cut || r.safety_factor < cut)) ++cutoff_bad;
+                }
+            }
+            check("pore pressure: F_wet has no interior local maximum on (max(d, 0), dz) (600 wide cases, 2e4 points)",
+                  interior_max == 0, std::to_string(interior_max) + " cases");
+            check("pore pressure: the wet lower bound is never above the wet minimum", bound_bad == 0,
+                  std::to_string(bound_bad) + " cases");
+            check("pore pressure: Brent alone matches a 2e4-point search over wide ranges (c = 0, where the dry optimum is h -> 0, and ponded d < 0 included)",
+                  opt_bad == 0, "max relative excess over the grid " + num(worst_wide));
+            check("pore pressure: a cutoff changes a result only when the true minimum and the result are both >= cutoff",
+                  cutoff_bad == 0, std::to_string(pruned) + " pruned of 1800");
+        }
         check("pore pressure: negative water density throws",
               throws([] { validate_rupture_parameters({1000.0, 0.7, 2600.0, 9.81, -1.0}); }));
     }

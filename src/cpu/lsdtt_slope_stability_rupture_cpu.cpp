@@ -87,7 +87,23 @@ double rupture_safety_factor_wet(double h, double dx, double dz, double d,
                  * ((h - d) / h) * (dx * dx + s * s) / (dx * s);
 }
 
-rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rupture_parameters& p)
+double rupture_wet_lower_bound(double dx, double dz, double d, const rupture_parameters& p)
+{
+    // F_wet = (A + mu) dx / s + A s / dx on the wet part, s = dz - h, with
+    // A(h) = k / h - mu r, k = c / (rho g) + mu r d, r = rho_w / rho.
+    // With k >= 0, A >= A_min = k / dz - mu r; s < dz - lo. Header.
+    const double lo = std::max(d, 0.0), smax = dz - lo;
+    if (!(dx > 0.0) || !(smax > 0.0)) return k_inf;
+    const double mu = p.friction_coefficient, r = p.water_density_kg_m3 / p.density_kg_m3;
+    const double k = p.cohesion_pa / (p.density_kg_m3 * p.gravity_m_s2) + mu * r * d;
+    if (k < 0.0) return -k_inf;
+    const double a_min = k / dz - mu * r;
+    if (a_min + mu < 0.0) return -k_inf;
+    return (a_min + mu) * dx / smax + std::min(a_min, 0.0) * smax / dx;
+}
+
+rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rupture_parameters& p,
+                                       double cutoff)
 {
     if (!std::isfinite(d) || d >= dz) return rupture_optimal_depth(dx, dz, p);
     rupture_pair out;
@@ -96,34 +112,23 @@ rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rup
     auto F = [&](double h) { return rupture_safety_factor_wet(h, dx, dz, d, p); };
 
     // Dry part, (0, d]: the dry optimum if it lies above the water table,
-    // otherwise the boundary h = d (F is continuous there).
+    // otherwise the boundary h = d (F is continuous there). With c = 0 the dry
+    // optimum is the limit h -> 0 (depth 0, F = mu dx / dz), which counts.
     if (d > 0.0)
     {
         const rupture_pair dry = rupture_optimal_depth(dx, dz, p);
-        const double h = (dry.depth > 0.0 && dry.depth < d) ? dry.depth : d;
-        const double f = (dry.depth > 0.0 && dry.depth < d) ? dry.safety_factor : F(d);
+        const bool inside = dry.depth >= 0.0 && dry.depth < d;
+        const double h = inside ? dry.depth : d;
+        const double f = inside ? dry.safety_factor : F(d);
         if (f < out.safety_factor) { out.safety_factor = f; out.depth = h; }
     }
-    // Wet part, (max(d, 0), dz): scan, then refine around the best scan point.
+    // Wet part, (max(d, 0), dz): skipped when its lower bound cannot beat the
+    // dry part or the caller's cutoff; otherwise Brent alone, F_wet being
+    // unimodal there (header).
+    if (rupture_wet_lower_bound(dx, dz, d, p) >= std::min(cutoff, out.safety_factor)) return out;
     const double lo = std::max(d, 0.0), hi = dz;
-    const int n_scan = 32;
-    const double step = (hi - lo) / n_scan;
-    double best_f = std::numeric_limits<double>::infinity();
-    int best_k = -1;
-    for (int k = 1; k < n_scan; ++k)
-    {
-        const double f = F(lo + k * step);
-        if (f < best_f) { best_f = f; best_k = k; }
-    }
-    if (best_k > 0)
-    {
-        const double a = lo + (best_k - 1) * step, b = lo + (best_k + 1) * step;
-        const brent_minimum m = minimise_brent_bounded(F, std::max(a, lo + 1e-12 * dz), std::min(b, hi * (1.0 - 1e-12)),
-                                                       1e-9 * dz, 200);
-        const double f = (m.f < best_f) ? m.f : best_f;
-        const double h = (m.f < best_f) ? m.x : lo + best_k * step;
-        if (f < out.safety_factor) { out.safety_factor = f; out.depth = h; }
-    }
+    const brent_minimum m = minimise_brent_bounded(F, lo + 1e-12 * dz, hi * (1.0 - 1e-12), 1e-7 * dz, 200);
+    if (m.f < out.safety_factor) { out.safety_factor = m.f; out.depth = m.x; }
     return out;
 }
 
@@ -226,7 +231,9 @@ rupture_rasters compute_rupture_planes(
             const int rp = static_cast<int>(pflat / nc), cp = static_cast<int>(pflat % nc);
             const double dx = b * std::hypot(static_cast<double>(rp - ri), static_cast<double>(cp - ci));
             const double dz = zi - static_cast<double>(z[pi]);
-            const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p);
+            // best_f as the cutoff: a pair whose wet bound cannot beat it skips
+            // its Brent search (the result is then not used either way).
+            const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p, best_f);
             if (rp_res.admissible && rp_res.safety_factor < best_f)
             {
                 best_f = rp_res.safety_factor;

@@ -36,7 +36,7 @@
 // The exponential profile is TOPMODEL's (deficit D = n (d - h), m = n z_m,
 // T0 = K0 z_m as d -> infinity): with it, and with the water table parallel to
 // the surface, the steady state is TOPMODEL's index relation, except that the
-// slope term is sin(beta) cos(beta) rather than tan(beta) (plan section 4.3a).
+// slope term is sin(beta) cos(beta) rather than tan(beta).
 //
 // NUMERICS (as Landlab, except where noted)
 //   * The link thickness is UPWIND (the cell with the higher water table), times
@@ -46,12 +46,24 @@
 //     _update_thickness); where f <= div q it is linear. h is clipped at 0.
 //   * Substeps: dt = min(C_c dx / |v|, C_vn n dx^2 / (4 T cos^2), remaining),
 //     v = |q| / (n h_upwind); C_c = 0.5, C_vn = 0.8 by default.
+//   * Steady state (run_to_steady): the march starts with a substep cap of the
+//     time to fill a tenth of the thinnest regolith (a dry aquifer has no
+//     stability limit). The cap grows by 1.5 per substep while the residual
+//     falls and halves (not below its start) when it rises; the Courant and
+//     von Neumann limits always apply. Only the end state is meaningful.
 //   * Seepage is reported as the substep's MEAN, f - div q - n dh/dt from the
 //     unclipped update, so the water budget closes to round-off; Landlab
 //     reports the regularised rate at the end of each step instead.
 //   * Fixed-head cells (channels in lsdtt-slope-stability) keep their
 //     thickness; flow into them leaves the aquifer. Nodata cells, cells with no
 //     regolith (d <= 0) and the raster edge are no-flux.
+//
+// PARALLELISM: links are stored per cell (east and south of each cell), so a
+// substep is two passes over rows: fluxes and the stability limit (a min
+// reduction), then the per-cell update, gathering the four link fluxes. Budget
+// terms are summed per row and the rows added in order, so every result,
+// budget included, is identical for any thread count. Grids under 16,384
+// cells run serially: a substep there is shorter than the thread fork.
 //
 // Double precision throughout (a steady-state stopping test is below float
 // resolution otherwise).
@@ -118,7 +130,8 @@ public:
                              const std::vector<std::uint8_t>& valid,
                              const std::vector<std::uint8_t>& fixed_head,
                              const std::vector<double>& fixed_thickness,
-                             const groundwater_dupuit_parameters& params);
+                             const groundwater_dupuit_parameters& params,
+                             int n_threads = 0);   // 0 = OpenMP default
 
     // Initial thickness of the active cells (fixed cells keep theirs);
     // clipped to [0, d].
@@ -149,18 +162,24 @@ public:
     [[nodiscard]] double storage() const;   // n h A over active cells (m^3)
 
 private:
-    struct link { std::size_t a, b; };
     double transmissivity(std::size_t cell, double h) const;
     // One substep of at most dt_max; returns the dt taken and max n|dh/dt|.
-    double substep(double dt_max, const std::vector<double>& recharge, double& max_rate,
-                   std::vector<double>* seep_accum);
+    // Seepage: accumulate seep * dt into seep_accum_ (run), or overwrite
+    // seepage_ with this substep's mean rate (run_to_steady).
+    enum class seep_mode { accumulate, overwrite };
+    double substep(double dt_max, const std::vector<double>& recharge, double& max_rate, seep_mode mode);
 
     lsdtt_raster_meta meta_;
     std::size_t n_;
     std::vector<double> z_, zb_, d_, h_, seepage_;
     std::vector<std::uint8_t> active_, fixed_;
-    std::vector<link> links_;
-    std::vector<double> cos_alpha_;
+    // Per-cell links: c2_east_[i] / c2_south_[i] = cos^2(alpha) of the link from
+    // i to its east / south neighbour, or 0 for no link. q_east_ / q_south_:
+    // flux per unit width, positive from i to the neighbour (work arrays).
+    std::vector<double> c2_east_, c2_south_, q_east_, q_south_, seep_accum_;
+    std::vector<double> row_terms_;   // per-row budget partial sums (work)
+    int n_threads_ = 0;
+    bool parallel_ = false;   // threads only on grids large enough to repay the fork (k_parallel_min_cells)
     groundwater_dupuit_parameters p_;
     groundwater_budget budget_;
 };

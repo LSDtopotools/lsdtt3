@@ -10,8 +10,8 @@
 // Unit test for the SINMAP component (src/cpu/lsdtt_slope_stability_sinmap_cpu).
 //
 // Every expected value comes from the model's own equations evaluated in the
-// test, or from surfaces whose geometry is known in closed form (plan section
-// 6.10). SINMAP's own software is not run.
+// test, or from surfaces whose geometry is known in closed form. SINMAP's own
+// software is not run.
 //
 //   * cells: FS_min / FS_max / saturation against the equations written out
 //     here; P(FS > 1) against 1e6-draw Monte Carlo of C, t and R/T in each
