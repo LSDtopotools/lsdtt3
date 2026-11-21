@@ -72,6 +72,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "../core/lsdtt_raster_meta.hpp"
@@ -144,15 +145,82 @@ public:
     struct steady_report
     {
         bool converged = false;
-        std::int64_t substeps = 0;
+        std::int64_t substeps = 0;     // explicit: substeps; implicit: pseudo-time (Newton) steps
         double time = 0.0;             // pseudo-time marched (s)
-        double residual = 0.0;         // max n |dh/dt| / max f on the last substep
+        double residual = 0.0;         // explicit: max n |dh/dt| / max f on the last substep;
+                                       // implicit: the steady measure of run_to_steady_implicit
+        // Implicit only:
+        std::int64_t linear_iterations = 0;   // BiCGSTAB iterations (0 with the direct solver)
+        std::int64_t line_search_cuts = 0;    // step halvings in the line search
+        std::int64_t dt_cuts = 0;             // pseudo-time steps retried with a smaller dt
+        std::int64_t active_set_changes = 0;  // cells whose bound status changed, summed over steps
+        std::int64_t n_saturated = 0;         // unknowns at h = d at the end
+        std::int64_t n_dry = 0;               // unknowns at h = 0 at the end
+        bool used_direct_solver = false;
+        std::string message;                  // why it stopped, when not converged
     };
     // March to steady state under constant recharge: stops when
     // max |n dh/dt| <= relative_tolerance * max(f). Throws if max(f) <= 0.
     steady_report run_to_steady(const std::vector<double>& recharge,
                                 double relative_tolerance = 1.0e-6,
                                 std::int64_t max_substeps = 10000000);
+
+    // ---- Implicit steady state -------------------------------------------------
+    // Solves the steady problem directly: on every unknown, 0 <= h <= d and
+    //   F = 0 where 0 < h < d,  F <= 0 where h = d (seepage -F),  F >= 0 where h = 0,
+    // F the steady residual (implicit_residual with inv_dt = 0). This is a
+    // box-constrained complementarity problem; the regularised seepage of the
+    // explicit march converges to the same state.
+    //
+    // METHOD. Pseudo-transient continuation (Kelley & Keyes 1998): each pseudo-
+    // time step is ONE semismooth Newton step (primal-dual active set;
+    // Hintermuller, Ito & Kunisch 2002) on the backward-Euler problem
+    //   Phi(h) = h - P_[0,d](h - c Ft(h)) = 0,  Ft = n (h - h_k) / dt + F(h),
+    // c = min(dt / n, dx^2 / T_max). Cells where h - c Ft leaves [0, d] are
+    // active: their row becomes h = bound; the rest take the Jacobian row. The
+    // step is projected onto [0, d] and backtracked (Armijo on ||Phi||^2, at
+    // most max_line_search halvings); if that fails, dt is quartered and the
+    // step retried. dt then grows by switched evolution relaxation
+    // (Mulder & van Leer 1985): dt *= min(dt_growth_max, m_old / m_new), with
+    // m the steady measure below; once n / dt is negligible the iteration is
+    // Newton on the steady problem.
+    //
+    // CONVERGENCE. m = max over unknowns of |F| (0 < h < d), max(F, 0) (h = d) and
+    // max(-F, 0) (h = 0), divided by max f; converged when m <= tolerance.
+    //
+    // LINEAR SOLVES. Eigen SparseLU for up to direct_solve_max_unknowns
+    // unknowns, else BiCGSTAB with IncompleteLUT (both serial, so the result
+    // does not depend on the thread count). Without Eigen it reports failure.
+    //
+    // Starts from the current thickness (set_thickness, else 0). Afterwards
+    // thickness() is the solution, seepage() is -F on saturated cells (m/s),
+    // and steady_rates() the steady budget. budget() is not changed.
+    struct implicit_options
+    {
+        double relative_tolerance = 1.0e-6;     // as run_to_steady
+        int max_steps = 200;                    // pseudo-time (Newton) steps
+        double dt_initial = 0.0;                // s; 0 = 0.1 n d_min / f_max, as the explicit march
+        double dt_growth_max = 10.0;
+        double dt_max = 1.0e30;                 // s
+        int solver_choice = -1;                 // -1 auto, 0 direct, 1 iterative
+        long direct_solve_max_unknowns = 10000;   // measured: BiCGSTAB + ILUT is faster from ~4e4 unknowns
+        double linear_tolerance = 1.0e-10;      // BiCGSTAB relative residual
+        int max_line_search = 8;
+    };
+    steady_report run_to_steady_implicit(const std::vector<double>& recharge, const implicit_options& options);
+    steady_report run_to_steady_implicit(const std::vector<double>& recharge)
+    {
+        return run_to_steady_implicit(recharge, implicit_options{});
+    }
+
+    // Steady budget of the last implicit steady solve, in m^3/s:
+    //   recharge = outflow_fixed_head + seepage + imbalance (imbalance from the
+    //   residual left on the unknowns; ~ tolerance).
+    struct steady_budget
+    {
+        double recharge = 0.0, outflow_fixed_head = 0.0, seepage = 0.0, imbalance = 0.0;
+    };
+    [[nodiscard]] const steady_budget& steady_rates() const { return steady_rates_; }
 
     [[nodiscard]] const std::vector<double>& thickness() const { return h_; }
     [[nodiscard]] std::vector<double> water_table_depth() const;   // z - z_w (m); NaN off the domain
@@ -161,8 +229,52 @@ public:
     [[nodiscard]] const groundwater_budget& budget() const { return budget_; }
     [[nodiscard]] double storage() const;   // n h A over active cells (m^3)
 
+    // ---- Building blocks of the implicit (Newton) solves ---------------------
+    // The unknowns are the active cells (not fixed-head, regolith > 0), in
+    // row-major order. For a full-grid thickness h (values at fixed-head and
+    // inactive cells are ignored: fixed cells keep their held thickness), the
+    // residual of unknown i is
+    //
+    //   F_i(h) = n (h_i - h_old_i) inv_dt + (div q(h))_i - f_i      (m/s)
+    //
+    // with div q from exactly the link fluxes of the explicit substep (upwind
+    // thickness, cos^2 of the base, fixed heads, no-flux edges and nodata).
+    // inv_dt = 0 gives the steady residual (h_old is then not read). At steady
+    // state F_i = 0 where 0 < h_i < d_i, and F_i <= 0 (seepage -F_i) where h_i = d_i.
+    //
+    // The Jacobian dF/dh is 5-point and non-symmetric. For a link (a -> b),
+    // q = T(h_up) c2 (z_w,a - z_w,b) / dx with up = a if z_w,a >= z_w,b, and
+    //   dq/dh_a =  T c2 / dx + [up = a] T'(h_a) c2 (z_w,a - z_w,b) / dx
+    //   dq/dh_b = -T c2 / dx + [up = b] T'(h_b) c2 (z_w,a - z_w,b) / dx,
+    // T' = K (uniform) or K0 exp(-(d - h) / z_m) (exponential), the derivative
+    // from above at h = 0. At a tie (z_w,a = z_w,b) the upwind side is a, as in
+    // the explicit kernel: one element of the generalised (Clarke) Jacobian.
+    struct jacobian_entry
+    {
+        std::int64_t row, col;   // unknown indices
+        double value;
+    };
+    [[nodiscard]] std::size_t n_unknowns() const { return unknown_cell_.size(); }
+    [[nodiscard]] const std::vector<std::int64_t>& unknown_cell() const { return unknown_cell_; }   // cell of each unknown
+    [[nodiscard]] const std::vector<std::int64_t>& cell_unknown() const { return cell_unknown_; }   // unknown of each cell, -1
+    // residual: resized to n_unknowns().
+    void implicit_residual(const std::vector<double>& h, const std::vector<double>& h_old, double inv_dt,
+                           const std::vector<double>& recharge, std::vector<double>& residual) const;
+    // entries: cleared and filled row by row (row-major unknown order, then the
+    // order of the links east, west, south, north); duplicates are summed by
+    // the caller (Eigen setFromTriplets does). The diagonal is always present.
+    void implicit_jacobian(const std::vector<double>& h, double inv_dt, std::vector<jacobian_entry>& entries) const;
+    // Flow from active cells into fixed-head cells for thickness h (m^3/s).
+    [[nodiscard]] double outflow_to_fixed_head(const std::vector<double>& h) const;
+
 private:
     double transmissivity(std::size_t cell, double h) const;
+    double transmissivity_derivative(std::size_t cell, double h) const;
+    double held(const std::vector<double>& h, std::size_t i) const { return fixed_[i] ? h_[i] : h[i]; }
+    // Flux q (positive from a to b) per unit width and its derivatives, for
+    // the link a -> b with cos^2 c2, at thickness h.
+    void link_flux(std::size_t a, std::size_t b, double c2, const std::vector<double>& h,
+                   double& q, double& dq_da, double& dq_db) const;
     // One substep of at most dt_max; returns the dt taken and max n|dh/dt|.
     // Seepage: accumulate seep * dt into seep_accum_ (run), or overwrite
     // seepage_ with this substep's mean rate (run_to_steady).
@@ -178,10 +290,12 @@ private:
     // flux per unit width, positive from i to the neighbour (work arrays).
     std::vector<double> c2_east_, c2_south_, q_east_, q_south_, seep_accum_;
     std::vector<double> row_terms_;   // per-row budget partial sums (work)
+    std::vector<std::int64_t> unknown_cell_, cell_unknown_;
     int n_threads_ = 0;
     bool parallel_ = false;   // threads only on grids large enough to repay the fork (k_parallel_min_cells)
     groundwater_dupuit_parameters p_;
     groundwater_budget budget_;
+    steady_budget steady_rates_;
 };
 
 } // namespace lsdtt

@@ -21,6 +21,11 @@
 #include <omp.h>
 #endif
 
+#ifdef LSDTT_HAS_EIGEN
+#include <Eigen/IterativeLinearSolvers>
+#include <Eigen/Sparse>
+#endif
+
 namespace lsdtt
 {
 
@@ -117,6 +122,13 @@ lsdtt_groundwater_dupuit::lsdtt_groundwater_dupuit(
     seep_accum_.assign(n_, 0.0);
     row_terms_.assign(static_cast<std::size_t>(nr) * 5, 0.0);
     parallel_ = n_threads_ > 1 && n_ >= k_parallel_min_cells;
+    cell_unknown_.assign(n_, -1);
+    for (std::size_t i = 0; i < n_; ++i)
+        if (active_[i])
+        {
+            cell_unknown_[i] = static_cast<std::int64_t>(unknown_cell_.size());
+            unknown_cell_.push_back(static_cast<std::int64_t>(i));
+        }
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc; ++c)
         {
@@ -283,6 +295,311 @@ lsdtt_groundwater_dupuit::steady_report lsdtt_groundwater_dupuit::run_to_steady(
         prev_residual = rep.residual;
     }
     return rep;
+}
+
+double lsdtt_groundwater_dupuit::transmissivity_derivative(std::size_t cell, double h) const
+{
+    // d T / d h, from above at h <= 0 (T is 0 there).
+    if (p_.profile == groundwater_transmissivity_profile::uniform) return p_.hydraulic_conductivity_m_per_s;
+    const double zm = p_.conductivity_decay_depth_metres, d = d_[cell];
+    return p_.hydraulic_conductivity_m_per_s * std::exp(-(d - std::max(h, 0.0)) / zm);
+}
+
+void lsdtt_groundwater_dupuit::link_flux(std::size_t a, std::size_t b, double c2, const std::vector<double>& h,
+                                         double& q, double& dq_da, double& dq_db) const
+{
+    const double cs = meta_.cell_size;
+    const double ha = held(h, a), hb = held(h, b);
+    const double zwa = zb_[a] + ha, zwb = zb_[b] + hb;
+    const bool up_a = zwa >= zwb;
+    const std::size_t up = up_a ? a : b;
+    const double h_up = up_a ? ha : hb;
+    const double T = transmissivity(up, h_up);
+    const double g = c2 * (zwa - zwb) / cs;
+    q = T * g;
+    const double dT = transmissivity_derivative(up, h_up);
+    dq_da = T * c2 / cs + (up_a ? dT * g : 0.0);
+    dq_db = -T * c2 / cs + (up_a ? 0.0 : dT * g);
+}
+
+void lsdtt_groundwater_dupuit::implicit_residual(const std::vector<double>& h, const std::vector<double>& h_old,
+                                                 double inv_dt, const std::vector<double>& f,
+                                                 std::vector<double>& F) const
+{
+    if (h.size() != n_ || f.size() != n_ || (inv_dt != 0.0 && h_old.size() != n_))
+        throw std::invalid_argument("groundwater: implicit residual inputs must match the grid");
+    const int nc = meta_.n_cols;
+    const double cs = meta_.cell_size, n_por = p_.drainable_porosity;
+    F.assign(unknown_cell_.size(), 0.0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads_) if (parallel_)
+#endif
+    for (std::int64_t u = 0; u < static_cast<std::int64_t>(unknown_cell_.size()); ++u)
+    {
+        const std::size_t i = static_cast<std::size_t>(unknown_cell_[static_cast<std::size_t>(u)]);
+        const int c = static_cast<int>(i % static_cast<std::size_t>(nc));
+        double out = 0.0, q, da, db;
+        if (c2_east_[i] > 0.0) { link_flux(i, i + 1, c2_east_[i], h, q, da, db); out += q; }
+        if (c > 0 && c2_east_[i - 1] > 0.0) { link_flux(i - 1, i, c2_east_[i - 1], h, q, da, db); out -= q; }
+        if (c2_south_[i] > 0.0) { link_flux(i, i + nc, c2_south_[i], h, q, da, db); out += q; }
+        if (i >= static_cast<std::size_t>(nc) && c2_south_[i - nc] > 0.0) { link_flux(i - nc, i, c2_south_[i - nc], h, q, da, db); out -= q; }
+        double r = out / cs - f[i];
+        if (inv_dt != 0.0) r += n_por * (h[i] - h_old[i]) * inv_dt;
+        F[static_cast<std::size_t>(u)] = r;
+    }
+}
+
+void lsdtt_groundwater_dupuit::implicit_jacobian(const std::vector<double>& h, double inv_dt,
+                                                 std::vector<jacobian_entry>& J) const
+{
+    if (h.size() != n_) throw std::invalid_argument("groundwater: implicit Jacobian thickness must match the grid");
+    const int nc = meta_.n_cols;
+    const double cs = meta_.cell_size, n_por = p_.drainable_porosity;
+    J.clear();
+    J.reserve(unknown_cell_.size() * 5);
+    for (std::size_t u = 0; u < unknown_cell_.size(); ++u)
+    {
+        const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+        const std::int64_t row = static_cast<std::int64_t>(u);
+        const int c = static_cast<int>(i % static_cast<std::size_t>(nc));
+        double diag = n_por * inv_dt;
+        // sign = +1 when i is the link's a end (flux out of i), -1 when its b end.
+        auto add_link = [&](std::size_t a, std::size_t b, double c2, double sign) {
+            double q, da, db;
+            link_flux(a, b, c2, h, q, da, db);
+            const std::size_t other = (sign > 0.0) ? b : a;
+            const double d_self = (sign > 0.0) ? da : db;
+            const double d_other = (sign > 0.0) ? db : da;
+            diag += sign * d_self / cs;
+            const std::int64_t col = cell_unknown_[other];
+            if (col >= 0) J.push_back({row, col, sign * d_other / cs});
+        };
+        if (c2_east_[i] > 0.0) add_link(i, i + 1, c2_east_[i], 1.0);
+        if (c > 0 && c2_east_[i - 1] > 0.0) add_link(i - 1, i, c2_east_[i - 1], -1.0);
+        if (c2_south_[i] > 0.0) add_link(i, i + nc, c2_south_[i], 1.0);
+        if (i >= static_cast<std::size_t>(nc) && c2_south_[i - nc] > 0.0) add_link(i - nc, i, c2_south_[i - nc], -1.0);
+        J.push_back({row, row, diag});
+    }
+}
+
+double lsdtt_groundwater_dupuit::outflow_to_fixed_head(const std::vector<double>& h) const
+{
+    if (h.size() != n_) throw std::invalid_argument("groundwater: thickness must match the grid");
+    const int nc = meta_.n_cols;
+    const double cs = meta_.cell_size;
+    double out = 0.0;
+    for (std::size_t i = 0; i < n_; ++i)
+    {
+        double q, da, db;
+        if (c2_east_[i] > 0.0)
+        {
+            link_flux(i, i + 1, c2_east_[i], h, q, da, db);
+            if (fixed_[i + 1]) out += q * cs;
+            if (fixed_[i]) out -= q * cs;
+        }
+        if (c2_south_[i] > 0.0)
+        {
+            link_flux(i, i + nc, c2_south_[i], h, q, da, db);
+            if (fixed_[i + nc]) out += q * cs;
+            if (fixed_[i]) out -= q * cs;
+        }
+    }
+    return out;
+}
+
+lsdtt_groundwater_dupuit::steady_report lsdtt_groundwater_dupuit::run_to_steady_implicit(
+    const std::vector<double>& f, const implicit_options& o)
+{
+    if (f.size() != n_) throw std::invalid_argument("groundwater: recharge must match the grid");
+    steady_report rep;
+#ifndef LSDTT_HAS_EIGEN
+    rep.message = "run_to_steady_implicit requires Eigen; lsdtt3 was built without it. No solve was performed.";
+    return rep;
+#else
+    const std::size_t m = unknown_cell_.size();
+    double f_max = 0.0, d_min = k_inf, T_max = 0.0;
+    for (std::int64_t c : unknown_cell_)
+    {
+        const std::size_t i = static_cast<std::size_t>(c);
+        f_max = std::max(f_max, f[i]);
+        d_min = std::min(d_min, d_[i]);
+        T_max = std::max(T_max, transmissivity(i, d_[i]));
+    }
+    if (m == 0) { rep.converged = true; return rep; }
+    if (!(f_max > 0.0)) throw std::invalid_argument("groundwater: steady state needs a positive recharge");
+    if (o.max_steps < 1 || o.max_line_search < 0 || !(o.dt_growth_max > 1.0) || !(o.relative_tolerance > 0.0))
+        throw std::invalid_argument("groundwater: invalid implicit options");
+
+    const double n_por = p_.drainable_porosity, cs = meta_.cell_size;
+    const double c_ref = (T_max > 0.0) ? cs * cs / T_max : k_inf;
+    double dt = (o.dt_initial > 0.0) ? o.dt_initial : 0.1 * n_por * d_min / f_max;
+
+    std::vector<double> h = h_;
+    for (std::int64_t c : unknown_cell_)
+    {
+        const std::size_t i = static_cast<std::size_t>(c);
+        h[i] = std::min(d_[i], std::max(0.0, std::isfinite(h[i]) ? h[i] : 0.0));
+    }
+    auto measure = [&](const std::vector<double>& hh, std::vector<double>& F) {
+        implicit_residual(hh, {}, 0.0, f, F);
+        double mm = 0.0;
+        for (std::size_t u = 0; u < m; ++u)
+        {
+            const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+            const double v = F[u];
+            if (hh[i] >= d_[i]) mm = std::max(mm, std::max(v, 0.0));
+            else if (hh[i] <= 0.0) mm = std::max(mm, std::max(-v, 0.0));
+            else mm = std::max(mm, std::fabs(v));
+        }
+        return mm / f_max;
+    };
+    auto clamp_u = [&](std::size_t u, double x) {
+        const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+        return std::min(d_[i], std::max(0.0, x));
+    };
+    // ||Phi||^2 for the backward-Euler residual Ft (scale c).
+    auto merit = [&](const std::vector<double>& hh, const std::vector<double>& Ft, double c) {
+        double sum = 0.0;
+        for (std::size_t u = 0; u < m; ++u)
+        {
+            const double x = hh[static_cast<std::size_t>(unknown_cell_[u])];
+            const double phi = x - clamp_u(u, x - c * Ft[u]);
+            sum += phi * phi;
+        }
+        return sum;
+    };
+
+    std::vector<double> Fs, Ft, h_try;
+    double meas = measure(h, Fs);
+    std::vector<std::int8_t> status(m, 0), prev(m, 0);
+    bool first = true;
+    // The sparsity pattern changes only with the active set, so SparseLU's
+    // symbolic analysis is kept until it does.
+    Eigen::SparseLU<Eigen::SparseMatrix<double>> lu;
+    bool pattern_valid = false;
+    const bool use_iterative = o.solver_choice == 1
+                            || (o.solver_choice < 0 && static_cast<long>(m) > o.direct_solve_max_unknowns);
+    rep.used_direct_solver = !use_iterative;
+    std::vector<jacobian_entry> J;
+    std::vector<Eigen::Triplet<double>> trips;
+    Eigen::SparseMatrix<double> A(static_cast<Eigen::Index>(m), static_cast<Eigen::Index>(m));
+    Eigen::VectorXd rhs(static_cast<Eigen::Index>(m)), step(static_cast<Eigen::Index>(m));
+    const double dt_floor = 1e-12 * dt;
+
+    while (meas > o.relative_tolerance && rep.substeps < o.max_steps)
+    {
+        ++rep.substeps;
+        const double inv_dt = 1.0 / dt;
+        const double c = std::min(dt / n_por, c_ref);
+        // At h_k the storage term is 0, so Ft(h_k) = F(h_k) = Fs.
+        for (std::size_t u = 0; u < m; ++u)
+        {
+            const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+            const double y = h[i] - c * Fs[u];
+            status[u] = (y >= d_[i]) ? 1 : (y <= 0.0 ? -1 : 0);
+            if (!first && status[u] != prev[u]) { ++rep.active_set_changes; pattern_valid = false; }
+        }
+        prev = status;
+        first = false;
+
+        implicit_jacobian(h, inv_dt, J);
+        trips.clear();
+        trips.reserve(J.size());
+        for (const jacobian_entry& e : J)
+            if (status[static_cast<std::size_t>(e.row)] == 0)
+                trips.emplace_back(static_cast<int>(e.row), static_cast<int>(e.col), e.value);
+        for (std::size_t u = 0; u < m; ++u)
+        {
+            const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+            const Eigen::Index k = static_cast<Eigen::Index>(u);
+            if (status[u] != 0) trips.emplace_back(static_cast<int>(u), static_cast<int>(u), 1.0);
+            rhs[k] = (status[u] == 0) ? -Fs[u] : (status[u] > 0 ? d_[i] - h[i] : -h[i]);
+        }
+        A.setZero();
+        A.setFromTriplets(trips.begin(), trips.end());
+
+        bool solved = false;
+        if (use_iterative)
+        {
+            Eigen::BiCGSTAB<Eigen::SparseMatrix<double>, Eigen::IncompleteLUT<double>> solver;
+            solver.setTolerance(o.linear_tolerance);
+            solver.compute(A);
+            if (solver.info() == Eigen::Success)
+            {
+                step = solver.solve(rhs);
+                rep.linear_iterations += solver.iterations();
+                solved = solver.info() == Eigen::Success;
+            }
+        }
+        else
+        {
+            if (!pattern_valid) { lu.analyzePattern(A); pattern_valid = true; }
+            lu.factorize(A);
+            if (lu.info() == Eigen::Success)
+            {
+                step = lu.solve(rhs);
+                solved = lu.info() == Eigen::Success;
+            }
+        }
+        bool accepted = false;
+        if (solved && step.allFinite())
+        {
+            const double merit0 = merit(h, Fs, c);
+            double t = 1.0;
+            for (int ls = 0; ls <= o.max_line_search; ++ls)
+            {
+                h_try = h;
+                for (std::size_t u = 0; u < m; ++u)
+                {
+                    const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+                    h_try[i] = clamp_u(u, h[i] + t * step[static_cast<Eigen::Index>(u)]);
+                }
+                implicit_residual(h_try, h, inv_dt, f, Ft);
+                const double mt = merit(h_try, Ft, c);
+                if (std::isfinite(mt) && mt <= (1.0 - 1e-4 * t) * merit0) { accepted = true; break; }
+                t *= 0.5;
+                ++rep.line_search_cuts;
+            }
+        }
+        if (!accepted)
+        {
+            dt *= 0.25;
+            ++rep.dt_cuts;
+            if (dt < dt_floor) { rep.message = "the pseudo-time step fell below 1e-12 of its start"; break; }
+            continue;
+        }
+        h.swap(h_try);
+        rep.time += dt;
+        const double old = meas;
+        meas = measure(h, Fs);
+        const double ratio = (meas > 0.0) ? old / meas : o.dt_growth_max;
+        dt = std::min(o.dt_max, dt * std::min(o.dt_growth_max, ratio));
+    }
+    rep.residual = meas;
+    rep.converged = meas <= o.relative_tolerance;
+    if (!rep.converged && rep.message.empty()) rep.message = "reached max_steps before the tolerance";
+
+    // Store the state, the seepage and the steady rates.
+    const double area = cs * cs;
+    std::fill(seepage_.begin(), seepage_.end(), 0.0);
+    steady_rates_ = steady_budget{};
+    for (std::size_t u = 0; u < m; ++u)
+    {
+        const std::size_t i = static_cast<std::size_t>(unknown_cell_[u]);
+        h_[i] = h[i];
+        steady_rates_.recharge += f[i] * area;
+        if (h[i] >= d_[i])
+        {
+            ++rep.n_saturated;
+            seepage_[i] = std::max(0.0, -Fs[u]);
+            steady_rates_.seepage += seepage_[i] * area;
+        }
+        else if (h[i] <= 0.0) ++rep.n_dry;
+    }
+    steady_rates_.outflow_fixed_head = outflow_to_fixed_head(h_);
+    steady_rates_.imbalance = steady_rates_.recharge - steady_rates_.outflow_fixed_head - steady_rates_.seepage;
+    return rep;
+#endif
 }
 
 std::vector<double> lsdtt_groundwater_dupuit::water_table_depth() const
