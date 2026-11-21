@@ -11,6 +11,8 @@
 
 #include "lsdtt_slope_stability_catalogue_cpu.hpp"
 
+#include "../utils/lsdtt_regression.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -53,6 +55,48 @@ void finish(landslide_record& rec, const accumulator& a, const lsdtt_raster_meta
 }
 
 } // namespace
+
+frequency_area_result compute_frequency_area(const std::vector<double>& areas_m2, double cell_area, int bins_per_decade,
+                                             std::size_t min_tail)
+{
+    if (!(cell_area > 0.0)) throw std::invalid_argument("compute_frequency_area: the cell area must be > 0");
+    std::vector<double> cells;
+    cells.reserve(areas_m2.size());
+    for (double a : areas_m2)
+        if (std::isfinite(a) && a > 0.0) cells.push_back(std::round(a / cell_area));
+    frequency_area_result out;
+    out.density = compute_log_binned_density(cells, bins_per_decade, true);
+    for (std::size_t k = 0; k < out.density.centre.size(); ++k)
+    {
+        out.density.lower[k] *= cell_area;
+        out.density.upper[k] *= cell_area;
+        out.density.centre[k] *= cell_area;
+        out.density.width[k] *= cell_area;
+        out.density.density[k] /= cell_area;
+    }
+    out.fit = fit_power_law_tail(cells, true, min_tail);
+    if (out.fit.valid)
+    {
+        out.fit.x_min *= cell_area;
+        out.eta = -out.fit.alpha;
+        out.eta_standard_error = out.fit.alpha_standard_error;
+        std::vector<double> lx, ly;
+        for (std::size_t k = 0; k < out.density.centre.size(); ++k)
+            if (out.density.centre[k] >= out.fit.x_min && out.density.count[k] >= 3.0)
+            {
+                lx.push_back(std::log10(out.density.centre[k]));
+                ly.push_back(std::log10(out.density.density[k]));
+            }
+        if (lx.size() >= 3)
+        {
+            const lsdtt_linear_regression_result r = compute_linear_regression(lx, ly);
+            out.binned_eta = r.slope;
+            out.binned_eta_standard_error = r.slope_standard_error;
+            out.binned_n_bins = lx.size();
+        }
+    }
+    return out;
+}
 
 cell_shape shape_from_moments(const cell_shape_moments& a, const lsdtt_raster_meta& meta)
 {

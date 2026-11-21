@@ -400,6 +400,28 @@ lsdtt_qq_data compute_qq(
 );
 
 // -----------------------------------------------------------------------------
+// Log-binned probability density (frequency - magnitude plots)
+//
+// Bins positive values into bins of equal width in log10 space, bins_per_decade
+// per decade, from the smallest to the largest value, and returns each bin's
+// count and probability density count / (n * width). With discrete = true the
+// values are positive integers (e.g. areas in cells): the edges sit half-way
+// between integers, the width is the number of integers in the bin, and bins
+// holding no integer are dropped, so sum(density * width) = 1 either way.
+// Non-finite and non-positive values are ignored. Throws if bins_per_decade < 1.
+// -----------------------------------------------------------------------------
+struct log_binned_density
+{
+    std::vector<double> lower, upper, centre;   // centre: geometric mean of the edges
+    std::vector<double> width;                  // in value units (discrete: integers in the bin)
+    std::vector<double> count, density;
+    std::size_t n_total = 0;
+};
+
+log_binned_density compute_log_binned_density(
+    const std::vector<double>& values, int bins_per_decade, bool discrete = false);
+
+// -----------------------------------------------------------------------------
 // Log-binned mean
 //
 // Bins paired (x, y) data into logarithmically-spaced bins of width

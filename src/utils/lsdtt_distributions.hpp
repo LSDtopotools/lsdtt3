@@ -301,4 +301,39 @@ struct equal_density_sample
 [[nodiscard]] equal_density_sample equal_density_samples(
     const equal_density_distribution& distribution, int n);
 
+// =============================================================================
+// POWER-LAW TAIL (frequency - magnitude, e.g. landslide area)
+// =============================================================================
+//
+// Fits p(x) ~ x^(-alpha) for x >= x_min by maximum likelihood, choosing x_min
+// to minimise the Kolmogorov-Smirnov distance between the empirical and the
+// fitted tail (Clauset, Shalizi & Newman 2009, SIAM Review 51:661, sections
+// 3.1-3.3):
+//   continuous: alpha = 1 + n / sum ln(x_i / x_min),
+//               model CCDF (x / x_min)^(1 - alpha);
+//   discrete (positive integers, e.g. areas in cells): the approximation
+//               alpha = 1 + n / sum ln(x_i / (x_min - 1/2)), model CCDF
+//               ((x - 1/2) / (x_min - 1/2))^(1 - alpha) (their eq. 3.7), good
+//               to about 1 % for x_min >= 6.
+//   standard error (alpha - 1) / sqrt(n) (their eq. 3.2).
+// Candidates for x_min are the distinct values with at least min_tail values
+// at or above them. Non-finite and non-positive values are ignored.
+// For a probability density p(A) ~ A^eta, eta = -alpha.
+// =============================================================================
+
+struct power_law_tail_fit
+{
+    bool valid = false;               // false: fewer than min_tail usable values
+    bool discrete = false;
+    double alpha = std::numeric_limits<double>::quiet_NaN();
+    double alpha_standard_error = std::numeric_limits<double>::quiet_NaN();
+    double x_min = std::numeric_limits<double>::quiet_NaN();
+    double ks_distance = std::numeric_limits<double>::quiet_NaN();
+    std::size_t n_total = 0;          // usable values
+    std::size_t n_tail = 0;           // values >= x_min
+};
+
+[[nodiscard]] power_law_tail_fit fit_power_law_tail(
+    const std::vector<double>& values, bool discrete, std::size_t min_tail = 50);
+
 } // namespace lsdtt

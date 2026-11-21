@@ -124,7 +124,21 @@ does not describe:
   removes single lines of cells down one flow path.
 
 Touching landslides are then merged (8-connected) into an amalgamated
-catalogue, which is what a mapper would see. Volume is area × mean depth. The
+catalogue, which is what a mapper would see.
+
+**Frequency – area.** For each catalogue the CLI also writes the
+log-binned probability density p(A) (`frequency_area_bins_per_decade` bins per
+decade) and fits its tail with a power law, p(A) ~ A^η.
+
+- **The fit:** η = −α, where α is found by maximum likelihood. A_min is chosen
+  to minimise the Kolmogorov–Smirnov distance between the data and the fitted
+  tail (Clauset, Shalizi & Newman 2009, SIAM Review 51:661).
+- **Discrete areas:** areas are whole numbers of cells, so the discrete form of
+  the estimator is used.
+- **Standard error:** (α − 1)/√n_tail. The tail must hold at least
+  `frequency_area_min_tail` landslides.
+- **Binned slope:** the least-squares slope of the binned density above A_min
+  is written as well, for comparison with studies that fit binned densities. Volume is area × mean depth. The
 landslide safety factor is scaLr's eq. 7, the summed resisting over the summed
 driving stresses. Length and width are the axes of the ellipse with the same
 second moments as the landslide's cells. These catalogues are statistics of
@@ -373,6 +387,8 @@ lsdtt-slope-stability -h
 | `<write_fname>_slip_failure_probability.tif`, `_slip_safety_factor_mean.tif`, `_slip_safety_factor_sd.tif` | probability of failure on the fixed critical surface (`parameter_uncertainty`) |
 | `<write_fname>_landslide_catalogue.csv` | one row per daylight point: area, depth, volume, safety factors, centroid, length, width, perimeter |
 | `<write_fname>_landslide_catalogue_amalgamated.csv` | the same for touching landslides merged |
+| `<write_fname>_landslide_frequency_area.csv`, `_landslide_frequency_area_fit.csv` | log-binned probability density p(A) of each catalogue, and its power-law tail p(A) ~ A^η: η by maximum likelihood with A_min chosen by the Kolmogorov–Smirnov distance (discrete in cells), its standard error, and the least-squares slope of the binned density above A_min |
+| `<write_fname>_slip_body_frequency_area.csv`, `_slip_body_frequency_area_fit.csv` | the same for the slip-body catalogues |
 | `<write_fname>_landslide_label.tif`, `_landslide_label_amalgamated.tif` | catalogue id of each landslide cell |
 | `<write_fname>_water_table_depth.tif`, `_saturated_thickness.tif`, `_seepage.tif` | the groundwater state used for pore pressure |
 | `<write_fname>_t<time>s_water_table_depth.tif`, `_t<time>s_rupture_safety_factor.tif` | the same at each transient output time |
@@ -527,6 +543,8 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `rupture_min_daylight_neighbours` | `int` | `2` | `param` | `run_rupture_planes` | Fewest neighbours of a daylight point that must share it, or its landslide is dropped. | Removes "1-D landslides", single lines of cells down one flow path, as the scaLr code does (its iopt = 2; the paper does not describe it). The 8 neighbours of the daylight point D are counted if their daylight point is D, stable or not. 0 keeps every landslide. 0 to 8. |
 | `write_landslide_catalogue` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the potential-landslide catalogues as CSV. | A landslide is the unstable cells (F &lt;= 1) that share a daylight point, as in scaLr (every daylight point also joins its own landslide if its own F &lt;= 1, as the scaLr code does). &lt;write_fname&gt;_landslide_catalogue.csv: one row per daylight point; _landslide_catalogue_amalgamated.csv: touching landslides merged (8-connected), as a mapper would see them. Columns: area, mean and max depth, volume (area x mean depth), mean F, the landslide safety factor (scaLr eq. 7), centroid, length and width (axes of the ellipse with the same second moments), perimeter. These are statistics of potential landslides, not maps of individual ones (Steer et al. 2026, section 4.1). |
+| `frequency_area_bins_per_decade` | `int` | `10` | `param` | `write_landslide_catalogue` | Logarithmic bins per decade of area for the frequency - area tables. | With each catalogue, &lt;write_fname&gt;_landslide_frequency_area.csv (and _slip_body_frequency_area.csv) holds the log-binned probability density p(A) per m2, and _frequency_area_fit.csv the power-law tail p(A) ~ A^eta: eta by maximum likelihood with A_min chosen by the Kolmogorov-Smirnov distance (Clauset et al. 2009, discrete in cells), with its standard error, and the least-squares slope of the binned density above A_min. |
+| `frequency_area_min_tail` | `int` | `50` | `param` | `write_landslide_catalogue` | Fewest landslides in the power-law tail of the frequency - area fit. | - |
 | `write_landslide_label_rasters` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the landslide id rasters behind the catalogues. | &lt;write_fname&gt;_landslide_label.tif and _landslide_label_amalgamated.tif: the catalogue id of each landslide cell, nodata elsewhere. For checking the statistics. |
 
 ### Groundwater

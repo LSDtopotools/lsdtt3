@@ -576,6 +576,7 @@ lsdtt_evidence(unit_slope_stability_columns unit exact_solution property metamor
 lsdtt_evidence(unit_slope_stability_catalogue unit exact_solution property negative)  # grouping rules on hand-built rupture results; rectangle statistics in closed form; catalogue invariants through the pipeline; bad option throws
 lsdtt_evidence(unit_slope_stability_groundwater_dupuit unit exact_solution differential property negative)  # Dupuit mound/divide, kinematic plane = SINMAP wetness, exponential = TOPMODEL relation, linear decay; RK4 of the update ODE in the test; exact water budget; bad parameters throw
 lsdtt_evidence(unit_brent_minimiser unit exact_solution differential negative)  # known minima and the scaLr closed-form depth; 2e6-point grid search inside the test; bad arguments throw
+lsdtt_evidence(unit_power_law_tail_fit unit property negative)  # Clauset MLE + KS x_min on samples from known continuous and discrete power laws and a lognormal body with a tail; binned density integrates to 1; slope tracks -alpha; too few values invalid
 lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4
 lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)
 lsdtt_evidence(unit_raster_resampling unit exact_solution property)

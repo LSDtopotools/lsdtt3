@@ -2919,6 +2919,8 @@ add_lsdtt_cli_smoke_test(
     --expect-absent ssp_sinmap_class_areas.csv
     --expect-absent ssp_landslide_label.tif
     --expect ssp_landslide_catalogue.csv
+    --expect ssp_landslide_frequency_area.csv
+    --expect-file-contains "ssp_landslide_frequency_area_fit.csv:catalogue,n_landslides,method,area_min_m2,eta"
     --stdout-contains "Rupture planes: "
     --stdout-contains "0 of "
 )
@@ -2970,6 +2972,8 @@ add_lsdtt_cli_smoke_test(
     --expect ssc_slip_evaluated.tif
     --expect ssc_slip_failure_probability.tif
     --expect ssc_slip_body_catalogue.csv
+    --expect ssc_slip_body_frequency_area.csv
+    --expect ssc_slip_body_frequency_area_fit.csv
     --expect ssc_slip_body_catalogue_amalgamated.csv
     --expect ssc_slip_body_label_amalgamated.tif
     --expect-raster-values ssc_slip_evaluated.tif:0,1
@@ -6704,6 +6708,14 @@ target_link_libraries(lsdtt-test-groundwater-dupuit PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_groundwater_dupuit COMMAND lsdtt-test-groundwater-dupuit)
 lsdtt_set_tests_properties(unit_slope_stability_groundwater_dupuit PROPERTIES
     LABELS "slope_stability;distributed_hydrology")
+
+# Power-law tail fits (Clauset et al. 2009 MLE with KS choice of x_min) and the
+# log-binned probability density, for frequency-area plots (src/utils).
+add_executable(lsdtt-test-power-law-tail-fit cpp/test_power_law_tail_fit.cpp)
+target_link_libraries(lsdtt-test-power-law-tail-fit PRIVATE lsdtt3_cpu)
+add_test(NAME unit_power_law_tail_fit COMMAND lsdtt-test-power-law-tail-fit)
+lsdtt_set_tests_properties(unit_power_law_tail_fit PROPERTIES
+    LABELS "statistics;slope_stability")
 
 add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
 target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
@@ -12970,7 +12982,7 @@ set(LSDTT_DOMAIN_RULES
     # equal-density sampling, the Brent minimiser). Library-level, so "core"
     # like the statistics above; the tests also carry their own
     # "slope_stability" label, so `ctest -L slope_stability` reaches them.
-    "uniform_combination|equal_density|brent_minimiser" "core"
+    "uniform_combination|equal_density|brent_minimiser|power_law_tail" "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The

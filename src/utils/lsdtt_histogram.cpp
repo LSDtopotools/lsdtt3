@@ -1144,4 +1144,47 @@ lsdtt_log_binned_quantiles compute_log_binned_quantiles(
     return compute_log_binned_quantiles_impl(guide_values, values_to_bin, n_bins, quantile_levels);
 }
 
+log_binned_density compute_log_binned_density(const std::vector<double>& values, int bins_per_decade, bool discrete)
+{
+    if (bins_per_decade < 1) throw std::invalid_argument("compute_log_binned_density: bins_per_decade must be >= 1");
+    log_binned_density out;
+    std::vector<double> x;
+    for (double v : values)
+        if (std::isfinite(v) && v > 0.0) x.push_back(discrete ? std::round(v) : v);
+    out.n_total = x.size();
+    if (x.empty()) return out;
+    std::sort(x.begin(), x.end());
+    const double lo = discrete ? x.front() - 0.5 : x.front();
+    const double hi = discrete ? x.back() + 0.5 : x.back();
+    const double llo = std::log10(lo), lhi = std::log10(hi);
+    const int nb = std::max(1, static_cast<int>(std::ceil((lhi - llo) * bins_per_decade - 1e-9)));
+    std::vector<double> edges(static_cast<std::size_t>(nb) + 1);
+    for (int k = 0; k <= nb; ++k) edges[static_cast<std::size_t>(k)] = std::pow(10.0, llo + (lhi - llo) * k / nb);
+    edges.front() = lo;
+    edges.back() = hi;
+    std::size_t j = 0;
+    const double n = static_cast<double>(x.size());
+    for (int k = 0; k < nb; ++k)
+    {
+        const double a = edges[static_cast<std::size_t>(k)], b = edges[static_cast<std::size_t>(k) + 1];
+        double c = 0.0;
+        while (j < x.size() && (x[j] < b || (k == nb - 1 && x[j] <= b))) { c += 1.0; ++j; }
+        double w = b - a;
+        if (discrete)
+        {
+            // Integers in [a, b): ceil(a) .. ceil(b) - 1.
+            w = std::ceil(b) - std::ceil(a);
+            if (k == nb - 1) w = std::floor(b) - std::ceil(a) + 1.0;
+            if (!(w > 0.0)) continue;
+        }
+        out.lower.push_back(a);
+        out.upper.push_back(b);
+        out.centre.push_back(std::sqrt(a * b));
+        out.width.push_back(w);
+        out.count.push_back(c);
+        out.density.push_back(c / (n * w));
+    }
+    return out;
+}
+
 } // namespace lsdtt

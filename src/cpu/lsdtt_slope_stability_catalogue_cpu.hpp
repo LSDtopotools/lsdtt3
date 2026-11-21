@@ -60,10 +60,13 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_distributions.hpp"
+#include "../utils/lsdtt_histogram.hpp"
 #include "lsdtt_slope_stability_rupture_cpu.hpp"
 
 namespace lsdtt
@@ -128,6 +131,32 @@ struct cell_shape
 
 // n must be > 0.
 [[nodiscard]] cell_shape shape_from_moments(const cell_shape_moments& m, const lsdtt_raster_meta& meta);
+
+// Frequency - area of a catalogue (landslides or slip bodies). Areas are whole
+// numbers of cells, so the fit and the bins are DISCRETE in cells and reported
+// in m^2:
+//   density: log-binned probability density p(A) (per m^2), bins_per_decade
+//     per decade (compute_log_binned_density, discrete);
+//   fit: the power-law tail p(A) ~ A^eta, eta = -alpha, by maximum likelihood
+//     with x_min chosen by the KS distance (fit_power_law_tail, discrete;
+//     Clauset, Shalizi & Newman 2009); x_min reported in m^2;
+//   binned_eta: the least-squares slope of log10 p(A) against log10 A over the
+//     bins whose centre is at or above x_min, holding at least 3 landslides, as in log-binned
+//     analyses (e.g. Steer et al. 2026, Fig. 8), with its standard error.
+struct frequency_area_result
+{
+    log_binned_density density;          // lower / upper / centre in m^2, density per m^2
+    power_law_tail_fit fit;              // x_min in m^2
+    double eta = std::numeric_limits<double>::quiet_NaN();
+    double eta_standard_error = std::numeric_limits<double>::quiet_NaN();
+    double binned_eta = std::numeric_limits<double>::quiet_NaN();
+    double binned_eta_standard_error = std::numeric_limits<double>::quiet_NaN();
+    std::size_t binned_n_bins = 0;
+};
+
+[[nodiscard]] frequency_area_result compute_frequency_area(
+    const std::vector<double>& areas_m2, double cell_area_m2, int bins_per_decade = 10,
+    std::size_t min_tail = 50);
 
 // rupture:  the result of compute_rupture_planes on this grid
 // region / by_region: as given to compute_rupture_planes (for F_L)

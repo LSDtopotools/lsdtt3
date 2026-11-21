@@ -295,6 +295,38 @@ static region_tables read_region_table(const std::string& path,
     return out;
 }
 
+// Frequency - area tables of one or two catalogues: the binned density and the fit.
+static void write_frequency_area(const std::string& base, const std::string& what,
+                                 const std::vector<std::pair<std::string, std::vector<double>>>& catalogues,
+                                 double cell_area, int bins_per_decade, int min_tail)
+{
+    const std::string pd = base + "_" + what + "_frequency_area.csv", pf = base + "_" + what + "_frequency_area_fit.csv";
+    std::ofstream d(pd), f(pf);
+    if (!d) throw std::runtime_error("Cannot write " + pd);
+    if (!f) throw std::runtime_error("Cannot write " + pf);
+    d << "catalogue,area_lower_m2,area_upper_m2,area_centre_m2,n_landslides,probability_density_per_m2\n";
+    f << "catalogue,n_landslides,method,area_min_m2,eta,eta_standard_error,n_tail,ks_distance,binned_eta,"
+         "binned_eta_standard_error,n_bins_fitted\n";
+    for (const auto& c : catalogues)
+    {
+        const lsdtt::frequency_area_result r = lsdtt::compute_frequency_area(
+            c.second, cell_area, bins_per_decade, static_cast<std::size_t>(std::max(2, min_tail)));
+        for (std::size_t k = 0; k < r.density.centre.size(); ++k)
+            d << c.first << ',' << number_string(r.density.lower[k]) << ',' << number_string(r.density.upper[k]) << ','
+              << number_string(r.density.centre[k]) << ',' << static_cast<long long>(r.density.count[k]) << ','
+              << number_string(r.density.density[k]) << '\n';
+        f << c.first << ',' << r.fit.n_total << ",mle_discrete_ks_xmin," << number_string(r.fit.x_min) << ','
+          << number_string(r.eta) << ',' << number_string(r.eta_standard_error) << ',' << r.fit.n_tail << ','
+          << number_string(r.fit.ks_distance) << ',' << number_string(r.binned_eta) << ','
+          << number_string(r.binned_eta_standard_error) << ',' << r.binned_n_bins << '\n';
+        std::cout << "  frequency - area (" << what << ", " << c.first << "): eta = " << number_string(r.eta)
+                  << " +/- " << number_string(r.eta_standard_error) << " for A >= " << number_string(r.fit.x_min)
+                  << " m2 (" << r.fit.n_tail << " of " << r.fit.n_total << "); binned slope "
+                  << number_string(r.binned_eta) << "\n";
+    }
+    std::cout << "  wrote " << pd << "\n  wrote " << pf << "\n";
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -793,6 +825,20 @@ int main(int argc, char* argv[])
         "potential landslides, not maps of individual ones (Steer et al. 2026, "
         "section 4.1).",
         "Landslide catalogues", "switch", "run_rupture_planes"};
+    int_default_map["frequency_area_bins_per_decade"] = 10;
+    help_map["frequency_area_bins_per_decade"] = {"int", "10",
+        "Logarithmic bins per decade of area for the frequency - area tables.",
+        "With each catalogue, <write_fname>_landslide_frequency_area.csv (and "
+        "_slip_body_frequency_area.csv) holds the log-binned probability density "
+        "p(A) per m2, and _frequency_area_fit.csv the power-law tail p(A) ~ A^eta: "
+        "eta by maximum likelihood with A_min chosen by the Kolmogorov-Smirnov "
+        "distance (Clauset et al. 2009, discrete in cells), with its standard error, "
+        "and the least-squares slope of the binned density above A_min.",
+        "Landslide catalogues", "param", "write_landslide_catalogue"};
+    int_default_map["frequency_area_min_tail"] = 50;
+    help_map["frequency_area_min_tail"] = {"int", "50",
+        "Fewest landslides in the power-law tail of the frequency - area fit.", "",
+        "Landslide catalogues", "param", "write_landslide_catalogue"};
     bool_default_map["write_landslide_label_rasters"] = true;
     help_map["write_landslide_label_rasters"] = {"bool", "true",
         "Write the landslide id rasters behind the catalogues.",
@@ -1044,6 +1090,10 @@ int main(int argc, char* argv[])
             throw std::runtime_error("slip_surface_family needs run_rupture_planes (its seeds and screen)");
         if (run_rupture && ii.at("threshold_contributing_pixels") < 1)
             throw std::runtime_error("threshold_contributing_pixels must be at least 1");
+        if (ii.at("frequency_area_bins_per_decade") < 1)
+            throw std::runtime_error("frequency_area_bins_per_decade must be at least 1");
+        if (ii.at("frequency_area_min_tail") < 2)
+            throw std::runtime_error("frequency_area_min_tail must be at least 2");
         if (ii.at("rupture_min_daylight_neighbours") < 0 || ii.at("rupture_min_daylight_neighbours") > 8)
             throw std::runtime_error("rupture_min_daylight_neighbours must be 0 to 8");
         const std::string water_table_method = sf.at("water_table_method");
@@ -1648,6 +1698,15 @@ int main(int argc, char* argv[])
                         };
                         write_slip(scat.by_toe, base + "_slip_body_catalogue.csv", true);
                         write_slip(scat.amalgamated, base + "_slip_body_catalogue_amalgamated.csv", false);
+                        auto areas = [](const std::vector<lsdtt::slip_body_record>& rows) {
+                            std::vector<double> a;
+                            for (const auto& r : rows) a.push_back(r.area_m2);
+                            return a;
+                        };
+                        const double ca = dem.get_meta().cell_size * dem.get_meta().cell_size;
+                        write_frequency_area(base, "slip_body", {{"by_toe", areas(scat.by_toe)},
+                                                                 {"amalgamated", areas(scat.amalgamated)}},
+                                             ca, ii.at("frequency_area_bins_per_decade"), ii.at("frequency_area_min_tail"));
                     }
                 }
             }
@@ -1707,6 +1766,15 @@ int main(int argc, char* argv[])
                     };
                     write_catalogue(cat.by_daylight, base + "_landslide_catalogue.csv", true);
                     write_catalogue(cat.amalgamated, base + "_landslide_catalogue_amalgamated.csv", false);
+                    auto areas = [](const std::vector<lsdtt::landslide_record>& rows) {
+                        std::vector<double> a;
+                        for (const auto& r : rows) a.push_back(r.area_m2);
+                        return a;
+                    };
+                    const double ca = dem.get_meta().cell_size * dem.get_meta().cell_size;
+                    write_frequency_area(base, "landslide", {{"by_daylight", areas(cat.by_daylight)},
+                                                             {"amalgamated", areas(cat.amalgamated)}},
+                                         ca, ii.at("frequency_area_bins_per_decade"), ii.at("frequency_area_min_tail"));
                 }
             }
             }   // run_rupture

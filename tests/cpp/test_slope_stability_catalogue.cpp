@@ -315,6 +315,33 @@ int main()
         try { (void)build_landslide_catalogues(f.build(), f.meta, {}, k_params, 9); } catch (const std::invalid_argument&) { return true; }
         return false; }());
 
+    // ------------------------------------------------------- frequency - area
+    {
+        // Areas in whole cells (900 m2) from a discrete power law, alpha 2.6,
+        // x_min 8 cells (Clauset et al. 2009, eq. D.6), plus small ones below.
+        const double ca = 900.0;
+        std::vector<double> areas;
+        std::uint64_t st = 99;
+        auto u01 = [&]() { st = st * 6364136223846793005ULL + 1442695040888963407ULL; return ((st >> 11) + 0.5) / 9007199254740992.0; };
+        for (int i = 0; i < 6000; ++i)
+            areas.push_back(ca * std::floor(7.5 * std::pow(1.0 - u01(), -1.0 / 1.6) + 0.5));
+        for (int i = 0; i < 3000; ++i) areas.push_back(ca * (1 + i % 7));
+        const frequency_area_result r = compute_frequency_area(areas, ca, 10, 50);
+        double integral = 0.0, n = 0.0;
+        for (std::size_t k = 0; k < r.density.centre.size(); ++k)
+        {
+            integral += r.density.density[k] * r.density.width[k];
+            n += r.density.count[k];
+        }
+        const double xmin_cells = r.fit.x_min / ca;
+        check("frequency - area: density per m2 integrates to 1; eta = -alpha; x_min in m2 on a whole cell; tail exponent recovered",
+              std::fabs(integral - 1.0) < 1e-12 && n == static_cast<double>(areas.size()) && r.eta == -r.fit.alpha
+              && xmin_cells == std::floor(xmin_cells) && std::fabs(r.eta + 2.6) < 3.0 * r.eta_standard_error
+              && r.binned_n_bins >= 3 && std::fabs(r.binned_eta + 2.6) < 0.3,
+              "eta " + num(r.eta) + " +/- " + num(r.eta_standard_error) + ", A_min " + num(r.fit.x_min) + " m2, binned "
+              + num(r.binned_eta));
+    }
+
     std::cout << g_checks << " checks, " << g_failures << " failed\n";
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;

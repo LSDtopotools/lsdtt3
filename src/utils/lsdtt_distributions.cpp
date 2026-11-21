@@ -663,4 +663,58 @@ equal_density_sample equal_density_samples(
     return out;
 }
 
+power_law_tail_fit fit_power_law_tail(const std::vector<double>& values, bool discrete, std::size_t min_tail)
+{
+    power_law_tail_fit out;
+    out.discrete = discrete;
+    std::vector<double> x;
+    x.reserve(values.size());
+    for (double v : values)
+        if (std::isfinite(v) && v > 0.0) x.push_back(discrete ? std::round(v) : v);
+    std::sort(x.begin(), x.end());
+    out.n_total = x.size();
+    if (min_tail < 2) min_tail = 2;
+    if (x.size() < min_tail) return out;
+    const double shift = discrete ? 0.5 : 0.0;
+    const std::size_t n = x.size();
+    // Suffix sums of ln x for the MLE at each candidate.
+    std::vector<double> suffix_log(n + 1, 0.0);
+    for (std::size_t i = n; i-- > 0;) suffix_log[i] = suffix_log[i + 1] + std::log(x[i]);
+
+    double best_d = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (i > 0 && x[i] == x[i - 1]) continue;      // distinct candidates only
+        const std::size_t m = n - i;
+        if (m < min_tail) break;
+        const double xm = x[i];
+        if (!(xm - shift > 0.0)) continue;
+        const double denom = suffix_log[i] - static_cast<double>(m) * std::log(xm - shift);
+        if (!(denom > 0.0)) continue;
+        const double alpha = 1.0 + static_cast<double>(m) / denom;
+        // KS distance over the distinct tail values: empirical CCDF P(X >= v).
+        double d = 0.0;
+        for (std::size_t j = i; j < n;)
+        {
+            std::size_t k = j;
+            while (k < n && x[k] == x[j]) ++k;
+            const double emp = static_cast<double>(n - j) / static_cast<double>(m);
+            const double model = std::pow((x[j] - shift) / (xm - shift), 1.0 - alpha);
+            d = std::max(d, std::fabs(emp - model));
+            j = k;
+        }
+        if (d < best_d)
+        {
+            best_d = d;
+            out.valid = true;
+            out.alpha = alpha;
+            out.alpha_standard_error = (alpha - 1.0) / std::sqrt(static_cast<double>(m));
+            out.x_min = xm;
+            out.ks_distance = d;
+            out.n_tail = m;
+        }
+    }
+    return out;
+}
+
 } // namespace lsdtt
