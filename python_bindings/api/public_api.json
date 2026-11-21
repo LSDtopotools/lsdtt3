@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 242,
+  "export_count": 248,
   "exports": [
     {
       "name": "BasinCollection",
@@ -1472,7 +1472,7 @@
     {
       "name": "FlowGraph",
       "kind": "class",
-      "doc": "Fractional D-infinity or MFD flow-routing graph.\n\nUse ``FlowInfo`` for single-receiver D8 channel trees. Use ``FlowGraph`` for\ndistributed-flow drainage area and later TWI/connectivity calculations.\n\nConstruct it as\n\n    FlowGraph(dem: Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, mfd_exponent: float = 1.0, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m).\nmethod : {\"mfd\", \"dinf\"}, default=\"mfd\"\n    ``mfd``: flow split among all downslope neighbours weighted by\n    slope**mfd_exponent (Quinn et al. 1991; Freeman 1991). ``dinf``:\n    D-infinity (Tarboton 1997), flow split between the two neighbours of\n    the steepest triangular facet.\nboundary_conditions : str, default='oooo'\n    Four NESW edge codes, as for ``FlowInfo``.\ninterior_nodata_is_outlet : bool, default=True\n    Pixels next to nodata may drain into it.\nmfd_exponent : float, default=1.0\n    Exponent on slope in the MFD split (1.0 Quinn, 1.1 Freeman).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\ndonor_count : numpy.ndarray\n    Uint8 array: number of cells draining into each cell.\nmetadata : RasterMeta\nmethod : str\nn_valid_cells : int\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 (row, col) array.\nshape : tuple\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate weights through fractional receivers; default weights are cell areas.\ndirection() -> Raster\ndrainage_area() -> Raster\n    Return the distributed-flow drainage area (m^2) as a Raster.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel (row, col) is an outlet.\noutlet_mask() -> Raster\n    Return a 0/1 Raster of outlet pixels.\nreceivers_of(row: int, col: int) -> dict\n    Return fractional receiver pixels and weights.\nslope() -> Raster\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "Fractional D-infinity or MFD flow-routing graph.\n\nUse ``FlowInfo`` for single-receiver D8 channel trees. Use ``FlowGraph`` for\ndistributed-flow drainage area and later TWI/connectivity calculations.\n\nConstruct it as\n\n    FlowGraph(dem: Raster, method: str = 'mfd', boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, mfd_exponent: float = 1.0, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m).\nmethod : {\"mfd\", \"dinf\"}, default=\"mfd\"\n    ``mfd``: flow split among all downslope neighbours weighted by\n    slope**mfd_exponent (Quinn et al. 1991; Freeman 1991). ``dinf``:\n    D-infinity (Tarboton 1997), flow split between the two neighbours of\n    the steepest triangular facet.\nboundary_conditions : str, default='oooo'\n    Four NESW edge codes, as for ``FlowInfo``.\ninterior_nodata_is_outlet : bool, default=True\n    Pixels next to nodata may drain into it.\nmfd_exponent : float, default=1.0\n    Exponent on slope in the MFD split (1.0 Quinn, 1.1 Freeman).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\ndonor_count : numpy.ndarray\n    Uint8 array: number of cells draining into each cell.\nmetadata : RasterMeta\nmethod : str\nn_valid_cells : int\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 (row, col) array.\nshape : tuple\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate weights through fractional receivers; default weights are cell areas.\ndinf_contour_width() -> Raster\n    Contour width of each cell for its D-infinity flow direction.\ndinf_edge_contaminated_mask() -> Raster\n    Cells whose D-infinity contributing area reaches the raster edge or nodata.\ndirection() -> Raster\ndrainage_area() -> Raster\n    Return the distributed-flow drainage area (m^2) as a Raster.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel (row, col) is an outlet.\noutlet_mask() -> Raster\n    Return a 0/1 Raster of outlet pixels.\nreceivers_of(row: int, col: int) -> dict\n    Return fractional receiver pixels and weights.\nslope() -> Raster\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "__init__",
@@ -1501,6 +1501,28 @@
               "defaults": [
                 null
               ]
+            }
+          ]
+        },
+        {
+          "name": "dinf_contour_width",
+          "kind": "method",
+          "doc": "dinf_contour_width(self) -> Raster\n\nContour width of each cell for its D-infinity flow direction.\n\nlsdtt-slope-stability ``contour_width_method: dinf_flow_direction``:\nw = b max(|sin beta|, |cos beta|) for flow bearing beta and cell size b, the\nwidth of a D-infinity flow tube on a plane, so A / w is the flow distance\nfrom the divide there. Cells without a direction get b. Pass the result as\n``contour_width`` to ``sinmap``.\n\nParameters\n----------\nself : FlowGraph\n    A FlowGraph built with ``method=\"dinf\"``.\n\nReturns\n-------\nRaster\n    Contour width (m); nodata outside the DEM.",
+          "signatures": [
+            {
+              "definition": "def dinf_contour_width(self) -> Raster",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "dinf_edge_contaminated_mask",
+          "kind": "method",
+          "doc": "dinf_edge_contaminated_mask(self) -> Raster\n\nCells whose D-infinity contributing area reaches the raster edge or nodata.\n\nlsdtt-slope-stability ``exclude_edge_contaminated_cells``: the area of these\ncells may be truncated, so their specific catchment area and SINMAP\nstability index are lower bounds. Pass the result as ``exclude`` to\n``sinmap`` to leave them out.\n\nParameters\n----------\nself : FlowGraph\n    A FlowGraph built with ``method=\"dinf\"``.\n\nReturns\n-------\nRaster\n    1 contaminated, 0 not; nodata outside the DEM.",
+          "signatures": [
+            {
+              "definition": "def dinf_edge_contaminated_mask(self) -> Raster",
+              "defaults": []
             }
           ]
         },
@@ -1629,7 +1651,7 @@
     {
       "name": "FlowInfo",
       "kind": "class",
-      "doc": "D8 drainage topology (steepest-descent receivers) of a conditioned DEM.\n\nEach valid pixel drains to the one of its eight neighbours with the steepest\ndownhill gradient, or is an outlet. ``FlowInfo`` stores this routing (and\neach pixel's upslope pixels), not the elevations, so later calls that need\nelevations take the DEM again. Fill or breach depressions first (for example\n``fill_pits``); a pixel with no downhill neighbour and no allowed exit raises\nan error unless ``allow_pits_as_outlets=True``. Pixels are addressed by\n``(row, col)`` (row 0 is the northern edge) or by flat index\n``row * n_cols + col``.\n\nTypical workflow::\n\n    F = lsdtt3.FlowInfo(lsdtt3.fill_pits(dem))\n    scope = F.channel_scope(threshold_contributing_pixels=1000)\n    N = F.channel_network(scope)\n    B = F.basins(outlets, min_upslope_pixels=0)\n\nConstruct it as\n\n    FlowInfo(dem: Raster, boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, forced_outlets: object | None = None, allow_pits_as_outlets: bool = False, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m) in a projected metre CRS.\nboundary_conditions : str, default='oooo'\n    Four characters for the north, east, south and west edges: ``o`` open\n    (an edge pixel may drain out of the grid when it has no lower in-grid\n    neighbour), ``n`` no-flux (flow cannot leave), ``p`` periodic (wraps to\n    the opposite edge; must be given for both opposite edges), ``b``\n    base level (every pixel on the edge is an outlet). See\n    ``make_boundary_conditions``.\ninterior_nodata_is_outlet : bool, default=True\n    If True, a pixel next to a nodata pixel may drain into it (become an\n    outlet) when it has no lower valid neighbour, as at a coastline or the\n    edge of a clipped DEM. If False such pixels must drain over valid pixels.\nforced_outlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` pixels that are made outlets regardless of\n    their neighbours (moulins, swallow holes, playas). Prepare the DEM with\n    ``fill_pits_with_sinks`` using the same pixels. Out-of-grid or nodata\n    pixels raise ``ValueError``; duplicates are ignored.\nallow_pits_as_outlets : bool, default=False\n    If True, a pixel that has no downhill neighbour and no allowed exit\n    becomes an outlet instead of raising an error (useful in landscape\n    evolution runs where transient pits form).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\nboundary_conditions : str\n    The four-character NESW boundary-condition string used.\ndirection : numpy.ndarray\n    Uint8 array (n_rows, n_cols) of internal D8 direction codes; see flow_direction() for a raster.\ndonor_count : numpy.ndarray\n    Uint8 array (n_rows, n_cols): number of neighbours draining directly into each pixel.\nmetadata : RasterMeta\n    Grid metadata (RasterMeta) of the DEM the topology was built from.\nn_outlets : int\n    Number of outlet pixels (pixels with no receiver).\nn_valid_cells : int\n    Number of valid (routed) pixels.\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 int64 array of (row, col), in flat-index order.\nreceiver : numpy.ndarray\n    Int64 array (n_rows, n_cols) of each pixel's receiver flat index; -2 at outlets, -1 at nodata.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols).\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate per-pixel weights downstream; default weights are cell areas.\nbasins(outlets: object | None = None, min_upslope_pixels: int = 0) -> BasinCollection\n    Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.\nchannel_mask(threshold_contributing_pixels: int) -> Raster\n    Return a 0/1 raster where contributing pixels meet the threshold.\nchannel_network(scope: ChannelScope) -> ChannelNetwork\n    Build a compact junction graph from a ChannelScope.\nchannel_point_attributes(filled_dem: Raster, points: geopandas.GeoDataFrame, *, threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame\n    Snap points (e.g. field sites) to the nearest channel cell and add its drainage area and along-channel slope.\nchannel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> ChannelScope\n    Resolve threshold or supplied source paths into a ChannelScope.\nchi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate zero-based chi across complete upstream raster domains.\nchi_from_outlets_inherited(outlets: object, seed_chi: Raster, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate chi from supplied outlets using seed-raster base values.\ncontributing_pixels() -> Raster\n    Return the number of pixels draining through each pixel, including itself.\nd8_flow_path_gradient(routing_dem: Raster, drainage_area: Raster, *, window_metres: float = 150.0, exclude: Raster | None = None, n_threads: int = 0) -> Raster\n    Gradient at every pixel along its D8 flow path, over a window centred on it.\ndistance_to_channel(threshold_contributing_pixels: int) -> Raster\n    Return the D8 flow-path length from each pixel to the nearest downstream channel.\ndistance_to_farthest_ridge() -> Raster\n    Return the longest D8 flow-path length from any upslope pixel to this pixel.\ndownstream_sum(values: Raster, sinks: Raster) -> Raster\n    Sum a raster along each pixel's D8 path down to the first sink pixel.\ndrainage_area() -> Raster\n    Return the D8 drainage area of every pixel, including the pixel itself.\nflat_index(row: int, col: int) -> int\n    Return the flat index ``row * n_cols + col`` of a pixel.\nflow_direction() -> Raster\n    Return the D8 receiver direction of every pixel as a Raster of codes.\nflow_distance_to_outlet() -> Raster\n    Return the D8 flow-path length from each pixel to its outlet.\nflow_lines_geodataframe() -> object\n    Return all D8 receiver edges as a GeoPandas line layer.\nheight_above_channel(dem: Raster, channels: Raster) -> Raster\n    Compute HAND (height above nearest drainage) from an explicit channel raster.\nheight_above_channel_with_donor(dem: Raster, channels: Raster) -> dict\n    Compute HAND and the channel pixel (\"donor\") each pixel drains to.\nheight_to_farthest_ridge(dem: Raster) -> Raster\n    Return the elevation difference to the farthest upslope ridge pixel.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel is an outlet (has no downstream receiver).\nis_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool\n    Return True if the candidate pixel drains through the target pixel.\nlow_concavity(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, exclude: Raster | None = None, n_threads: int = 0) -> pandas.DataFrame\n    Fit log S against log A downstream of every channel pixel: the low-concavity finder.\nlow_concavity_segments(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, min_run_pixels: int = 1, exclude: Raster | None = None, include: Raster | None = None, n_threads: int = 0) -> geopandas.GeoDataFrame\n    The channel network as segments marked low concavity or not: the CLI's segments file.\nreceiver_of(row: int, col: int) -> object\n    Return the pixel this pixel drains to.\nrow_col(flat_index: int) -> tuple\n    Return the ``(row, col)`` of a flat index.\nscope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope\n    Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.\nsnap_points(x: object | None = None, y: object | None = None, *, longitude: object | None = None, latitude: object | None = None, points: object | None = None, crs: str | None = None, method: str = 'downstream', threshold_contributing_pixels: int | None = None, threshold_drainage_area_m2: float | None = None, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, max_search_radius_metres: float | None = None) -> object\n    Snap points (for example basin outlets or sample sites) onto the flow network.\nsources(threshold_contributing_pixels: int) -> object\n    Return channel sources (channel heads) as an N by 2 (row, col) array.\nupslope_mean(values: Raster, include_self: bool = True) -> Raster\n    Average a raster over the upslope area of every pixel.\nupslope_pixels(row: int, col: int) -> object\n    Return every pixel that drains through this pixel, including itself.\nupslope_sum(values: Raster, include_self: bool = True) -> Raster\n    Sum a raster over the upslope area of every pixel.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
+      "doc": "D8 drainage topology (steepest-descent receivers) of a conditioned DEM.\n\nEach valid pixel drains to the one of its eight neighbours with the steepest\ndownhill gradient, or is an outlet. ``FlowInfo`` stores this routing (and\neach pixel's upslope pixels), not the elevations, so later calls that need\nelevations take the DEM again. Fill or breach depressions first (for example\n``fill_pits``); a pixel with no downhill neighbour and no allowed exit raises\nan error unless ``allow_pits_as_outlets=True``. Pixels are addressed by\n``(row, col)`` (row 0 is the northern edge) or by flat index\n``row * n_cols + col``.\n\nTypical workflow::\n\n    F = lsdtt3.FlowInfo(lsdtt3.fill_pits(dem))\n    scope = F.channel_scope(threshold_contributing_pixels=1000)\n    N = F.channel_network(scope)\n    B = F.basins(outlets, min_upslope_pixels=0)\n\nConstruct it as\n\n    FlowInfo(dem: Raster, boundary_conditions: str = 'oooo', interior_nodata_is_outlet: bool = True, forced_outlets: object | None = None, allow_pits_as_outlets: bool = False, n_threads: int = 0)\n\nParameters\n----------\ndem : Raster\n    Depression-conditioned elevation raster (m) in a projected metre CRS.\nboundary_conditions : str, default='oooo'\n    Four characters for the north, east, south and west edges: ``o`` open\n    (an edge pixel may drain out of the grid when it has no lower in-grid\n    neighbour), ``n`` no-flux (flow cannot leave), ``p`` periodic (wraps to\n    the opposite edge; must be given for both opposite edges), ``b``\n    base level (every pixel on the edge is an outlet). See\n    ``make_boundary_conditions``.\ninterior_nodata_is_outlet : bool, default=True\n    If True, a pixel next to a nodata pixel may drain into it (become an\n    outlet) when it has no lower valid neighbour, as at a coastline or the\n    edge of a clipped DEM. If False such pixels must drain over valid pixels.\nforced_outlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` pixels that are made outlets regardless of\n    their neighbours (moulins, swallow holes, playas). Prepare the DEM with\n    ``fill_pits_with_sinks`` using the same pixels. Out-of-grid or nodata\n    pixels raise ``ValueError``; duplicates are ignored.\nallow_pits_as_outlets : bool, default=False\n    If True, a pixel that has no downhill neighbour and no allowed exit\n    becomes an outlet instead of raising an error (useful in landscape\n    evolution runs where transient pits form).\nn_threads : int, default=0\n    OpenMP thread count; 0 uses the runtime default.\n\nAttributes\n----------\nboundary_conditions : str\n    The four-character NESW boundary-condition string used.\ndirection : numpy.ndarray\n    Uint8 array (n_rows, n_cols) of internal D8 direction codes; see flow_direction() for a raster.\ndonor_count : numpy.ndarray\n    Uint8 array (n_rows, n_cols): number of neighbours draining directly into each pixel.\nmetadata : RasterMeta\n    Grid metadata (RasterMeta) of the DEM the topology was built from.\nn_outlets : int\n    Number of outlet pixels (pixels with no receiver).\nn_valid_cells : int\n    Number of valid (routed) pixels.\noutlets : numpy.ndarray\n    Outlet pixels as an N x 2 int64 array of (row, col), in flat-index order.\nreceiver : numpy.ndarray\n    Int64 array (n_rows, n_cols) of each pixel's receiver flat index; -2 at outlets, -1 at nodata.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols).\nvalid_mask : numpy.ndarray\n    Bool array (n_rows, n_cols), True for valid pixels.\n\nMethods\n-------\naccumulate(weights: object | None = None) -> Raster\n    Accumulate per-pixel weights downstream; default weights are cell areas.\nbasins(outlets: object | None = None, min_upslope_pixels: int = 0) -> BasinCollection\n    Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.\nchannel_mask(threshold_contributing_pixels: int) -> Raster\n    Return a 0/1 raster where contributing pixels meet the threshold.\nchannel_network(scope: ChannelScope) -> ChannelNetwork\n    Build a compact junction graph from a ChannelScope.\nchannel_point_attributes(filled_dem: Raster, points: geopandas.GeoDataFrame, *, threshold_contributing_pixels: int, slope_window_half_length_metres: float = 25.0, channel_points_snap_max_search_radius_pixels: int = 10) -> geopandas.GeoDataFrame\n    Snap points (e.g. field sites) to the nearest channel cell and add its drainage area and along-channel slope.\nchannel_scope(threshold_contributing_pixels: int, sources: object | None = None, outlets: object | None = None, snap_sources: bool = True, source_snap_max_radius_pixels: int = 25, outlet_snap_max_distance_metres: float = 0.0, auto_detect_roles: bool = False, channel_definition_algorithm_choice: str = 'contributing_pixels', min_channel_stream_order: int = 3) -> ChannelScope\n    Resolve threshold or supplied source paths into a ChannelScope.\nchi_from_outlets(outlets: object | None = None, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate zero-based chi across complete upstream raster domains.\nchi_from_outlets_inherited(outlets: object, seed_chi: Raster, m_over_n: float = 0.45, reference_area: float = 1.0, denominator: object | None = None) -> Raster\n    Integrate chi from supplied outlets using seed-raster base values.\ncontributing_pixels() -> Raster\n    Return the number of pixels draining through each pixel, including itself.\nd8_flow_path_gradient(routing_dem: Raster, drainage_area: Raster, *, window_metres: float = 150.0, exclude: Raster | None = None, n_threads: int = 0) -> Raster\n    Gradient at every pixel along its D8 flow path, over a window centred on it.\ndistance_to_channel(threshold_contributing_pixels: int) -> Raster\n    Return the D8 flow-path length from each pixel to the nearest downstream channel.\ndistance_to_farthest_ridge() -> Raster\n    Return the longest D8 flow-path length from any upslope pixel to this pixel.\ndownstream_sum(values: Raster, sinks: Raster) -> Raster\n    Sum a raster along each pixel's D8 path down to the first sink pixel.\ndrainage_area() -> Raster\n    Return the D8 drainage area of every pixel, including the pixel itself.\nflat_index(row: int, col: int) -> int\n    Return the flat index ``row * n_cols + col`` of a pixel.\nflow_direction() -> Raster\n    Return the D8 receiver direction of every pixel as a Raster of codes.\nflow_distance_to_outlet() -> Raster\n    Return the D8 flow-path length from each pixel to its outlet.\nflow_lines_geodataframe() -> object\n    Return all D8 receiver edges as a GeoPandas line layer.\nheight_above_channel(dem: Raster, channels: Raster) -> Raster\n    Compute HAND (height above nearest drainage) from an explicit channel raster.\nheight_above_channel_with_donor(dem: Raster, channels: Raster) -> dict\n    Compute HAND and the channel pixel (\"donor\") each pixel drains to.\nheight_to_farthest_ridge(dem: Raster) -> Raster\n    Return the elevation difference to the farthest upslope ridge pixel.\nis_outlet(row: int, col: int) -> bool\n    Return True if the pixel is an outlet (has no downstream receiver).\nis_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool\n    Return True if the candidate pixel drains through the target pixel.\nlow_concavity(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, exclude: Raster | None = None, n_threads: int = 0) -> pandas.DataFrame\n    Fit log S against log A downstream of every channel pixel: the low-concavity finder.\nlow_concavity_segments(drainage_area: Raster, gradient: Raster, *, threshold_contributing_pixels: int = 1000, window_pixels: int = 10, min_pixels: int = 5, max_abs_concavity: float = 0.15, min_run_pixels: int = 1, exclude: Raster | None = None, include: Raster | None = None, n_threads: int = 0) -> geopandas.GeoDataFrame\n    The channel network as segments marked low concavity or not: the CLI's segments file.\nreceiver_of(row: int, col: int) -> object\n    Return the pixel this pixel drains to.\nrow_col(flat_index: int) -> tuple\n    Return the ``(row, col)`` of a flat index.\nrupture_planes(geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes\n    Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).\nscope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope\n    Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.\nsnap_points(x: object | None = None, y: object | None = None, *, longitude: object | None = None, latitude: object | None = None, points: object | None = None, crs: str | None = None, method: str = 'downstream', threshold_contributing_pixels: int | None = None, threshold_drainage_area_m2: float | None = None, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, max_search_radius_metres: float | None = None) -> object\n    Snap points (for example basin outlets or sample sites) onto the flow network.\nsources(threshold_contributing_pixels: int) -> object\n    Return channel sources (channel heads) as an N by 2 (row, col) array.\nupslope_mean(values: Raster, include_self: bool = True) -> Raster\n    Average a raster over the upslope area of every pixel.\nupslope_pixels(row: int, col: int) -> object\n    Return every pixel that drains through this pixel, including itself.\nupslope_sum(values: Raster, include_self: bool = True) -> Raster\n    Sum a raster over the upslope area of every pixel.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
       "members": [
         {
           "name": "__init__",
@@ -2017,6 +2039,17 @@
           ]
         },
         {
+          "name": "rupture_planes",
+          "kind": "method",
+          "doc": "rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes\n\nPlanar rupture surfaces of every hillslope cell (scaLr, Steer et al.).\n\nlsdtt-slope-stability ``run_rupture_planes``, the same routine; the keyword\nnames are the CLI's less the ``rupture_`` prefix. From each source cell R the\nD8 path (this FlowInfo's receivers) is walked down to the channel; for each\ncandidate daylight point D the plane through D at the optimal depth h*\n(closed form) gives F, and the minimum over the path is kept. With a water\ntable the pore pressure is hydrostatic and the minimum is found numerically.\nThe CLI routes on the carved-then-filled DEM and measures on the input DEM.\n\nParameters\n----------\ngeometry : Raster\n    Elevations for dx and dz, normally the input (unconditioned) DEM.\nchannel : Raster or None, default=None, keyword-only\n    Nonzero = channel cell (the walk stops before it). None uses\n    ``threshold_contributing_pixels`` on this FlowInfo, as the CLI.\nthreshold_contributing_pixels : int, default=1000, keyword-only\n    Channel cells have at least this many D8 contributing pixels.\ncohesion_pa : float, default=1000.0, keyword-only\n    Cohesion c (Pa).\nfriction_coefficient : float, default=tan 35, keyword-only\n    mu = tan phi.\ndensity_kg_m3 : float, default=2600.0, keyword-only\n    Bulk density rho.\nregion : Raster or None, default=None, keyword-only\n    Integer region ids selecting parameter sets; nodata cells are left out.\nregion_parameters : dict or None, default=None, keyword-only\n    ``{region_id: {name: value}}`` with the CLI's region-table column names\n    (``rupture_cohesion_pa``, ``rupture_cohesion_pa_min``, ...); a missing name\n    takes the keyword value; ``sinmap_*`` names are ignored. Needed with\n    ``region``.\nwater_table_depth : Raster or None, default=None, keyword-only\n    Depth (m) of the water table below the geometry surface, e.g.\n    ``GroundwaterDupuit.water_table_depth()``; None or nodata is dry.\nn_threads : int, default=0, keyword-only\n    OpenMP threads; the result does not depend on it.\n\nReturns\n-------\nRupturePlanes\n    The rasters and counts, and methods for the probability of failure,\n    catalogues and slip surfaces.",
+          "signatures": [
+            {
+              "definition": "def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes",
+              "defaults": []
+            }
+          ]
+        },
+        {
           "name": "scope_from_heads",
           "kind": "method",
           "doc": "scope_from_heads(self, heads: lsdtt3.ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> lsdtt3.ChannelScope\n\nResolve ChannelHeads into explicit D8 source paths for channel and chi analysis.\n\nEquivalent to ``channel_scope`` with ``sources=heads.pixels`` and no source\nsnapping.\n\nParameters\n----------\nheads : ChannelHeads\n    Heads extracted with this ``FlowInfo``.\noutlets : array-like of int or None, default=None\n    N x 2 array of ``(row, col)`` points where traced channels stop.\noutlet_snap_max_distance_metres : float, default=0.0\n    Largest distance (m) from an outlet to the path it cuts; 0 = unlimited.\n\nReturns\n-------\nChannelScope",
@@ -2397,6 +2430,124 @@
         }
       ],
       "signatures": []
+    },
+    {
+      "name": "GroundwaterDupuit",
+      "kind": "class",
+      "doc": "An unconfined aquifer on an impermeable base: the Dupuit - Boussinesq model.\n\nlsdtt-slope-stability ``water_table_method: dupuit_steady`` and\n``dupuit_transient`` (after Landlab's GroundwaterDupuitPercolator, Litwin et\nal. 2020). The base lies ``regolith_thickness_metres`` below the surface;\nwater flows down the water-table gradient; ``fixed_head`` cells (the CLI's\nchannels) are seepage outlets with the water table at the surface; the\nraster edge and nodata are no-flux. Where the regolith saturates, water\nseeps out. The keyword names are the CLI's less the ``groundwater_`` prefix.\n\nMembers: ``run_to_steady``, ``run``, ``set_thickness``,\n``water_table_depth``, ``saturated_thickness``, ``seepage``, ``storage``,\n``budget``, ``steady_rates``.\n\nConstruct it as\n\n    GroundwaterDupuit(surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0)\n\nParameters\n----------\nsurface : Raster\n    Ground elevation (m), normally the input DEM.\nfixed_head : Raster\n    Nonzero = fixed-head (channel) cell, e.g. ``RupturePlanes.channel``.\nregolith_thickness_metres : float, default=2.0, keyword-only\n    Aquifer thickness d (m), used where ``regolith_thickness`` is None.\nregolith_thickness : Raster or None, default=None, keyword-only\n    Thickness per cell (m); nodata or <= 0 cells are left out.\nhydraulic_conductivity_m_per_s : float, default=0.001, keyword-only\n    K, or K0 at the surface for the exponential profile.\ndrainable_porosity : float, default=0.2, keyword-only\n    n.\ntransmissivity_profile : {\"uniform\", \"exponential\"}, default=\"uniform\", keyword-only\n    exponential: K decays with depth over conductivity_decay_depth_metres\n    (TOPMODEL's assumption).\nconductivity_decay_depth_metres : float, default=1.0, keyword-only\n    z_m of the exponential profile.\nn_threads : int, default=0, keyword-only\n    OpenMP threads; the result does not depend on it.\n\nAttributes\n----------\nstorage : float\n    Water stored, n h summed over the active cells (m^3).\n\nMethods\n-------\nbudget() -> dict\n    The cumulative water budget of the explicit steady march and the runs (m^3).\nrun(duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict\n    Advance the water table by ``duration_s`` under a constant recharge.\nrun_to_steady(recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict\n    Find the steady water table under a constant recharge.\nsaturated_thickness() -> Raster\n    Saturated thickness h (m).\nseepage() -> Raster\n    Seepage rate (m/s) from the last call.\nset_thickness(thickness: Raster) -> None\n    Set the saturated thickness h of the active cells (clipped to [0, d]).\nsteady_rates() -> dict\n    The budget of the last implicit steady solve, as rates (m^3/s).\nwater_table_depth() -> Raster\n    Depth of the water table below the surface (m): the input to ``FlowInfo.rupture_planes``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "__init__",
+          "kind": "method",
+          "doc": "__init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None",
+          "signatures": [
+            {
+              "definition": "def __init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "budget",
+          "kind": "method",
+          "doc": "budget(self) -> dict\n\nThe cumulative water budget of the explicit steady march and the runs (m^3).\n\nrecharge_m3 + clipped_added_m3 = storage_change_m3 + outflow_fixed_head_m3 +\nseepage_m3 to round-off. An implicit steady solve reports ``steady_rates()``\ninstead and does not add to this.\n\nParameters\n----------\nself : GroundwaterDupuit\n    The aquifer.\n\nReturns\n-------\ndict\n    ``recharge_m3, storage_change_m3, outflow_fixed_head_m3, seepage_m3,\n    clipped_added_m3``.",
+          "signatures": [
+            {
+              "definition": "def budget(self) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "kind": "method",
+          "doc": "run(self, duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict\n\nAdvance the water table by ``duration_s`` under a constant recharge.\n\nlsdtt-slope-stability ``dupuit_transient`` runs its recharge series as one\ncall per constant segment. ``budget()`` accumulates over calls.\n\nParameters\n----------\nduration_s : float\n    Time to advance (s), > 0.\nrecharge_m_per_s : float or Raster\n    Recharge f (m/s); nodata is 0.\ntransient_method : {\"explicit\", \"implicit\"}, default=\"explicit\", keyword-only\n    explicit: substeps at the stability limit (set by stability, not\n    accuracy: on coarse grids they can be hours long). implicit: backward\n    Euler, each step solved by Newton's method; first order in the step and\n    damps fast transients.\nimplicit_max_dt_s : float, default=3600.0, keyword-only\n    implicit: longest step (s).\nimplicit_dt_tolerance_metres : float, default=0.0, keyword-only\n    implicit: step-doubling error tolerance on the water table (m); 0 = off.\n\nReturns\n-------\ndict\n    ``transient_method``, ``steps``; implicit also ``newton_iterations``,\n    ``linear_iterations``, ``splits``, ``rejected_by_error``,\n    ``max_error_estimate_metres``.",
+          "signatures": [
+            {
+              "definition": "def run(self, duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "run_to_steady",
+          "kind": "method",
+          "doc": "run_to_steady(self, recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict\n\nFind the steady water table under a constant recharge.\n\nlsdtt-slope-stability ``dupuit_steady`` (and the antecedent state of\n``dupuit_transient``). Raises RuntimeError if it does not converge.\n\nParameters\n----------\nrecharge_m_per_s : float or Raster\n    Recharge f (m/s), > 0 somewhere; nodata is 0.\nsteady_method : {\"implicit\", \"explicit\"}, default=\"implicit\", keyword-only\n    implicit: solved directly by Newton's method (pseudo-transient\n    continuation with an active-set step for saturated and dry cells); tens\n    of iterations whatever the grid. explicit: the time-dependent model\n    marched until it stops changing; its steps are limited by the Courant\n    and von Neumann conditions. Both solve the same discrete equations.\nsteady_tolerance : float, default=1e-06, keyword-only\n    Converged when the residual is at most this times the largest recharge.\nmax_substeps : int, default=10000000, keyword-only\n    explicit: most substeps.\nmax_newton_iterations : int, default=200, keyword-only\n    implicit: most Newton (pseudo-time) steps.\n\nReturns\n-------\ndict\n    ``steady_method``, ``steps``, ``residual``, ``pseudo_time_s``; implicit\n    also ``linear_iterations``, ``used_direct_solver``, ``n_saturated``,\n    ``n_dry``. The implicit solve's budget is in ``steady_rates()``.",
+          "signatures": [
+            {
+              "definition": "def run_to_steady(self, recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "saturated_thickness",
+          "kind": "method",
+          "doc": "saturated_thickness(self) -> Raster\n\nSaturated thickness h (m).\n\nParameters\n----------\nself : GroundwaterDupuit\n    The aquifer.\n\nReturns\n-------\nRaster\n    h (m); nodata outside the aquifer.",
+          "signatures": [
+            {
+              "definition": "def saturated_thickness(self) -> Raster",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "seepage",
+          "kind": "method",
+          "doc": "seepage(self) -> Raster\n\nSeepage rate (m/s) from the last call.\n\nThe implicit steady state's seepage, or the mean over the last ``run``.\n\nParameters\n----------\nself : GroundwaterDupuit\n    The aquifer.\n\nReturns\n-------\nRaster\n    Seepage (m/s); nodata outside the aquifer.",
+          "signatures": [
+            {
+              "definition": "def seepage(self) -> Raster",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "set_thickness",
+          "kind": "method",
+          "doc": "set_thickness(self, thickness: Raster) -> None\n\nSet the saturated thickness h of the active cells (clipped to [0, d]).\n\nParameters\n----------\nthickness : Raster\n    Saturated thickness (m); nodata is 0.\n\nReturns\n-------\nNone",
+          "signatures": [
+            {
+              "definition": "def set_thickness(self, thickness: Raster) -> None",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "steady_rates",
+          "kind": "method",
+          "doc": "steady_rates(self) -> dict\n\nThe budget of the last implicit steady solve, as rates (m^3/s).\n\nParameters\n----------\nself : GroundwaterDupuit\n    The aquifer.\n\nReturns\n-------\ndict\n    ``recharge_m3_per_s, outflow_fixed_head_m3_per_s, seepage_m3_per_s,\n    imbalance_m3_per_s``.",
+          "signatures": [
+            {
+              "definition": "def steady_rates(self) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "storage",
+          "kind": "property",
+          "doc": "Water stored, n h summed over the active cells (m^3).",
+          "signatures": []
+        },
+        {
+          "name": "water_table_depth",
+          "kind": "method",
+          "doc": "water_table_depth(self) -> Raster\n\nDepth of the water table below the surface (m): the input to ``FlowInfo.rupture_planes``.\n\nParameters\n----------\nself : GroundwaterDupuit\n    The aquifer.\n\nReturns\n-------\nRaster\n    Water-table depth (m); 0 where saturated; nodata outside the aquifer.",
+          "signatures": [
+            {
+              "definition": "def water_table_depth(self) -> Raster",
+              "defaults": []
+            }
+          ]
+        }
+      ],
+      "signatures": [
+        {
+          "definition": "def __init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None",
+          "defaults": []
+        }
+      ]
     },
     {
       "name": "HillslopeCellularResult",
@@ -3497,7 +3648,7 @@
     {
       "name": "Raster",
       "kind": "class",
-      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 262 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
+      "doc": "An in-memory single-band float32 raster with an explicit validity mask.\n\nInstances are value objects: functions in this module return new rasters and\ndo not modify their inputs. Values are float32; each pixel is either valid or\nnodata (``mask_numpy()`` is True where valid). Array row 0 is the northern\nedge (see ``RasterMeta``). Typical round trip::\n\n    dem = lsdtt3.Raster.read(\"dem.tif\")\n    z = dem.to_numpy()                 # float32, shape (n_rows, n_cols)\n    out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)\n    out.write(\"doubled.tif\")\n\nNot constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 285 more.\n\nAttributes\n----------\nmetadata : RasterMeta\n    Grid metadata (RasterMeta): shape, lower-left corner, cell size, nodata value, CRS.\nshape : tuple[int, int]\n    Grid shape as (n_rows, n_cols), the shape of to_numpy().\nvalid_pixel_count : int\n    Number of valid (non-nodata) pixels.\n\nMethods\n-------\nRaster.from_numpy(data: object, mask: object, metadata: RasterMeta) -> Raster\n    Create a raster from copied two-dimensional NumPy-compatible arrays.\nmask_numpy() -> object\n    Return a copied Boolean array, True where raster values are valid.\nRaster.read(path: str) -> Raster\n    Read the first band of a GDAL-readable raster file.\nto_numpy() -> object\n    Return a copied ``float32`` array of raster values.\nwrite(path: str, format: str = 'cog') -> None\n    Write this raster to a file with GDAL.\n\nAuthors\n-------\nB. Gailleton",
       "members": [
         {
           "name": "from_numpy",
@@ -4542,6 +4693,113 @@
       "signatures": []
     },
     {
+      "name": "RupturePlanes",
+      "kind": "class",
+      "doc": "Planar rupture surfaces (scaLr) on a DEM, from ``FlowInfo.rupture_planes``.\n\nHolds the inputs of the run, so its probability of failure, landslide\ncatalogues and slip surfaces are computed from the same flow, geometry,\nchannels, regions and water table.\n\nMembers: ``safety_factor``, ``depth``, ``rupture_slope``,\n``topographic_slope``, ``length``, ``unstable``, ``channel``, ``daylight``,\n``n_sources``, ``n_unstable``, ``n_channel``, ``failure_probability``,\n``landslide_catalogues``, ``slip_surfaces``.\n\nReturned by ``FlowInfo.rupture_planes()``; not constructible directly.\n\nAttributes\n----------\nchannel : Raster\n    The channel mask used (1 channel, 0 hillslope).\ndaylight : object\n    Flat index of each cell's daylight point (numpy int64, -1 where none).\ndepth : Raster\n    Optimal rupture depth h* below the source cell (m).\nlength : Raster\n    Horizontal distance dx from the source to its daylight point (m).\nn_channel : int\n    Channel cells (not sources).\nn_sources : int\n    Hillslope cells with an admissible daylight point.\nn_unstable : int\n    Of the sources, those with F <= 1.\nrupture_slope : Raster\n    Gradient of the rupture plane, (dz - h*) / dx (m/m).\nsafety_factor : Raster\n    Factor of safety F at the critical daylight point (the minimum over the path); nodata on channels and cells with no admissible plane.\ntopographic_slope : Raster\n    Gradient from the source to its daylight point, dz / dx (m/m).\nunstable : Raster\n    1 where F <= 1, 0 where F > 1.\n\nMethods\n-------\nfailure_probability(*, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict\n    Probability of failure of the rupture planes by equal-density sampling of cohesion and friction.\nlandslide_catalogues(*, min_daylight_neighbours: int = 2) -> dict\n    The potential-landslide catalogues: by daylight point and amalgamated.\nslip_surfaces(*, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces\n    Critical slip surfaces seeded from the rupture planes.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "channel",
+          "kind": "property",
+          "doc": "The channel mask used (1 channel, 0 hillslope).",
+          "signatures": []
+        },
+        {
+          "name": "daylight",
+          "kind": "property",
+          "doc": "Flat index of each cell's daylight point (numpy int64, -1 where none).",
+          "signatures": []
+        },
+        {
+          "name": "depth",
+          "kind": "property",
+          "doc": "Optimal rupture depth h* below the source cell (m).",
+          "signatures": []
+        },
+        {
+          "name": "failure_probability",
+          "kind": "method",
+          "doc": "failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict\n\nProbability of failure of the rupture planes by equal-density sampling of cohesion and friction.\n\nlsdtt-slope-stability ``parameter_uncertainty: equal_density``, the same routine. For each cell and\neach (c, mu) sample the search is the full deterministic one, so the daylight point may differ\nbetween samples; Pf = sum of the weights of the samples with F_min <= 1. Exact for this model\n(no Monte Carlo error). Density and the water table are held fixed.\n\nParameters\n----------\ncohesion_distribution : {\"uniform\", \"normal\"}, default=\"uniform\", keyword-only\n    uniform on [cohesion_pa_min, cohesion_pa_max], or normal about the central cohesion with\n    cohesion_pa_sd, truncated to [max(0, c - 3 sd), c + 3 sd].\ncohesion_pa_min, cohesion_pa_max, cohesion_pa_sd : float, default=500.0, 1500.0, 250.0, keyword-only\n    Bounds (uniform) or standard deviation (normal) of cohesion (Pa).\nfriction_coefficient_distribution : {\"uniform\", \"normal\"}, default=\"uniform\", keyword-only\n    As cohesion_distribution, for the friction coefficient.\nfriction_coefficient_min, friction_coefficient_max, friction_coefficient_sd : float, default=0.6, 0.8, 0.05, keyword-only\n    Bounds or standard deviation of the friction coefficient.\nuncertainty_samples_per_parameter : int, default=5, keyword-only\n    Equal-density samples of each parameter; their tensor product is used.\n\nA region's rupture_cohesion_pa_min (and the other bounds and SDs) in the\nregion_parameters given to ``FlowInfo.rupture_planes`` override these.\n\nReturns\n-------\ndict\n    ``failure_probability`` (Raster, P(F <= 1)), ``mean_safety_factor``,\n    ``sd_safety_factor`` (Rasters, weighted over the samples), ``n_sources``,\n    ``n_possible_failure`` (Pf > 0), ``n_certain_failure`` (Pf = 1), ``n_samples``.",
+          "signatures": [
+            {
+              "definition": "def failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "landslide_catalogues",
+          "kind": "method",
+          "doc": "landslide_catalogues(self, *, min_daylight_neighbours: int = 2) -> dict\n\nThe potential-landslide catalogues: by daylight point and amalgamated.\n\nlsdtt-slope-stability ``write_landslide_catalogue`` (scaLr's MATLAB): the\nunstable cells sharing a daylight point form one landslide (after\nre-attaching each daylight point to its source), the 1-D rule drops daylight\npoints with fewer than ``min_daylight_neighbours`` daylight-point neighbours,\nand 8-connected landslides are merged into the amalgamated catalogue. Areas,\ndepths, volumes, F_L (eq. 7) and the planform ellipse are the CLI's columns.\n\nParameters\n----------\nmin_daylight_neighbours : int, default=2, keyword-only\n    The 1-D rule (CLI ``rupture_min_daylight_neighbours``); 0 keeps every\n    daylight point (the paper's catalogue), 0 to 8.\n\nReturns\n-------\ndict\n    ``by_daylight`` and ``amalgamated`` (DataFrames, the CLI's\n    ``_landslide_catalogue*.csv`` columns), ``label`` and\n    ``label_amalgamated`` (Rasters of the ids), ``n_daylight_points``,\n    ``n_daylight_points_removed``, ``n_landslide_cells``.",
+          "signatures": [
+            {
+              "definition": "def landslide_catalogues(self, *, min_daylight_neighbours: int = 2) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "length",
+          "kind": "property",
+          "doc": "Horizontal distance dx from the source to its daylight point (m).",
+          "signatures": []
+        },
+        {
+          "name": "n_channel",
+          "kind": "property",
+          "doc": "Channel cells (not sources).",
+          "signatures": []
+        },
+        {
+          "name": "n_sources",
+          "kind": "property",
+          "doc": "Hillslope cells with an admissible daylight point.",
+          "signatures": []
+        },
+        {
+          "name": "n_unstable",
+          "kind": "property",
+          "doc": "Of the sources, those with F <= 1.",
+          "signatures": []
+        },
+        {
+          "name": "rupture_slope",
+          "kind": "property",
+          "doc": "Gradient of the rupture plane, (dz - h*) / dx (m/m).",
+          "signatures": []
+        },
+        {
+          "name": "safety_factor",
+          "kind": "property",
+          "doc": "Factor of safety F at the critical daylight point (the minimum over the path); nodata on channels and cells with no admissible plane.",
+          "signatures": []
+        },
+        {
+          "name": "slip_surfaces",
+          "kind": "method",
+          "doc": "slip_surfaces(self, *, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces\n\nCritical slip surfaces seeded from the rupture planes.\n\nlsdtt-slope-stability ``slip_surface_family``, the same routines; the keyword\nnames are the CLI's less the ``slip_surface_`` prefix. Crowns whose rupture\nF is above ``screen_safety_factor`` are screened out. The 2-D families\n(method of slices on the crown's D8 section) have no side resistance;\n``ellipsoid`` (method of columns) does.\n\nParameters\n----------\nfamily : {\"plane_integrated\", \"circular\", \"bilinear\", \"structural\", \"ellipsoid\"}, default=\"circular\", keyword-only\n    plane_integrated: scaLr's plane with the forces summed over the body;\n    circular: arcs by sagitta; bilinear: a Rankine back segment onto a\n    flatter basal plane; structural: a plane at the apparent dip of a weak\n    layer, ending where it daylights; ellipsoid: 3-D ellipsoids through the\n    crown and the daylight point.\nmethod : {\"auto\", \"ordinary\", \"bishop\", \"janbu\", \"spencer\"}, default=\"auto\", keyword-only\n    Limit-equilibrium method of the 2-D families; auto is ordinary for\n    plane_integrated, bishop for circular, janbu for bilinear and structural.\nsearch : {\"seeded\", \"full\"}, default=\"seeded\", keyword-only\n    seeded: the toe at the rupture daylight point (+/- toe_window_pixels);\n    full: every toe down the path (up to max_length_metres).\nback_scarp : {\"vertical\", \"rankine\"}, default=\"vertical\", keyword-only\n    The crown's back scarp: a tension crack, or a Rankine active plane\n    carrying cohesion and friction (not for bilinear).\njanbu_correction : bool, default=True, keyword-only\n    Apply Janbu's f0.\nstructural_dip_gradient : float or Raster, default=0.3, keyword-only\n    structural: tan(dip) of the weak layer, constant or per cell (at the crown).\nstructural_dip_direction_degrees : float or Raster, default=0.0, keyword-only\n    structural: dip direction, degrees clockwise from north.\ncolumn_method : {\"xie_revised\", \"hovland\"}, default=\"xie_revised\", keyword-only\n    ellipsoid: the method of columns.\nellipsoid_search : {\"seeded\", \"random\"}, default=\"seeded\", keyword-only\n    ellipsoid: a grid of shapes, or random draws.\nellipsoid_random_draws : int, default=200, keyword-only\n    ellipsoid random search: shapes per crown.\nellipsoid_random_seed : int, default=1, keyword-only\n    ellipsoid random search: seed.\nellipsoid_min_half_axis_pixels : float, default=3.0, keyword-only\n    ellipsoid: smallest length half-axis (cells); shorter crowns are \"too small\".\nlayer_depths : list of Raster or None, default=None, keyword-only\n    ellipsoid: depths (m) of weak layers that truncate the ellipsoids; each\n    is searched separately.\nscreen_safety_factor : float, default=1.5, keyword-only\n    Crowns with rupture F above this are not evaluated.\ntoe_window_pixels : int, default=0, keyword-only\n    Seeded search: toes this many cells either side of the daylight point.\nmax_length_metres : float, default=0.0, keyword-only\n    Full search: longest crown-to-toe flow distance (0 = no cap).\nslices_per_cell : int, default=4, keyword-only\n    Slices per section cell.\nsearch_points : int, default=12, keyword-only\n    Points per shape parameter in the search.\n\nReturns\n-------\nSlipSurfaces\n    The critical surface of each evaluated crown, its bodies and counts.",
+          "signatures": [
+            {
+              "definition": "def slip_surfaces(self, *, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "topographic_slope",
+          "kind": "property",
+          "doc": "Gradient from the source to its daylight point, dz / dx (m/m).",
+          "signatures": []
+        },
+        {
+          "name": "unstable",
+          "kind": "property",
+          "doc": "1 where F <= 1, 0 where F > 1.",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
       "name": "STICategoricalRaster",
       "kind": "class",
       "doc": "Rasterized categorical STI field and code lookup.\n\nReturned by ``rasterize_sti_categories()``; not constructible directly.\n\nAttributes\n----------\ncodes : Raster\nlookup : object\n\nAuthors\n-------\nB. Gailleton",
@@ -4654,6 +4912,155 @@
           "name": "table",
           "kind": "property",
           "doc": "One row per accepted side basin: outlet_flat, receiver_channel_flat, outlet_row, outlet_col, receiver_channel_row, receiver_channel_col, n_pixels, drainage_area_metres2, complete.",
+          "signatures": []
+        }
+      ],
+      "signatures": []
+    },
+    {
+      "name": "SlipSurfaces",
+      "kind": "class",
+      "doc": "Critical slip surfaces of each crown, from ``RupturePlanes.slip_surfaces``.\n\nMembers: ``family``, ``method``, ``safety_factor``, ``crown_depth``,\n``max_depth``, ``sagitta``, ``basal_gradient``, ``length``, ``sinuosity``,\n``unstable``, ``evaluated``, ``body_depth``, ``cover_safety_factor``,\n``n_evaluated``, ``n_screened``, ``n_unstable``, ``n_inadmissible``,\n``n_too_small``, ``failure_probability``, ``spencer_check``,\n``body_catalogues``.\n\nReturned by ``RupturePlanes.slip_surfaces()``; not constructible directly.\n\nAttributes\n----------\nbasal_gradient : Raster\n    bilinear: tan of the basal plane; structural: the apparent dip gradient.\nbody_depth : Raster\n    Envelope of the unstable bodies' thickness (m).\ncover_safety_factor : Raster\n    ellipsoid: lowest F of the critical surfaces covering each cell.\ncrown_depth : Raster\n    Depth h below the crown (m); ellipsoid: the depth half-axis.\nevaluated : Raster\n    1 evaluated, 0 screened out (crowns with a rupture result).\nfamily : str\n    The slip-surface family.\nlength : Raster\n    Flow distance crown to toe (m); ellipsoid: straight distance.\nmax_depth : Raster\n    Largest body thickness (m).\nmethod : str\n    The limit-equilibrium method used (auto resolved), or the column method for ellipsoids.\nn_evaluated : int\n    Crowns evaluated.\nn_inadmissible : int\n    Crowns with no admissible surface.\nn_screened : int\n    Crowns screened out by screen_safety_factor.\nn_too_small : int\n    ellipsoid: crowns below ellipsoid_min_half_axis_pixels (0 for the 2-D families).\nn_unstable : int\n    Crowns with F <= 1.\nsafety_factor : Raster\n    Factor of safety of each evaluated crown's critical surface.\nsagitta : Raster\n    circular: the sagitta s (m); ellipsoid: the lateral half-axis (m).\nsinuosity : Raster\n    2-D: flow distance over straight distance crown to toe.\nunstable : Raster\n    1 where F <= 1.\n\nMethods\n-------\nbody_catalogues() -> dict\n    Catalogues of the unstable slip bodies: by toe and amalgamated.\nfailure_probability(*, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict\n    Probability of failure on each crown's fixed critical surface.\nspencer_check() -> dict\n    Spencer's factor of safety on each critical 2-D surface.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [
+        {
+          "name": "basal_gradient",
+          "kind": "property",
+          "doc": "bilinear: tan of the basal plane; structural: the apparent dip gradient.",
+          "signatures": []
+        },
+        {
+          "name": "body_catalogues",
+          "kind": "method",
+          "doc": "body_catalogues(self) -> dict\n\nCatalogues of the unstable slip bodies: by toe and amalgamated.\n\nlsdtt-slope-stability ``write_slip_body_catalogue``. By toe: the union of the\nbodies of the unstable crowns sharing a toe (groups may overlap, so their\nvolumes need not add up). Amalgamated: 8-connected components of the body\nenvelope, which do not overlap.\n\nParameters\n----------\nself : SlipSurfaces\n    The slip surfaces.\n\nReturns\n-------\ndict\n    ``by_toe`` and ``amalgamated`` (DataFrames, the CLI's\n    ``_slip_body_catalogue*.csv`` columns) and ``label_amalgamated`` (Raster).",
+          "signatures": [
+            {
+              "definition": "def body_catalogues(self) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "body_depth",
+          "kind": "property",
+          "doc": "Envelope of the unstable bodies' thickness (m).",
+          "signatures": []
+        },
+        {
+          "name": "cover_safety_factor",
+          "kind": "property",
+          "doc": "ellipsoid: lowest F of the critical surfaces covering each cell.",
+          "signatures": []
+        },
+        {
+          "name": "crown_depth",
+          "kind": "property",
+          "doc": "Depth h below the crown (m); ellipsoid: the depth half-axis.",
+          "signatures": []
+        },
+        {
+          "name": "evaluated",
+          "kind": "property",
+          "doc": "1 evaluated, 0 screened out (crowns with a rupture result).",
+          "signatures": []
+        },
+        {
+          "name": "failure_probability",
+          "kind": "method",
+          "doc": "failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict\n\nProbability of failure on each crown's fixed critical surface.\n\nlsdtt-slope-stability ``parameter_uncertainty`` with a slip family. The surface found with the\ncentral values is held fixed and evaluated for each (c, mu) sample, so Pf is a lower bound on the\nprobability that some surface fails. Screened-out crowns get 0. For ellipsoids the result also\nhas ``cover_failure_probability``, the highest Pf of the ellipsoids covering each cell.\n\nParameters\n----------\ncohesion_distribution : {\"uniform\", \"normal\"}, default=\"uniform\", keyword-only\n    uniform on [cohesion_pa_min, cohesion_pa_max], or normal about the central cohesion with\n    cohesion_pa_sd, truncated to [max(0, c - 3 sd), c + 3 sd].\ncohesion_pa_min, cohesion_pa_max, cohesion_pa_sd : float, default=500.0, 1500.0, 250.0, keyword-only\n    Bounds (uniform) or standard deviation (normal) of cohesion (Pa).\nfriction_coefficient_distribution : {\"uniform\", \"normal\"}, default=\"uniform\", keyword-only\n    As cohesion_distribution, for the friction coefficient.\nfriction_coefficient_min, friction_coefficient_max, friction_coefficient_sd : float, default=0.6, 0.8, 0.05, keyword-only\n    Bounds or standard deviation of the friction coefficient.\nuncertainty_samples_per_parameter : int, default=5, keyword-only\n    Equal-density samples of each parameter; their tensor product is used.\n\nA region's rupture_cohesion_pa_min (and the other bounds and SDs) in the\nregion_parameters given to ``FlowInfo.rupture_planes`` override these.\n\nReturns\n-------\ndict\n    ``failure_probability`` (Raster, P(F <= 1)), ``mean_safety_factor``,\n    ``sd_safety_factor`` (Rasters, weighted over the samples), ``n_sources``,\n    ``n_possible_failure`` (Pf > 0), ``n_certain_failure`` (Pf = 1), ``n_samples``.",
+          "signatures": [
+            {
+              "definition": "def failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "family",
+          "kind": "property",
+          "doc": "The slip-surface family.",
+          "signatures": []
+        },
+        {
+          "name": "length",
+          "kind": "property",
+          "doc": "Flow distance crown to toe (m); ellipsoid: straight distance.",
+          "signatures": []
+        },
+        {
+          "name": "max_depth",
+          "kind": "property",
+          "doc": "Largest body thickness (m).",
+          "signatures": []
+        },
+        {
+          "name": "method",
+          "kind": "property",
+          "doc": "The limit-equilibrium method used (auto resolved), or the column method for ellipsoids.",
+          "signatures": []
+        },
+        {
+          "name": "n_evaluated",
+          "kind": "property",
+          "doc": "Crowns evaluated.",
+          "signatures": []
+        },
+        {
+          "name": "n_inadmissible",
+          "kind": "property",
+          "doc": "Crowns with no admissible surface.",
+          "signatures": []
+        },
+        {
+          "name": "n_screened",
+          "kind": "property",
+          "doc": "Crowns screened out by screen_safety_factor.",
+          "signatures": []
+        },
+        {
+          "name": "n_too_small",
+          "kind": "property",
+          "doc": "ellipsoid: crowns below ellipsoid_min_half_axis_pixels (0 for the 2-D families).",
+          "signatures": []
+        },
+        {
+          "name": "n_unstable",
+          "kind": "property",
+          "doc": "Crowns with F <= 1.",
+          "signatures": []
+        },
+        {
+          "name": "safety_factor",
+          "kind": "property",
+          "doc": "Factor of safety of each evaluated crown's critical surface.",
+          "signatures": []
+        },
+        {
+          "name": "sagitta",
+          "kind": "property",
+          "doc": "circular: the sagitta s (m); ellipsoid: the lateral half-axis (m).",
+          "signatures": []
+        },
+        {
+          "name": "sinuosity",
+          "kind": "property",
+          "doc": "2-D: flow distance over straight distance crown to toe.",
+          "signatures": []
+        },
+        {
+          "name": "spencer_check",
+          "kind": "method",
+          "doc": "spencer_check(self) -> dict\n\nSpencer's factor of safety on each critical 2-D surface.\n\nlsdtt-slope-stability ``slip_surface_spencer_check``: force and moment\nequilibrium with a constant interslice inclination, on the surface the\nfamily's own method found, as a check of the simplified methods. Not for\nellipsoids.\n\nParameters\n----------\nself : SlipSurfaces\n    A 2-D family's result.\n\nReturns\n-------\ndict\n    ``safety_factor`` (Raster, nodata where Spencer has no solution) and\n    ``n_no_solution``.",
+          "signatures": [
+            {
+              "definition": "def spencer_check(self) -> dict",
+              "defaults": []
+            }
+          ]
+        },
+        {
+          "name": "unstable",
+          "kind": "property",
+          "doc": "1 where F <= 1.",
           "signatures": []
         }
       ],
@@ -7308,6 +7715,18 @@
       ]
     },
     {
+      "name": "landslide_frequency_area",
+      "kind": "function",
+      "doc": "Frequency - area of a landslide catalogue and its power-law tail.\n\nlsdtt-slope-stability's ``_frequency_area.csv`` and ``_frequency_area_fit.csv``\nfor one catalogue (landslides or slip bodies). Areas are whole numbers of\ncells, so the fit and the bins are discrete in cells. The tail p(A) ~ A^eta\nis fitted by maximum likelihood with A_min chosen by the Kolmogorov -\nSmirnov distance (Clauset, Shalizi and Newman 2009); ``binned_eta`` is the\nleast-squares slope of log p(A) against log A over the bins at or above\nA_min holding at least 3 landslides.\n\nParameters\n----------\nareas_m2 : sequence of float\n    Landslide areas (m^2), e.g. a catalogue's ``area_m2`` column.\ncell_area_m2 : float\n    Area of one cell (m^2).\nbins_per_decade : int, default=10, keyword-only\n    Logarithmic bins per decade of area (CLI ``frequency_area_bins_per_decade``).\nmin_tail : int, default=50, keyword-only\n    Fewest landslides in the fitted tail (at least 2; CLI ``frequency_area_min_tail``).\n\nReturns\n-------\ntuple of (pandas.DataFrame, dict)\n    The density (``area_lower_m2, area_upper_m2, area_centre_m2,\n    n_landslides, probability_density_per_m2``) and the fit (``n_landslides,\n    method, area_min_m2, eta, eta_standard_error, n_tail, ks_distance,\n    binned_eta, binned_eta_standard_error, n_bins_fitted``), the CLI's columns\n    less ``catalogue``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def landslide_frequency_area(areas_m2: Sequence[float], cell_area_m2: float, *, bins_per_decade: int = 10, min_tail: int = 50) -> tuple[pandas.DataFrame, dict]",
+          "defaults": []
+        }
+      ]
+    },
+    {
       "name": "least_cost_carve_depth",
       "kind": "function",
       "doc": "Return the non-negative elevation removed by least-cost breaching (parameters as breach_least_cost).\n\nParameters\n----------\nraster : Raster\n    Elevation raster (m).\nmax_distance, max_cost, prefer_shortest_path, flat_increment, fill_remainder, n_threads, edge_policy, fill_min_slope\n    As in ``breach_least_cost``.\n\nReturns\n-------\nRaster\n    ``raster - breach_least_cost(raster, ...)`` in metres.\n\nAuthors\n-------\nB. Gailleton\nS. M. Mudd",
@@ -8092,6 +8511,30 @@
             false,
             5
           ]
+        }
+      ]
+    },
+    {
+      "name": "sinmap",
+      "kind": "function",
+      "doc": "SINMAP stability index, class, probability and factor-of-safety bounds.\n\nlsdtt-slope-stability ``run_sinmap`` (Pack et al. 1998), the same routine;\nthe keyword names are the CLI's less the ``sinmap_`` prefix. The infinite\nslope with steady wetness w = min(1, R a / (T sin theta)) is evaluated over\nuniform ranges of dimensionless cohesion C, friction coefficient tan phi and\nT/R. FS_min uses (C_min, t_min, (T/R)_min), FS_max the other bounds; the\nstability index is FS_min where it is above 1, P(FS > 1) where FS_min < 1 <\nFS_max (closed form), and 0 where FS_max < 1. Flat cells are class 1 and\nnodata in the continuous outputs. The CLI uses the D-infinity slope and area\nof the carved-then-filled DEM: ``FlowGraph(dem, method=\"dinf\")``,\n``.slope()`` and ``.drainage_area()``.\n\nParameters\n----------\nslope : Raster\n    Gradient S (m/m), e.g. ``FlowGraph.slope()``.\ndrainage_area : Raster\n    Contributing area (m^2) on the same grid, e.g. ``FlowGraph.drainage_area()``.\ndimensionless_cohesion_min, dimensionless_cohesion_max : float, default=0.0, 0.25, keyword-only\n    C = (C_r + C_s) / (h rho_s g), bounds.\nfriction_coefficient_min, friction_coefficient_max : float, default=tan 30, 1.0, keyword-only\n    tan phi, bounds.\ntransmissivity_over_recharge_min_metres, transmissivity_over_recharge_max_metres : float, default=2000.0, 3000.0, keyword-only\n    T / R (m), bounds.\nwater_to_soil_density_ratio : float, default=0.5, keyword-only\n    rho_w / rho_s.\nregion : Raster or None, default=None, keyword-only\n    Integer region ids selecting parameter sets; nodata cells are left out.\nregion_parameters : dict or None, default=None, keyword-only\n    ``{region_id: {name: value}}`` with the CLI's region-table column names\n    (``sinmap_dimensionless_cohesion_min``, ...); a missing name takes the\n    keyword value. ``rupture_*`` names are accepted and ignored, so one table\n    can drive both ``sinmap`` and ``FlowInfo.rupture_planes``. Needed with\n    ``region``.\nexclude : Raster or None, default=None, keyword-only\n    Nonzero cells are left out, e.g. ``FlowGraph.dinf_edge_contaminated_mask()``.\ncontour_width : Raster or None, default=None, keyword-only\n    Contour width (m) for a = A / w, e.g. ``FlowGraph.dinf_contour_width()``\n    (the CLI's default); None uses the cell size, as SINMAP.\nn_threads : int, default=0, keyword-only\n    OpenMP threads (0 = default); the result does not depend on it.\n\nReturns\n-------\ndict\n    Rasters ``stability_index``, ``stability_class`` (1 stable to 6 defended),\n    ``probability_stable``, ``fs_min``, ``fs_max``, ``saturation`` (SINMAP's\n    coding: 3 always saturated, 2 partly, else the wettest w),\n    ``specific_catchment_area`` (m); counts ``n_evaluated``, ``n_flat``,\n    ``n_excluded``; ``class_areas``, a DataFrame of the CLI's class-area\n    table (``region_id, stability_class, n_cells, area_m2,\n    fraction_of_region``).\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def sinmap(slope: Raster, drainage_area: Raster, *, dimensionless_cohesion_min: float = 0.0, dimensionless_cohesion_max: float = 0.25, friction_coefficient_min: float = 0.5773502691896257, friction_coefficient_max: float = 1.0, transmissivity_over_recharge_min_metres: float = 2000.0, transmissivity_over_recharge_max_metres: float = 3000.0, water_to_soil_density_ratio: float = 0.5, region: Raster | None = None, region_parameters: dict | None = None, exclude: Raster | None = None, contour_width: Raster | None = None, n_threads: int = 0) -> dict",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "sinmap_slope_area_curves",
+      "kind": "function",
+      "doc": "The class boundaries of SINMAP's slope - specific catchment area plot.\n\nlsdtt-slope-stability ``write_sinmap_slope_area_curves_table`` for one\nparameter set: the saturation lines (``always_saturated_above``,\n``never_saturated_below``) and the FS curves ``fs_min_1.5``, ``fs_min_1.0``\nand ``fs_max_1.0`` as points. The CLI uses the largest evaluated slope,\nthe cell size and the largest specific catchment area as the extent.\n\nParameters\n----------\nslope_max : float\n    Largest gradient (m/m) of the plot.\narea_min, area_max : float\n    Range of specific catchment area (m); points outside it are dropped.\ndimensionless_cohesion_min, dimensionless_cohesion_max, friction_coefficient_min, friction_coefficient_max, transmissivity_over_recharge_min_metres, transmissivity_over_recharge_max_metres, water_to_soil_density_ratio\n    As ``sinmap``, keyword-only.\nn_slopes : int, default=400, keyword-only\n    Slopes sampled along each curve.\n\nReturns\n-------\npandas.DataFrame\n    ``curve, slope, specific_catchment_area_m``, the CLI table's columns\n    less ``region_id``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def sinmap_slope_area_curves(slope_max: float, area_min: float, area_max: float, *, dimensionless_cohesion_min: float = 0.0, dimensionless_cohesion_max: float = 0.25, friction_coefficient_min: float = 0.5773502691896257, friction_coefficient_max: float = 1.0, transmissivity_over_recharge_min_metres: float = 2000.0, transmissivity_over_recharge_max_metres: float = 3000.0, water_to_soil_density_ratio: float = 0.5, n_slopes: int = 400) -> pandas.DataFrame",
+          "defaults": []
         }
       ]
     },

@@ -5,8 +5,10 @@
     stability index, planar rupture surfaces after scaLr, a Dupuit - Boussinesq
     water table, a probability of failure, 2-D slip surfaces by the method of
     slices and 3-D ellipsoids by the method of columns) are tested against
-    analytic solutions. The user guide
-    will follow once the remaining components are built and measured.
+    analytic solutions. How to choose between them, what the results mean and
+    how they were checked are in
+    [Slope stability](../design_and_algorithms/slope_stability.md); the
+    [Python guide](../python/slope_stability.md) shows the same steps in Python.
 
 ## Intent
 
@@ -129,7 +131,7 @@ to the surface where the regolith saturates.
     output time.
   - Backward Euler is first order in the step and damps fast transients, so the
     maximum step sets how well a storm is resolved.
-    `groundwater_implicit_dt_tolerance_m` adds step-doubling error control.
+    `groundwater_implicit_dt_tolerance_metres` adds step-doubling error control.
   - The explicit stepper regularises seepage within about 1 % of saturation,
     while the implicit one holds saturated cells exactly at the surface. Their
     counts of saturated cells therefore differ slightly near the seepage faces.
@@ -594,7 +596,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `groundwater_max_substeps` | `int` | `10000000` | `param` | `groundwater_steady_method=explicit` | explicit steady method: most substeps in the march to steady state before giving up. | Substeps are limited by Courant and von Neumann conditions; fine grids and conductive regolith need many. |
 | `groundwater_transient_method` | `string` | `explicit` | `param` | `water_table_method=dupuit_transient` | How dupuit_transient steps the recharge series: explicit or implicit. | explicit: substeps at the Courant and von Neumann limits, the semi-analytic thickness update with regularised seepage. implicit: backward Euler, each step solved by the same Newton method as the implicit steady state, with steps of at most groundwater_implicit_max_dt_s landing on every recharge breakpoint and output time. Backward Euler is first order in the step and damps fast transients, so the maximum step sets how well a storm is resolved. The explicit substep is limited by stability, not accuracy: on coarse grids it can be hours long. |
 | `groundwater_implicit_max_dt_s` | `float` | `3600` | `param` | `groundwater_transient_method=implicit` | implicit transient method: longest backward-Euler step (s). | - |
-| `groundwater_implicit_dt_tolerance_m` | `float` | `0` | `param` | `groundwater_transient_method=implicit` | implicit transient method: step-doubling error tolerance on the water table (m); 0 = off. | Each step is also taken as two half steps; where they differ by more than this the step is halved, otherwise the half-step result is kept. The largest accepted difference is reported. |
+| `groundwater_implicit_dt_tolerance_metres` | `float` | `0` | `param` | `groundwater_transient_method=implicit` | implicit transient method: step-doubling error tolerance on the water table (m); 0 = off. | Each step is also taken as two half steps; where they differ by more than this the step is halved, otherwise the half-step result is kept. The largest accepted difference is reported. |
 | `groundwater_max_newton_iterations` | `int` | `200` | `param` | `groundwater_steady_method=implicit` | implicit steady method: most Newton (pseudo-time) steps before giving up. | - |
 | `write_groundwater_rasters` | `bool` | `true` | `switch` | `water_table_method` | Write the groundwater rasters. | &lt;write_fname&gt;_water_table_depth.tif (m below the surface), _saturated_thickness.tif (m above the base) and _seepage.tif (return flow, m/s). |
 

@@ -657,7 +657,7 @@ lsdtt_groundwater_dupuit::implicit_run_report lsdtt_groundwater_dupuit::run_impl
     rep.message = "run_implicit requires Eigen; lsdtt3 was built without it. No step was taken.";
     return rep;
 #else
-    if (!(o.max_dt_s > 0.0) || o.max_newton_per_step < 1 || o.max_splits < 0 || !(o.dt_tolerance_m >= 0.0))
+    if (!(o.max_dt_s > 0.0) || o.max_newton_per_step < 1 || o.max_splits < 0 || !(o.dt_tolerance_metres >= 0.0))
         throw std::invalid_argument("groundwater: invalid implicit transient options");
     const std::size_t m = unknown_cell_.size();
     const double n_por = p_.drainable_porosity, area = meta_.cell_size * meta_.cell_size;
@@ -734,14 +734,14 @@ lsdtt_groundwater_dupuit::implicit_run_report lsdtt_groundwater_dupuit::run_impl
         {
             bool ok = be_step(h_, dt, h1, F1);
             double err = 0.0;
-            if (ok && o.dt_tolerance_m > 0.0)
+            if (ok && o.dt_tolerance_metres > 0.0)
             {
                 // Step doubling: two half steps from the same start.
                 ok = be_step(h_, 0.5 * dt, h_half, F_half) && be_step(h_half, 0.5 * dt, h2, F2);
                 if (ok)
                     for (std::int64_t c : unknown_cell_)
                         err = std::max(err, std::fabs(h1[static_cast<std::size_t>(c)] - h2[static_cast<std::size_t>(c)]));
-                if (ok && err > o.dt_tolerance_m)
+                if (ok && err > o.dt_tolerance_metres)
                 {
                     ++rep.rejected_by_error;
                     dt *= 0.5;
@@ -756,13 +756,13 @@ lsdtt_groundwater_dupuit::implicit_run_report lsdtt_groundwater_dupuit::run_impl
             }
             if (ok)
             {
-                if (o.dt_tolerance_m > 0.0)
+                if (o.dt_tolerance_metres > 0.0)
                 {
                     // Keep the more accurate two half steps.
                     commit(h_half, F_half, 0.5 * dt);
                     commit(h2, F2, 0.5 * dt);
-                    rep.max_error_estimate_m = std::max(rep.max_error_estimate_m, err);
-                    dt_next = std::min(o.max_dt_s, (err < 0.25 * o.dt_tolerance_m) ? 2.0 * dt : dt);
+                    rep.max_error_estimate_metres = std::max(rep.max_error_estimate_metres, err);
+                    dt_next = std::min(o.max_dt_s, (err < 0.25 * o.dt_tolerance_metres) ? 2.0 * dt : dt);
                 }
                 else
                 {

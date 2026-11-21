@@ -843,7 +843,7 @@ int main()
             ge.run(T, storm);
             lsdtt_groundwater_dupuit::implicit_options fixed_dt, ctrl;
             fixed_dt.max_dt_s = ctrl.max_dt_s = T / 4;
-            ctrl.dt_tolerance_m = 1e-3;
+            ctrl.dt_tolerance_metres = 1e-3;
             g1.run_implicit(T, storm, fixed_dt);
             const auto r2 = g2.run_implicit(T, storm, ctrl);
             double e1 = 0.0, e2 = 0.0;
@@ -852,8 +852,8 @@ int main()
                 e1 = std::max(e1, std::fabs(g1.thickness()[i] - ge.thickness()[i]));
                 e2 = std::max(e2, std::fabs(g2.thickness()[i] - ge.thickness()[i]));
             }
-            check("implicit transient: step doubling keeps each step's estimate within dt_tolerance_m and is closer to the explicit run",
-                  r2.ok && r2.rejected_by_error > 0 && r2.max_error_estimate_m <= 1e-3 && e2 < e1,
+            check("implicit transient: step doubling keeps each step's estimate within dt_tolerance_metres and is closer to the explicit run",
+                  r2.ok && r2.rejected_by_error > 0 && r2.max_error_estimate_metres <= 1e-3 && e2 < e1,
                   "max |dh| " + num(e1) + " m (4 fixed steps) vs " + num(e2) + " m (" + std::to_string(r2.steps) + " steps, "
                   + std::to_string(r2.rejected_by_error) + " rejected)");
         }

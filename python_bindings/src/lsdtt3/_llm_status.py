@@ -178,4 +178,10 @@ READY = frozenset({
     "WaterLineRepairResult",
 })
 
-EXPERIMENTAL_OVERRIDES = frozenset()
+# The slope-stability methods on ready classes (2026-11-21), experimental with
+# the rest of the slope-stability bindings until promoted.
+EXPERIMENTAL_OVERRIDES = frozenset({
+    "FlowInfo.rupture_planes",
+    "FlowGraph.dinf_contour_width",
+    "FlowGraph.dinf_edge_contaminated_mask",
+})

@@ -249,6 +249,7 @@ def test_catalogues_list_every_ready_export_once_and_no_experimental_one():
 def test_catalogues_list_every_public_member_of_a_ready_class():
     """Methods (plan 5.2): a ready class lists the members the API manifest has
     (except __init__), unless one is demoted on its own."""
+    from lsdtt3._llm_status import EXPERIMENTAL_OVERRIDES
     from lsdtt3._topics import GUIDE_TOPICS
 
     exports = _manifest_exports()
@@ -259,7 +260,8 @@ def test_catalogues_list_every_public_member_of_a_ready_class():
                 assert not listed, name
                 continue
             expected = sorted(member["name"] for member in exports[name]["members"]
-                              if member["name"] != "__init__")
+                              if member["name"] != "__init__"
+                              and f"{name}.{member['name']}" not in EXPERIMENTAL_OVERRIDES)
             assert sorted(listed) == expected, name
 
 

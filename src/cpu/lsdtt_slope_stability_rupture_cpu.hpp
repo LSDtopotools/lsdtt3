@@ -94,6 +94,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "../core/lsdtt_flow_base.hpp"
@@ -165,6 +166,17 @@ struct rupture_parameter_sample
     rupture_parameters parameters;
     double weight = 1.0;
 };
+
+// The distribution of one uncertain rupture parameter, as lsdtt-slope-stability
+// builds it (rupture_cohesion_distribution, rupture_friction_coefficient_
+// distribution): family "uniform" on [lower, upper], or "normal" with mean
+// `central` and standard deviation sd, truncated to
+// [max(0, central - 3 sd), central + 3 sd]. `name` (e.g. "rupture_cohesion_pa")
+// prefixes the messages. Throws std::invalid_argument for an unknown family,
+// lower > upper, or sd < 0.
+[[nodiscard]] equal_density_distribution rupture_parameter_distribution(
+    const std::string& family, double central, double lower, double upper, double sd,
+    const std::string& name);
 
 // The tensor product of equal-density samples of cohesion (n_cohesion values)
 // and friction coefficient (n_friction values) about `central` (which supplies

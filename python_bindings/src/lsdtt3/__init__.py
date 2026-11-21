@@ -38,6 +38,12 @@ GraphFlood            run_graphflood, run_graphflood_optimised_v2,
                       fill_hydraulic_surface
 Hillslopes, LEM       hillslope_transport_implicit, hillslope_steady_state,
                       LandscapeModel, route_sediment, trigger_landslides
+Slope stability       sinmap, FlowInfo.rupture_planes -> RupturePlanes,
+                      RupturePlanes.failure_probability,
+                      RupturePlanes.landslide_catalogues,
+                      RupturePlanes.slip_surfaces -> SlipSurfaces,
+                      landslide_frequency_area, GroundwaterDupuit (water
+                      table for pore pressure)
 Synthetic landscapes  synthetic_noise, synthetic_mountain_range,
                       synthetic_network
 Statistics            BasinCollection.statistics, basin_surface_metrics,
@@ -389,6 +395,12 @@ from ._core import (
     run_landslide_series,
     landslide_crn_concentration,
     landslide_crn_concentrations,
+    sinmap,
+    sinmap_slope_area_curves,
+    landslide_frequency_area,
+    RupturePlanes,
+    SlipSurfaces,
+    GroundwaterDupuit,
     synthetic_noise,
     synthetic_mountain_range,
     synthetic_hillslope_strip,
@@ -652,6 +664,12 @@ __all__ = [
     "run_landslide_series",
     "landslide_crn_concentration",
     "landslide_crn_concentrations",
+    "sinmap",
+    "sinmap_slope_area_curves",
+    "landslide_frequency_area",
+    "RupturePlanes",
+    "SlipSurfaces",
+    "GroundwaterDupuit",
     "synthetic_noise",
     "synthetic_mountain_range",
     "synthetic_hillslope_strip",

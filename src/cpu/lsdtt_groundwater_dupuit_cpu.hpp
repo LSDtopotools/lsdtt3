@@ -208,7 +208,7 @@ public:
         int max_line_search = 8;
         // run_implicit (transient) only:
         double max_dt_s = 3600.0;               // longest backward-Euler step (s)
-        double dt_tolerance_m = 0.0;            // step-doubling error control (m); 0 = off
+        double dt_tolerance_metres = 0.0;            // step-doubling error control (m); 0 = off
         int max_newton_per_step = 30;
         int max_splits = 8;                     // halvings of a step that fails to converge
     };
@@ -234,8 +234,8 @@ public:
     // c = dt / n, to max |Phi| <= 1e-12 max(h_old, 1 mm) in thickness, or a
     // round-off stall within 1e-9 of it). Steps are at most max_dt_s; a step
     // that fails to converge is halved, at most max_splits times. With
-    // dt_tolerance_m > 0, each step is also taken as two half steps; where the
-    // two differ by more than dt_tolerance_m the step is halved, otherwise the
+    // dt_tolerance_metres > 0, each step is also taken as two half steps; where the
+    // two differ by more than dt_tolerance_metres the step is halved, otherwise the
     // half-step result is kept and the next step may double (up to max_dt_s).
     // Call once per constant-recharge segment so steps land on its ends.
     //
@@ -252,7 +252,7 @@ public:
         std::int64_t linear_iterations = 0;
         std::int64_t splits = 0;              // halvings after a failed step
         std::int64_t rejected_by_error = 0;   // halvings by the step-doubling test
-        double max_error_estimate_m = 0.0;    // largest accepted step-doubling difference
+        double max_error_estimate_metres = 0.0;    // largest accepted step-doubling difference
         double time = 0.0;                    // s advanced
         std::string message;
     };

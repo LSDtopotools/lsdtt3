@@ -13,4 +13,4 @@ groundwater_recharge_series_fname: slope_stability_recharge_series.csv
 groundwater_output_times_s: 3600,21600,43200,172800
 regolith_thickness_metres: 2
 groundwater_transient_method: implicit
-groundwater_implicit_dt_tolerance_m: 0.01
+groundwater_implicit_dt_tolerance_metres: 0.01

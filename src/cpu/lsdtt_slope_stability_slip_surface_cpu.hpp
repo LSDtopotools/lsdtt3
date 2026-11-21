@@ -302,6 +302,11 @@ struct slip_surface_options
 // Throws std::invalid_argument naming the field.
 void validate_slip_surface_options(const slip_surface_options& o);
 
+// slip_surface_method: auto: ordinary for plane_integrated (and ellipsoid, which
+// uses its column method instead), bishop for circular, janbu for bilinear and
+// structural.
+[[nodiscard]] limit_equilibrium_method default_limit_equilibrium_method(slip_surface_family family);
+
 struct slip_surface_rasters
 {
     lsdtt_raster_cpu safety_factor;   // F of the critical surface (evaluated crowns)

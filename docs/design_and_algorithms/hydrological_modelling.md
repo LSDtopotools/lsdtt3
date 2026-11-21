@@ -200,6 +200,18 @@ STI adds measured soil transmissivity (from the HOST database or your own field 
 
 The tool produces no discharge, so there is nothing to validate against gauge data. The TWI pattern can still be checked in the field: look for seeps, spring lines and saturated patches during rain or after snowmelt. If your TWI does not match them, suspect the DEM (an inverted hillshade, undetected levees, feet on a metre grid) or the routing method (D8 versus D-infinity).
 
+**Steep slopes: tan β or sin β.** The index uses tan β, the small-slope form
+of the hydraulic gradient. For flow parallel to the slope through a soil whose
+thickness is measured perpendicular to it, the hydraulic gradient is sin β,
+and tan β overstates it by 1/cos β: 3 % at a gradient of 0.25 and 41 % at a
+gradient of 1. SINMAP and the Dupuit groundwater model of
+`lsdtt-slope-stability` use sin β (see
+[Slope stability](slope_stability.md#relation-to-topmodel-and-the-wetness-index)),
+so in steep landscapes sin β may be the better slope term. It is **not**
+implemented for TWI, STI or `lsdtt-distributed-hydrology`: they keep
+`ln(a/tan β)` for continuity with published TOPMODEL parameter sets and
+earlier LSDTopoTools. Any change would have to be a deliberate, tested option.
+
 ---
 
 ## Cross-comparison

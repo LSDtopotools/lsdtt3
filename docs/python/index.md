@@ -37,7 +37,8 @@ For development from a clone, see
 4. Continue with [chi and ksn](chi_ksn.md), channel-head extraction,
    [floodplains, terraces and valleys](fluvial_surfaces.md),
    [ridgeline profiles](ridgelines.md),
-   [slope-area and low-concavity reaches](slope_area.md), or the cosmogenic
+   [slope-area and low-concavity reaches](slope_area.md),
+   [slope stability](slope_stability.md), or the cosmogenic
    and GraphFlood tools as needed.
 
 ## Core ideas

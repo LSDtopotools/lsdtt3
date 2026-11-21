@@ -101,7 +101,7 @@ FlowGraph::FlowGraph(const Raster& dem, const std::string& method,
 
 void bind_flow_graph(nb::module_& module)
 {
-    nb::class_<FlowGraph>(module, "FlowGraph", R"doc(
+    nb::class_<FlowGraph> graph_class(module, "FlowGraph", R"doc(
 Fractional D-infinity or MFD flow-routing graph.
 
 Use ``FlowInfo`` for single-receiver D8 channel trees. Use ``FlowGraph`` for
@@ -124,7 +124,8 @@ mfd_exponent : float, default=1.0
     Exponent on slope in the MFD split (1.0 Quinn, 1.1 Freeman).
 n_threads : int, default=0
     OpenMP thread count; 0 uses the runtime default.
-)doc")
+)doc");
+    graph_class
         .def(nb::init<const Raster&, const std::string&, const std::string&, bool, float, int>(),
             nb::arg("dem"), nb::arg("method") = "mfd", nb::arg("boundary_conditions") = "oooo",
             nb::arg("interior_nodata_is_outlet") = true, nb::arg("mfd_exponent") = 1.0f,
@@ -146,5 +147,6 @@ n_threads : int, default=0
             "Return a 0/1 Raster of outlet pixels.")
         .def("slope", [](const FlowGraph& g) { if (g.native().options().method != lsdtt::lsdtt_flowgraph_method::d_infinity) throw std::runtime_error("slope is available only for method='dinf'"); return as_raster(g.native().dinf_slopes()); })
         .def("direction", [](const FlowGraph& g) { if (g.native().options().method != lsdtt::lsdtt_flowgraph_method::d_infinity) throw std::runtime_error("direction is available only for method='dinf'"); return as_raster(g.native().dinf_flow_direction()); });
+    bind_slope_stability_graph(graph_class);
 }
 } // namespace lsdtt3_python

@@ -306,6 +306,22 @@ rupture_rasters compute_rupture_planes(
     return out;
 }
 
+equal_density_distribution rupture_parameter_distribution(
+    const std::string& family, double central, double lower, double upper, double sd, const std::string& name)
+{
+    if (family == "uniform")
+    {
+        if (!(lower <= upper)) throw std::invalid_argument(name + "_min must not exceed " + name + "_max");
+        return uniform_parameter(lower, upper);
+    }
+    if (family == "normal")
+    {
+        if (!(sd >= 0.0)) throw std::invalid_argument(name + "_sd must be >= 0");
+        return truncated_normal_parameter(central, sd, std::max(0.0, central - 3.0 * sd), central + 3.0 * sd);
+    }
+    throw std::invalid_argument(name + " distribution must be uniform or normal");
+}
+
 std::vector<rupture_parameter_sample> rupture_parameter_samples(
     const rupture_parameters& central,
     const equal_density_distribution& cohesion, int n_cohesion,

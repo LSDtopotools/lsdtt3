@@ -954,8 +954,8 @@ int main(int argc, char* argv[])
     help_map["groundwater_implicit_max_dt_s"] = {"float", "3600",
         "implicit transient method: longest backward-Euler step (s).", "",
         "Groundwater", "param", "groundwater_transient_method=implicit"};
-    float_default_map["groundwater_implicit_dt_tolerance_m"] = 0.0f;
-    help_map["groundwater_implicit_dt_tolerance_m"] = {"float", "0",
+    float_default_map["groundwater_implicit_dt_tolerance_metres"] = 0.0f;
+    help_map["groundwater_implicit_dt_tolerance_metres"] = {"float", "0",
         "implicit transient method: step-doubling error tolerance on the water table (m); 0 = off.",
         "Each step is also taken as two half steps; where they differ by more than "
         "this the step is halved, otherwise the half-step result is kept. The largest "
@@ -1068,16 +1068,7 @@ int main(int argc, char* argv[])
             else if (m == "bishop") slip_options.evaluation.method = lem::bishop;
             else if (m == "janbu") slip_options.evaluation.method = lem::janbu;
             else if (m == "spencer") slip_options.evaluation.method = lem::spencer;
-            else if (m == "auto")
-            {
-                switch (slip_options.family)
-                {
-                case lsdtt::slip_surface_family::circular: slip_options.evaluation.method = lem::bishop; break;
-                case lsdtt::slip_surface_family::bilinear:
-                case lsdtt::slip_surface_family::structural: slip_options.evaluation.method = lem::janbu; break;
-                default: slip_options.evaluation.method = lem::ordinary; break;
-                }
-            }
+            else if (m == "auto") slip_options.evaluation.method = lsdtt::default_limit_equilibrium_method(slip_options.family);
             else throw std::runtime_error("slip_surface_method must be auto, ordinary, bishop, janbu or spencer");
             const lem mm = slip_options.evaluation.method;
             slip_method_name = mm == lem::ordinary ? "ordinary" : mm == lem::bishop ? "bishop" : mm == lem::janbu ? "janbu" : "spencer";
@@ -1168,8 +1159,8 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("groundwater_transient_method must be implicit or explicit");
             if (!(ff.at("groundwater_implicit_max_dt_s") > 0.0f))
                 throw std::runtime_error("groundwater_implicit_max_dt_s must be > 0");
-            if (!(ff.at("groundwater_implicit_dt_tolerance_m") >= 0.0f))
-                throw std::runtime_error("groundwater_implicit_dt_tolerance_m must be >= 0");
+            if (!(ff.at("groundwater_implicit_dt_tolerance_metres") >= 0.0f))
+                throw std::runtime_error("groundwater_implicit_dt_tolerance_metres must be >= 0");
             if (ii.at("groundwater_max_newton_iterations") < 1)
                 throw std::runtime_error("groundwater_max_newton_iterations must be at least 1");
         }
@@ -1234,16 +1225,7 @@ int main(int argc, char* argv[])
             {
                 const rupture_uncertainty_spec& u = uncertainty_by_region.at(kv.first);
                 const lsdtt::rupture_parameters& c0 = kv.second;
-                auto dist = [](const std::string& family, double mean, double lo, double hi, double sd,
-                               const std::string& name) {
-                    if (family == "uniform")
-                    {
-                        if (!(lo <= hi)) throw std::runtime_error(name + "_min must not exceed " + name + "_max");
-                        return lsdtt::uniform_parameter(lo, hi);
-                    }
-                    if (!(sd >= 0.0)) throw std::runtime_error(name + "_sd must be >= 0");
-                    return lsdtt::truncated_normal_parameter(mean, sd, std::max(0.0, mean - 3.0 * sd), mean + 3.0 * sd);
-                };
+                const auto& dist = lsdtt::rupture_parameter_distribution;
                 try
                 {
                     samples_by_region[kv.first] = lsdtt::rupture_parameter_samples(
@@ -1443,6 +1425,10 @@ int main(int argc, char* argv[])
                 lsdtt::make_flow_base(dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
             const lsdtt::lsdtt_raster_result npix = d8->get_n_contributing_pixels_raster();
             const double threshold = static_cast<double>(ii.at("threshold_contributing_pixels"));
+            // The pixel threshold as an area, for comparison across resolutions (D3).
+            lsdtt::lsdtt_run_record::add_provenance(
+                "channel_threshold_area_m2",
+                number_string(threshold * dem.get_meta().cell_size * dem.get_meta().cell_size));
             std::vector<std::uint8_t> channel(npix.data.size(), 0);
             for (std::size_t i = 0; i < channel.size(); ++i)
                 channel[i] = (npix.mask[i] && static_cast<double>(npix.data[i]) >= threshold) ? 1 : 0;
@@ -1533,7 +1519,7 @@ int main(int argc, char* argv[])
                     const bool transient_implicit = sf.at("groundwater_transient_method") == "implicit";
                     lsdtt::lsdtt_groundwater_dupuit::implicit_options to;
                     to.max_dt_s = ff.at("groundwater_implicit_max_dt_s");
-                    to.dt_tolerance_m = ff.at("groundwater_implicit_dt_tolerance_m");
+                    to.dt_tolerance_metres = ff.at("groundwater_implicit_dt_tolerance_metres");
                     lsdtt::lsdtt_groundwater_dupuit::implicit_run_report tr_total;
                     double t_now = 0.0;
                     for (double t_out : output_times)
@@ -1553,7 +1539,7 @@ int main(int argc, char* argv[])
                                 tr_total.newton_iterations += r.newton_iterations;
                                 tr_total.splits += r.splits;
                                 tr_total.rejected_by_error += r.rejected_by_error;
-                                tr_total.max_error_estimate_m = std::max(tr_total.max_error_estimate_m, r.max_error_estimate_m);
+                                tr_total.max_error_estimate_metres = std::max(tr_total.max_error_estimate_metres, r.max_error_estimate_metres);
                                 if (!r.ok)
                                     throw std::runtime_error("the implicit groundwater transient failed at t = " + number_string(t_now)
                                                              + " s: " + r.message + " (lower groundwater_implicit_max_dt_s, "
@@ -1597,9 +1583,9 @@ int main(int argc, char* argv[])
                         std::cout << "Groundwater transient (implicit): " << tr_total.steps << " backward-Euler steps, "
                                   << tr_total.newton_iterations << " Newton iterations, " << tr_total.splits
                                   << " split after a failed solve";
-                        if (to.dt_tolerance_m > 0.0)
+                        if (to.dt_tolerance_metres > 0.0)
                             std::cout << ", " << tr_total.rejected_by_error << " halved by the error control (largest accepted estimate "
-                                      << number_string(tr_total.max_error_estimate_m) << " m)";
+                                      << number_string(tr_total.max_error_estimate_metres) << " m)";
                         std::cout << "\n";
                         lsdtt::lsdtt_run_record::add_provenance("groundwater_transient_steps", std::to_string(tr_total.steps));
                     }

@@ -979,6 +979,10 @@ Methods
 -------
 accumulate(weights: object | None = None) -> Raster
     Accumulate weights through fractional receivers; default weights are cell areas.
+dinf_contour_width() -> Raster
+    Contour width of each cell for its D-infinity flow direction.
+dinf_edge_contaminated_mask() -> Raster
+    Cells whose D-infinity contributing area reaches the raster edge or nodata.
 direction() -> Raster
 drainage_area() -> Raster
     Return the distributed-flow drainage area (m^2) as a Raster.
@@ -1016,6 +1020,57 @@ Accumulate weights through fractional receivers; default weights are cell areas.
 
 ```python
 def accumulate(self, weights: object | None = None) -> lsdtt3.Raster
+```
+
+#### `dinf_contour_width`
+
+dinf_contour_width(self) -> Raster
+
+Contour width of each cell for its D-infinity flow direction.
+
+lsdtt-slope-stability ``contour_width_method: dinf_flow_direction``:
+w = b max(|sin beta|, |cos beta|) for flow bearing beta and cell size b, the
+width of a D-infinity flow tube on a plane, so A / w is the flow distance
+from the divide there. Cells without a direction get b. Pass the result as
+``contour_width`` to ``sinmap``.
+
+Parameters
+----------
+self : FlowGraph
+    A FlowGraph built with ``method="dinf"``.
+
+Returns
+-------
+Raster
+    Contour width (m); nodata outside the DEM.
+
+```python
+def dinf_contour_width(self) -> Raster
+```
+
+#### `dinf_edge_contaminated_mask`
+
+dinf_edge_contaminated_mask(self) -> Raster
+
+Cells whose D-infinity contributing area reaches the raster edge or nodata.
+
+lsdtt-slope-stability ``exclude_edge_contaminated_cells``: the area of these
+cells may be truncated, so their specific catchment area and SINMAP
+stability index are lower bounds. Pass the result as ``exclude`` to
+``sinmap`` to leave them out.
+
+Parameters
+----------
+self : FlowGraph
+    A FlowGraph built with ``method="dinf"``.
+
+Returns
+-------
+Raster
+    1 contaminated, 0 not; nodata outside the DEM.
+
+```python
+def dinf_edge_contaminated_mask(self) -> Raster
 ```
 
 #### `direction`
@@ -1234,6 +1289,8 @@ receiver_of(row: int, col: int) -> object
     Return the pixel this pixel drains to.
 row_col(flat_index: int) -> tuple
     Return the ``(row, col)`` of a flat index.
+rupture_planes(geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
+    Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
 scope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope
     Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.
 snap_points(x: object | None = None, y: object | None = None, *, longitude: object | None = None, latitude: object | None = None, points: object | None = None, crs: str | None = None, method: str = 'downstream', threshold_contributing_pixels: int | None = None, threshold_drainage_area_m2: float | None = None, min_search_radius_pixels: int = 0, max_search_radius_pixels: int = 25, max_search_radius_metres: float | None = None) -> object
@@ -2007,6 +2064,58 @@ tuple of (int, int)
 
 ```python
 def row_col(self, flat_index: int) -> tuple
+```
+
+#### `rupture_planes`
+
+rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
+
+Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
+
+lsdtt-slope-stability ``run_rupture_planes``, the same routine; the keyword
+names are the CLI's less the ``rupture_`` prefix. From each source cell R the
+D8 path (this FlowInfo's receivers) is walked down to the channel; for each
+candidate daylight point D the plane through D at the optimal depth h*
+(closed form) gives F, and the minimum over the path is kept. With a water
+table the pore pressure is hydrostatic and the minimum is found numerically.
+The CLI routes on the carved-then-filled DEM and measures on the input DEM.
+
+Parameters
+----------
+geometry : Raster
+    Elevations for dx and dz, normally the input (unconditioned) DEM.
+channel : Raster or None, default=None, keyword-only
+    Nonzero = channel cell (the walk stops before it). None uses
+    ``threshold_contributing_pixels`` on this FlowInfo, as the CLI.
+threshold_contributing_pixels : int, default=1000, keyword-only
+    Channel cells have at least this many D8 contributing pixels.
+cohesion_pa : float, default=1000.0, keyword-only
+    Cohesion c (Pa).
+friction_coefficient : float, default=tan 35, keyword-only
+    mu = tan phi.
+density_kg_m3 : float, default=2600.0, keyword-only
+    Bulk density rho.
+region : Raster or None, default=None, keyword-only
+    Integer region ids selecting parameter sets; nodata cells are left out.
+region_parameters : dict or None, default=None, keyword-only
+    ``{region_id: {name: value}}`` with the CLI's region-table column names
+    (``rupture_cohesion_pa``, ``rupture_cohesion_pa_min``, ...); a missing name
+    takes the keyword value; ``sinmap_*`` names are ignored. Needed with
+    ``region``.
+water_table_depth : Raster or None, default=None, keyword-only
+    Depth (m) of the water table below the geometry surface, e.g.
+    ``GroundwaterDupuit.water_table_depth()``; None or nodata is dry.
+n_threads : int, default=0, keyword-only
+    OpenMP threads; the result does not depend on it.
+
+Returns
+-------
+RupturePlanes
+    The rasters and counts, and methods for the probability of failure,
+    catalogues and slip surfaces.
+
+```python
+def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
 ```
 
 #### `scope_from_heads`

@@ -642,6 +642,17 @@ slip_search_result search_slip_surface(const slip_section& sec, int k, slip_surf
     return search_slip_shape(sec, k, family, slip_back_scarp::vertical, p, opt, search_points);
 }
 
+limit_equilibrium_method default_limit_equilibrium_method(slip_surface_family family)
+{
+    switch (family)
+    {
+    case slip_surface_family::circular: return limit_equilibrium_method::bishop;
+    case slip_surface_family::bilinear:
+    case slip_surface_family::structural: return limit_equilibrium_method::janbu;
+    default: return limit_equilibrium_method::ordinary;
+    }
+}
+
 void validate_slip_surface_options(const slip_surface_options& o)
 {
     if (o.family == slip_surface_family::ellipsoid)
