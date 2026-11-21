@@ -19,7 +19,8 @@
 //     function Phase 2 will minimise when the water table makes it piecewise:
 //     Brent's minimum must match a 2 x 10^6-point grid search and the paper's
 //     closed-form optimal depth (eqs. 5-6, the admissible root), including a
-//     high-cohesion case where the other root is the admissible one;
+//     high-cohesion case (c dz > mu rho g dx^2), where eq. 5's root turns
+//     positive but lies beyond dz, so eq. 6's root is still the admissible one;
 //   * evaluation counts, the converged flag, and argument errors.
 //
 // Usage: lsdtt-test-brent-minimiser
@@ -131,7 +132,7 @@ int main()
             {60.0, 40.0, 1000.0, 0.70, rho_g},      // paper-like: c = 1 kPa, mu = tan 35
             {200.0, 120.0, 1000.0, 0.70, rho_g},
             {30.0, 5.0, 1000.0, 0.62, rho_g},
-            {30.0, 25.0, 5.0e6, 0.70, rho_g},       // high cohesion: c > mu rho g dx^2 / dz
+            {30.0, 25.0, 5.0e6, 0.70, rho_g},       // high cohesion: c > mu rho g dx^2 / dz (eq. 5 root > dz)
         };
         double worst_grid = 0.0, worst_root = 0.0;
         bool better_than_grid = true;
@@ -148,11 +149,11 @@ int main()
             worst_root = std::max(worst_root, std::fabs(r.x - rc.closed_form_depth()) / rc.dz);
         }
         const rupture& high = cases[3];
-        const bool high_case_is_other_root = high.c > high.mu * high.rho_g * high.dx * high.dx / high.dz;
+        const bool high_cohesion_case_present = high.c > high.mu * high.rho_g * high.dx * high.dx / high.dz;
         check("scaLr F(h): Brent's minimum matches a 2e6-point grid search, never worse",
               worst_grid < 1e-9 && better_than_grid, "max relative difference " + num(worst_grid));
         check("scaLr F(h): Brent's depth matches the closed-form admissible root (eqs. 5-6)",
-              worst_root < 1e-7 && high_case_is_other_root, "max |h - h_closed| / dz " + num(worst_root));
+              worst_root < 1e-7 && high_cohesion_case_present, "max |h - h_closed| / dz " + num(worst_root));
     }
 
     {

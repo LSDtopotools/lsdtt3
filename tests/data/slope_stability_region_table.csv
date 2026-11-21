@@ -1,3 +1,3 @@
-region_id,region_name,sinmap_dimensionless_cohesion_min,sinmap_dimensionless_cohesion_max,sinmap_transmissivity_over_recharge_min_metres,sinmap_transmissivity_over_recharge_max_metres
-1,west (parameter-file friction; stronger soil),0.1,0.3,,
-7,east (weaker and wetter),0.0,0.05,500,800
+region_id,region_name,sinmap_dimensionless_cohesion_min,sinmap_dimensionless_cohesion_max,sinmap_transmissivity_over_recharge_min_metres,sinmap_transmissivity_over_recharge_max_metres,rupture_cohesion_pa
+1,west (parameter-file friction; stronger soil),0.1,0.3,,,5000
+7,east (weaker and wetter),0.0,0.05,500,800,

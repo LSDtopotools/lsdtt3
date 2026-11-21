@@ -13,11 +13,14 @@
 // Physically based estimates of POTENTIAL slope failure, as maps and
 // statistics. Not for mapping individual landslides.
 //
-// Phase 1 (this version): a stability index inspired by SINMAP (Pack, Tarboton,
-// Goodwin & Prasad 2005), itself built on SHALSTAB (Montgomery & Dietrich
-// 1994); src/cpu/lsdtt_slope_stability_sinmap_cpu lists where it diverges. Later phases add
-// scaLr rupture depths (Steer et al. 2026), curved and 3-D failure surfaces,
-// and a Dupuit-Boussinesq water table.
+// Components so far:
+//   A. a stability index inspired by SINMAP (Pack, Tarboton, Goodwin & Prasad
+//      2005), itself built on SHALSTAB (Montgomery & Dietrich 1994);
+//      src/cpu/lsdtt_slope_stability_sinmap_cpu lists where it diverges;
+//   B. planar rupture surfaces after scaLr (Steer et al. 2026),
+//      src/cpu/lsdtt_slope_stability_rupture_cpu.
+// Later phases add landslide catalogues, curved and 3-D failure surfaces, and
+// a Dupuit-Boussinesq water table.
 //
 // Workflow:
 //   1. Read the DEM; interior nodata; carve (least-cost breach, default) then
@@ -25,12 +28,14 @@
 //   2. D-infinity flow graph on the routing surface: slope (facet steepest
 //      descent, as SINMAP) and drainage area; a = A / w, w the D-infinity
 //      contour width by default (SINMAP: the cell size).
-//   3. Optional region raster and table: one SINMAP parameter set per region.
+//   3. Optional region raster and table: one parameter set per region.
 //   4. SINMAP per cell: FS_min, FS_max, P(FS > 1), stability index and class,
-//      saturation. Optional exclusion of edge-contaminated cells.
-//   5. Tables: area by stability class (and region); the class boundaries of
-//      SINMAP's slope - specific catchment area plot. Figures are drawn by
-//      lsdviztools3 from these files.
+//      saturation; area by class; the slope - specific catchment area plot
+//      boundaries. Optional exclusion of edge-contaminated cells.
+//   5. Rupture planes: D8 on the routing surface, channel cells from
+//      threshold_contributing_pixels; per hillslope cell the optimal planar
+//      rupture to a daylight point downslope (depth, safety factor, length,
+//      slopes). Figures are drawn by lsdviztools3 from these files.
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
@@ -41,6 +46,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -50,6 +56,7 @@
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_csv_table.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
+#include "../src/core/lsdtt_flow_base.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
@@ -59,6 +66,7 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_sinmap_cpu.hpp"
 
 static const std::string k_status    = "experimental";
@@ -165,23 +173,53 @@ static double value_of(const lsdtt::sinmap_parameters& p, const std::string& key
     return p.water_to_soil_density_ratio;
 }
 
-// Region table: region_id (integer, unique) plus any of the SINMAP keys and an
-// optional region_name. Any other column is an error (a typo would otherwise
-// silently fall back to the defaults).
-static std::map<std::int32_t, lsdtt::sinmap_parameters> read_region_table(
-    const std::string& path, const lsdtt::sinmap_parameters& defaults)
+// The rupture (scaLr) keys a region table may carry.
+static const char* const k_rupture_keys[] = {
+    "rupture_cohesion_pa",
+    "rupture_friction_coefficient",
+    "rupture_density_kg_m3",
+};
+
+static lsdtt::rupture_parameters with_value(lsdtt::rupture_parameters p, const std::string& key, double v)
+{
+    if (key == "rupture_cohesion_pa") p.cohesion_pa = v;
+    else if (key == "rupture_friction_coefficient") p.friction_coefficient = v;
+    else if (key == "rupture_density_kg_m3") p.density_kg_m3 = v;
+    return p;
+}
+
+static double value_of(const lsdtt::rupture_parameters& p, const std::string& key)
+{
+    if (key == "rupture_cohesion_pa") return p.cohesion_pa;
+    if (key == "rupture_friction_coefficient") return p.friction_coefficient;
+    return p.density_kg_m3;
+}
+
+struct region_tables
+{
+    std::map<std::int32_t, lsdtt::sinmap_parameters>  sinmap;
+    std::map<std::int32_t, lsdtt::rupture_parameters> rupture;
+};
+
+// Region table: region_id (integer, unique), an optional region_name, and any
+// of the sinmap_* and rupture_* parameter names. Any other column is an error
+// (a typo would otherwise silently fall back to the parameter-file value).
+static region_tables read_region_table(const std::string& path,
+                                       const lsdtt::sinmap_parameters& sinmap_defaults,
+                                       const lsdtt::rupture_parameters& rupture_defaults)
 {
     const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(path);
     if (!lsdtt::csv_has_column(t, "region_id"))
         throw std::runtime_error(path + ": the region table needs a region_id column");
     std::set<std::string> allowed = {"region_id", "region_name"};
     for (const char* k : k_sinmap_keys) allowed.insert(k);
+    for (const char* k : k_rupture_keys) allowed.insert(k);
     for (const std::string& h : t.headers)
         if (!allowed.count(h))
             throw std::runtime_error(path + ": unknown column '" + h +
-                                     "' (allowed: region_id, region_name and the sinmap_* parameter names)");
+                                     "' (allowed: region_id, region_name and the sinmap_* and rupture_* parameter names)");
 
-    std::map<std::int32_t, lsdtt::sinmap_parameters> out;
+    region_tables out;
     for (std::size_t r = 0; r < t.rows.size(); ++r)
     {
         const int row_1 = static_cast<int>(r) + 2;   // header is line 1
@@ -190,19 +228,27 @@ static std::map<std::int32_t, lsdtt::sinmap_parameters> read_region_table(
         if (id_ll < std::numeric_limits<std::int32_t>::min() + 1LL || id_ll > std::numeric_limits<std::int32_t>::max())
             throw std::runtime_error(path + ": region_id out of range on line " + std::to_string(row_1));
         const std::int32_t id = static_cast<std::int32_t>(id_ll);
-        if (out.count(id))
+        if (out.sinmap.count(id))
             throw std::runtime_error(path + ": region_id " + std::to_string(id) + " appears twice");
-        lsdtt::sinmap_parameters p = defaults;
+        lsdtt::sinmap_parameters ps = sinmap_defaults;
         for (const char* k : k_sinmap_keys)
-            p = with_value(p, k, lsdtt::csv_row_double_optional(t.rows[r], k, value_of(defaults, k), path, row_1));
-        try { lsdtt::validate_sinmap_parameters(p); }
+            ps = with_value(ps, k, lsdtt::csv_row_double_optional(t.rows[r], k, value_of(sinmap_defaults, k), path, row_1));
+        lsdtt::rupture_parameters pr = rupture_defaults;
+        for (const char* k : k_rupture_keys)
+            pr = with_value(pr, k, lsdtt::csv_row_double_optional(t.rows[r], k, value_of(rupture_defaults, k), path, row_1));
+        try
+        {
+            lsdtt::validate_sinmap_parameters(ps);
+            lsdtt::validate_rupture_parameters(pr);
+        }
         catch (const std::exception& e)
         {
             throw std::runtime_error(path + " region " + std::to_string(id) + ": " + e.what());
         }
-        out[id] = p;
+        out.sinmap[id] = ps;
+        out.rupture[id] = pr;
     }
-    if (out.empty()) throw std::runtime_error(path + ": the region table has no rows");
+    if (out.sinmap.empty()) throw std::runtime_error(path + ": the region table has no rows");
     return out;
 }
 
@@ -409,6 +455,46 @@ int main(int argc, char* argv[])
         "size to the largest a. For plotting with the cell cloud.",
         "SINMAP", "switch", "run_sinmap"};
 
+    // --- Planar rupture surfaces (scaLr) -----------------------------------------
+    bool_default_map["run_rupture_planes"] = true;
+    help_map["run_rupture_planes"] = {"bool", "true",
+        "Compute planar rupture surfaces after scaLr (Steer et al. 2026).",
+        "For each hillslope cell R, every cell D down its D8 path (stopping before "
+        "the first channel cell) is a candidate daylight point; a plane from depth "
+        "h below R to D gives an infinite-slope safety factor at R, minimised in "
+        "closed form over h, and the D with the lowest factor is kept. Outputs the "
+        "potential rupture depth and its safety factor per cell. Elevation "
+        "differences come from the input DEM (after interior nodata handling); "
+        "paths follow the routing surface. Dry: no pore pressure yet.",
+        "Rupture planes", "switch", ""};
+    lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
+    float_default_map["rupture_cohesion_pa"] = 1000.0f;
+    help_map["rupture_cohesion_pa"] = {"float", "1000",
+        "Cohesion c of the slope material (Pa).",
+        "scaLr's reference value is 1 kPa, deliberately low as an apparent strength "
+        "during a triggering event (Steer et al. 2026, section 3). Rupture depth rises "
+        "with cohesion.",
+        "Rupture planes", "param", "run_rupture_planes"};
+    float_default_map["rupture_friction_coefficient"] = 0.7002075f;
+    help_map["rupture_friction_coefficient"] = {"float", "0.7002075",
+        "Friction coefficient mu = tan(phi) of the slope material (dimensionless).",
+        "0.700 = tan 35 degrees, scaLr's reference value.",
+        "Rupture planes", "param", "run_rupture_planes"};
+    float_default_map["rupture_density_kg_m3"] = 2600.0f;
+    help_map["rupture_density_kg_m3"] = {"float", "2600",
+        "Bulk density rho of the slope material (kg/m3).",
+        "As in scaLr. Gravity is 9.81 m/s2.",
+        "Rupture planes", "param", "run_rupture_planes"};
+    bool_default_map["write_rupture_rasters"] = true;
+    help_map["write_rupture_rasters"] = {"bool", "true",
+        "Write the rupture-plane rasters.",
+        "<write_fname>_rupture_safety_factor.tif (F at the daylight point), "
+        "_rupture_depth.tif (optimal depth h, m), _rupture_unstable.tif (1 where "
+        "F <= 1), _rupture_length.tif (horizontal distance R to D, m), "
+        "_rupture_slope.tif ((dz - h)/dx) and _rupture_topographic_slope.tif "
+        "(dz/dx). Channel cells and cells with no admissible D are nodata.",
+        "Rupture planes", "switch", "run_rupture_planes"};
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(k_tool_name, k_status, k_citation, help_map, cli_args);
@@ -468,15 +554,34 @@ int main(int argc, char* argv[])
         if (region_fname.empty() != region_table_fname.empty())
             throw std::runtime_error(
                 "slope_stability_region_fname and slope_stability_region_table_fname must be given together");
-        std::map<std::int32_t, lsdtt::sinmap_parameters> by_region;
-        if (!region_table_fname.empty())
-            by_region = read_region_table(resolve_input(parser.get_read_path(), region_table_fname), sinmap);
-        else
-            by_region[0] = sinmap;
+        lsdtt::rupture_parameters rupture;
+        rupture.cohesion_pa = ff.at("rupture_cohesion_pa");
+        rupture.friction_coefficient = ff.at("rupture_friction_coefficient");
+        rupture.density_kg_m3 = ff.at("rupture_density_kg_m3");
+        lsdtt::validate_rupture_parameters(rupture);
+        const bool run_sinmap = bf.at("run_sinmap");
+        const bool run_rupture = bf.at("run_rupture_planes");
+        if (run_rupture && ii.at("threshold_contributing_pixels") < 1)
+            throw std::runtime_error("threshold_contributing_pixels must be at least 1");
 
-        if (!bf.at("run_sinmap"))
+        std::map<std::int32_t, lsdtt::sinmap_parameters> by_region;
+        std::map<std::int32_t, lsdtt::rupture_parameters> rupture_by_region;
+        if (!region_table_fname.empty())
         {
-            std::cout << "run_sinmap is false: nothing to compute in this version.\n";
+            region_tables tables = read_region_table(
+                resolve_input(parser.get_read_path(), region_table_fname), sinmap, rupture);
+            by_region = std::move(tables.sinmap);
+            rupture_by_region = std::move(tables.rupture);
+        }
+        else
+        {
+            by_region[0] = sinmap;
+            rupture_by_region[0] = rupture;
+        }
+
+        if (!run_sinmap && !run_rupture)
+        {
+            std::cout << "run_sinmap and run_rupture_planes are both false: nothing to compute.\n";
             parser.print_parameters();
             return run_record.succeed();
         }
@@ -533,18 +638,7 @@ int main(int argc, char* argv[])
         }
 
         // ---------------------------------------------------------------------
-        // Step 2: D-infinity slope and drainage area on the routing surface.
-        // ---------------------------------------------------------------------
-        lsdtt::lsdtt_flowgraph_options flow_options;
-        flow_options.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
-        flow_options.boundary_conditions = sf.at("boundary_conditions");
-        flow_options.n_threads = ii.at("n_threads");
-        const lsdtt::lsdtt_flowgraph_cpu graph(dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), flow_options);
-        const lsdtt::lsdtt_raster_cpu slope(graph.dinf_slopes());
-        const lsdtt::lsdtt_raster_cpu area(graph.accumulate_raster());
-
-        // ---------------------------------------------------------------------
-        // Step 3: regions.
+        // Step 2: regions.
         // ---------------------------------------------------------------------
         std::vector<std::int32_t> region;
         if (!region_fname.empty())
@@ -567,8 +661,18 @@ int main(int argc, char* argv[])
         }
 
         // ---------------------------------------------------------------------
-        // Step 4: SINMAP.
+        // Step 3: SINMAP (D-infinity slope and area on the routing surface).
         // ---------------------------------------------------------------------
+        if (run_sinmap)
+        {
+        lsdtt::lsdtt_flowgraph_options flow_options;
+        flow_options.method = lsdtt::lsdtt_flowgraph_method::d_infinity;
+        flow_options.boundary_conditions = sf.at("boundary_conditions");
+        flow_options.n_threads = ii.at("n_threads");
+        const lsdtt::lsdtt_flowgraph_cpu graph(dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), flow_options);
+        const lsdtt::lsdtt_raster_cpu slope(graph.dinf_slopes());
+        const lsdtt::lsdtt_raster_cpu area(graph.accumulate_raster());
+
         std::vector<std::uint8_t> exclude;
         if (bf.at("exclude_edge_contaminated_cells"))
         {
@@ -601,7 +705,7 @@ int main(int argc, char* argv[])
         }
 
         // ---------------------------------------------------------------------
-        // Step 5: tables.
+        // Step 3b: SINMAP tables.
         // ---------------------------------------------------------------------
         if (bf.at("write_sinmap_class_area_table"))
         {
@@ -639,6 +743,40 @@ int main(int argc, char* argv[])
                             << number_string(pt.specific_catchment_area_metres) << '\n';
             }
             std::cout << "  wrote " << path << "\n";
+        }
+        }   // run_sinmap
+
+        // ---------------------------------------------------------------------
+        // Step 4: planar rupture surfaces (D8 on the routing surface).
+        // ---------------------------------------------------------------------
+        if (run_rupture)
+        {
+            lsdtt::lsdtt_flowinfo_options d8o;
+            d8o.boundary_conditions = sf.at("boundary_conditions");
+            d8o.n_threads = ii.at("n_threads");
+            const std::unique_ptr<lsdtt::lsdtt_flow_base> d8 =
+                lsdtt::make_flow_base(dem.get_data_array(), dem.get_mask_array(), dem.get_meta(), d8o);
+            const lsdtt::lsdtt_raster_result npix = d8->get_n_contributing_pixels_raster();
+            const double threshold = static_cast<double>(ii.at("threshold_contributing_pixels"));
+            std::vector<std::uint8_t> channel(npix.data.size(), 0);
+            for (std::size_t i = 0; i < channel.size(); ++i)
+                channel[i] = (npix.mask[i] && static_cast<double>(npix.data[i]) >= threshold) ? 1 : 0;
+            const lsdtt::rupture_rasters rup = lsdtt::compute_rupture_planes(
+                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"));
+            std::cout << "Rupture planes: " << rup.n_sources << " hillslope cells with a daylight point, "
+                      << rup.n_unstable << " unstable (F <= 1); " << rup.n_channel << " channel cells\n";
+            lsdtt::lsdtt_run_record::add_provenance("rupture_sources", std::to_string(rup.n_sources));
+            lsdtt::lsdtt_run_record::add_provenance("rupture_unstable_cells", std::to_string(rup.n_unstable));
+            lsdtt::lsdtt_run_record::add_provenance("rupture_channel_cells", std::to_string(rup.n_channel));
+            if (bf.at("write_rupture_rasters"))
+            {
+                write_raster(rup.safety_factor, base + "_rupture_safety_factor.tif");
+                write_raster(rup.depth, base + "_rupture_depth.tif");
+                write_raster(rup.unstable, base + "_rupture_unstable.tif");
+                write_raster(rup.length, base + "_rupture_length.tif");
+                write_raster(rup.rupture_slope, base + "_rupture_slope.tif");
+                write_raster(rup.topographic_slope, base + "_rupture_topographic_slope.tif");
+            }
         }
 
         parser.print_parameters();

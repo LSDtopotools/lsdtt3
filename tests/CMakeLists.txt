@@ -2861,6 +2861,14 @@ add_lsdtt_cli_smoke_test(
     --expect ss_sinmap_class_areas.csv
     --expect ss_sinmap_slope_area_curves.csv
     --expect-absent ss_edge_contaminated.tif
+    --expect ss_rupture_safety_factor.tif
+    --expect ss_rupture_depth.tif
+    --expect ss_rupture_unstable.tif
+    --expect ss_rupture_length.tif
+    --expect ss_rupture_slope.tif
+    --expect ss_rupture_topographic_slope.tif
+    --expect-raster-values ss_rupture_unstable.tif:0,1
+    --stdout-contains "Rupture planes: "
     --stdout-contains "Conditioned pixels: 1646 filled, 2492 carved"
     # All six classes occur on this DEM with SINMAP's default bounds (measured
     # 2026-11-21: 56.6 % stable ... 0.17 % defended).
@@ -2885,9 +2893,24 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "ssr_sinmap_class_areas.csv:\n7,"
     --expect-file-not-contains "ssr_sinmap_class_areas.csv:\n0,"
     --expect-file-contains "ssr_sinmap_slope_area_curves.csv:\n7,fs_max_1.0,"
+    --expect ssr_rupture_depth.tif
 )
 lsdtt_set_tests_properties(smoke_slope_stability_regions PROPERTIES
     FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_rupture_only
+    lsdtt-slope-stability
+    slope_stability_rupture_only.param.in
+    ssp_rupture_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssp_rupture_safety_factor.tif
+    --expect-absent ssp_sinmap_stability_index.tif
+    --expect-absent ssp_sinmap_class_areas.csv
+    --stdout-contains "Rupture planes: "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
 
 add_lsdtt_cli_smoke_test(
     smoke_slope_stability_edge_exclusion
@@ -2908,7 +2931,9 @@ foreach(_ss_case_message
         "region_bad_column|unknown column 'sinmap_cohesion_min'"
         "region_missing_id|region ids with no parameter row: 7"
         "region_without_table|must be given together"
-        "region_not_integer|region ids must be integers")
+        "region_not_integer|region ids must be integers"
+        "rupture_bad_cohesion|rupture: cohesion must be finite and >= 0"
+        "rupture_bad_threshold|threshold_contributing_pixels must be at least 1")
     string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
     list(GET _ss_pair 0 _ss_case)
     list(GET _ss_pair 1 _ss_message)
@@ -6413,6 +6438,16 @@ add_executable(lsdtt-test-slope-stability-sinmap cpp/test_slope_stability_sinmap
 target_link_libraries(lsdtt-test-slope-stability-sinmap PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_sinmap COMMAND lsdtt-test-slope-stability-sinmap)
 lsdtt_set_tests_properties(unit_slope_stability_sinmap PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability, Phase 2: planar rupture surfaces after scaLr
+# (src/cpu/lsdtt_slope_stability_rupture_cpu): the stable optimal-depth form
+# against Brent and a dense search; planar and parabolic hillslopes against
+# their equations; channel stops, geometry checks, regions, threads.
+add_executable(lsdtt-test-slope-stability-rupture cpp/test_slope_stability_rupture.cpp)
+target_link_libraries(lsdtt-test-slope-stability-rupture PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_rupture COMMAND lsdtt-test-slope-stability-rupture)
+lsdtt_set_tests_properties(unit_slope_stability_rupture PROPERTIES
     LABELS "slope_stability")
 
 add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)

@@ -1,9 +1,10 @@
 # lsdtt-slope-stability
 
 !!! warning "Experimental"
-    This CLI is under development. Its first component, the SINMAP stability
-    index, is tested against analytic solutions; the user guide will follow once
-    the remaining components are built and measured.
+    This CLI is under development. Its first two components, a SINMAP-style
+    stability index and planar rupture surfaces after scaLr, are tested against
+    analytic solutions; the user guide will follow once the remaining components
+    are built and measured.
 
 ## Intent
 
@@ -16,6 +17,16 @@ Goodwin & Prasad 2005), which itself built on SHALSTAB (Montgomery & Dietrich
 which cohesion, the friction coefficient and the ratio of transmissivity to
 recharge are uncertain between bounds. Like SINMAP it applies to shallow
 translational failure, not to deep-seated slides.
+
+It also computes **planar rupture surfaces** after scaLr (Steer, Pelascini &
+Longuevergne 2026). For each hillslope cell R, every cell D on its D8 path
+down to the channel is a candidate point where the rupture surface reaches the
+ground (the daylight point). A plane from depth h below R to D gives an
+infinite-slope factor of safety at R. The depth minimising it has a closed form,
+and the D with the lowest factor of safety is kept. The result is a potential
+rupture depth and factor of safety for every hillslope cell. As in scaLr, these
+rasters describe potential failure statistically; they do not map individual
+landslides.
 
 ## How this differs from SINMAP
 
@@ -44,6 +55,24 @@ replica:
 8. **No interactive calibration** and, for now, no landslide-inventory
    statistics. The slope - specific catchment area boundaries are written as a
    table for plotting.
+
+## Notes on the rupture planes
+
+- The optimal depth is computed from a rearranged form of the scaLr paper's
+  root (its eq. 6) that has no singular denominator. The paper notes that at
+  very high cohesion the other root (its eq. 5) is the positive one. That root
+  is indeed positive there, but it always lies deeper than the daylight point,
+  so eq. 6 gives the optimal depth in every case. As printed, both roots divide
+  by zero when c Δz = μ ρ g Δx²; the form used here does not.
+- With zero cohesion the optimal depth is 0 and the factor of safety is
+  μ Δx / Δz, the cohesionless infinite slope along the chord.
+- Elevation differences come from the input DEM, after interior nodata is
+  handled; paths follow the carved-then-filled routing surface. A candidate
+  daylight point higher than its source cell is skipped.
+- Channel cells are those with at least `threshold_contributing_pixels`
+  contributing pixels. The walk stops before the first channel cell, and
+  channel cells are not sources.
+- There is no pore pressure yet: the material is dry.
 
 ## Relation to the topographic wetness index
 
@@ -79,6 +108,9 @@ this CLI uses the D-infinity facet slope on the carved-then-filled surface.
    stability index and class, and the saturation.
 5. Write the area in each stability class, and the class boundaries of SINMAP's
    slope - specific catchment area plot.
+6. Build a D8 flow graph on the routing surface. Mark channel cells with
+   `threshold_contributing_pixels`, and find each hillslope cell's optimal
+   planar rupture surface.
 
 ## Usage
 
@@ -100,6 +132,11 @@ lsdtt-slope-stability -h
 | `<write_fname>_specific_catchment_area.tif`, `_dinf_slope.tif` | a (m) and slope (m/m) |
 | `<write_fname>_sinmap_class_areas.csv` | area by stability class and region |
 | `<write_fname>_sinmap_slope_area_curves.csv` | class boundaries for the slope - specific catchment area plot |
+| `<write_fname>_rupture_safety_factor.tif` | factor of safety of the optimal planar rupture surface |
+| `<write_fname>_rupture_depth.tif` | its depth below the cell (m) |
+| `<write_fname>_rupture_unstable.tif` | 1 where the factor of safety is at most 1, else 0 |
+| `<write_fname>_rupture_length.tif` | horizontal distance to the daylight point (m) |
+| `<write_fname>_rupture_slope.tif`, `_rupture_topographic_slope.tif` | gradient of the rupture plane and of the line from the cell to the daylight point (m/m) |
 
 Flat cells are class 1 (unconditionally stable) and nodata in the stability
 index and factor-of-safety rasters.
@@ -184,5 +221,21 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_sinmap_rasters` | `bool` | `true` | `switch` | `run_sinmap` | Write the SINMAP rasters. | &lt;write_fname&gt;_sinmap_stability_index.tif, _sinmap_stability_class.tif (1 stable, 2 moderately stable, 3 quasi-stable, 4 lower threshold, 5 upper threshold, 6 defended), _sinmap_probability_stable.tif, _sinmap_fs_min.tif, _sinmap_fs_max.tif, _sinmap_saturation.tif (3 always saturated, 2 saturated for part of the T/R range, else the wettest possible wetness in [0, 1)), _specific_catchment_area.tif (a, m) and _dinf_slope.tif (m/m). Flat cells are class 1 and nodata in the stability index and FS rasters. |
 | `write_sinmap_class_area_table` | `bool` | `true` | `switch` | `run_sinmap` | Write the area in each stability class (by region). | &lt;write_fname&gt;_sinmap_class_areas.csv: region_id (0 without a region raster), stability_class, n_cells, area_m2, fraction_of_region. |
 | `write_sinmap_slope_area_curves_table` | `bool` | `true` | `switch` | `run_sinmap` | Write the class boundaries of SINMAP's slope - specific catchment area plot. | &lt;write_fname&gt;_sinmap_slope_area_curves.csv: region_id, curve, slope (m/m), specific_catchment_area_m. Curves: always_saturated_above, never_saturated_below, fs_min_1.5, fs_min_1.0, fs_max_1.0 (manual Fig. 4, Appendix 1). Slope runs to the steepest cell, a from one cell size to the largest a. For plotting with the cell cloud. |
+
+### Rupture planes
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_rupture_planes` | `bool` | `true` | `switch` | - | Compute planar rupture surfaces after scaLr (Steer et al. 2026). | For each hillslope cell R, every cell D down its D8 path (stopping before the first channel cell) is a candidate daylight point; a plane from depth h below R to D gives an infinite-slope safety factor at R, minimised in closed form over h, and the D with the lowest factor is kept. Outputs the potential rupture depth and its safety factor per cell. Elevation differences come from the input DEM (after interior nodata handling); paths follow the routing surface. Dry: no pore pressure yet. |
+| `rupture_cohesion_pa` | `float` | `1000` | `param` | `run_rupture_planes` | Cohesion c of the slope material (Pa). | scaLr's reference value is 1 kPa, deliberately low as an apparent strength during a triggering event (Steer et al. 2026, section 3). Rupture depth rises with cohesion. |
+| `rupture_friction_coefficient` | `float` | `0.7002075` | `param` | `run_rupture_planes` | Friction coefficient mu = tan(phi) of the slope material (dimensionless). | 0.700 = tan 35 degrees, scaLr's reference value. |
+| `rupture_density_kg_m3` | `float` | `2600` | `param` | `run_rupture_planes` | Bulk density rho of the slope material (kg/m3). | As in scaLr. Gravity is 9.81 m/s2. |
+| `write_rupture_rasters` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the rupture-plane rasters. | &lt;write_fname&gt;_rupture_safety_factor.tif (F at the daylight point), _rupture_depth.tif (optimal depth h, m), _rupture_unstable.tif (1 where F &lt;= 1), _rupture_length.tif (horizontal distance R to D, m), _rupture_slope.tif ((dz - h)/dx) and _rupture_topographic_slope.tif (dz/dx). Channel cells and cells with no admissible D are nodata. |
+
+### Channel network
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
 
 <!-- END GENERATED CLI PARAMETERS -->
