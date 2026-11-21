@@ -132,12 +132,12 @@ long-standing core modules in detail; the rest are summarised in the table.
 |---|---|
 | `lsdtt_array2d` | Lightweight 2D array over a contiguous `std::vector` |
 | `lsdtt_binary_array2d_tracing` | Boundary tracing on binary images (Gonzalez, Woods & Eddins pp. 557–560); returns row/col in the input array's coordinate system |
-| `lsdtt_distributions` | Parametric distribution fitting for valid flat numeric samples |
+| `lsdtt_distributions` | Parametric distribution fitting for valid flat numeric samples; closed-form CDFs of sums and products of independent uniforms (`cdf_sum_of_uniforms`, `cdf_product_of_uniforms`, `integrated_cdf_product_of_uniforms`, `cdf_sum_with_product_of_uniforms`); equal-density sampling of a uniform or truncated-normal parameter with trapezoid weights (`equal_density_samples`) |
 | `lsdtt_histogram` | Histogram, PDF/CDF and binning utilities |
 | `lsdtt_image_filters` | Generic 2-D image-filter primitives on flat row-major arrays |
 | `lsdtt_linear_algebra` | Lightweight linear algebra utilities |
 | `lsdtt_natural_breaks` | Jenks natural-breaks classification (`lsdtt_jenks_options`) |
-| `lsdtt_numeric_utils` | Numeric helpers, including inclusive `start, start + step, …` ranges |
+| `lsdtt_numeric_utils` | Numeric helpers, including inclusive `start, start + step, …` ranges and a bounded 1-D minimiser (`minimise_brent_bounded`, Brent 1973; local minimum, NaN treated as +inf) |
 | `lsdtt_polygon_geometry` | Header-only planar polygon geometry |
 | `lsdtt_random` | Fully specified random numbers (splitmix64) |
 | `lsdtt_raster_geometry` | Header-only raster geometry from metadata alone |
