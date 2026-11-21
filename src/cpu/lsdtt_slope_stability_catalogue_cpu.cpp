@@ -29,7 +29,7 @@ struct accumulator
     std::int64_t n = 0;
     double sum_h = 0.0, max_h = 0.0, sum_f = 0.0;
     double resist = 0.0, drive = 0.0;
-    double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_yy = 0.0, sum_xy = 0.0;   // in cells
+    cell_shape_moments moments;
     std::int64_t boundary_edges = 0;
 };
 
@@ -43,23 +43,35 @@ void finish(landslide_record& rec, const accumulator& a, const lsdtt_raster_meta
     rec.volume_m3 = rec.area_m2 * rec.mean_depth_m;
     rec.mean_safety_factor = a.sum_f / static_cast<double>(a.n);
     rec.landslide_safety_factor = (a.drive > 0.0) ? a.resist / a.drive : std::numeric_limits<double>::infinity();
+    const cell_shape sh = shape_from_moments(a.moments, meta);
+    rec.centroid_x = sh.centroid_x;
+    rec.centroid_y = sh.centroid_y;
+    rec.length_m = sh.length_m;
+    rec.width_m = sh.width_m;
+    rec.length_to_width = sh.length_to_width;
+    rec.perimeter_m = static_cast<double>(a.boundary_edges) * b;
+}
 
+} // namespace
+
+cell_shape shape_from_moments(const cell_shape_moments& a, const lsdtt_raster_meta& meta)
+{
+    cell_shape out;
+    const double b = meta.cell_size;
     const double n = static_cast<double>(a.n);
     const double mc = a.sum_x / n, mr = a.sum_y / n;               // column, row
-    rec.centroid_x = meta.x_min + (mc + 0.5) * b;
-    rec.centroid_y = meta.y_min + (static_cast<double>(meta.n_rows) - mr - 0.5) * b;
+    out.centroid_x = meta.x_min + (mc + 0.5) * b;
+    out.centroid_y = meta.y_min + (static_cast<double>(meta.n_rows) - mr - 0.5) * b;
     // Second central moments in cells, plus 1/12 for the cell's own extent.
     const double uxx = a.sum_xx / n - mc * mc + 1.0 / 12.0;
     const double uyy = a.sum_yy / n - mr * mr + 1.0 / 12.0;
     const double uxy = a.sum_xy / n - mc * mr;
     const double common = std::sqrt((uxx - uyy) * (uxx - uyy) + 4.0 * uxy * uxy);
-    rec.length_m = 2.0 * std::sqrt(2.0) * std::sqrt(std::max(0.0, uxx + uyy + common)) * b;
-    rec.width_m  = 2.0 * std::sqrt(2.0) * std::sqrt(std::max(0.0, uxx + uyy - common)) * b;
-    rec.length_to_width = (rec.width_m > 0.0) ? rec.length_m / rec.width_m : std::numeric_limits<double>::infinity();
-    rec.perimeter_m = static_cast<double>(a.boundary_edges) * b;
+    out.length_m = 2.0 * std::sqrt(2.0) * std::sqrt(std::max(0.0, uxx + uyy + common)) * b;
+    out.width_m  = 2.0 * std::sqrt(2.0) * std::sqrt(std::max(0.0, uxx + uyy - common)) * b;
+    out.length_to_width = (out.width_m > 0.0) ? out.length_m / out.width_m : std::numeric_limits<double>::infinity();
+    return out;
 }
-
-} // namespace
 
 landslide_catalogues build_landslide_catalogues(
     const rupture_rasters& rupture,
@@ -174,10 +186,7 @@ landslide_catalogues build_landslide_catalogues(
             a.sum_f += F[i];
             a.resist += resist;
             a.drive += drive;
-            a.sum_x += c; a.sum_y += r;
-            a.sum_xx += static_cast<double>(c) * c;
-            a.sum_yy += static_cast<double>(r) * r;
-            a.sum_xy += static_cast<double>(c) * r;
+            a.moments.add(r, c);
             const int d4r[4] = {-1, 1, 0, 0}, d4c[4] = {0, 0, -1, 1};
             for (int k = 0; k < 4; ++k)
             {

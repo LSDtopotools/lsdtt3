@@ -462,6 +462,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_slope_stability_sinmap_cpu.cpp
     src/cpu/lsdtt_slope_stability_rupture_cpu.cpp
     src/cpu/lsdtt_slope_stability_catalogue_cpu.cpp
+    src/cpu/lsdtt_slope_stability_slip_surface_cpu.cpp
     src/cpu/lsdtt_groundwater_dupuit_cpu.cpp
     src/cpu/lsdtt_channel_point_attributes_cpu.cpp
     src/cpu/lsdtt_sea_mask_cpu.cpp

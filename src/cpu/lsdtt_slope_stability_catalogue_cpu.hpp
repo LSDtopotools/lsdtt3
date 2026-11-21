@@ -101,6 +101,34 @@ struct landslide_catalogues
     std::int64_t n_landslide_cells = 0;
 };
 
+// Planform shape of a set of cells from their first and second moments: the
+// centroid (map coordinates) and the axes of the ellipse with the same second
+// moments, including each cell's own b^2 / 12 (MATLAB regionprops
+// MajorAxisLength / MinorAxisLength). Shared by the landslide and slip-body
+// catalogues.
+struct cell_shape_moments
+{
+    std::int64_t n = 0;
+    double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_yy = 0.0, sum_xy = 0.0;   // in cells
+    void add(int row, int col)
+    {
+        ++n;
+        sum_x += col; sum_y += row;
+        sum_xx += static_cast<double>(col) * col;
+        sum_yy += static_cast<double>(row) * row;
+        sum_xy += static_cast<double>(col) * row;
+    }
+};
+
+struct cell_shape
+{
+    double centroid_x = 0.0, centroid_y = 0.0;
+    double length_m = 0.0, width_m = 0.0, length_to_width = 0.0;
+};
+
+// n must be > 0.
+[[nodiscard]] cell_shape shape_from_moments(const cell_shape_moments& m, const lsdtt_raster_meta& meta);
+
 // rupture:  the result of compute_rupture_planes on this grid
 // region / by_region: as given to compute_rupture_planes (for F_L)
 // min_daylight_neighbours: the 1-D rule (step 3); 2 is the MATLAB's iopt = 2,

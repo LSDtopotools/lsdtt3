@@ -1,0 +1,7 @@
+# Failure: no slices per cell.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssb
+slip_surface_family: circular
+slip_surface_slices_per_cell: 0

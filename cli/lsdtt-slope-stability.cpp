@@ -18,9 +18,13 @@
 //      2005), itself built on SHALSTAB (Montgomery & Dietrich 1994);
 //      src/cpu/lsdtt_slope_stability_sinmap_cpu lists where it diverges;
 //   B. planar rupture surfaces after scaLr (Steer et al. 2026),
-//      src/cpu/lsdtt_slope_stability_rupture_cpu.
-// Later phases add landslide catalogues, curved and 3-D failure surfaces, and
-// a Dupuit-Boussinesq water table.
+//      src/cpu/lsdtt_slope_stability_rupture_cpu, with landslide catalogues
+//      (lsdtt_slope_stability_catalogue_cpu) and a probability of failure;
+//   C. slip surfaces integrated by the method of slices (scaLr's plane and
+//      circular arcs), src/cpu/lsdtt_slope_stability_slip_surface_cpu;
+//   pore pressure from a Dupuit-Boussinesq water table
+//      (src/cpu/lsdtt_groundwater_dupuit_cpu).
+// Not yet: 3-D (column) surfaces.
 //
 // Workflow:
 //   1. Read the DEM; interior nodata; carve (least-cost breach, default) then
@@ -68,6 +72,7 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_sinmap_cpu.hpp"
 
@@ -596,6 +601,79 @@ int main(int argc, char* argv[])
         "about 1/(n - 1) (the trapezoid rule on a step); 1 uses the median only.",
         "Rupture uncertainty", "param", "parameter_uncertainty"};
 
+    // --- Slip surfaces (method of slices; deep-seated) ---------------------------
+    string_default_map["slip_surface_family"] = "none";
+    help_map["slip_surface_family"] = {"string", "none",
+        "Slip surfaces integrated over the sliding body by the method of slices.",
+        "none: off. plane_integrated: scaLr's plane, but with the forces summed over "
+        "the whole body from the crown R to the toe D (isolates the effect of "
+        "integration). circular: circular arcs from depth h below R to D, with a "
+        "sagitta s (s = 0 is the plane), for rotational deep-seated slides. The "
+        "section is R's D8 path, unrolled along the flow distance. A surface above "
+        "the ground anywhere is rejected. Needs run_rupture_planes (the seeds and "
+        "screen). 2-D: no side resistance, so for slides of low length-to-width "
+        "ratio the 3-D factor of safety is typically higher.",
+        "Slip surfaces", "param", "run_rupture_planes"};
+    string_default_map["slip_surface_method"] = "auto";
+    help_map["slip_surface_method"] = {"string", "auto",
+        "Limit-equilibrium method for the slip surfaces.",
+        "ordinary (Fellenius): F = sum[c l + mu (W cos a - u l)] / sum W sin a. "
+        "bishop (simplified): F = sum[(c b + mu (W - u b)) / m_a] / sum W sin a, "
+        "m_a = cos a + mu sin a / F, iterated; surfaces with m_a < 0.2 are rejected. "
+        "auto: ordinary for plane_integrated, bishop for circular.",
+        "Slip surfaces", "param", "slip_surface_family"};
+    string_default_map["slip_surface_search"] = "seeded";
+    help_map["slip_surface_search"] = {"string", "seeded",
+        "Which toes are searched.",
+        "seeded (fast): the toe is the rupture plane's daylight point D* "
+        "(plus or minus slip_surface_toe_window_pixels along the path). full: every "
+        "toe down the path (up to slip_surface_max_length_metres); never above the "
+        "seeded factor of safety, at roughly path-length times the cost.",
+        "Slip surfaces", "param", "slip_surface_family"};
+    float_default_map["slip_surface_screen_safety_factor"] = 1.5f;
+    help_map["slip_surface_screen_safety_factor"] = {"float", "1.5",
+        "Only crowns whose rupture-plane factor of safety is at most this are evaluated.",
+        "Others are written as not evaluated (_slip_evaluated.tif = 0, nodata factor "
+        "of safety), not as stable. Set it very large to evaluate every crown.",
+        "Slip surfaces", "param", "slip_surface_family"};
+    int_default_map["slip_surface_toe_window_pixels"] = 0;
+    help_map["slip_surface_toe_window_pixels"] = {"int", "0",
+        "Seeded search: toe candidates either side of D* along the path.", "",
+        "Slip surfaces", "param", "slip_surface_search=seeded"};
+    float_default_map["slip_surface_max_length_metres"] = 0.0f;
+    help_map["slip_surface_max_length_metres"] = {"float", "0",
+        "Full search: the longest flow distance from crown to toe (m); 0 = no cap.", "",
+        "Slip surfaces", "param", "slip_surface_search=full"};
+    int_default_map["slip_surface_slices_per_cell"] = 4;
+    help_map["slip_surface_slices_per_cell"] = {"int", "4",
+        "Slices per path segment between cell centres.",
+        "The sums converge to the arc integrals at second order in the slice width.",
+        "Slip surfaces", "param", "slip_surface_family"};
+    int_default_map["slip_surface_search_points"] = 12;
+    help_map["slip_surface_search_points"] = {"int", "12",
+        "Grid points per shape parameter (h, and s / chord for circles) before Brent refinement.", "",
+        "Slip surfaces", "param", "slip_surface_family"};
+    bool_default_map["write_slip_surface_rasters"] = true;
+    help_map["write_slip_surface_rasters"] = {"bool", "true",
+        "Write the slip-surface rasters.",
+        "<write_fname>_slip_safety_factor.tif, _slip_crown_depth.tif (h, m), "
+        "_slip_max_depth.tif (deepest body thickness at a cell centre, m), "
+        "_slip_sagitta.tif (circular, m), _slip_length.tif (flow distance to the "
+        "toe, m), _slip_sinuosity.tif (flow over straight distance), "
+        "_slip_unstable.tif, _slip_evaluated.tif (1 evaluated, 0 screened out) and "
+        "_slip_body_depth.tif (the deepest unstable body over each cell, m).",
+        "Slip surfaces", "switch", "slip_surface_family"};
+    bool_default_map["write_slip_body_catalogue"] = true;
+    help_map["write_slip_body_catalogue"] = {"bool", "true",
+        "Write the catalogues of unstable slip bodies as CSV.",
+        "<write_fname>_slip_body_catalogue.csv: unstable crowns sharing a toe; the "
+        "footprint is the union of their bodies, the depth at a cell the deepest of "
+        "them, volume = sum(depth) x cell area (groups can overlap). "
+        "_slip_body_catalogue_amalgamated.csv: 8-connected components of the body "
+        "depth raster, which do not overlap. Statistics of potential landslides, not "
+        "maps of individual ones.",
+        "Slip surfaces", "switch", "slip_surface_family"};
+
     // --- Landslide catalogues -----------------------------------------------------
     int_default_map["rupture_min_daylight_neighbours"] = 2;
     help_map["rupture_min_daylight_neighbours"] = {"int", "2",
@@ -790,10 +868,40 @@ int main(int argc, char* argv[])
             throw std::runtime_error("rupture_friction_coefficient_distribution must be uniform or normal");
         if (use_uncertainty && ii.at("uncertainty_samples_per_parameter") < 1)
             throw std::runtime_error("uncertainty_samples_per_parameter must be at least 1");
+        const std::string slip_family_name = sf.at("slip_surface_family");
+        const bool run_slip = slip_family_name != "none";
+        lsdtt::slip_surface_options slip_options;
+        if (slip_family_name == "plane_integrated") slip_options.family = lsdtt::slip_surface_family::plane_integrated;
+        else if (slip_family_name == "circular") slip_options.family = lsdtt::slip_surface_family::circular;
+        else if (run_slip) throw std::runtime_error("slip_surface_family must be none, plane_integrated or circular");
+        {
+            const std::string m = sf.at("slip_surface_method");
+            if (m == "ordinary") slip_options.evaluation.method = lsdtt::limit_equilibrium_method::ordinary;
+            else if (m == "bishop") slip_options.evaluation.method = lsdtt::limit_equilibrium_method::bishop;
+            else if (m == "auto")
+                slip_options.evaluation.method = (slip_options.family == lsdtt::slip_surface_family::circular)
+                    ? lsdtt::limit_equilibrium_method::bishop : lsdtt::limit_equilibrium_method::ordinary;
+            else throw std::runtime_error("slip_surface_method must be auto, ordinary or bishop");
+            const std::string srch = sf.at("slip_surface_search");
+            if (srch != "seeded" && srch != "full") throw std::runtime_error("slip_surface_search must be seeded or full");
+            slip_options.full_search = srch == "full";
+        }
+        slip_options.screen_safety_factor = ff.at("slip_surface_screen_safety_factor");
+        slip_options.toe_window = ii.at("slip_surface_toe_window_pixels");
+        slip_options.max_length_metres = ff.at("slip_surface_max_length_metres");
+        slip_options.evaluation.slices_per_cell = ii.at("slip_surface_slices_per_cell");
+        slip_options.search_points = ii.at("slip_surface_search_points");
+        if (run_slip)
+        {
+            try { lsdtt::validate_slip_surface_options(slip_options); }
+            catch (const std::exception& e) { throw std::runtime_error(e.what()); }
+        }
         rupture_uncertainty_spec uncertainty;
         for (const char* k : k_rupture_uncertainty_keys) *field_of(uncertainty, k) = ff.at(k);
         const bool run_sinmap = bf.at("run_sinmap");
         const bool run_rupture = bf.at("run_rupture_planes");
+        if (run_slip && !run_rupture)
+            throw std::runtime_error("slip_surface_family needs run_rupture_planes (its seeds and screen)");
         if (run_rupture && ii.at("threshold_contributing_pixels") < 1)
             throw std::runtime_error("threshold_contributing_pixels must be at least 1");
         if (ii.at("rupture_min_daylight_neighbours") < 0 || ii.at("rupture_min_daylight_neighbours") > 8)
@@ -1252,6 +1360,92 @@ int main(int argc, char* argv[])
                 write_raster(pf.failure_probability, base + "_rupture_failure_probability.tif");
                 write_raster(pf.mean_safety_factor, base + "_rupture_safety_factor_mean.tif");
                 write_raster(pf.sd_safety_factor, base + "_rupture_safety_factor_sd.tif");
+            }
+
+            if (run_slip)
+            {
+                const lsdtt::slip_surface_rasters slip = lsdtt::compute_slip_surfaces(
+                    *d8, input_dem, channel, region, rupture_by_region, rup, slip_options, ii.at("n_threads"),
+                    water_table_depth);
+                std::cout << "Slip surfaces (" << slip_family_name << ", "
+                          << (slip_options.evaluation.method == lsdtt::limit_equilibrium_method::bishop ? "bishop" : "ordinary")
+                          << ", " << (slip_options.full_search ? "full" : "seeded") << " search): " << slip.n_evaluated
+                          << " crowns evaluated, " << slip.n_screened << " screened out (rupture F above "
+                          << number_string(slip_options.screen_safety_factor) << "), " << slip.n_inadmissible
+                          << " with no admissible surface, " << slip.n_unstable << " unstable\n";
+                lsdtt::lsdtt_run_record::add_provenance("slip_crowns_evaluated", std::to_string(slip.n_evaluated));
+                lsdtt::lsdtt_run_record::add_provenance("slip_crowns_screened", std::to_string(slip.n_screened));
+                lsdtt::lsdtt_run_record::add_provenance("slip_crowns_inadmissible", std::to_string(slip.n_inadmissible));
+                lsdtt::lsdtt_run_record::add_provenance("slip_crowns_unstable", std::to_string(slip.n_unstable));
+                if (bf.at("write_slip_surface_rasters"))
+                {
+                    write_raster(slip.safety_factor, base + "_slip_safety_factor.tif");
+                    write_raster(slip.crown_depth, base + "_slip_crown_depth.tif");
+                    write_raster(slip.max_depth, base + "_slip_max_depth.tif");
+                    if (slip_options.family == lsdtt::slip_surface_family::circular)
+                        write_raster(slip.sagitta, base + "_slip_sagitta.tif");
+                    write_raster(slip.length, base + "_slip_length.tif");
+                    write_raster(slip.sinuosity, base + "_slip_sinuosity.tif");
+                    write_raster(slip.unstable, base + "_slip_unstable.tif");
+                    write_raster(slip.evaluated, base + "_slip_evaluated.tif");
+                    write_raster(slip.body_depth, base + "_slip_body_depth.tif");
+                }
+                if (use_uncertainty)
+                {
+                    const lsdtt::rupture_probability_rasters spf = lsdtt::compute_slip_failure_probability(
+                        slip, *d8, input_dem, channel, region, samples_by_region, slip_options.evaluation,
+                        ii.at("n_threads"), water_table_depth);
+                    std::cout << "Slip-surface probability of failure (on each crown's critical surface found with "
+                                 "the central values; a lower bound): " << spf.n_possible_failure << " crowns with Pf > 0, "
+                              << spf.n_certain_failure << " with Pf = 1\n";
+                    lsdtt::lsdtt_run_record::add_provenance("slip_crowns_pf_positive", std::to_string(spf.n_possible_failure));
+                    write_raster(spf.failure_probability, base + "_slip_failure_probability.tif");
+                    write_raster(spf.mean_safety_factor, base + "_slip_safety_factor_mean.tif");
+                    write_raster(spf.sd_safety_factor, base + "_slip_safety_factor_sd.tif");
+                }
+                if (bf.at("write_slip_body_catalogue") || bf.at("write_landslide_label_rasters"))
+                {
+                    const lsdtt::slip_body_catalogues scat = lsdtt::build_slip_body_catalogues(slip, dem.get_meta());
+                    std::cout << "Slip-body catalogues: " << scat.by_toe.size() << " by toe, " << scat.amalgamated.size()
+                              << " amalgamated\n";
+                    lsdtt::lsdtt_run_record::add_provenance("slip_bodies_by_toe", std::to_string(scat.by_toe.size()));
+                    lsdtt::lsdtt_run_record::add_provenance("slip_bodies_amalgamated", std::to_string(scat.amalgamated.size()));
+                    if (bf.at("write_landslide_label_rasters"))
+                    {
+                        const float ndv = static_cast<float>(dem.get_meta().no_data_value);
+                        std::vector<float> v(scat.label_amalgamated.size(), ndv);
+                        std::vector<std::uint8_t> mk(scat.label_amalgamated.size(), 0);
+                        for (std::size_t q = 0; q < v.size(); ++q)
+                            if (scat.label_amalgamated[q] > 0) { v[q] = static_cast<float>(scat.label_amalgamated[q]); mk[q] = 1; }
+                        write_raster(lsdtt::lsdtt_raster_cpu(std::move(v), std::move(mk), dem.get_meta()),
+                                     base + "_slip_body_label_amalgamated.tif");
+                    }
+                    if (bf.at("write_slip_body_catalogue"))
+                    {
+                        auto write_slip = [&](const std::vector<lsdtt::slip_body_record>& rows, const std::string& path, bool by_toe) {
+                            std::ofstream out(path);
+                            if (!out) throw std::runtime_error("Cannot write " + path);
+                            out << "body_id," << (by_toe ? "toe_x,toe_y," : "n_toes,")
+                                << "n_crowns,n_cells,area_m2,mean_depth_m,max_depth_m,volume_m3,min_safety_factor,"
+                                   "mean_safety_factor,centroid_x,centroid_y,length_m,width_m,length_to_width\n";
+                            for (const auto& r : rows)
+                            {
+                                out << r.id << ',';
+                                if (by_toe) out << number_string(r.toe_x) << ',' << number_string(r.toe_y) << ',';
+                                else out << r.n_toes << ',';
+                                out << r.n_crowns << ',' << r.n_cells << ',' << number_string(r.area_m2) << ','
+                                    << number_string(r.mean_depth_m) << ',' << number_string(r.max_depth_m) << ','
+                                    << number_string(r.volume_m3) << ',' << number_string(r.min_safety_factor) << ','
+                                    << number_string(r.mean_safety_factor) << ',' << number_string(r.centroid_x) << ','
+                                    << number_string(r.centroid_y) << ',' << number_string(r.length_m) << ','
+                                    << number_string(r.width_m) << ',' << number_string(r.length_to_width) << '\n';
+                            }
+                            std::cout << "  wrote " << path << "\n";
+                        };
+                        write_slip(scat.by_toe, base + "_slip_body_catalogue.csv", true);
+                        write_slip(scat.amalgamated, base + "_slip_body_catalogue_amalgamated.csv", false);
+                    }
+                }
             }
 
             const bool want_catalogue = bf.at("write_landslide_catalogue");

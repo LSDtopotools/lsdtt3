@@ -2955,6 +2955,42 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_stability_uncertainty_regions PROPERTIES
     FIXTURES_REQUIRED slope_stability_fixture)
 
+# Slip surfaces by the method of slices. The numerics are in
+# lsdtt-test-slope-stability-slip-surface; these carry the plumbing and names.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_circular
+    lsdtt-slope-stability
+    slope_stability_slip_circular.param.in
+    ssc_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssc_slip_sagitta.tif
+    --expect ssc_slip_body_depth.tif
+    --expect ssc_slip_evaluated.tif
+    --expect ssc_slip_failure_probability.tif
+    --expect ssc_slip_body_catalogue.csv
+    --expect ssc_slip_body_catalogue_amalgamated.csv
+    --expect ssc_slip_body_label_amalgamated.tif
+    --expect-raster-values ssc_slip_evaluated.tif:0,1
+    --stdout-contains "Slip surfaces (circular, bishop, seeded search): "
+    --stdout-contains "Slip-surface probability of failure"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_circular PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_plane
+    lsdtt-slope-stability
+    slope_stability_slip_plane.param.in
+    ssi_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-absent ssi_slip_sagitta.tif
+    --expect-absent ssi_slip_body_catalogue.csv
+    --stdout-contains "Slip surfaces (plane_integrated, ordinary, seeded search): "
+    --stdout-contains " 0 screened out"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_plane PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
 # The water table from the Dupuit - Boussinesq aquifer, steady and
 # transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
 # plumbing, output names and the time series.
@@ -3021,7 +3057,11 @@ foreach(_ss_case_message
         "uncertainty_bad_method|parameter_uncertainty must be none or equal_density"
         "uncertainty_bad_distribution|rupture_cohesion_distribution must be uniform or normal"
         "uncertainty_bad_bounds|rupture_cohesion_pa_min must not exceed rupture_cohesion_pa_max"
-        "uncertainty_bad_samples|uncertainty_samples_per_parameter must be at least 1")
+        "uncertainty_bad_samples|uncertainty_samples_per_parameter must be at least 1"
+        "slip_bad_family|slip_surface_family must be none, plane_integrated or circular"
+        "slip_no_rupture|slip_surface_family needs run_rupture_planes"
+        "slip_bad_method|slip_surface_method must be auto, ordinary or bishop"
+        "slip_bad_slices|slip surfaces: slices per cell must be at least 1")
     string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
     list(GET _ss_pair 0 _ss_case)
     list(GET _ss_pair 1 _ss_message)
@@ -6547,6 +6587,17 @@ add_executable(lsdtt-test-slope-stability-rupture-probability cpp/test_slope_sta
 target_link_libraries(lsdtt-test-slope-stability-rupture-probability PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_rupture_probability COMMAND lsdtt-test-slope-stability-rupture-probability)
 lsdtt_set_tests_properties(unit_slope_stability_rupture_probability PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: slip surfaces by the method of slices (plane_integrated and
+# circular; src/cpu/lsdtt_slope_stability_slip_surface_cpu): the infinite-slope
+# closed form, scaLr's plane with the cohesion term doubled, circles against
+# the continuous arc integrals, Bishop >= ordinary, search properties, guards,
+# sinuosity, trends, seeded vs full, bodies, catalogues and fixed-surface Pf.
+add_executable(lsdtt-test-slope-stability-slip-surface cpp/test_slope_stability_slip_surface.cpp)
+target_link_libraries(lsdtt-test-slope-stability-slip-surface PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_slip_surface COMMAND lsdtt-test-slope-stability-slip-surface)
+lsdtt_set_tests_properties(unit_slope_stability_slip_surface PROPERTIES
     LABELS "slope_stability")
 
 # Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
