@@ -1,0 +1,7 @@
+# Failure: bilinear with a Rankine back scarp.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssb
+slip_surface_family: bilinear
+slip_surface_back_scarp: rankine

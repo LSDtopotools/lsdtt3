@@ -20,11 +20,12 @@
 //   B. planar rupture surfaces after scaLr (Steer et al. 2026),
 //      src/cpu/lsdtt_slope_stability_rupture_cpu, with landslide catalogues
 //      (lsdtt_slope_stability_catalogue_cpu) and a probability of failure;
-//   C. slip surfaces integrated by the method of slices (scaLr's plane and
-//      circular arcs), src/cpu/lsdtt_slope_stability_slip_surface_cpu;
+//   C. slip surfaces integrated by the method of slices (scaLr's plane,
+//      circular arcs, bilinear and structural surfaces),
+//      src/cpu/lsdtt_slope_stability_slip_surface_cpu, and 3-D ellipsoids by
+//      the method of columns, src/cpu/lsdtt_slope_stability_columns_cpu;
 //   pore pressure from a Dupuit-Boussinesq water table
 //      (src/cpu/lsdtt_groundwater_dupuit_cpu).
-// Not yet: 3-D (column) surfaces.
 //
 // Workflow:
 //   1. Read the DEM; interior nodata; carve (least-cost breach, default) then
@@ -73,6 +74,7 @@
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_columns_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_sinmap_cpu.hpp"
 
@@ -604,15 +606,21 @@ int main(int argc, char* argv[])
     // --- Slip surfaces (method of slices; deep-seated) ---------------------------
     string_default_map["slip_surface_family"] = "none";
     help_map["slip_surface_family"] = {"string", "none",
-        "Slip surfaces integrated over the sliding body by the method of slices.",
-        "none: off. plane_integrated: scaLr's plane, but with the forces summed over "
-        "the whole body from the crown R to the toe D (isolates the effect of "
-        "integration). circular: circular arcs from depth h below R to D, with a "
-        "sagitta s (s = 0 is the plane), for rotational deep-seated slides. The "
-        "section is R's D8 path, unrolled along the flow distance. A surface above "
-        "the ground anywhere is rejected. Needs run_rupture_planes (the seeds and "
-        "screen). 2-D: no side resistance, so for slides of low length-to-width "
-        "ratio the 3-D factor of safety is typically higher.",
+        "Slip surfaces integrated over the sliding body (deep-seated landslides).",
+        "none: off. On a 2-D section (R's D8 path, unrolled along the flow distance), "
+        "by the method of slices: plane_integrated, scaLr's plane but with the forces "
+        "summed over the body from the crown R to the toe D (isolates the effect of "
+        "integration); circular, arcs from depth h below R to D with a sagitta s "
+        "(rotational slides); bilinear, a steep back segment at the Rankine angle "
+        "45 deg + phi/2 from depth h below R down to a flatter basal plane through D "
+        "(compound slides); structural, a plane from depth h below R at the apparent "
+        "dip of a given bedding or weak layer, ending where it daylights (dip-slope "
+        "slides). In 3-D: ellipsoid, ellipsoids through R and D by the method of "
+        "columns (Hovland / Xie, as r.slope.stability), which include side "
+        "resistance. A surface above the ground anywhere is rejected. Needs "
+        "run_rupture_planes (the seeds and screen). The 2-D families have no side "
+        "resistance, so for slides of low length-to-width ratio the 3-D factor of "
+        "safety is typically higher.",
         "Slip surfaces", "param", "run_rupture_planes"};
     string_default_map["slip_surface_method"] = "auto";
     help_map["slip_surface_method"] = {"string", "auto",
@@ -620,7 +628,11 @@ int main(int argc, char* argv[])
         "ordinary (Fellenius): F = sum[c l + mu (W cos a - u l)] / sum W sin a. "
         "bishop (simplified): F = sum[(c b + mu (W - u b)) / m_a] / sum W sin a, "
         "m_a = cos a + mu sin a / F, iterated; surfaces with m_a < 0.2 are rejected. "
-        "auto: ordinary for plane_integrated, bishop for circular.",
+        "janbu (simplified, force equilibrium, with Janbu's correction factor f0). "
+        "spencer (force and moment equilibrium, constant interslice inclination; "
+        "slow, for checking). auto: ordinary for plane_integrated, bishop for "
+        "circular, janbu for bilinear and structural. The ellipsoid family uses "
+        "slip_surface_column_method instead.",
         "Slip surfaces", "param", "slip_surface_family"};
     string_default_map["slip_surface_search"] = "seeded";
     help_map["slip_surface_search"] = {"string", "seeded",
@@ -630,6 +642,85 @@ int main(int argc, char* argv[])
         "toe down the path (up to slip_surface_max_length_metres); never above the "
         "seeded factor of safety, at roughly path-length times the cost.",
         "Slip surfaces", "param", "slip_surface_family"};
+    bool_default_map["slip_surface_spencer_check"] = false;
+    help_map["slip_surface_spencer_check"] = {"bool", "false",
+        "Also write Spencer's factor of safety on each critical 2-D surface.",
+        "<write_fname>_slip_spencer_safety_factor.tif: Spencer's method (force and moment "
+        "equilibrium) evaluated on the surface the family's own method found, as a check "
+        "of the simplified methods. Much cheaper than slip_surface_method: spencer, which "
+        "searches with it. Nodata where Spencer has no solution.",
+        "Slip surfaces", "switch", "slip_surface_family"};
+    string_default_map["slip_surface_back_scarp"] = "vertical";
+    help_map["slip_surface_back_scarp"] = {"string", "vertical",
+        "The back scarp at the crown of a 2-D slip surface.",
+        "vertical: from the ground at R straight down to the surface, with no "
+        "resistance (a tension crack). rankine: from the ground at R down at the "
+        "Rankine active angle 45 deg + phi/2 (phi = atan of the crown's friction "
+        "coefficient) until it meets the surface; the scarp carries cohesion and "
+        "friction. Not for bilinear, whose back segment is already at that angle.",
+        "Slip surfaces", "param", "slip_surface_family"};
+    bool_default_map["slip_surface_janbu_correction"] = true;
+    help_map["slip_surface_janbu_correction"] = {"bool", "true",
+        "Apply Janbu's correction factor f0 = 1 + b1 (d/L - 1.4 (d/L)^2).",
+        "d is the deepest point of the surface below the line from its upper end to "
+        "the toe, L that line's length; b1 = 0.50 (c and phi), 0.31 (phi only), 0.69 "
+        "(c only).",
+        "Slip surfaces", "switch", "slip_surface_method=janbu"};
+    float_default_map["slip_surface_structural_dip_gradient"] = 0.3f;
+    help_map["slip_surface_structural_dip_gradient"] = {"float", "0.3",
+        "structural: the dip of the bedding or weak layer, as a gradient tan(dip) (m/m).",
+        "The apparent dip along each crown's section is this times cos(bearing of R "
+        "to D* - dip direction).",
+        "Slip surfaces", "param", "slip_surface_family=structural"};
+    float_default_map["slip_surface_structural_dip_direction_degrees"] = 0.0f;
+    help_map["slip_surface_structural_dip_direction_degrees"] = {"float", "0",
+        "structural: the direction the layer dips towards, degrees clockwise from north.", "",
+        "Slip surfaces", "param", "slip_surface_family=structural"};
+    string_default_map["slip_surface_structural_dip_gradient_fname"] = "";
+    help_map["slip_surface_structural_dip_gradient_fname"] = {"string", "",
+        "structural: a raster of dip gradient, in place of the constant; read at each crown.",
+        "Same grid as the DEM.",
+        "Slip surfaces", "param", "slip_surface_family=structural"};
+    string_default_map["slip_surface_structural_dip_direction_fname"] = "";
+    help_map["slip_surface_structural_dip_direction_fname"] = {"string", "",
+        "structural: a raster of dip direction (degrees clockwise from north), in place of the constant.",
+        "Same grid as the DEM.",
+        "Slip surfaces", "param", "slip_surface_family=structural"};
+    string_default_map["slip_surface_column_method"] = "xie_revised";
+    help_map["slip_surface_column_method"] = {"string", "xie_revised",
+        "ellipsoid: the column sum.",
+        "F = sum f [c A + mu (G cos beta_c - u A)] / sum f G sin beta_m over the columns, "
+        "with f = cos beta_m (xie_revised) or 1 (hovland). No inter-column forces.",
+        "Slip surfaces", "param", "slip_surface_family=ellipsoid"};
+    string_default_map["slip_surface_ellipsoid_search"] = "seeded";
+    help_map["slip_surface_ellipsoid_search"] = {"string", "seeded",
+        "ellipsoid: how the depth and width half-axes are searched.",
+        "seeded: a slip_surface_search_points grid over the depth half-axis c (up to "
+        "half the R-D distance a) and the lateral half-axis b (up to 2a), refined with "
+        "Brent; the ellipsoid passes through R and D*. random: "
+        "slip_surface_ellipsoid_random_draws draws, also letting the centre move "
+        "up or down by up to c/2 (reproducible from slip_surface_ellipsoid_random_seed).",
+        "Slip surfaces", "param", "slip_surface_family=ellipsoid"};
+    int_default_map["slip_surface_ellipsoid_random_draws"] = 200;
+    help_map["slip_surface_ellipsoid_random_draws"] = {"int", "200",
+        "ellipsoid, random search: draws per crown.", "",
+        "Slip surfaces", "param", "slip_surface_ellipsoid_search=random"};
+    int_default_map["slip_surface_ellipsoid_random_seed"] = 1;
+    help_map["slip_surface_ellipsoid_random_seed"] = {"int", "1",
+        "ellipsoid, random search: the seed.", "",
+        "Slip surfaces", "param", "slip_surface_ellipsoid_search=random"};
+    float_default_map["slip_surface_ellipsoid_min_half_axis_pixels"] = 3.0f;
+    help_map["slip_surface_ellipsoid_min_half_axis_pixels"] = {"float", "3",
+        "ellipsoid: the smallest half-axis, in cell sizes.",
+        "Smaller ellipsoids are poorly resolved by the columns (Mergili et al. 2014); "
+        "crowns whose R-D half-length is below this are not evaluated.",
+        "Slip surfaces", "param", "slip_surface_family=ellipsoid"};
+    string_default_map["slip_surface_layer_depth_fnames"] = "";
+    help_map["slip_surface_layer_depth_fnames"] = {"string", "",
+        "ellipsoid: comma-separated rasters of layer depth below the ground (m).",
+        "Each ellipsoid is also evaluated truncated at each layer (the slip surface "
+        "follows the layer base where the ellipsoid goes deeper), and the lowest F kept.",
+        "Slip surfaces", "param", "slip_surface_family=ellipsoid"};
     float_default_map["slip_surface_screen_safety_factor"] = 1.5f;
     help_map["slip_surface_screen_safety_factor"] = {"float", "1.5",
         "Only crowns whose rupture-plane factor of safety is at most this are evaluated.",
@@ -661,7 +752,12 @@ int main(int argc, char* argv[])
         "_slip_sagitta.tif (circular, m), _slip_length.tif (flow distance to the "
         "toe, m), _slip_sinuosity.tif (flow over straight distance), "
         "_slip_unstable.tif, _slip_evaluated.tif (1 evaluated, 0 screened out) and "
-        "_slip_body_depth.tif (the deepest unstable body over each cell, m).",
+        "_slip_body_depth.tif (the deepest unstable body over each cell, m). Also "
+        "_slip_basal_gradient.tif (bilinear: the basal plane; structural: the apparent "
+        "dip). ellipsoid: _slip_crown_depth.tif is the depth half-axis, "
+        "_slip_half_width.tif the lateral half-axis, _slip_length.tif the R-D "
+        "distance, and _slip_cover_safety_factor.tif the lowest factor of safety of "
+        "the critical ellipsoids covering each cell; no sinuosity.",
         "Slip surfaces", "switch", "slip_surface_family"};
     bool_default_map["write_slip_body_catalogue"] = true;
     help_map["write_slip_body_catalogue"] = {"bool", "true",
@@ -873,15 +969,40 @@ int main(int argc, char* argv[])
         lsdtt::slip_surface_options slip_options;
         if (slip_family_name == "plane_integrated") slip_options.family = lsdtt::slip_surface_family::plane_integrated;
         else if (slip_family_name == "circular") slip_options.family = lsdtt::slip_surface_family::circular;
-        else if (run_slip) throw std::runtime_error("slip_surface_family must be none, plane_integrated or circular");
+        else if (slip_family_name == "bilinear") slip_options.family = lsdtt::slip_surface_family::bilinear;
+        else if (slip_family_name == "structural") slip_options.family = lsdtt::slip_surface_family::structural;
+        else if (slip_family_name == "ellipsoid") slip_options.family = lsdtt::slip_surface_family::ellipsoid;
+        else if (run_slip)
+            throw std::runtime_error("slip_surface_family must be none, plane_integrated, circular, bilinear, structural or ellipsoid");
+        const bool run_ellipsoid = slip_options.family == lsdtt::slip_surface_family::ellipsoid && run_slip;
+        std::string slip_method_name;
         {
             const std::string m = sf.at("slip_surface_method");
-            if (m == "ordinary") slip_options.evaluation.method = lsdtt::limit_equilibrium_method::ordinary;
-            else if (m == "bishop") slip_options.evaluation.method = lsdtt::limit_equilibrium_method::bishop;
+            using lem = lsdtt::limit_equilibrium_method;
+            if (m == "ordinary") slip_options.evaluation.method = lem::ordinary;
+            else if (m == "bishop") slip_options.evaluation.method = lem::bishop;
+            else if (m == "janbu") slip_options.evaluation.method = lem::janbu;
+            else if (m == "spencer") slip_options.evaluation.method = lem::spencer;
             else if (m == "auto")
-                slip_options.evaluation.method = (slip_options.family == lsdtt::slip_surface_family::circular)
-                    ? lsdtt::limit_equilibrium_method::bishop : lsdtt::limit_equilibrium_method::ordinary;
-            else throw std::runtime_error("slip_surface_method must be auto, ordinary or bishop");
+            {
+                switch (slip_options.family)
+                {
+                case lsdtt::slip_surface_family::circular: slip_options.evaluation.method = lem::bishop; break;
+                case lsdtt::slip_surface_family::bilinear:
+                case lsdtt::slip_surface_family::structural: slip_options.evaluation.method = lem::janbu; break;
+                default: slip_options.evaluation.method = lem::ordinary; break;
+                }
+            }
+            else throw std::runtime_error("slip_surface_method must be auto, ordinary, bishop, janbu or spencer");
+            const lem mm = slip_options.evaluation.method;
+            slip_method_name = mm == lem::ordinary ? "ordinary" : mm == lem::bishop ? "bishop" : mm == lem::janbu ? "janbu" : "spencer";
+            slip_options.evaluation.janbu_correction = bf.at("slip_surface_janbu_correction");
+            const std::string sc = sf.at("slip_surface_back_scarp");
+            if (sc == "vertical") slip_options.back_scarp = lsdtt::slip_back_scarp::vertical;
+            else if (sc == "rankine") slip_options.back_scarp = lsdtt::slip_back_scarp::rankine;
+            else throw std::runtime_error("slip_surface_back_scarp must be vertical or rankine");
+            slip_options.structural_dip_gradient = ff.at("slip_surface_structural_dip_gradient");
+            slip_options.structural_dip_direction_degrees = ff.at("slip_surface_structural_dip_direction_degrees");
             const std::string srch = sf.at("slip_surface_search");
             if (srch != "seeded" && srch != "full") throw std::runtime_error("slip_surface_search must be seeded or full");
             slip_options.full_search = srch == "full";
@@ -891,9 +1012,28 @@ int main(int argc, char* argv[])
         slip_options.max_length_metres = ff.at("slip_surface_max_length_metres");
         slip_options.evaluation.slices_per_cell = ii.at("slip_surface_slices_per_cell");
         slip_options.search_points = ii.at("slip_surface_search_points");
+        lsdtt::ellipsoid_options ell_options;
+        ell_options.screen_safety_factor = slip_options.screen_safety_factor;
+        ell_options.search_points = slip_options.search_points;
+        {
+            const std::string cm = sf.at("slip_surface_column_method");
+            if (cm == "xie_revised") ell_options.method = lsdtt::column_method::xie_revised;
+            else if (cm == "hovland") ell_options.method = lsdtt::column_method::hovland;
+            else throw std::runtime_error("slip_surface_column_method must be xie_revised or hovland");
+            const std::string es = sf.at("slip_surface_ellipsoid_search");
+            if (es != "seeded" && es != "random") throw std::runtime_error("slip_surface_ellipsoid_search must be seeded or random");
+            ell_options.random_search = es == "random";
+            ell_options.random_draws = ii.at("slip_surface_ellipsoid_random_draws");
+            ell_options.seed = static_cast<std::uint64_t>(ii.at("slip_surface_ellipsoid_random_seed"));
+            ell_options.min_half_axis_pixels = ff.at("slip_surface_ellipsoid_min_half_axis_pixels");
+        }
         if (run_slip)
         {
-            try { lsdtt::validate_slip_surface_options(slip_options); }
+            try
+            {
+                if (run_ellipsoid) lsdtt::validate_ellipsoid_options(ell_options, 0);
+                else lsdtt::validate_slip_surface_options(slip_options);
+            }
             catch (const std::exception& e) { throw std::runtime_error(e.what()); }
         }
         rupture_uncertainty_spec uncertainty;
@@ -1364,15 +1504,51 @@ int main(int argc, char* argv[])
 
             if (run_slip)
             {
-                const lsdtt::slip_surface_rasters slip = lsdtt::compute_slip_surfaces(
-                    *d8, input_dem, channel, region, rupture_by_region, rup, slip_options, ii.at("n_threads"),
-                    water_table_depth);
+                // Rasters the family needs, on the DEM grid; nodata becomes NaN.
+                auto read_aux = [&](const std::string& fname, const std::string& key) {
+                    const lsdtt::lsdtt_raster_cpu r = read_raster(resolve_input(parser.get_read_path(), fname));
+                    require_same_grid(dem.get_meta(), r.get_meta(), key);
+                    std::vector<double> v(r.get_data().size(), std::numeric_limits<double>::quiet_NaN());
+                    for (std::size_t q = 0; q < v.size(); ++q)
+                        if (r.get_mask()[q]) v[q] = r.get_data()[q];
+                    return v;
+                };
+                if (slip_options.family == lsdtt::slip_surface_family::structural)
+                {
+                    if (!sf.at("slip_surface_structural_dip_gradient_fname").empty())
+                        slip_options.structural_dip_gradient_raster = read_aux(sf.at("slip_surface_structural_dip_gradient_fname"),
+                                                                               "slip_surface_structural_dip_gradient_fname");
+                    if (!sf.at("slip_surface_structural_dip_direction_fname").empty())
+                        slip_options.structural_dip_direction_raster = read_aux(sf.at("slip_surface_structural_dip_direction_fname"),
+                                                                                "slip_surface_structural_dip_direction_fname");
+                }
+                if (run_ellipsoid)
+                {
+                    std::stringstream ls(sf.at("slip_surface_layer_depth_fnames"));
+                    std::string tok;
+                    while (std::getline(ls, tok, ','))
+                    {
+                        const auto b0 = tok.find_first_not_of(" \t"), b1 = tok.find_last_not_of(" \t");
+                        if (b0 == std::string::npos) continue;
+                        ell_options.layer_depths.push_back(read_aux(tok.substr(b0, b1 - b0 + 1), "slip_surface_layer_depth_fnames"));
+                    }
+                }
+                lsdtt::ellipsoid_surfaces ell;
+                if (run_ellipsoid)
+                    ell = lsdtt::compute_ellipsoid_surfaces(input_dem, region, rupture_by_region, rup, ell_options,
+                                                            ii.at("n_threads"), water_table_depth);
+                const lsdtt::slip_surface_rasters slip = run_ellipsoid ? ell.slip
+                    : lsdtt::compute_slip_surfaces(*d8, input_dem, channel, region, rupture_by_region, rup, slip_options,
+                                                   ii.at("n_threads"), water_table_depth);
                 std::cout << "Slip surfaces (" << slip_family_name << ", "
-                          << (slip_options.evaluation.method == lsdtt::limit_equilibrium_method::bishop ? "bishop" : "ordinary")
-                          << ", " << (slip_options.full_search ? "full" : "seeded") << " search): " << slip.n_evaluated
+                          << (run_ellipsoid ? sf.at("slip_surface_column_method") + " columns, " + sf.at("slip_surface_ellipsoid_search")
+                                            : slip_method_name + ", " + (slip_options.full_search ? "full" : "seeded"))
+                          << " search): " << slip.n_evaluated
                           << " crowns evaluated, " << slip.n_screened << " screened out (rupture F above "
                           << number_string(slip_options.screen_safety_factor) << "), " << slip.n_inadmissible
-                          << " with no admissible surface, " << slip.n_unstable << " unstable\n";
+                          << " with no admissible surface"
+                          << (run_ellipsoid ? " (" + std::to_string(ell.n_too_small) + " too small)" : std::string())
+                          << ", " << slip.n_unstable << " unstable\n";
                 lsdtt::lsdtt_run_record::add_provenance("slip_crowns_evaluated", std::to_string(slip.n_evaluated));
                 lsdtt::lsdtt_run_record::add_provenance("slip_crowns_screened", std::to_string(slip.n_screened));
                 lsdtt::lsdtt_run_record::add_provenance("slip_crowns_inadmissible", std::to_string(slip.n_inadmissible));
@@ -1384,17 +1560,45 @@ int main(int argc, char* argv[])
                     write_raster(slip.max_depth, base + "_slip_max_depth.tif");
                     if (slip_options.family == lsdtt::slip_surface_family::circular)
                         write_raster(slip.sagitta, base + "_slip_sagitta.tif");
+                    if (slip_options.family == lsdtt::slip_surface_family::bilinear
+                        || slip_options.family == lsdtt::slip_surface_family::structural)
+                        write_raster(slip.basal_gradient, base + "_slip_basal_gradient.tif");
+                    if (run_ellipsoid)
+                    {
+                        write_raster(slip.sagitta, base + "_slip_half_width.tif");
+                        write_raster(slip.cover_safety_factor, base + "_slip_cover_safety_factor.tif");
+                    }
+                    else
+                        write_raster(slip.sinuosity, base + "_slip_sinuosity.tif");
                     write_raster(slip.length, base + "_slip_length.tif");
-                    write_raster(slip.sinuosity, base + "_slip_sinuosity.tif");
                     write_raster(slip.unstable, base + "_slip_unstable.tif");
                     write_raster(slip.evaluated, base + "_slip_evaluated.tif");
                     write_raster(slip.body_depth, base + "_slip_body_depth.tif");
                 }
+                if (bf.at("slip_surface_spencer_check") && !run_ellipsoid)
+                {
+                    std::int64_t no_sol = 0;
+                    const lsdtt::lsdtt_raster_cpu sp = lsdtt::compute_slip_spencer_check(
+                        slip, *d8, input_dem, channel, region, rupture_by_region, slip_options.evaluation,
+                        ii.at("n_threads"), water_table_depth, &no_sol);
+                    std::cout << "Spencer check on the critical surfaces: " << no_sol << " with no solution\n";
+                    lsdtt::lsdtt_run_record::add_provenance("slip_spencer_no_solution", std::to_string(no_sol));
+                    write_raster(sp, base + "_slip_spencer_safety_factor.tif");
+                }
                 if (use_uncertainty)
                 {
-                    const lsdtt::rupture_probability_rasters spf = lsdtt::compute_slip_failure_probability(
-                        slip, *d8, input_dem, channel, region, samples_by_region, slip_options.evaluation,
-                        ii.at("n_threads"), water_table_depth);
+                    lsdtt::rupture_probability_rasters spf;
+                    if (run_ellipsoid)
+                    {
+                        lsdtt::ellipsoid_probability ep = lsdtt::compute_ellipsoid_failure_probability(
+                            ell, input_dem, region, rupture_by_region, samples_by_region, ell_options);
+                        write_raster(ep.cover_failure_probability, base + "_slip_cover_failure_probability.tif");
+                        spf = std::move(ep.crown);
+                    }
+                    else
+                        spf = lsdtt::compute_slip_failure_probability(
+                            slip, *d8, input_dem, channel, region, samples_by_region, slip_options.evaluation,
+                            ii.at("n_threads"), water_table_depth);
                     std::cout << "Slip-surface probability of failure (on each crown's critical surface found with "
                                  "the central values; a lower bound): " << spf.n_possible_failure << " crowns with Pf > 0, "
                               << spf.n_certain_failure << " with Pf = 1\n";

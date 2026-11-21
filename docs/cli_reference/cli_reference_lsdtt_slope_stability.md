@@ -3,8 +3,9 @@
 !!! warning "Experimental"
     This CLI is under development. Its components so far (a SINMAP-style
     stability index, planar rupture surfaces after scaLr, a Dupuit - Boussinesq
-    water table, a probability of failure, and slip surfaces integrated by the
-    method of slices) are tested against analytic solutions. The user guide
+    water table, a probability of failure, 2-D slip surfaces by the method of
+    slices and 3-D ellipsoids by the method of columns) are tested against
+    analytic solutions. The user guide
     will follow once the remaining components are built and measured.
 
 ## Intent
@@ -29,9 +30,10 @@ rupture depth and factor of safety for every hillslope cell. As in scaLr, these
 rasters describe potential failure statistically; they do not map individual
 landslides.
 
-For deep-seated slides it can integrate the forces over the sliding body by
-the method of slices, on scaLr's plane or on circular arcs (see "Slip
-surfaces" below).
+For deep-seated slides it can integrate the forces over the sliding body: by
+the method of slices on scaLr's plane, circular arcs, compound (bilinear) or
+structurally controlled surfaces, or in 3-D by the method of columns on
+ellipsoids (see "Slip surfaces" below).
 
 ## How this differs from SINMAP
 
@@ -133,56 +135,129 @@ potential landslides; they are not maps of individual landslides.
 scaLr judges a rupture plane by the infinite-slope formula at its crown R
 alone. That formula sees only the depth there and the plane's angle, so bending
 the surface would change nothing. With `slip_surface_family`, the forces are
-instead summed over the whole body between R and the toe D, by the method of
-slices:
+instead summed over the whole body between R and the toe.
+
+**2-D families (method of slices)** on a section along R's D8 path, unrolled
+along the flow distance, with the ground linear between cell centres:
 
 - `plane_integrated` keeps scaLr's plane, so it shows the effect of
   integration alone. On a planar slope its ordinary-method factor of safety is
   scaLr's formula with the cohesion term doubled, because the body's mean
   thickness is half the depth at R.
-- `circular` uses arcs from depth h below R to D with a sagitta s, the depth
-  of the arc below its chord; s = 0 is the plane. These represent rotational,
-  deep-seated slides.
+- `circular` uses arcs from depth h below R to the toe D, with a sagitta s (the
+  depth of the arc below its chord); s = 0 is the plane. These represent
+  rotational slides.
+- `bilinear` (compound slides) has a steep back segment from depth h below R,
+  at the Rankine active angle 45° + φ/2 (φ = atan μ), down to a flatter basal
+  plane through D. A basal plane at the chord's gradient gives the plane.
+- `structural` (dip-slope slides) follows a plane from depth h below R at the
+  apparent dip of a bedding or weak layer: tan(dip) × cos(bearing of R to D −
+  dip direction). The toe is wherever that plane meets the ground. A plane
+  that cannot meet the ground before the channel is rejected.
 
-The section is R's D8 path, unrolled along the flow distance, with the ground
-linear between cell centres. A path that bends in plan stretches the section,
-so its sinuosity (flow distance over straight distance) is written. Surfaces
-that rise above the ground are rejected. The back scarp at R is vertical and
-carries no resistance.
+A path that bends in plan stretches the section, so its sinuosity (flow
+distance over straight distance) is written. Surfaces that rise above the
+ground are rejected.
 
+- **Back scarp** (`slip_surface_back_scarp`):
+  - `vertical` (the default) runs from the ground at R straight down to the
+    surface, with no resistance, like a tension crack.
+  - `rankine` runs from the ground at R down at the Rankine angle until it
+    meets the surface, and carries cohesion and friction.
+  - The Rankine scarp also cuts off the wedge above it, so it can raise or
+    lower F.
+  - `bilinear` already has a Rankine back segment and takes only `vertical`.
 - **Methods** (`slip_surface_method`):
   - ordinary (Fellenius): F = Σ[c l + μ (W cos α − u l)] / Σ W sin α;
   - simplified Bishop: F = Σ[(c b + μ (W − u b)) / m_α] / Σ W sin α, with
-    m_α = cos α + μ sin α / F, iterated. Surfaces with m_α < 0.2 are rejected.
-  - `auto` uses the ordinary method for planes and Bishop for circles.
-- **Pore pressure** u is the hydrostatic head of the water table above the
-  base, as in the rupture planes.
+    m_α = cos α + μ sin α / F, iterated;
+  - simplified Janbu: force equilibrium, Σ[(c b + μ (W − u b)) / (cos α m_α)]
+    / Σ W tan α, times Janbu's correction factor
+    f0 = 1 + b1 (d/L − 1.4 (d/L)²) (`slip_surface_janbu_correction`);
+  - Spencer: force and moment equilibrium, with interslice forces at a constant
+    inclination. It is slow when used to search.
+  - Surfaces with m_α < 0.2 are rejected.
+  - `auto` uses ordinary for planes, Bishop for circles, and Janbu for
+    `bilinear` and `structural`.
+  - `slip_surface_spencer_check` instead evaluates Spencer only on each
+    critical surface found by the family's own method, as a check of the
+    simplified methods. In the unit tests Spencer is within 0.4 % of Bishop on
+    circles. On bilinear surfaces simplified Janbu is below Spencer, and its
+    correction moves it closer.
+- **Pore pressure** u = ρ_w g (z_w − z_b) is the *vertical* hydrostatic head of
+  the water table above the base, as in the rupture planes and scaLr's eq. A1.
+  It is not the slope-parallel seepage form, ρ_w g (z_w − z_b) cos²θ, often
+  used for infinite slopes with flow parallel to the surface. The vertical form
+  gives the larger pore pressure, by 1/cos²θ (about 6 % at a gradient of 0.25,
+  and twice as much at a gradient of 1), and so the lower factor of safety.
 - **Parameters:** c, μ and ρ come from the crown's region for the whole body.
 - **Search** (`slip_surface_search`):
   - `seeded`, the fast default, fixes the toe at the rupture plane's daylight
-    point and evaluates only crowns whose rupture-plane factor of safety is at
-    most `slip_surface_screen_safety_factor`. The rest are written as not
-    evaluated, not as stable.
-  - `full` searches every toe down the path. It is never above the seeded
-    result.
-  - The shape is searched on a grid and refined with Brent's method. The
-    circle search includes the plane, so it is never above `plane_integrated`
-    with the same method.
-- **Bodies:** an unstable crown's body covers the path cells from R to the cell
-  before D, with the depth of ground above the surface at each.
-  - `_slip_body_depth.tif` is the deepest unstable body over each cell, so a
-    volume is Σ depth × cell area.
-  - The by-toe catalogue groups unstable crowns sharing a toe. Its groups can
-    overlap.
-  - The amalgamated catalogue takes the connected parts of the body-depth
-    raster, which do not overlap.
-- **Probability of failure:** with `parameter_uncertainty`, Pf is computed on
-  each crown's critical surface, found with the central values. It is
-  therefore a lower bound on the probability that some surface fails.
-  Screened-out crowns get Pf = 0, and `_slip_evaluated.tif` marks them.
-- **Two dimensions are not three:** a section has no side resistance. For
-  slides of low length-to-width ratio, the 3-D factor of safety is typically
-  higher than this one.
+    point. `full` searches every toe down the path and is never above the
+    seeded result. For `structural` the toe follows from the plane.
+  - Only crowns whose rupture-plane factor of safety is at most
+    `slip_surface_screen_safety_factor` are evaluated. The rest are written as
+    not evaluated, not as stable.
+  - The shape is searched on a grid and refined with Brent's method. Planes
+    belong to the `circular` and `bilinear` families, so their searches are
+    never above `plane_integrated` with the same method.
+
+**3-D family (method of columns): `ellipsoid`.** These are ellipsoids through
+R and the rupture plane's daylight point D, after r.slope.stability (Mergili
+et al. 2014).
+
+- **Geometry:**
+  - one half-axis lies along the chord R–D (half its length);
+  - the width half-axis is horizontal across it, and the depth half-axis is
+    normal to the chord;
+  - the depth and width are searched;
+  - the slip surface is the ellipsoid's lower surface, and each cell above it
+    and below the ground is a column.
+- **Factor of safety:**
+  F = Σ f [c A + μ (G cos β_c − u A)] / Σ f G sin β_m, with no inter-column
+  forces, where:
+  - A is the column's slip-surface area;
+  - β_c and β_m are the true dip, and the apparent dip in the sliding
+    direction R to D;
+  - G is the column's weight;
+  - f = cos β_m for `xie_revised` (the default), or 1 for `hovland`
+    (`slip_surface_column_method`).
+- **Pore pressure** is the vertical head, as in 2-D.
+- **Small ellipsoids:** crowns whose R–D half-length is below
+  `slip_surface_ellipsoid_min_half_axis_pixels` cell sizes are not evaluated,
+  because small ellipsoids are poorly resolved by the columns.
+- **Layers:** with `slip_surface_layer_depth_fnames`, each ellipsoid is also
+  evaluated truncated at each layer base, and the lowest factor of safety is
+  kept. A layer therefore never raises F.
+- **Search:** `slip_surface_ellipsoid_search: random` replaces the grid search
+  with reproducible random draws, which also let the centre move up or down.
+  Use it to check the seeded search.
+- **Per-cell outputs:** `_slip_cover_safety_factor.tif` gives the lowest
+  factor of safety of the critical ellipsoids covering each cell, and with
+  uncertainty `_slip_cover_failure_probability.tif` the highest probability.
+
+**Bodies:** an unstable crown's body covers its path cells (2-D) or its
+columns (3-D).
+
+- **Depth at a cell:**
+  - 2-D: the mean thickness of the body over the cell's span along the section,
+    so a thin wedge between cell centres still counts;
+  - 3-D: the column's thickness.
+- `_slip_body_depth.tif` is the deepest unstable body over each cell, so a
+  volume is Σ depth × cell area.
+- The by-toe catalogue groups unstable crowns sharing a toe. Its groups can
+  overlap.
+- The amalgamated catalogue takes the connected parts of the body-depth raster,
+  which do not overlap.
+
+**Probability of failure:** with `parameter_uncertainty`, Pf is computed on
+each crown's critical surface, found with the central values. It is therefore
+a lower bound on the probability that some surface fails. Screened-out crowns
+get Pf = 0, and `_slip_evaluated.tif` marks them.
+
+**Two dimensions are not three:** a section has no side resistance. For slides
+of low length-to-width ratio, the 3-D factor of safety is typically higher than
+the 2-D one; the `ellipsoid` family includes it.
 
 ## Probability of failure
 
@@ -254,8 +329,8 @@ this CLI uses the D-infinity facet slope on the carved-then-filled surface.
 7. With `parameter_uncertainty`, repeat the search for each (c, μ)
    combination and write the probability of failure.
 8. With `slip_surface_family`, find each screened crown's critical slip
-   surface by the method of slices, build the bodies of the unstable ones, and
-   write their rasters and catalogues.
+   surface (method of slices in 2-D, of columns in 3-D), build the bodies of
+   the unstable ones, and write their rasters and catalogues.
 9. Group unstable cells into landslides by shared daylight point, and write
    the two catalogues.
 
@@ -287,8 +362,11 @@ lsdtt-slope-stability -h
 | `<write_fname>_rupture_failure_probability.tif` | probability that the factor of safety is at most 1 over the (c, μ) combinations (`parameter_uncertainty`) |
 | `<write_fname>_rupture_safety_factor_mean.tif`, `_rupture_safety_factor_sd.tif` | weighted mean and SD of the factor of safety over the combinations |
 | `<write_fname>_slip_safety_factor.tif`, `_slip_unstable.tif` | factor of safety of the critical slip surface, and 1 where it is at most 1 (`slip_surface_family`) |
-| `<write_fname>_slip_crown_depth.tif`, `_slip_max_depth.tif`, `_slip_sagitta.tif` | depth at the crown, deepest body thickness at a cell centre, and sagitta (circular) (m) |
-| `<write_fname>_slip_length.tif`, `_slip_sinuosity.tif` | flow distance to the toe (m), and flow over straight distance |
+| `<write_fname>_slip_crown_depth.tif`, `_slip_max_depth.tif`, `_slip_sagitta.tif` | depth of the surface below the crown (ellipsoid: the depth half-axis), deepest body thickness, and sagitta (circular) (m) |
+| `<write_fname>_slip_basal_gradient.tif` | bilinear: gradient of the basal plane; structural: the apparent dip (m/m) |
+| `<write_fname>_slip_half_width.tif`, `_slip_cover_safety_factor.tif`, `_slip_cover_failure_probability.tif` | ellipsoid: the lateral half-axis (m); the lowest F and the highest Pf of the critical ellipsoids covering each cell |
+| `<write_fname>_slip_spencer_safety_factor.tif` | Spencer's F on each critical 2-D surface (`slip_surface_spencer_check`) |
+| `<write_fname>_slip_length.tif`, `_slip_sinuosity.tif` | flow distance to the toe (ellipsoid: the straight R–D distance) (m), and flow over straight distance (2-D only) |
 | `<write_fname>_slip_evaluated.tif` | 1 evaluated, 0 screened out by `slip_surface_screen_safety_factor` |
 | `<write_fname>_slip_body_depth.tif`, `_slip_body_label_amalgamated.tif` | deepest unstable body over each cell (m), and the amalgamated body id |
 | `<write_fname>_slip_body_catalogue.csv`, `_slip_body_catalogue_amalgamated.csv` | unstable bodies by toe, and merged: crowns, cells, area, depth, volume, safety factors, centroid, length, width |
@@ -419,15 +497,28 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `slip_surface_family` | `string` | `none` | `param` | `run_rupture_planes` | Slip surfaces integrated over the sliding body by the method of slices. | none: off. plane_integrated: scaLr's plane, but with the forces summed over the whole body from the crown R to the toe D (isolates the effect of integration). circular: circular arcs from depth h below R to D, with a sagitta s (s = 0 is the plane), for rotational deep-seated slides. The section is R's D8 path, unrolled along the flow distance. A surface above the ground anywhere is rejected. Needs run_rupture_planes (the seeds and screen). 2-D: no side resistance, so for slides of low length-to-width ratio the 3-D factor of safety is typically higher. |
-| `slip_surface_method` | `string` | `auto` | `param` | `slip_surface_family` | Limit-equilibrium method for the slip surfaces. | ordinary (Fellenius): F = sum[c l + mu (W cos a - u l)] / sum W sin a. bishop (simplified): F = sum[(c b + mu (W - u b)) / m_a] / sum W sin a, m_a = cos a + mu sin a / F, iterated; surfaces with m_a &lt; 0.2 are rejected. auto: ordinary for plane_integrated, bishop for circular. |
+| `slip_surface_family` | `string` | `none` | `param` | `run_rupture_planes` | Slip surfaces integrated over the sliding body (deep-seated landslides). | none: off. On a 2-D section (R's D8 path, unrolled along the flow distance), by the method of slices: plane_integrated, scaLr's plane but with the forces summed over the body from the crown R to the toe D (isolates the effect of integration); circular, arcs from depth h below R to D with a sagitta s (rotational slides); bilinear, a steep back segment at the Rankine angle 45 deg + phi/2 from depth h below R down to a flatter basal plane through D (compound slides); structural, a plane from depth h below R at the apparent dip of a given bedding or weak layer, ending where it daylights (dip-slope slides). In 3-D: ellipsoid, ellipsoids through R and D by the method of columns (Hovland / Xie, as r.slope.stability), which include side resistance. A surface above the ground anywhere is rejected. Needs run_rupture_planes (the seeds and screen). The 2-D families have no side resistance, so for slides of low length-to-width ratio the 3-D factor of safety is typically higher. |
+| `slip_surface_method` | `string` | `auto` | `param` | `slip_surface_family` | Limit-equilibrium method for the slip surfaces. | ordinary (Fellenius): F = sum[c l + mu (W cos a - u l)] / sum W sin a. bishop (simplified): F = sum[(c b + mu (W - u b)) / m_a] / sum W sin a, m_a = cos a + mu sin a / F, iterated; surfaces with m_a &lt; 0.2 are rejected. janbu (simplified, force equilibrium, with Janbu's correction factor f0). spencer (force and moment equilibrium, constant interslice inclination; slow, for checking). auto: ordinary for plane_integrated, bishop for circular, janbu for bilinear and structural. The ellipsoid family uses slip_surface_column_method instead. |
 | `slip_surface_search` | `string` | `seeded` | `param` | `slip_surface_family` | Which toes are searched. | seeded (fast): the toe is the rupture plane's daylight point D* (plus or minus slip_surface_toe_window_pixels along the path). full: every toe down the path (up to slip_surface_max_length_metres); never above the seeded factor of safety, at roughly path-length times the cost. |
+| `slip_surface_spencer_check` | `bool` | `false` | `switch` | `slip_surface_family` | Also write Spencer's factor of safety on each critical 2-D surface. | &lt;write_fname&gt;_slip_spencer_safety_factor.tif: Spencer's method (force and moment equilibrium) evaluated on the surface the family's own method found, as a check of the simplified methods. Much cheaper than slip_surface_method: spencer, which searches with it. Nodata where Spencer has no solution. |
+| `slip_surface_back_scarp` | `string` | `vertical` | `param` | `slip_surface_family` | The back scarp at the crown of a 2-D slip surface. | vertical: from the ground at R straight down to the surface, with no resistance (a tension crack). rankine: from the ground at R down at the Rankine active angle 45 deg + phi/2 (phi = atan of the crown's friction coefficient) until it meets the surface; the scarp carries cohesion and friction. Not for bilinear, whose back segment is already at that angle. |
+| `slip_surface_janbu_correction` | `bool` | `true` | `switch` | `slip_surface_method=janbu` | Apply Janbu's correction factor f0 = 1 + b1 (d/L - 1.4 (d/L)^2). | d is the deepest point of the surface below the line from its upper end to the toe, L that line's length; b1 = 0.50 (c and phi), 0.31 (phi only), 0.69 (c only). |
+| `slip_surface_structural_dip_gradient` | `float` | `0.3` | `param` | `slip_surface_family=structural` | structural: the dip of the bedding or weak layer, as a gradient tan(dip) (m/m). | The apparent dip along each crown's section is this times cos(bearing of R to D* - dip direction). |
+| `slip_surface_structural_dip_direction_degrees` | `float` | `0` | `param` | `slip_surface_family=structural` | structural: the direction the layer dips towards, degrees clockwise from north. | - |
+| `slip_surface_structural_dip_gradient_fname` | `string` | - | `param` | `slip_surface_family=structural` | structural: a raster of dip gradient, in place of the constant; read at each crown. | Same grid as the DEM. |
+| `slip_surface_structural_dip_direction_fname` | `string` | - | `param` | `slip_surface_family=structural` | structural: a raster of dip direction (degrees clockwise from north), in place of the constant. | Same grid as the DEM. |
+| `slip_surface_column_method` | `string` | `xie_revised` | `param` | `slip_surface_family=ellipsoid` | ellipsoid: the column sum. | F = sum f [c A + mu (G cos beta_c - u A)] / sum f G sin beta_m over the columns, with f = cos beta_m (xie_revised) or 1 (hovland). No inter-column forces. |
+| `slip_surface_ellipsoid_search` | `string` | `seeded` | `param` | `slip_surface_family=ellipsoid` | ellipsoid: how the depth and width half-axes are searched. | seeded: a slip_surface_search_points grid over the depth half-axis c (up to half the R-D distance a) and the lateral half-axis b (up to 2a), refined with Brent; the ellipsoid passes through R and D*. random: slip_surface_ellipsoid_random_draws draws, also letting the centre move up or down by up to c/2 (reproducible from slip_surface_ellipsoid_random_seed). |
+| `slip_surface_ellipsoid_random_draws` | `int` | `200` | `param` | `slip_surface_ellipsoid_search=random` | ellipsoid, random search: draws per crown. | - |
+| `slip_surface_ellipsoid_random_seed` | `int` | `1` | `param` | `slip_surface_ellipsoid_search=random` | ellipsoid, random search: the seed. | - |
+| `slip_surface_ellipsoid_min_half_axis_pixels` | `float` | `3` | `param` | `slip_surface_family=ellipsoid` | ellipsoid: the smallest half-axis, in cell sizes. | Smaller ellipsoids are poorly resolved by the columns (Mergili et al. 2014); crowns whose R-D half-length is below this are not evaluated. |
+| `slip_surface_layer_depth_fnames` | `string` | - | `param` | `slip_surface_family=ellipsoid` | ellipsoid: comma-separated rasters of layer depth below the ground (m). | Each ellipsoid is also evaluated truncated at each layer (the slip surface follows the layer base where the ellipsoid goes deeper), and the lowest F kept. |
 | `slip_surface_screen_safety_factor` | `float` | `1.5` | `param` | `slip_surface_family` | Only crowns whose rupture-plane factor of safety is at most this are evaluated. | Others are written as not evaluated (_slip_evaluated.tif = 0, nodata factor of safety), not as stable. Set it very large to evaluate every crown. |
 | `slip_surface_toe_window_pixels` | `int` | `0` | `param` | `slip_surface_search=seeded` | Seeded search: toe candidates either side of D* along the path. | - |
 | `slip_surface_max_length_metres` | `float` | `0` | `param` | `slip_surface_search=full` | Full search: the longest flow distance from crown to toe (m); 0 = no cap. | - |
 | `slip_surface_slices_per_cell` | `int` | `4` | `param` | `slip_surface_family` | Slices per path segment between cell centres. | The sums converge to the arc integrals at second order in the slice width. |
 | `slip_surface_search_points` | `int` | `12` | `param` | `slip_surface_family` | Grid points per shape parameter (h, and s / chord for circles) before Brent refinement. | - |
-| `write_slip_surface_rasters` | `bool` | `true` | `switch` | `slip_surface_family` | Write the slip-surface rasters. | &lt;write_fname&gt;_slip_safety_factor.tif, _slip_crown_depth.tif (h, m), _slip_max_depth.tif (deepest body thickness at a cell centre, m), _slip_sagitta.tif (circular, m), _slip_length.tif (flow distance to the toe, m), _slip_sinuosity.tif (flow over straight distance), _slip_unstable.tif, _slip_evaluated.tif (1 evaluated, 0 screened out) and _slip_body_depth.tif (the deepest unstable body over each cell, m). |
+| `write_slip_surface_rasters` | `bool` | `true` | `switch` | `slip_surface_family` | Write the slip-surface rasters. | &lt;write_fname&gt;_slip_safety_factor.tif, _slip_crown_depth.tif (h, m), _slip_max_depth.tif (deepest body thickness at a cell centre, m), _slip_sagitta.tif (circular, m), _slip_length.tif (flow distance to the toe, m), _slip_sinuosity.tif (flow over straight distance), _slip_unstable.tif, _slip_evaluated.tif (1 evaluated, 0 screened out) and _slip_body_depth.tif (the deepest unstable body over each cell, m). Also _slip_basal_gradient.tif (bilinear: the basal plane; structural: the apparent dip). ellipsoid: _slip_crown_depth.tif is the depth half-axis, _slip_half_width.tif the lateral half-axis, _slip_length.tif the R-D distance, and _slip_cover_safety_factor.tif the lowest factor of safety of the critical ellipsoids covering each cell; no sinuosity. |
 | `write_slip_body_catalogue` | `bool` | `true` | `switch` | `slip_surface_family` | Write the catalogues of unstable slip bodies as CSV. | &lt;write_fname&gt;_slip_body_catalogue.csv: unstable crowns sharing a toe; the footprint is the union of their bodies, the depth at a cell the deepest of them, volume = sum(depth) x cell area (groups can overlap). _slip_body_catalogue_amalgamated.csv: 8-connected components of the body depth raster, which do not overlap. Statistics of potential landslides, not maps of individual ones. |
 
 ### Landslide catalogues

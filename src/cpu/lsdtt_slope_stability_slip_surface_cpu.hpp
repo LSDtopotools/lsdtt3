@@ -9,8 +9,10 @@
 //
 // -----------------------------------------------------------------------------
 // Slip surfaces integrated over the sliding body, by the method of slices, for
-// deep-seated landslides: the planar surface of scaLr (plane_integrated) and
-// circular arcs (circular).
+// deep-seated landslides, along a 2-D section: the planar surface of scaLr
+// (plane_integrated), circular arcs (circular), bilinear compound surfaces
+// (bilinear) and structurally controlled planes (structural). The 3-D
+// ellipsoids are in lsdtt_slope_stability_columns_cpu.
 //
 // WHY INTEGRATE. scaLr (lsdtt_slope_stability_rupture_cpu) judges a surface by
 // the infinite-slope formula at the crown R alone, which sees only the depth h
@@ -25,43 +27,84 @@
 // bends in plan, which stretches the section; sinuosity = x_k / (straight-line
 // R-D distance) is written so bent sections can be flagged.
 //
-// SURFACES (each through (0, z_0 - h) and the toe (x_k, z_k), 0 < h < z_0 - z_k):
-//   plane_integrated: the straight line between them (scaLr's plane);
-//   circular: the arc through them with sagitta s >= 0 (the deepest point of
-//     the arc below the chord, perpendicular to it); s = 0 is the plane. The
+// SURFACES. Each has a base curve through A = (0, z_0 - h), h the depth below R:
+//   plane_integrated: the straight line from A to the toe (x_k, z_k) (scaLr's
+//     plane), 0 < h < z_0 - z_k;
+//   circular: the arc from A to the toe with sagitta s >= 0 (the deepest point
+//     of the arc below the chord, perpendicular to it); s = 0 is the plane. The
 //     centre lies on the perpendicular bisector of the chord at r - s above it,
 //     r = (L^2/4 + s^2) / (2 s), L the chord length; the base is the lower arc
 //     z_b = z_c - sqrt(r^2 - (x - x_c)^2). An arc whose crown or toe lies above
 //     the centre's elevation (the surface would turn past vertical) is
-//     inadmissible.
-// A back scarp at R is vertical and carries no resistance. A surface that rises
-// above the ground anywhere between R and D (thickness below -1e-9 (z_0 - z_k)
-// at a slice edge) is inadmissible: F = +inf.
+//     inadmissible;
+//   bilinear (compound): from A a steep back segment at the Rankine active
+//     gradient tan(psi), psi = 45 deg + phi / 2, phi = atan(mu), down to the
+//     basal plane through the toe at gradient tan(beta), 0 <= tan(beta) <= the
+//     chord's (z_b = max(z_A - tan(psi) x, z_k + tan(beta)(x_k - x))). The kink
+//     is a slice edge. tan(beta) equal to the chord's gives the plane;
+//   structural: a plane from A at a given apparent dip gradient g (the bedding
+//     or a weak layer), ending where it daylights: the first point at which it
+//     meets the ground, by linear interpolation between centres. The toe is
+//     not searched. g = tan(dip) cos(bearing of R to D* - dip direction), with
+//     D* scaLr's daylight point; g > 0 dips downslope.
+// BACK SCARP. vertical (default): from the ground at R down to A, with no
+//   resistance (a tension crack). rankine: from the ground at R down at the
+//   Rankine gradient tan(psi) until it meets the base (z_s = max(z_b,
+//   z_0 - tan(psi) x)); the meeting point is a slice edge, and the scarp
+//   slices carry cohesion and friction like the rest. As psi -> 90 deg, Bishop
+//   and Janbu (which weigh cohesion by the slice width) tend to the vertical
+//   frictionless scarp; the ordinary method (cohesion by base length) tends to
+//   it plus c h along the scarp. The scarp cuts off the wedge above it, so F
+//   can rise or fall against the vertical scarp. Not offered for bilinear, whose back segment is
+//   already at psi. psi comes from the crown's (central) mu.
+// A surface that rises above the ground anywhere between R and the toe
+// (thickness below -1e-9 (z_0 - z_toe) at a slice edge) is inadmissible:
+// F = +inf.
 //
-// SLICES. Each path segment [x_j, x_j+1] is split into slices_per_cell slices
-// of width w. For a slice: thickness t at both edges (ground minus base),
+// SLICES. Each path segment is split into slices_per_cell slices, and further
+// at any kink. For a slice: thickness t at both edges (ground minus surface),
 // weight W = rho g w (t_a + t_b) / 2 (exact for a linear base), base angle
 // alpha from the base chord over the slice (positive when the base falls
 // downslope), base length l = w / cos alpha, pore pressure
 // u = rho_w g max(0, z_w - z_b) at the slice mid-point, z_w = z - d_w with the
 // water-table depth d_w linear between cell centres (NaN = dry). Pore pressure
-// is the hydrostatic head above the base, as in scaLr's eq. A1.
+// is the VERTICAL hydrostatic head above the base, as in scaLr's eq. A1, not
+// the slope-parallel seepage form (that is larger than it by 1/cos^2).
 //
 // LIMIT EQUILIBRIUM.
 //   ordinary (Fellenius 1936):
 //     F = sum [c l + mu (W cos a - u l)] / sum W sin a
 //   bishop (simplified, Bishop 1955):
 //     F = sum [(c w + mu (W - u w)) / m_a] / sum W sin a,  m_a = cos a + mu sin a / F
-//     iterated from the ordinary F to |dF| <= 1e-10 max(1, |F|) (at most 100
-//     iterations). A surface with any m_a < 0.2 (the standard guard, steep
-//     base near the toe) is inadmissible.
+//   janbu (simplified, Janbu 1973):
+//     F0 = sum [(c w + mu (W - u w)) / (cos a m_a)] / sum W tan a,  F = f0 F0,
+//     f0 = 1 + b1 (d/L - 1.4 (d/L)^2), b1 = 0.69 (c only), 0.31 (mu only),
+//     0.50 (both), d the deepest point of the surface below the line joining
+//     its upper end (the foot of a vertical scarp, or the ground at R) and the
+//     toe, L that line's length (janbu_correction = false gives f0 = 1);
+//   spencer (Spencer 1967; force and moment equilibrium, interslice forces at a
+//     constant inclination theta): from the equilibrium of a slice (x downslope,
+//     z up, theta measured from the horizontal), the net interslice force is
+//       Q = [c l / F + mu (W cos a - u l) / F - W sin a] / [cos(a + theta) + sin(a + theta) mu / F]
+//     (Fredlund & Krahn's form with their theta of opposite sign), and F and
+//     theta solve sum Q = 0 and sum Q (x sin theta - z cos theta) = 0, the
+//     moment about the surface's upper end with (x, z) the base mid-point;
+//     theta is found in [-1.3, 1.3] rad by Brent on F_force(theta) -
+//     F_moment(theta), each F by Brent root on its sum. A planar surface (all
+//     base angles equal) satisfies moment equilibrium identically at
+//     theta = -alpha, so its Spencer F is the force solution, the ordinary F.
+//     No solution: inadmissible.
+//   Bishop and Janbu iterate from the ordinary F to |dF| <= 1e-10 max(1, |F|)
+//   (at most 100 iterations). A surface with any m_a < 0.2 (Bishop, Janbu,
+//   Spencer; the standard guard, steep base near the toe) is inadmissible.
 //   sum W sin a <= 0 is inadmissible. For a base parallel to a planar slope
-//   both methods equal the infinite-slope formula exactly, dry and wet
-//   (F = (c + mu (rho g h cos^2 t - u)) / (rho g h sin t cos t)). For a
-//   straight base and planar ground (scaLr's triangle) the ordinary method
-//   gives F = 2 c / (rho g h sin b cos b) + mu / tan b, tan b = (dz - h) / dx:
-//   scaLr's point formula with the cohesion term doubled (mean thickness h/2).
-//   Parameters (c, mu, rho) are the crown cell's for the whole body.
+//   ordinary, Bishop and (uncorrected) Janbu equal the infinite-slope formula
+//   exactly, dry and wet (F = (c + mu (rho g h cos^2 t - u)) / (rho g h sin t
+//   cos t)). For a straight base and planar ground (scaLr's triangle) the
+//   ordinary method gives F = 2 c / (rho g h sin b cos b) + mu / tan b,
+//   tan b = (dz - h) / dx: scaLr's point formula with the cohesion term doubled
+//   (mean thickness h/2). Parameters (c, mu, rho) are the crown cell's for the
+//   whole body.
 //
 // SEARCH per (R, D):
 //   plane_integrated: h on a grid of search_points values in (0, dz), then
@@ -69,8 +112,11 @@
 //   circular: first the plane search (s = 0, same method), then a grid of
 //     search_points h values times search_points relative sagittas s / L in
 //     [0, 0.5] (0.5 is a semicircle), then two rounds of Brent in s and in h
-//     around the best. The result is never above the plane's (planes are in
-//     the family).
+//     around the best. Never above the plane's (planes are in the family);
+//   bilinear: as circular, with tan(beta) / (chord gradient) in [0, 1] in place
+//     of s / L (1 is the plane);
+//   structural: h in (0, z_0 - min z) on the grid, then Brent (one search per
+//     crown: the toe follows from h).
 // Over toes:
 //   seeded (default; fast): D is scaLr's daylight point D* (plus or minus
 //     toe_window cells along the path). Only crowns with scaLr F* <=
@@ -78,11 +124,13 @@
 //     evaluated (nodata F), not as stable.
 //   full: every toe along the path (up to max_length_metres of flow distance,
 //     0 = no cap). Never above the seeded result for the same crown, since the
-//     toe set contains D*.
+//     toe set contains D*. The screen applies here too.
 //
 // BODIES. For a crown with F <= 1, the body covers the path cells from R to the
-// cell before D, with depth z_j - z_b(x_j) > 0 at each. The body-depth raster is
-// the maximum over all unstable bodies covering a cell (the envelope of the
+// toe; the depth at a cell is the mean thickness over its span along the
+// section (half-way to its neighbours), so a thin wedge between cell centres
+// (a Rankine scarp on a short section) still counts. The body-depth raster is the
+// maximum over all unstable bodies covering a cell (the envelope of the
 // critical surfaces), so the volume of a set of cells is sum(depth) b^2.
 //
 // Two dimensions are not three: a section has no side resistance, so for
@@ -107,22 +155,34 @@ namespace lsdtt
 enum class slip_surface_family
 {
     plane_integrated,
-    circular
+    circular,
+    bilinear,
+    structural,
+    ellipsoid      // 3-D, lsdtt_slope_stability_columns_cpu
 };
 
 enum class limit_equilibrium_method
 {
     ordinary,
-    bishop
+    bishop,
+    janbu,
+    spencer
+};
+
+enum class slip_back_scarp
+{
+    vertical,
+    rankine
 };
 
 struct slip_evaluation_options
 {
     limit_equilibrium_method method = limit_equilibrium_method::bishop;
     int slices_per_cell = 4;
-    double bishop_tolerance = 1.0e-10;
+    double bishop_tolerance = 1.0e-10;   // also Janbu's iteration
     int bishop_max_iterations = 100;
     double min_m_alpha = 0.2;
+    bool janbu_correction = true;
 };
 
 // A hillslope section along the D8 path from a crown (index 0).
@@ -148,8 +208,15 @@ struct slip_section
 // straight-line R-D distance (1 for a straight path). NaN for k out of range.
 [[nodiscard]] double slip_section_sinuosity(const slip_section& s, int toe_index, int n_cols);
 
-// The base of a surface through (0, z_crown_base) and (x_toe, z_toe) with
-// sagitta s (0 = straight).
+// Bearing (degrees clockwise from north) of the straight line from cell `from`
+// to cell `to` on a north-up grid. NaN if they coincide.
+[[nodiscard]] double grid_bearing_degrees(std::int64_t from, std::int64_t to, int n_cols);
+
+// tan(45 deg + atan(mu) / 2): the Rankine active failure gradient.
+[[nodiscard]] double rankine_back_gradient(double friction_coefficient);
+
+// The circle helper: the base of a surface through (0, z_crown_base) and
+// (x_toe, z_toe) with sagitta s (0 = straight).
 struct slip_surface_geometry
 {
     bool admissible = false;
@@ -162,8 +229,33 @@ struct slip_surface_geometry
 [[nodiscard]] slip_surface_geometry make_slip_surface(
     double x_toe, double z_crown_base, double z_toe, double sagitta);
 
-// F for the surface of depth h at the crown and sagitta s (metres) ending at
-// section point toe_index. +inf if inadmissible.
+// One 2-D slip surface on a section.
+struct slip_shape
+{
+    slip_surface_family family = slip_surface_family::plane_integrated;
+    int toe_index = -1;          // section point of the toe; structural: the first point past daylight
+    double depth = 0.0;          // h (m): the base's depth below R at x = 0
+    double sagitta = 0.0;        // circular (m)
+    double basal_gradient = 0.0; // bilinear: tan(beta); structural: apparent dip gradient g
+    double back_gradient = 0.0;  // tan(psi): bilinear back segment, rankine scarp
+    bool rankine_scarp = false;
+};
+
+// F for the shape. +inf if inadmissible.
+[[nodiscard]] double evaluate_slip_shape(
+    const slip_section& section, const slip_shape& shape,
+    const rupture_parameters& p, const slip_evaluation_options& opt);
+
+// Body depth at the section points the body covers (from the crown to the point
+// before the toe): the MEAN thickness (ground minus surface) over each point's
+// span along the section, half-way to its neighbours and clipped to the body.
+// Empty if inadmissible.
+[[nodiscard]] std::vector<double> slip_shape_thickness(const slip_section& section, const slip_shape& shape);
+
+// The largest thickness of the body (dense sampling plus the kinks).
+[[nodiscard]] double slip_shape_max_thickness(const slip_section& section, const slip_shape& shape);
+
+// Plane or circle with a vertical scarp (kept for the C1/C2 tests).
 [[nodiscard]] double evaluate_slip_surface(
     const slip_section& section, int toe_index, double h, double sagitta,
     const rupture_parameters& p, const slip_evaluation_options& opt);
@@ -175,9 +267,17 @@ struct slip_search_result
     double depth = 0.0;     // h at the crown (m)
     double sagitta = 0.0;   // s (m)
     int toe_index = -1;
+    slip_shape shape;
 };
 
 // The minimum of F over the family's shape parameters for one toe (header).
+// structural: toe_index is ignored and apparent_dip_gradient used.
+[[nodiscard]] slip_search_result search_slip_shape(
+    const slip_section& section, int toe_index, slip_surface_family family, slip_back_scarp scarp,
+    const rupture_parameters& p, const slip_evaluation_options& opt, int search_points,
+    double apparent_dip_gradient = 0.0);
+
+// plane_integrated or circular with a vertical scarp (kept for the C1/C2 tests).
 [[nodiscard]] slip_search_result search_slip_surface(
     const slip_section& section, int toe_index, slip_surface_family family,
     const rupture_parameters& p, const slip_evaluation_options& opt, int search_points);
@@ -186,11 +286,17 @@ struct slip_surface_options
 {
     slip_surface_family family = slip_surface_family::circular;
     slip_evaluation_options evaluation;
+    slip_back_scarp back_scarp = slip_back_scarp::vertical;
     bool full_search = false;
     double screen_safety_factor = 1.5;
     int toe_window = 0;
     double max_length_metres = 0.0;   // full search only; 0 = no cap
     int search_points = 12;
+    // structural: dip gradient tan(dip) and dip direction (degrees clockwise
+    // from north), constants or one value per cell (taken at the crown).
+    double structural_dip_gradient = 0.3;
+    double structural_dip_direction_degrees = 0.0;
+    std::vector<double> structural_dip_gradient_raster, structural_dip_direction_raster;
 };
 
 // Throws std::invalid_argument naming the field.
@@ -199,17 +305,18 @@ void validate_slip_surface_options(const slip_surface_options& o);
 struct slip_surface_rasters
 {
     lsdtt_raster_cpu safety_factor;   // F of the critical surface (evaluated crowns)
-    lsdtt_raster_cpu crown_depth;     // h (m)
-    lsdtt_raster_cpu max_depth;       // largest body thickness at a cell centre (m)
-    lsdtt_raster_cpu sagitta;         // s (m)
-    lsdtt_raster_cpu length;          // flow distance R to D (m)
-    lsdtt_raster_cpu sinuosity;       // flow distance / straight distance
+    lsdtt_raster_cpu crown_depth;     // h (m); ellipsoid: the depth half-axis c_e
+    lsdtt_raster_cpu max_depth;       // largest body thickness (m; 2-D: dense sampling)
+    lsdtt_raster_cpu sagitta;         // circular: s (m); ellipsoid: lateral half-axis b_e (m)
+    lsdtt_raster_cpu basal_gradient;  // bilinear: tan(beta); structural: apparent dip gradient
+    lsdtt_raster_cpu length;          // flow distance R to toe (m); ellipsoid: straight R-D distance
+    lsdtt_raster_cpu sinuosity;       // flow distance / straight distance (2-D)
     lsdtt_raster_cpu unstable;        // 1 where F <= 1
     lsdtt_raster_cpu evaluated;       // 1 evaluated, 0 screened out (crowns with a scaLr result)
     lsdtt_raster_cpu body_depth;      // envelope of unstable bodies (m)
+    lsdtt_raster_cpu cover_safety_factor;   // ellipsoid only: lowest F of the critical surfaces covering a cell
     std::vector<std::int64_t> toe;    // flat toe per crown, -1
-    std::vector<int> toe_index;       // index of the toe on the crown's section, -1
-    std::vector<double> depth_h, sagitta_s;   // the critical surface per crown (for re-evaluation)
+    std::vector<slip_shape> shape;    // 2-D: the critical surface per crown (for re-evaluation)
     // Bodies of unstable crowns in increasing crown order (CSR).
     std::vector<std::int64_t> body_crown, body_offset, body_cell;
     std::vector<double> body_cell_depth;
@@ -217,7 +324,8 @@ struct slip_surface_rasters
 };
 
 // rupture: compute_rupture_planes on the same grid (seeds and screen).
-// region / by_region: as for compute_rupture_planes.
+// region / by_region: as for compute_rupture_planes. Families plane_integrated,
+// circular, bilinear and structural (ellipsoid: compute_ellipsoid_surfaces).
 [[nodiscard]] slip_surface_rasters compute_slip_surfaces(
     const lsdtt_flow_base& flow,
     const lsdtt_raster_cpu& geometry,
@@ -244,6 +352,21 @@ struct slip_surface_rasters
     const slip_evaluation_options& evaluation,
     int n_threads = 0,
     const std::vector<double>& water_table_depth = {});
+
+// Spencer's F on each evaluated crown's critical surface (found by the
+// family's own method): a check of the simplified methods. Nodata where
+// Spencer has no solution in its theta range. evaluation.method is ignored.
+[[nodiscard]] lsdtt_raster_cpu compute_slip_spencer_check(
+    const slip_surface_rasters& slip,
+    const lsdtt_flow_base& flow,
+    const lsdtt_raster_cpu& geometry,
+    const std::vector<std::uint8_t>& channel,
+    const std::vector<std::int32_t>& region,
+    const std::map<std::int32_t, rupture_parameters>& by_region,
+    const slip_evaluation_options& evaluation,
+    int n_threads = 0,
+    const std::vector<double>& water_table_depth = {},
+    std::int64_t* n_no_solution = nullptr);
 
 // Catalogues of unstable slip bodies.
 struct slip_body_record

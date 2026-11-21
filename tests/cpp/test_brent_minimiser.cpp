@@ -169,6 +169,23 @@ int main()
               && throws([] { (void)minimise_brent_bounded([](double x) { return x; }, 0.0, 1.0, 1e-8, 0); }));
     }
 
+    // ---------------------------------------------------- root finding (zeroin)
+    {
+        const auto r1 = find_root_brent([](double x) { return x * x - 2.0; }, 0.0, 2.0);
+        check("root: x^2 - 2 on [0, 2] gives sqrt 2", r1.bracketed && r1.converged && std::fabs(r1.x - std::sqrt(2.0)) < 1e-12,
+              "x = " + num(r1.x));
+        const auto r2 = find_root_brent([](double x) { return std::cos(x) - x; }, 0.0, 1.0);
+        check("root: cos x = x (Dottie number)", r2.converged && std::fabs(r2.x - 0.7390851332151607) < 1e-12);
+        const auto r3 = find_root_brent([](double x) { return std::pow(x - 1.0, 3); }, -3.0, 4.0);
+        check("root: a triple root still converges by bisection", r3.converged && std::fabs(r3.x - 1.0) < 1e-4,
+              "x = " + num(r3.x) + ", " + std::to_string(r3.iterations) + " iterations");
+        const auto r4 = find_root_brent([](double x) { return x * x + 1.0; }, -1.0, 1.0);
+        check("root: no sign change is reported as not bracketed", !r4.bracketed && std::isnan(r4.x));
+        check("root: invalid arguments throw",
+              throws([] { (void)find_root_brent([](double x) { return x; }, 2.0, 1.0); })
+              && throws([] { (void)find_root_brent([](double x) { return x; }, 0.0, 1.0, 0.0); }));
+    }
+
     std::cout << g_checks << " checks, " << g_failures << " failed\n";
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;

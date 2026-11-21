@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -188,6 +189,117 @@ brent_minimum minimise_brent_bounded(
     result.x = x;
     result.f = fx;
     return result;
+}
+
+// -----------------------------------------------------------------------------
+// Bracketed root of a one-dimensional function: Brent's method.
+//
+// Brent, R. P. (1973). Algorithms for Minimization without Derivatives,
+// Prentice-Hall, ch. 4 ("zero"); the same algorithm as Netlib's zeroin.
+// Bisection, accelerated by secant and inverse quadratic interpolation when
+// they stay inside the bracket. No derivatives.
+//
+// CONTRACT
+//   * f(lower) and f(upper) must be finite and of opposite sign (or one of them
+//     zero); otherwise bracketed = false and x is NaN.
+//   * Converges to |x - root| <= 2 eps |x| + x_tolerance / 2.
+//   * Throws std::invalid_argument for non-finite or reversed bounds, a
+//     non-positive tolerance, or max_iterations < 1.
+// -----------------------------------------------------------------------------
+struct brent_root
+{
+    double x = std::numeric_limits<double>::quiet_NaN();
+    double f = std::numeric_limits<double>::quiet_NaN();
+    int iterations = 0;
+    bool bracketed = false;
+    bool converged = false;
+};
+
+template <class Function>
+brent_root find_root_brent(
+    Function&& f,
+    double lower,
+    double upper,
+    double x_tolerance = 1.0e-12,
+    int max_iterations = 200)
+{
+    if (!(std::isfinite(lower) && std::isfinite(upper)))
+        throw std::invalid_argument("find_root_brent: bounds must be finite");
+    if (lower > upper)
+        throw std::invalid_argument("find_root_brent: lower exceeds upper");
+    if (!(x_tolerance > 0.0))
+        throw std::invalid_argument("find_root_brent: x_tolerance must be positive");
+    if (max_iterations < 1)
+        throw std::invalid_argument("find_root_brent: max_iterations must be >= 1");
+
+    brent_root out;
+    double a = lower, b = upper;
+    double fa = static_cast<double>(f(a)), fb = static_cast<double>(f(b));
+    if (!std::isfinite(fa) || !std::isfinite(fb) || (fa > 0.0 && fb > 0.0) || (fa < 0.0 && fb < 0.0))
+        return out;
+    out.bracketed = true;
+    if (fa == 0.0) { out.x = a; out.f = 0.0; out.converged = true; return out; }
+    if (fb == 0.0) { out.x = b; out.f = 0.0; out.converged = true; return out; }
+    const double eps = std::numeric_limits<double>::epsilon();
+    double c = a, fc = fa, d = b - a, e = d;
+    for (int it = 0; it < max_iterations; ++it)
+    {
+        if ((fb > 0.0 && fc > 0.0) || (fb < 0.0 && fc < 0.0)) { c = a; fc = fa; d = b - a; e = d; }
+        if (std::fabs(fc) < std::fabs(fb))
+        {
+            a = b; b = c; c = a;
+            fa = fb; fb = fc; fc = fa;
+        }
+        const double tol = 2.0 * eps * std::fabs(b) + 0.5 * x_tolerance;
+        const double m = 0.5 * (c - b);
+        if (std::fabs(m) <= tol || fb == 0.0)
+        {
+            out.converged = true;
+            break;
+        }
+        if (std::fabs(e) >= tol && std::fabs(fa) > std::fabs(fb))
+        {
+            double p, q, r;
+            const double s = fb / fa;
+            if (a == c)
+            {
+                p = 2.0 * m * s;
+                q = 1.0 - s;
+            }
+            else
+            {
+                q = fa / fc;
+                r = fb / fc;
+                p = s * (2.0 * m * q * (q - r) - (b - a) * (r - 1.0));
+                q = (q - 1.0) * (r - 1.0) * (s - 1.0);
+            }
+            if (p > 0.0) q = -q; else p = -p;
+            if (2.0 * p < std::min(3.0 * m * q - std::fabs(tol * q), std::fabs(e * q)))
+            {
+                e = d;
+                d = p / q;
+            }
+            else
+            {
+                d = m;
+                e = m;
+            }
+        }
+        else
+        {
+            d = m;
+            e = m;
+        }
+        a = b;
+        fa = fb;
+        b += (std::fabs(d) > tol) ? d : (m > 0.0 ? tol : -tol);
+        fb = static_cast<double>(f(b));
+        ++out.iterations;
+        if (!std::isfinite(fb)) { out.converged = false; break; }
+    }
+    out.x = b;
+    out.f = fb;
+    return out;
 }
 
 } // namespace lsdtt

@@ -2826,7 +2826,8 @@ add_lsdtt_cli_smoke_test(
 # read_path, so a setup step copies them together (as fixture_basin_stats_outlets
 # does). tests/data/slope_stability_regions.tif is on the basin_stats fixture
 # grid (Watopia UTM 58S, 200 x 200, 30 m): west half id 1, east half id 7, the
-# ten northern rows nodata.
+# ten northern rows nodata. tests/data/slope_stability_layer_depth.tif is on the
+# same grid: a layer 4 m deep in the west half and 8 m deep in the east.
 # =============================================================================
 set(LSDTT_SLOPE_STABILITY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_fixture")
 # cmake -E copy needs the target directory to exist when it copies several files.
@@ -2839,6 +2840,7 @@ add_test(NAME fixture_slope_stability_inputs
         "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_bad_column.csv"
         "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_missing_id.csv"
         "${LSDTT_TEST_DATA_DIR}/slope_stability_recharge_series.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_layer_depth.tif"
         "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}/")
 lsdtt_set_tests_properties(fixture_slope_stability_inputs PROPERTIES
     LABELS "fixture;slope_stability"
@@ -2991,6 +2993,67 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_stability_slip_plane PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# Compound, structural and 3-D slip surfaces (C3, C4, C6). The numerics are in
+# lsdtt-test-slope-stability-slip-compound and lsdtt-test-slope-stability-columns.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_bilinear
+    lsdtt-slope-stability
+    slope_stability_slip_bilinear.param.in
+    ssk_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssk_slip_basal_gradient.tif
+    --expect ssk_slip_spencer_safety_factor.tif
+    --expect ssk_slip_failure_probability.tif
+    --expect-absent ssk_slip_sagitta.tif
+    --stdout-contains "Slip surfaces (bilinear, janbu, seeded search): "
+    --stdout-contains "Spencer check on the critical surfaces: "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_bilinear PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_structural
+    lsdtt-slope-stability
+    slope_stability_slip_structural.param.in
+    ssj_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssj_slip_basal_gradient.tif
+    --expect ssj_slip_sinuosity.tif
+    --stdout-contains "Slip surfaces (structural, ordinary, seeded search): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_structural PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_rankine
+    lsdtt-slope-stability
+    slope_stability_slip_rankine.param.in
+    ssq_slip_body_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssq_slip_sagitta.tif
+    --stdout-contains "Slip surfaces (circular, bishop, seeded search): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_rankine PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_ellipsoid
+    lsdtt-slope-stability
+    slope_stability_slip_ellipsoid.param.in
+    sse3_slip_safety_factor.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sse3_slip_half_width.tif
+    --expect sse3_slip_cover_safety_factor.tif
+    --expect sse3_slip_cover_failure_probability.tif
+    --expect sse3_slip_failure_probability.tif
+    --expect sse3_slip_body_catalogue_amalgamated.csv
+    --expect-absent sse3_slip_sinuosity.tif
+    --stdout-contains "Slip surfaces (ellipsoid, xie_revised columns, seeded search): "
+    --stdout-contains " too small)"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_ellipsoid PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
 # The water table from the Dupuit - Boussinesq aquifer, steady and
 # transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
 # plumbing, output names and the time series.
@@ -3058,10 +3121,14 @@ foreach(_ss_case_message
         "uncertainty_bad_distribution|rupture_cohesion_distribution must be uniform or normal"
         "uncertainty_bad_bounds|rupture_cohesion_pa_min must not exceed rupture_cohesion_pa_max"
         "uncertainty_bad_samples|uncertainty_samples_per_parameter must be at least 1"
-        "slip_bad_family|slip_surface_family must be none, plane_integrated or circular"
+        "slip_bad_family|slip_surface_family must be none, plane_integrated, circular, bilinear, structural or ellipsoid"
         "slip_no_rupture|slip_surface_family needs run_rupture_planes"
-        "slip_bad_method|slip_surface_method must be auto, ordinary or bishop"
-        "slip_bad_slices|slip surfaces: slices per cell must be at least 1")
+        "slip_bad_method|slip_surface_method must be auto, ordinary, bishop, janbu or spencer"
+        "slip_bad_slices|slip surfaces: slices per cell must be at least 1"
+        "slip_bilinear_rankine|bilinear already has a Rankine back segment"
+        "slip_bad_scarp|slip_surface_back_scarp must be vertical or rankine"
+        "slip_bad_column_method|slip_surface_column_method must be xie_revised or hovland"
+        "slip_bad_ellipsoid_search|slip_surface_ellipsoid_search must be seeded or random")
     string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
     list(GET _ss_pair 0 _ss_case)
     list(GET _ss_pair 1 _ss_message)
@@ -6598,6 +6665,25 @@ add_executable(lsdtt-test-slope-stability-slip-surface cpp/test_slope_stability_
 target_link_libraries(lsdtt-test-slope-stability-slip-surface PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_slip_surface COMMAND lsdtt-test-slope-stability-slip-surface)
 lsdtt_set_tests_properties(unit_slope_stability_slip_surface PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: compound (bilinear) and structural slip surfaces, the Rankine
+# back scarp, and the Janbu and Spencer methods: closed-form wedges and
+# triangles, limits, the Janbu correction, Spencer against Bishop and Janbu.
+add_executable(lsdtt-test-slope-stability-slip-compound cpp/test_slope_stability_slip_compound.cpp)
+target_link_libraries(lsdtt-test-slope-stability-slip-compound PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_slip_compound COMMAND lsdtt-test-slope-stability-slip-compound)
+lsdtt_set_tests_properties(unit_slope_stability_slip_compound PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: 3-D ellipsoids by the method of columns
+# (src/cpu/lsdtt_slope_stability_columns_cpu): the column infinite-slope
+# identity, area and apparent dip, the ellipsoid surface, volume convergence on
+# flat ground, rasters, cover F, truncation, seeded vs random, fixed-surface Pf.
+add_executable(lsdtt-test-slope-stability-columns cpp/test_slope_stability_columns.cpp)
+target_link_libraries(lsdtt-test-slope-stability-columns PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_columns COMMAND lsdtt-test-slope-stability-columns)
+lsdtt_set_tests_properties(unit_slope_stability_columns PROPERTIES
     LABELS "slope_stability")
 
 # Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):

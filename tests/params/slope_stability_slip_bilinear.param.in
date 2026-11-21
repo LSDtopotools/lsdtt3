@@ -1,0 +1,13 @@
+# lsdtt-slope-stability: bilinear (compound) slip surfaces, Janbu (auto), with
+# the Spencer check and the probability of failure on the critical surfaces.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssk
+n_threads: 2
+run_sinmap: false
+slip_surface_family: bilinear
+slip_surface_spencer_check: true
+parameter_uncertainty: equal_density
+uncertainty_samples_per_parameter: 3
+write_landslide_label_rasters: false
