@@ -668,6 +668,227 @@ int main()
         }
     }
 
+    // --------------------------------------- implicit transient stepper (I4)
+    {
+        // (1) Backward Euler exactly: a small sine mound between fixed heads on a
+        // flat base is the discrete Laplacian's eigenvector (linearised, D = K h/n),
+        // so after N steps of dt its amplitude is (1 + lambda_h dt)^-N with
+        // lambda_h = 4 D sin^2(pi dx / 2L) / dx^2.
+        {
+            const double K = 1e-4, hbar = 10.0, n_por = 0.2, amp = 1e-3;
+            const int n = 101;
+            const double cs = 10.0, L = (n - 1) * cs;
+            const double D = K * hbar / n_por;
+            const double lam = 4.0 * D * std::pow(std::sin(M_PI * cs / (2.0 * L)), 2) / (cs * cs);
+            double worst = 0.0;
+            std::string detail;
+            for (double ldt : {0.1, 1.0, 5.0})
+            {
+                strip s = make_strip(n, cs);
+                for (int i = 0; i < n; ++i) { s.z[i] = 1000.0; s.zb[i] = 0.0; }
+                s.fixed[0] = s.fixed[n - 1] = 1;
+                s.hfix[0] = s.hfix[n - 1] = hbar;
+                groundwater_dupuit_parameters p = base_p;
+                p.hydraulic_conductivity_m_per_s = K;
+                p.drainable_porosity = n_por;
+                lsdtt_groundwater_dupuit g(s.meta, s.z, s.zb, s.valid, s.fixed, s.hfix, p);
+                std::vector<double> h0(n);
+                for (int i = 0; i < n; ++i) h0[i] = hbar + amp * std::sin(M_PI * i * cs / L);
+                g.set_thickness(h0);
+                const double dt = ldt / lam;
+                const int N = (ldt > 2.0) ? 3 : 6;
+                lsdtt_groundwater_dupuit::implicit_options o;
+                o.max_dt_s = dt;
+                const auto r = g.run_implicit(N * dt, std::vector<double>(n, 0.0), o);
+                const double ratio = (g.thickness()[n / 2] - hbar) / amp;
+                const double expect = std::pow(1.0 + ldt, -N);   // exp(-lambda t) for contrast
+                worst = std::max(worst, std::fabs(ratio / expect - 1.0) + (r.ok && r.steps == N ? 0.0 : 1.0));
+                detail += "lambda dt " + num(ldt) + ": " + num(ratio) + " vs " + num(expect) + " (exp " + num(std::exp(-ldt * N)) + "); ";
+            }
+            check("implicit transient: a linearised sine mound decays as (1 + lambda_h dt)^-N, backward Euler exactly (< 1e-3)",
+                  worst < 1e-3, detail);
+        }
+
+        // The 2-D budget grid: fixed-head column and bottom row, a hole.
+        const int nr = 30, nc = 30;
+        const double cs = 10.0;
+        lsdtt_raster_meta meta = make_meta(nr, nc, cs);
+        const std::size_t n = static_cast<std::size_t>(nr) * nc;
+        std::vector<double> z(n), zb(n), f(n), hfix(n, 0.0), h0(n);
+        std::vector<std::uint8_t> valid(n, 1), fixed(n, 0);
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c)
+            {
+                const std::size_t i = static_cast<std::size_t>(r) * nc + c;
+                z[i] = 0.3 * (nr - r) * cs + 12.0 * std::sin(c / 4.0) * std::cos(r / 5.0);
+                zb[i] = z[i] - (1.0 + 0.5 * std::sin(c / 3.0 + r / 7.0) * std::sin(c / 3.0 + r / 7.0));
+                f[i] = 3e-8 * (1.0 + 0.5 * std::cos(c / 6.0));
+                h0[i] = 0.4 * (z[i] - zb[i]);
+                if (r == nr - 1 || c == nc / 2) { fixed[i] = 1; hfix[i] = z[i] - zb[i]; }
+            }
+        valid[5 * nc + 5] = 0;
+        groundwater_dupuit_parameters p = base_p;
+        p.hydraulic_conductivity_m_per_s = 1e-4;
+
+        // (2) First-order convergence to the explicit run as dt -> 0. Far from
+        // saturation (fixed heads at 0.3 d), where the explicit scheme's
+        // regularised seepage (eps = 0.01) and the implicit complementarity agree.
+        {
+            const double T = 86400.0 * 2;
+            // A gentler surface over a 3 m aquifer, fixed heads at 0.3 d.
+            std::vector<double> z2(n), zb2(n), hlow(n, 0.0);
+            for (int r = 0; r < nr; ++r)
+                for (int c = 0; c < nc; ++c)
+                {
+                    const std::size_t i = static_cast<std::size_t>(r) * nc + c;
+                    z2[i] = 0.1 * (nr - r) * cs + 2.0 * std::sin(c / 4.0) * std::cos(r / 5.0);
+                    zb2[i] = z2[i] - 3.0;
+                    if (fixed[i]) hlow[i] = 0.9;
+                }
+            const std::vector<double> h02(n, 1.2);
+            lsdtt_groundwater_dupuit ge(meta, z2, zb2, valid, fixed, hlow, p);
+            ge.set_thickness(h02);
+            // The explicit substep is limited by stability, not accuracy (7
+            // substeps over these 2 days, a time error of about 3.5 cm), so the
+            // reference is run in 4096 short calls.
+            for (int j = 0; j < 4096; ++j) ge.run(T / 4096, f);
+            std::vector<double> err;
+            double h_frac_max = 0.0;
+            for (int k : {16, 32, 64, 128})
+            {
+                lsdtt_groundwater_dupuit gi(meta, z2, zb2, valid, fixed, hlow, p);
+                gi.set_thickness(h02);
+                lsdtt_groundwater_dupuit::implicit_options o;
+                o.max_dt_s = T / k;
+                gi.run_implicit(T, f, o);
+                double e = 0.0;
+                for (std::size_t i = 0; i < n; ++i)
+                {
+                    e = std::max(e, std::fabs(gi.thickness()[i] - ge.thickness()[i]));
+                    if (gi.cell_unknown()[i] >= 0) h_frac_max = std::max(h_frac_max, gi.thickness()[i] / 3.0);
+                }
+                err.push_back(e);
+            }
+            const double r1 = err[0] / err[1], r2 = err[1] / err[2], r3 = err[2] / err[3];
+            check("implicit transient: converges to the explicit run at first order in dt (halving ratios near 2)",
+                   r1 > 1.7 && r2 > 1.7 && r3 > 1.7 && r1 < 2.3 && r2 < 2.3 && r3 < 2.3 && h_frac_max < 0.9,
+                  "max h/d " + num(h_frac_max) + "; max |dh| " + num(err[0]) + ", " + num(err[1]) + ", " + num(err[2]) + ", " + num(err[3]) + " m; ratios "
+                  + num(r1) + ", " + num(r2) + ", " + num(r3));
+        }
+
+        // (3) Storm then drainage: saturation grows and shrinks; budget and bounds.
+        {
+            lsdtt_groundwater_dupuit g(meta, z, zb, valid, fixed, hfix, p);
+            g.set_thickness(h0);
+            std::vector<double> storm(n), dry(n, 0.0);
+            for (std::size_t i = 0; i < n; ++i) storm[i] = 30.0 * f[i];
+            lsdtt_groundwater_dupuit::implicit_options o;
+            o.max_dt_s = 1800.0;
+            const auto r1 = g.run_implicit(86400.0, storm, o);
+            const double s_peak = g.storage();
+            std::int64_t sat_peak = 0;
+            for (std::size_t i = 0; i < n; ++i)
+                if (g.cell_unknown()[i] >= 0 && g.thickness()[i] >= z[i] - zb[i]) ++sat_peak;
+            const auto r2 = g.run_implicit(86400.0 * 5, dry, o);
+            const double s_end = g.storage();
+            std::int64_t sat_end = 0;
+            bool bounds = true;
+            for (std::size_t i = 0; i < n; ++i)
+                if (g.cell_unknown()[i] >= 0)
+                {
+                    bounds &= g.thickness()[i] >= 0.0 && g.thickness()[i] <= z[i] - zb[i];
+                    if (g.thickness()[i] >= z[i] - zb[i]) ++sat_end;
+                }
+            const groundwater_budget& b = g.budget();
+            const double imb = b.recharge_in + b.clipped_added - b.storage_change - b.outflow_fixed_head - b.seepage_out;
+            // (Saturation can spread downslope as the storm water drains, so the
+            // count is reported, not tested; storage must fall.)
+            check("implicit transient: storm then drainage; budget closes (1e-9), 0 <= h <= d, the storm saturates cells, storage falls in drainage",
+                  r1.ok && r2.ok && bounds && sat_peak > 0 && s_end < s_peak && b.seepage_out > 0.0 && std::fabs(imb) <= 1e-9 * b.recharge_in
+                  && b.clipped_added == 0.0,
+                  "saturated " + std::to_string(sat_peak) + " -> " +  std::to_string(sat_end) + ", storage " + num(s_peak) + " -> " + num(s_end) + " m3, imbalance " + num(imb / b.recharge_in)
+                  + " of recharge, " + std::to_string(r1.steps + r2.steps) + " steps, " + std::to_string(r1.newton_iterations + r2.newton_iterations)
+                  + " Newton");
+        }
+
+        // (4) A long run at constant recharge reaches the implicit steady state.
+        {
+            lsdtt_groundwater_dupuit gs(meta, z, zb, valid, fixed, hfix, p), gt(meta, z, zb, valid, fixed, hfix, p);
+            gs.set_thickness(h0);
+            gt.set_thickness(h0);
+            lsdtt_groundwater_dupuit::implicit_options so;
+            so.relative_tolerance = 1e-10;
+            gs.run_to_steady_implicit(f, so);
+            lsdtt_groundwater_dupuit::implicit_options o;
+            o.max_dt_s = 1e8;
+            const auto r = gt.run_implicit(1e10, f, o);
+            double dh = 0.0, dmax = 0.0;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                dh = std::max(dh, std::fabs(gs.thickness()[i] - gt.thickness()[i]));
+                dmax = std::max(dmax, z[i] - zb[i]);
+            }
+            check("implicit transient: a long run at constant recharge reaches the implicit steady state",
+                  r.ok && dh <= 1e-6 * dmax, "max |dh| " + num(dh) + " m in " + std::to_string(r.steps) + " steps");
+        }
+
+        // (5) Step-doubling error control.
+        {
+            const double T = 86400.0;
+            std::vector<double> storm(n);
+            for (std::size_t i = 0; i < n; ++i) storm[i] = 30.0 * f[i];
+            lsdtt_groundwater_dupuit ge(meta, z, zb, valid, fixed, hfix, p), g1(meta, z, zb, valid, fixed, hfix, p),
+                g2(meta, z, zb, valid, fixed, hfix, p);
+            for (auto* g : {&ge, &g1, &g2}) g->set_thickness(h0);
+            ge.run(T, storm);
+            lsdtt_groundwater_dupuit::implicit_options fixed_dt, ctrl;
+            fixed_dt.max_dt_s = ctrl.max_dt_s = T / 4;
+            ctrl.dt_tolerance_m = 1e-3;
+            g1.run_implicit(T, storm, fixed_dt);
+            const auto r2 = g2.run_implicit(T, storm, ctrl);
+            double e1 = 0.0, e2 = 0.0;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                e1 = std::max(e1, std::fabs(g1.thickness()[i] - ge.thickness()[i]));
+                e2 = std::max(e2, std::fabs(g2.thickness()[i] - ge.thickness()[i]));
+            }
+            check("implicit transient: step doubling keeps each step's estimate within dt_tolerance_m and is closer to the explicit run",
+                  r2.ok && r2.rejected_by_error > 0 && r2.max_error_estimate_m <= 1e-3 && e2 < e1,
+                  "max |dh| " + num(e1) + " m (4 fixed steps) vs " + num(e2) + " m (" + std::to_string(r2.steps) + " steps, "
+                  + std::to_string(r2.rejected_by_error) + " rejected)");
+        }
+
+        // (6) Threads.
+        {
+            const int nb = 130;
+            lsdtt_raster_meta mb = make_meta(nb, nb, 10.0);
+            const std::size_t nn = static_cast<std::size_t>(nb) * nb;
+            std::vector<double> zz(nn), zzb(nn), ff(nn), hf(nn, 0.0), hh0(nn);
+            std::vector<std::uint8_t> vv(nn, 1), fx(nn, 0);
+            for (int r = 0; r < nb; ++r)
+                for (int c = 0; c < nb; ++c)
+                {
+                    const std::size_t i = static_cast<std::size_t>(r) * nb + c;
+                    zz[i] = 0.2 * (nb - r) * 10.0 + 0.3 * std::fabs(c - nb / 2.0) * 10.0;
+                    zzb[i] = zz[i] - 2.0;
+                    ff[i] = 1e-7;
+                    hh0[i] = 0.5;
+                    if (c == nb / 2 || r == nb - 1) { fx[i] = 1; hf[i] = 2.0; }
+                }
+            std::vector<std::vector<double>> out;
+            for (int t : {1, 2, 8})
+            {
+                lsdtt_groundwater_dupuit g(mb, zz, zzb, vv, fx, hf, p, t);
+                g.set_thickness(hh0);
+                lsdtt_groundwater_dupuit::implicit_options o;
+                o.max_dt_s = 21600.0;
+                if (g.run_implicit(86400.0, ff, o).ok) out.push_back(g.thickness());
+            }
+            check("implicit transient: identical at 1, 2 and 8 threads (130 x 130)",
+                  out.size() == 3 && out[0] == out[1] && out[0] == out[2]);
+        }
+    }
+
     std::cout << g_checks << " checks, " << g_failures << " failed\n";
     std::cout << "RESULT: " << (g_failures == 0 ? "PASS" : "FAIL") << "\n";
     return g_failures == 0 ? 0 : 1;

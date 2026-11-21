@@ -915,17 +915,56 @@ int main(int argc, char* argv[])
         "<write_fname>_groundwater_time_series.csv. The full outputs are written for "
         "the last time.",
         "Groundwater", "param", "water_table_method=dupuit_transient"};
+    string_default_map["groundwater_steady_method"] = "implicit";
+    help_map["groundwater_steady_method"] = {"string", "implicit",
+        "How the steady water table is found (dupuit_steady, and the antecedent state of dupuit_transient).",
+        "implicit: solved directly by Newton's method. Pseudo-transient continuation "
+        "with a semismooth (active-set) Newton step for the saturated (h = d) and dry "
+        "(h = 0) cells; sparse direct or BiCGSTAB solves. Few iterations, independent "
+        "of the stability limit. explicit: marched in time with the explicit scheme "
+        "until it stops changing; substeps are limited by the Courant and von Neumann "
+        "conditions, so fine grids and conductive regolith need many. Both solve the "
+        "same discrete equations and agree to the tolerance.",
+        "Groundwater", "param", "water_table_method"};
     float_default_map["groundwater_steady_tolerance"] = 1.0e-6f;
     help_map["groundwater_steady_tolerance"] = {"float", "1e-06",
-        "Steady state reached when max |n dh/dt| <= this x max recharge.",
-        "Relative to the recharge rate.",
+        "Steady state reached when the residual is at most this x max recharge.",
+        "explicit: max |n dh/dt|. implicit: max |net inflow| on unsaturated cells "
+        "(and its sign on saturated or dry ones). Both relative to the recharge rate.",
         "Groundwater", "param", "water_table_method"};
     int_default_map["groundwater_max_substeps"] = 10000000;
     help_map["groundwater_max_substeps"] = {"int", "10000000",
-        "Most substeps in the march to steady state before giving up.",
+        "explicit steady method: most substeps in the march to steady state before giving up.",
         "Substeps are limited by Courant and von Neumann conditions; fine grids and "
         "conductive regolith need many.",
-        "Groundwater", "param", "water_table_method"};
+        "Groundwater", "param", "groundwater_steady_method=explicit"};
+    string_default_map["groundwater_transient_method"] = "explicit";
+    help_map["groundwater_transient_method"] = {"string", "explicit",
+        "How dupuit_transient steps the recharge series: explicit or implicit.",
+        "explicit: substeps at the Courant and von Neumann limits, the semi-analytic "
+        "thickness update with regularised seepage. implicit: backward Euler, each step "
+        "solved by the same Newton method as the implicit steady state, with steps of "
+        "at most groundwater_implicit_max_dt_s landing on every recharge breakpoint and "
+        "output time. Backward Euler is first order in the step and damps fast "
+        "transients, so the maximum step sets how well a storm is resolved. The "
+        "explicit substep is limited by stability, not accuracy: on coarse grids it can "
+        "be hours long.",
+        "Groundwater", "param", "water_table_method=dupuit_transient"};
+    float_default_map["groundwater_implicit_max_dt_s"] = 3600.0f;
+    help_map["groundwater_implicit_max_dt_s"] = {"float", "3600",
+        "implicit transient method: longest backward-Euler step (s).", "",
+        "Groundwater", "param", "groundwater_transient_method=implicit"};
+    float_default_map["groundwater_implicit_dt_tolerance_m"] = 0.0f;
+    help_map["groundwater_implicit_dt_tolerance_m"] = {"float", "0",
+        "implicit transient method: step-doubling error tolerance on the water table (m); 0 = off.",
+        "Each step is also taken as two half steps; where they differ by more than "
+        "this the step is halved, otherwise the half-step result is kept. The largest "
+        "accepted difference is reported.",
+        "Groundwater", "param", "groundwater_transient_method=implicit"};
+    int_default_map["groundwater_max_newton_iterations"] = 200;
+    help_map["groundwater_max_newton_iterations"] = {"int", "200",
+        "implicit steady method: most Newton (pseudo-time) steps before giving up.", "",
+        "Groundwater", "param", "groundwater_steady_method=implicit"};
     bool_default_map["write_groundwater_rasters"] = true;
     help_map["write_groundwater_rasters"] = {"bool", "true",
         "Write the groundwater rasters.",
@@ -1123,6 +1162,16 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("dupuit_steady needs groundwater_recharge_m_per_s > 0");
             if (!(ff.at("groundwater_steady_tolerance") > 0.0f))
                 throw std::runtime_error("groundwater_steady_tolerance must be > 0");
+            if (sf.at("groundwater_steady_method") != "implicit" && sf.at("groundwater_steady_method") != "explicit")
+                throw std::runtime_error("groundwater_steady_method must be implicit or explicit");
+            if (sf.at("groundwater_transient_method") != "implicit" && sf.at("groundwater_transient_method") != "explicit")
+                throw std::runtime_error("groundwater_transient_method must be implicit or explicit");
+            if (!(ff.at("groundwater_implicit_max_dt_s") > 0.0f))
+                throw std::runtime_error("groundwater_implicit_max_dt_s must be > 0");
+            if (!(ff.at("groundwater_implicit_dt_tolerance_m") >= 0.0f))
+                throw std::runtime_error("groundwater_implicit_dt_tolerance_m must be >= 0");
+            if (ii.at("groundwater_max_newton_iterations") < 1)
+                throw std::runtime_error("groundwater_max_newton_iterations must be at least 1");
         }
         if (water_table_method == "dupuit_transient")
         {
@@ -1425,17 +1474,45 @@ int main(int argc, char* argv[])
                 }
                 lsdtt::lsdtt_groundwater_dupuit aquifer(meta, surface, basez, valid, channel, {}, gw, ii.at("n_threads"));
                 const std::vector<double> f_antecedent(n, ff.at("groundwater_recharge_m_per_s"));
+                const bool steady_implicit = sf.at("groundwater_steady_method") == "implicit";
                 if (ff.at("groundwater_recharge_m_per_s") > 0.0f)
                 {
-                    const auto rep = aquifer.run_to_steady(f_antecedent, ff.at("groundwater_steady_tolerance"),
-                                                           ii.at("groundwater_max_substeps"));
-                    std::cout << "Groundwater steady state: " << (rep.converged ? "converged" : "NOT converged")
-                              << " after " << rep.substeps << " substeps (" << number_string(rep.time)
-                              << " s of pseudo-time), residual " << number_string(rep.residual) << "\n";
-                    lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_substeps", std::to_string(rep.substeps));
-                    if (!rep.converged)
-                        throw std::runtime_error("the groundwater steady state did not converge within groundwater_max_substeps "
-                                                 "(raise it, or groundwater_steady_tolerance)");
+                    if (steady_implicit)
+                    {
+                        lsdtt::lsdtt_groundwater_dupuit::implicit_options io;
+                        io.relative_tolerance = ff.at("groundwater_steady_tolerance");
+                        io.max_steps = ii.at("groundwater_max_newton_iterations");
+                        const auto rep = aquifer.run_to_steady_implicit(f_antecedent, io);
+                        std::cout << "Groundwater steady state: " << (rep.converged ? "converged" : "NOT converged")
+                                  << " (implicit) after " << rep.substeps << " Newton steps ("
+                                  << (rep.used_direct_solver ? "direct" : "BiCGSTAB, " + std::to_string(rep.linear_iterations)
+                                                                         + " linear iterations")
+                                  << "), residual " << number_string(rep.residual) << "; " << rep.n_saturated
+                                  << " saturated cells\n";
+                        lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_method", "implicit");
+                        lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_newton_steps", std::to_string(rep.substeps));
+                        if (!rep.converged)
+                            throw std::runtime_error("the implicit groundwater steady state did not converge: " + rep.message
+                                                     + " (raise groundwater_max_newton_iterations or groundwater_steady_tolerance, "
+                                                       "or try groundwater_steady_method: explicit)");
+                        const auto& sr = aquifer.steady_rates();
+                        std::cout << "Groundwater steady rates (m3/s): recharge " << number_string(sr.recharge)
+                                  << ", to channels " << number_string(sr.outflow_fixed_head) << ", seepage "
+                                  << number_string(sr.seepage) << ", imbalance " << number_string(sr.imbalance) << "\n";
+                    }
+                    else
+                    {
+                        const auto rep = aquifer.run_to_steady(f_antecedent, ff.at("groundwater_steady_tolerance"),
+                                                               ii.at("groundwater_max_substeps"));
+                        std::cout << "Groundwater steady state: " << (rep.converged ? "converged" : "NOT converged")
+                                  << " (explicit) after " << rep.substeps << " substeps (" << number_string(rep.time)
+                                  << " s of pseudo-time), residual " << number_string(rep.residual) << "\n";
+                        lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_method", "explicit");
+                        lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_substeps", std::to_string(rep.substeps));
+                        if (!rep.converged)
+                            throw std::runtime_error("the groundwater steady state did not converge within groundwater_max_substeps "
+                                                     "(raise it, or groundwater_steady_tolerance)");
+                    }
                 }
 
                 auto wt_raster = [&](const std::vector<double>& v) {
@@ -1453,6 +1530,11 @@ int main(int argc, char* argv[])
                     std::ofstream ts(ts_path);
                     if (!ts) throw std::runtime_error("Cannot write " + ts_path);
                     ts << "time_s,storage_m3,saturated_cells,rupture_unstable_cells\n";
+                    const bool transient_implicit = sf.at("groundwater_transient_method") == "implicit";
+                    lsdtt::lsdtt_groundwater_dupuit::implicit_options to;
+                    to.max_dt_s = ff.at("groundwater_implicit_max_dt_s");
+                    to.dt_tolerance_m = ff.at("groundwater_implicit_dt_tolerance_m");
+                    lsdtt::lsdtt_groundwater_dupuit::implicit_run_report tr_total;
                     double t_now = 0.0;
                     for (double t_out : output_times)
                     {
@@ -1463,7 +1545,22 @@ int main(int argc, char* argv[])
                             while (k + 1 < recharge_series.size() && recharge_series[k + 1].first <= t_now) ++k;
                             const double seg_end = (k + 1 < recharge_series.size())
                                                      ? std::min(t_out, recharge_series[k + 1].first) : t_out;
-                            aquifer.run(seg_end - t_now, std::vector<double>(n, recharge_series[k].second));
+                            const std::vector<double> f_seg(n, recharge_series[k].second);
+                            if (transient_implicit)
+                            {
+                                const auto r = aquifer.run_implicit(seg_end - t_now, f_seg, to);
+                                tr_total.steps += r.steps;
+                                tr_total.newton_iterations += r.newton_iterations;
+                                tr_total.splits += r.splits;
+                                tr_total.rejected_by_error += r.rejected_by_error;
+                                tr_total.max_error_estimate_m = std::max(tr_total.max_error_estimate_m, r.max_error_estimate_m);
+                                if (!r.ok)
+                                    throw std::runtime_error("the implicit groundwater transient failed at t = " + number_string(t_now)
+                                                             + " s: " + r.message + " (lower groundwater_implicit_max_dt_s, "
+                                                               "or try groundwater_transient_method: explicit)");
+                            }
+                            else
+                                aquifer.run(seg_end - t_now, f_seg);
                             t_now = seg_end;
                         }
                         const std::vector<double> dw = aquifer.water_table_depth();
@@ -1493,9 +1590,25 @@ int main(int argc, char* argv[])
                     }
                     ts.close();
                     std::cout << "  wrote " << ts_path << "\n";
+                    lsdtt::lsdtt_run_record::add_provenance("groundwater_transient_method",
+                                                            transient_implicit ? "implicit" : "explicit");
+                    if (transient_implicit)
+                    {
+                        std::cout << "Groundwater transient (implicit): " << tr_total.steps << " backward-Euler steps, "
+                                  << tr_total.newton_iterations << " Newton iterations, " << tr_total.splits
+                                  << " split after a failed solve";
+                        if (to.dt_tolerance_m > 0.0)
+                            std::cout << ", " << tr_total.rejected_by_error << " halved by the error control (largest accepted estimate "
+                                      << number_string(tr_total.max_error_estimate_m) << " m)";
+                        std::cout << "\n";
+                        lsdtt::lsdtt_run_record::add_provenance("groundwater_transient_steps", std::to_string(tr_total.steps));
+                    }
                 }
                 water_table_depth = aquifer.water_table_depth();
                 const lsdtt::groundwater_budget& bud = aquifer.budget();
+                // The cumulative budget covers the explicit march and the transient
+                // run; an implicit steady solve reports its rates above instead.
+                if (!(steady_implicit && water_table_method == "dupuit_steady"))
                 std::cout << "Groundwater budget (m3): recharge " << number_string(bud.recharge_in) << ", storage change "
                           << number_string(bud.storage_change) << ", to channels " << number_string(bud.outflow_fixed_head)
                           << ", seepage " << number_string(bud.seepage_out) << "\n";

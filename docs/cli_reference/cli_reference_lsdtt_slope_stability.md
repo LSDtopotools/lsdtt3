@@ -102,9 +102,37 @@ to the surface where the regolith saturates.
 - Channel cells are seepage outlets, with the water table at the surface. The
   raster edge and nodata cells are no-flux.
 - `dupuit_steady` gives the steady state under a constant recharge.
+  `groundwater_steady_method` chooses how it is found:
+  - `implicit` (the default) solves the steady equations directly by Newton's
+    method. Each cell is either saturated (h = d, seeping), unsaturated
+    (inflow balances outflow), or dry. It uses pseudo-transient continuation
+    with an active-set Newton step, so it takes tens of iterations whatever the
+    grid's stability limit.
+  - `explicit` marches the time-dependent model until it stops changing. Its
+    time steps are limited by the Courant and von Neumann conditions, so fine
+    grids and conductive regolith need many.
+  - Both solve the same discrete equations and agree to
+    `groundwater_steady_tolerance`.
+  - The implicit solve reports its budget as steady rates (m³/s: recharge, flow
+    to channels, seepage). The explicit march and the transient run report a
+    cumulative budget (m³).
 - `dupuit_transient` starts from that steady state, runs a recharge series and
   evaluates the rupture planes at each output time. It writes a time series of
   storage, saturated cells and unstable cells.
+  `groundwater_transient_method` chooses the stepper:
+  - `explicit` (the default) takes substeps at the Courant and von Neumann
+    limits. Its substep is set by stability, not accuracy, so on coarse grids
+    it can be hours long.
+  - `implicit` uses backward Euler. Each step is solved by the same Newton
+    method as the implicit steady state. Steps are at most
+    `groundwater_implicit_max_dt_s` and land on every recharge breakpoint and
+    output time.
+  - Backward Euler is first order in the step and damps fast transients, so the
+    maximum step sets how well a storm is resolved.
+    `groundwater_implicit_dt_tolerance_m` adds step-doubling error control.
+  - The explicit stepper regularises seepage within about 1 % of saturation,
+    while the implicit one holds saturated cells exactly at the surface. Their
+    counts of saturated cells therefore differ slightly near the seepage faces.
 - With `groundwater_transmissivity_profile: exponential`, conductivity decays
   with depth as TOPMODEL assumes. The steady state then follows TOPMODEL's
   index relation, with sin β cos β in place of tan β.
@@ -561,8 +589,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `groundwater_recharge_m_per_s` | `float` | `1e-08` | `param` | `water_table_method` | Recharge f (m/s) for the steady state (dupuit_steady), and the antecedent state of dupuit_transient. | 1e-8 m/s is about 0.9 mm/day. For a design storm use the effective recharge of the critical wet period. |
 | `groundwater_recharge_series_fname` | `string` | - | `param` | `water_table_method=dupuit_transient` | CSV recharge series for dupuit_transient: columns time_s, recharge_m_per_s. | Piecewise constant: each rate applies from its time to the next; the first time must be 0, times increasing; the last rate continues to the last output time. A relative path is read from read_path. |
 | `groundwater_output_times_s` | `string` | - | `param` | `water_table_method=dupuit_transient` | Comma-separated times (s) at which dupuit_transient writes the water table and rupture safety factor. | &lt;write_fname&gt;_t&lt;time&gt;s_water_table_depth.tif and, with run_rupture_planes, _t&lt;time&gt;s_rupture_safety_factor.tif, plus one row each in &lt;write_fname&gt;_groundwater_time_series.csv. The full outputs are written for the last time. |
-| `groundwater_steady_tolerance` | `float` | `1e-06` | `param` | `water_table_method` | Steady state reached when max \|n dh/dt\| &lt;= this x max recharge. | Relative to the recharge rate. |
-| `groundwater_max_substeps` | `int` | `10000000` | `param` | `water_table_method` | Most substeps in the march to steady state before giving up. | Substeps are limited by Courant and von Neumann conditions; fine grids and conductive regolith need many. |
+| `groundwater_steady_method` | `string` | `implicit` | `param` | `water_table_method` | How the steady water table is found (dupuit_steady, and the antecedent state of dupuit_transient). | implicit: solved directly by Newton's method. Pseudo-transient continuation with a semismooth (active-set) Newton step for the saturated (h = d) and dry (h = 0) cells; sparse direct or BiCGSTAB solves. Few iterations, independent of the stability limit. explicit: marched in time with the explicit scheme until it stops changing; substeps are limited by the Courant and von Neumann conditions, so fine grids and conductive regolith need many. Both solve the same discrete equations and agree to the tolerance. |
+| `groundwater_steady_tolerance` | `float` | `1e-06` | `param` | `water_table_method` | Steady state reached when the residual is at most this x max recharge. | explicit: max \|n dh/dt\|. implicit: max \|net inflow\| on unsaturated cells (and its sign on saturated or dry ones). Both relative to the recharge rate. |
+| `groundwater_max_substeps` | `int` | `10000000` | `param` | `groundwater_steady_method=explicit` | explicit steady method: most substeps in the march to steady state before giving up. | Substeps are limited by Courant and von Neumann conditions; fine grids and conductive regolith need many. |
+| `groundwater_transient_method` | `string` | `explicit` | `param` | `water_table_method=dupuit_transient` | How dupuit_transient steps the recharge series: explicit or implicit. | explicit: substeps at the Courant and von Neumann limits, the semi-analytic thickness update with regularised seepage. implicit: backward Euler, each step solved by the same Newton method as the implicit steady state, with steps of at most groundwater_implicit_max_dt_s landing on every recharge breakpoint and output time. Backward Euler is first order in the step and damps fast transients, so the maximum step sets how well a storm is resolved. The explicit substep is limited by stability, not accuracy: on coarse grids it can be hours long. |
+| `groundwater_implicit_max_dt_s` | `float` | `3600` | `param` | `groundwater_transient_method=implicit` | implicit transient method: longest backward-Euler step (s). | - |
+| `groundwater_implicit_dt_tolerance_m` | `float` | `0` | `param` | `groundwater_transient_method=implicit` | implicit transient method: step-doubling error tolerance on the water table (m); 0 = off. | Each step is also taken as two half steps; where they differ by more than this the step is halved, otherwise the half-step result is kept. The largest accepted difference is reported. |
+| `groundwater_max_newton_iterations` | `int` | `200` | `param` | `groundwater_steady_method=implicit` | implicit steady method: most Newton (pseudo-time) steps before giving up. | - |
 | `write_groundwater_rasters` | `bool` | `true` | `switch` | `water_table_method` | Write the groundwater rasters. | &lt;write_fname&gt;_water_table_depth.tif (m below the surface), _saturated_thickness.tif (m above the base) and _seepage.tif (return flow, m/s). |
 
 <!-- END GENERATED CLI PARAMETERS -->

@@ -206,6 +206,11 @@ public:
         long direct_solve_max_unknowns = 10000;   // measured: BiCGSTAB + ILUT is faster from ~4e4 unknowns
         double linear_tolerance = 1.0e-10;      // BiCGSTAB relative residual
         int max_line_search = 8;
+        // run_implicit (transient) only:
+        double max_dt_s = 3600.0;               // longest backward-Euler step (s)
+        double dt_tolerance_m = 0.0;            // step-doubling error control (m); 0 = off
+        int max_newton_per_step = 30;
+        int max_splits = 8;                     // halvings of a step that fails to converge
     };
     steady_report run_to_steady_implicit(const std::vector<double>& recharge, const implicit_options& options);
     steady_report run_to_steady_implicit(const std::vector<double>& recharge)
@@ -221,6 +226,42 @@ public:
         double recharge = 0.0, outflow_fixed_head = 0.0, seepage = 0.0, imbalance = 0.0;
     };
     [[nodiscard]] const steady_budget& steady_rates() const { return steady_rates_; }
+
+    // ---- Implicit transient stepping -----------------------------------------
+    // Advance by duration seconds with recharge f by backward Euler: each step
+    // solves n (h - h_old) / dt + F(h) = 0 with 0 <= h <= d (the same semismooth
+    // Newton iteration as run_to_steady_implicit, h_old fixed, active-set scale
+    // c = dt / n, to max |Phi| <= 1e-12 max(h_old, 1 mm) in thickness, or a
+    // round-off stall within 1e-9 of it). Steps are at most max_dt_s; a step
+    // that fails to converge is halved, at most max_splits times. With
+    // dt_tolerance_m > 0, each step is also taken as two half steps; where the
+    // two differ by more than dt_tolerance_m the step is halved, otherwise the
+    // half-step result is kept and the next step may double (up to max_dt_s).
+    // Call once per constant-recharge segment so steps land on its ends.
+    //
+    // Per step the seepage is -Ft on saturated cells at the new state, so
+    //   recharge dt A = storage change + outflow to fixed heads dt + seepage dt
+    // to the Newton tolerance; budget() accumulates these (m^3) as run() does,
+    // seepage() is the mean over this call. Backward Euler is first order in dt
+    // and damps fast transients: max_dt_s sets the resolution.
+    struct implicit_run_report
+    {
+        bool ok = true;
+        std::int64_t steps = 0;
+        std::int64_t newton_iterations = 0;
+        std::int64_t linear_iterations = 0;
+        std::int64_t splits = 0;              // halvings after a failed step
+        std::int64_t rejected_by_error = 0;   // halvings by the step-doubling test
+        double max_error_estimate_m = 0.0;    // largest accepted step-doubling difference
+        double time = 0.0;                    // s advanced
+        std::string message;
+    };
+    implicit_run_report run_implicit(double duration, const std::vector<double>& recharge,
+                                     const implicit_options& options);
+    implicit_run_report run_implicit(double duration, const std::vector<double>& recharge)
+    {
+        return run_implicit(duration, recharge, implicit_options{});
+    }
 
     [[nodiscard]] const std::vector<double>& thickness() const { return h_; }
     [[nodiscard]] std::vector<double> water_table_depth() const;   // z - z_w (m); NaN off the domain
@@ -270,6 +311,7 @@ public:
 private:
     double transmissivity(std::size_t cell, double h) const;
     double transmissivity_derivative(std::size_t cell, double h) const;
+    double active_set_scale_reference() const;   // dx^2 / T_max (s)
     double held(const std::vector<double>& h, std::size_t i) const { return fixed_[i] ? h_[i] : h[i]; }
     // Flux q (positive from a to b) per unit width and its derivatives, for
     // the link a -> b with cos^2 c2, at thickness h.

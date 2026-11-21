@@ -3071,10 +3071,23 @@ add_lsdtt_cli_smoke_test(
     --expect ssg_seepage.tif
     --expect ssg_rupture_safety_factor.tif
     --expect ssg_landslide_catalogue.csv
-    --stdout-contains "Groundwater steady state: converged"
-    --stdout-contains "Groundwater budget (m3): "
+    --stdout-contains "Groundwater steady state: converged (implicit) after "
+    --stdout-contains "Groundwater steady rates (m3/s): "
 )
 lsdtt_set_tests_properties(smoke_slope_stability_groundwater_steady PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_steady_explicit
+    lsdtt-slope-stability
+    slope_stability_groundwater_steady_explicit.param.in
+    sgx_water_table_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sgx_rupture_safety_factor.tif
+    --stdout-contains "Groundwater steady state: converged (explicit) after "
+    --stdout-contains "Groundwater budget (m3): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_steady_explicit PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3093,6 +3106,25 @@ add_lsdtt_cli_smoke_test(
     --expect-file-contains "sst_groundwater_time_series.csv:\n172800,"
 )
 lsdtt_set_tests_properties(smoke_slope_stability_groundwater_transient PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_transient_implicit
+    lsdtt-slope-stability
+    slope_stability_groundwater_transient_implicit.param.in
+    sti_groundwater_time_series.csv
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sti_t3600s_water_table_depth.tif
+    --expect sti_t3600s_rupture_safety_factor.tif
+    --expect sti_t43200s_water_table_depth.tif
+    --expect sti_water_table_depth.tif
+    --expect sti_rupture_safety_factor.tif
+    --expect-file-contains "sti_groundwater_time_series.csv:time_s,storage_m3,saturated_cells,rupture_unstable_cells"
+    --expect-file-contains "sti_groundwater_time_series.csv:\n172800,"
+    --stdout-contains "Groundwater transient (implicit): "
+    --stdout-contains "Groundwater budget (m3): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_transient_implicit PROPERTIES
     FIXTURES_REQUIRED slope_stability_fixture)
 
 add_lsdtt_cli_smoke_test(
@@ -3121,6 +3153,8 @@ foreach(_ss_case_message
         "groundwater_bad_method|water_table_method must be none, dupuit_steady or dupuit_transient"
         "groundwater_no_series|dupuit_transient needs groundwater_recharge_series_fname"
         "groundwater_bad_times|groundwater_output_times_s must be positive and increasing"
+        "groundwater_bad_steady_method|groundwater_steady_method must be implicit or explicit"
+        "groundwater_bad_transient_method|groundwater_transient_method must be implicit or explicit"
         "uncertainty_bad_method|parameter_uncertainty must be none or equal_density"
         "uncertainty_bad_distribution|rupture_cohesion_distribution must be uniform or normal"
         "uncertainty_bad_bounds|rupture_cohesion_pa_min must not exceed rupture_cohesion_pa_max"
