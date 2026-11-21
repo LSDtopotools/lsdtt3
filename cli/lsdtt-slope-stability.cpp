@@ -197,10 +197,38 @@ static double value_of(const lsdtt::rupture_parameters& p, const std::string& ke
     return p.density_kg_m3;
 }
 
+// Bounds and SDs of the uncertain rupture parameters (parameter_uncertainty).
+// A region table may carry them per region.
+struct rupture_uncertainty_spec
+{
+    double cohesion_pa_min = 500.0, cohesion_pa_max = 1500.0, cohesion_pa_sd = 250.0;
+    double friction_coefficient_min = 0.6, friction_coefficient_max = 0.8, friction_coefficient_sd = 0.05;
+};
+
+static const char* const k_rupture_uncertainty_keys[] = {
+    "rupture_cohesion_pa_min",
+    "rupture_cohesion_pa_max",
+    "rupture_cohesion_pa_sd",
+    "rupture_friction_coefficient_min",
+    "rupture_friction_coefficient_max",
+    "rupture_friction_coefficient_sd",
+};
+
+static double* field_of(rupture_uncertainty_spec& u, const std::string& key)
+{
+    if (key == "rupture_cohesion_pa_min") return &u.cohesion_pa_min;
+    if (key == "rupture_cohesion_pa_max") return &u.cohesion_pa_max;
+    if (key == "rupture_cohesion_pa_sd") return &u.cohesion_pa_sd;
+    if (key == "rupture_friction_coefficient_min") return &u.friction_coefficient_min;
+    if (key == "rupture_friction_coefficient_max") return &u.friction_coefficient_max;
+    return &u.friction_coefficient_sd;
+}
+
 struct region_tables
 {
     std::map<std::int32_t, lsdtt::sinmap_parameters>  sinmap;
     std::map<std::int32_t, lsdtt::rupture_parameters> rupture;
+    std::map<std::int32_t, rupture_uncertainty_spec>  uncertainty;
 };
 
 // Region table: region_id (integer, unique), an optional region_name, and any
@@ -208,7 +236,8 @@ struct region_tables
 // (a typo would otherwise silently fall back to the parameter-file value).
 static region_tables read_region_table(const std::string& path,
                                        const lsdtt::sinmap_parameters& sinmap_defaults,
-                                       const lsdtt::rupture_parameters& rupture_defaults)
+                                       const lsdtt::rupture_parameters& rupture_defaults,
+                                       const rupture_uncertainty_spec& uncertainty_defaults)
 {
     const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(path);
     if (!lsdtt::csv_has_column(t, "region_id"))
@@ -216,6 +245,7 @@ static region_tables read_region_table(const std::string& path,
     std::set<std::string> allowed = {"region_id", "region_name"};
     for (const char* k : k_sinmap_keys) allowed.insert(k);
     for (const char* k : k_rupture_keys) allowed.insert(k);
+    for (const char* k : k_rupture_uncertainty_keys) allowed.insert(k);
     for (const std::string& h : t.headers)
         if (!allowed.count(h))
             throw std::runtime_error(path + ": unknown column '" + h +
@@ -247,8 +277,12 @@ static region_tables read_region_table(const std::string& path,
         {
             throw std::runtime_error(path + " region " + std::to_string(id) + ": " + e.what());
         }
+        rupture_uncertainty_spec pu = uncertainty_defaults;
+        for (const char* k : k_rupture_uncertainty_keys)
+            *field_of(pu, k) = lsdtt::csv_row_double_optional(t.rows[r], k, *field_of(pu, k), path, row_1);
         out.sinmap[id] = ps;
         out.rupture[id] = pr;
+        out.uncertainty[id] = pu;
     }
     if (out.sinmap.empty()) throw std::runtime_error(path + ": the region table has no rows");
     return out;
@@ -467,7 +501,7 @@ int main(int argc, char* argv[])
         "closed form over h, and the D with the lowest factor is kept. Outputs the "
         "potential rupture depth and its safety factor per cell. Elevation "
         "differences come from the input DEM (after interior nodata handling); "
-        "paths follow the routing surface. Dry: no pore pressure yet.",
+        "paths follow the routing surface. Pore pressure from water_table_method.",
         "Rupture planes", "switch", ""};
     lsdtt::declare_channel_initiation_parameters(int_default_map, help_map);
     float_default_map["rupture_cohesion_pa"] = 1000.0f;
@@ -496,6 +530,71 @@ int main(int argc, char* argv[])
         "_rupture_slope.tif ((dz - h)/dx) and _rupture_topographic_slope.tif "
         "(dz/dx). Channel cells and cells with no admissible D are nodata.",
         "Rupture planes", "switch", "run_rupture_planes"};
+
+    // --- Rupture uncertainty (probability of failure) ----------------------------
+    string_default_map["parameter_uncertainty"] = "none";
+    help_map["parameter_uncertainty"] = {"string", "none",
+        "Probability of failure of the rupture planes from uncertain cohesion and friction.",
+        "none: deterministic only. equal_density: uncertainty_samples_per_parameter "
+        "values of cohesion and of the friction coefficient at equal intervals of "
+        "each distribution's CDF, with trapezoid weights (the equal-density "
+        "strategy of r.slope.stability, Mergili et al. 2014), all combinations. For "
+        "each cell and each combination the rupture-plane search is repeated "
+        "exactly (the daylight point may differ between combinations). Writes "
+        "<write_fname>_rupture_failure_probability.tif (the weighted fraction of "
+        "combinations with F <= 1), _rupture_safety_factor_mean.tif and "
+        "_rupture_safety_factor_sd.tif (weighted mean and SD of F). Density and "
+        "the water table are fixed (with dupuit_transient, the water table at the "
+        "last output time). The deterministic rasters and the landslide catalogues "
+        "use the central values (rupture_cohesion_pa, rupture_friction_coefficient). "
+        "Cost: about the number of combinations times the deterministic search.",
+        "Rupture uncertainty", "param", "run_rupture_planes"};
+    string_default_map["rupture_cohesion_distribution"] = "uniform";
+    help_map["rupture_cohesion_distribution"] = {"string", "uniform",
+        "Distribution of cohesion for parameter_uncertainty.",
+        "uniform: between rupture_cohesion_pa_min and _max. normal: mean "
+        "rupture_cohesion_pa, SD rupture_cohesion_pa_sd, truncated to mean +- 3 SD "
+        "and at 0. Per region from the region table if it has these columns.",
+        "Rupture uncertainty", "param", "parameter_uncertainty"};
+    float_default_map["rupture_cohesion_pa_min"] = 500.0f;
+    help_map["rupture_cohesion_pa_min"] = {"float", "500",
+        "Lower bound of uniform cohesion (Pa).", "",
+        "Rupture uncertainty", "param", "rupture_cohesion_distribution=uniform"};
+    float_default_map["rupture_cohesion_pa_max"] = 1500.0f;
+    help_map["rupture_cohesion_pa_max"] = {"float", "1500",
+        "Upper bound of uniform cohesion (Pa).", "",
+        "Rupture uncertainty", "param", "rupture_cohesion_distribution=uniform"};
+    float_default_map["rupture_cohesion_pa_sd"] = 250.0f;
+    help_map["rupture_cohesion_pa_sd"] = {"float", "250",
+        "SD of normal cohesion (Pa); the mean is rupture_cohesion_pa.", "0 makes cohesion certain.",
+        "Rupture uncertainty", "param", "rupture_cohesion_distribution=normal"};
+    string_default_map["rupture_friction_coefficient_distribution"] = "uniform";
+    help_map["rupture_friction_coefficient_distribution"] = {"string", "uniform",
+        "Distribution of the friction coefficient for parameter_uncertainty.",
+        "uniform: between rupture_friction_coefficient_min and _max. normal: mean "
+        "rupture_friction_coefficient, SD rupture_friction_coefficient_sd, truncated "
+        "to mean +- 3 SD and at 0. Per region from the region table if it has these "
+        "columns.",
+        "Rupture uncertainty", "param", "parameter_uncertainty"};
+    float_default_map["rupture_friction_coefficient_min"] = 0.6f;
+    help_map["rupture_friction_coefficient_min"] = {"float", "0.6",
+        "Lower bound of the uniform friction coefficient (dimensionless).", "",
+        "Rupture uncertainty", "param", "rupture_friction_coefficient_distribution=uniform"};
+    float_default_map["rupture_friction_coefficient_max"] = 0.8f;
+    help_map["rupture_friction_coefficient_max"] = {"float", "0.8",
+        "Upper bound of the uniform friction coefficient (dimensionless).", "",
+        "Rupture uncertainty", "param", "rupture_friction_coefficient_distribution=uniform"};
+    float_default_map["rupture_friction_coefficient_sd"] = 0.05f;
+    help_map["rupture_friction_coefficient_sd"] = {"float", "0.05",
+        "SD of the normal friction coefficient; the mean is rupture_friction_coefficient.",
+        "0 makes friction certain.",
+        "Rupture uncertainty", "param", "rupture_friction_coefficient_distribution=normal"};
+    int_default_map["uncertainty_samples_per_parameter"] = 5;
+    help_map["uncertainty_samples_per_parameter"] = {"int", "5",
+        "Number of equal-density values per uncertain parameter.",
+        "5 gives 25 combinations. The error in the probability of failure is at most "
+        "about 1/(n - 1) (the trapezoid rule on a step); 1 uses the median only.",
+        "Rupture uncertainty", "param", "parameter_uncertainty"};
 
     // --- Landslide catalogues -----------------------------------------------------
     int_default_map["rupture_min_daylight_neighbours"] = 2;
@@ -679,6 +778,20 @@ int main(int argc, char* argv[])
         rupture.friction_coefficient = ff.at("rupture_friction_coefficient");
         rupture.density_kg_m3 = ff.at("rupture_density_kg_m3");
         lsdtt::validate_rupture_parameters(rupture);
+        const std::string parameter_uncertainty = sf.at("parameter_uncertainty");
+        if (parameter_uncertainty != "none" && parameter_uncertainty != "equal_density")
+            throw std::runtime_error("parameter_uncertainty must be none or equal_density");
+        const bool use_uncertainty = parameter_uncertainty == "equal_density";
+        const std::string c_dist = sf.at("rupture_cohesion_distribution");
+        const std::string mu_dist = sf.at("rupture_friction_coefficient_distribution");
+        if (c_dist != "uniform" && c_dist != "normal")
+            throw std::runtime_error("rupture_cohesion_distribution must be uniform or normal");
+        if (mu_dist != "uniform" && mu_dist != "normal")
+            throw std::runtime_error("rupture_friction_coefficient_distribution must be uniform or normal");
+        if (use_uncertainty && ii.at("uncertainty_samples_per_parameter") < 1)
+            throw std::runtime_error("uncertainty_samples_per_parameter must be at least 1");
+        rupture_uncertainty_spec uncertainty;
+        for (const char* k : k_rupture_uncertainty_keys) *field_of(uncertainty, k) = ff.at(k);
         const bool run_sinmap = bf.at("run_sinmap");
         const bool run_rupture = bf.at("run_rupture_planes");
         if (run_rupture && ii.at("threshold_contributing_pixels") < 1)
@@ -749,17 +862,59 @@ int main(int argc, char* argv[])
 
         std::map<std::int32_t, lsdtt::sinmap_parameters> by_region;
         std::map<std::int32_t, lsdtt::rupture_parameters> rupture_by_region;
+        std::map<std::int32_t, rupture_uncertainty_spec> uncertainty_by_region;
         if (!region_table_fname.empty())
         {
             region_tables tables = read_region_table(
-                resolve_input(parser.get_read_path(), region_table_fname), sinmap, rupture);
+                resolve_input(parser.get_read_path(), region_table_fname), sinmap, rupture, uncertainty);
             by_region = std::move(tables.sinmap);
             rupture_by_region = std::move(tables.rupture);
+            uncertainty_by_region = std::move(tables.uncertainty);
         }
         else
         {
             by_region[0] = sinmap;
             rupture_by_region[0] = rupture;
+            uncertainty_by_region[0] = uncertainty;
+        }
+
+        // Equal-density samples per region, built (and checked) before any raster work.
+        std::map<std::int32_t, std::vector<lsdtt::rupture_parameter_sample>> samples_by_region;
+        if (use_uncertainty && run_rupture)
+        {
+            const int n_s = ii.at("uncertainty_samples_per_parameter");
+            for (const auto& kv : rupture_by_region)
+            {
+                const rupture_uncertainty_spec& u = uncertainty_by_region.at(kv.first);
+                const lsdtt::rupture_parameters& c0 = kv.second;
+                auto dist = [](const std::string& family, double mean, double lo, double hi, double sd,
+                               const std::string& name) {
+                    if (family == "uniform")
+                    {
+                        if (!(lo <= hi)) throw std::runtime_error(name + "_min must not exceed " + name + "_max");
+                        return lsdtt::uniform_parameter(lo, hi);
+                    }
+                    if (!(sd >= 0.0)) throw std::runtime_error(name + "_sd must be >= 0");
+                    return lsdtt::truncated_normal_parameter(mean, sd, std::max(0.0, mean - 3.0 * sd), mean + 3.0 * sd);
+                };
+                try
+                {
+                    samples_by_region[kv.first] = lsdtt::rupture_parameter_samples(
+                        c0,
+                        dist(c_dist, c0.cohesion_pa, u.cohesion_pa_min, u.cohesion_pa_max, u.cohesion_pa_sd,
+                             "rupture_cohesion_pa"),
+                        n_s,
+                        dist(mu_dist, c0.friction_coefficient, u.friction_coefficient_min, u.friction_coefficient_max,
+                             u.friction_coefficient_sd, "rupture_friction_coefficient"),
+                        n_s);
+                }
+                catch (const std::exception& e)
+                {
+                    throw std::runtime_error(std::string("parameter_uncertainty")
+                                             + (region_table_fname.empty() ? "" : " (region " + std::to_string(kv.first) + ")")
+                                             + ": " + e.what());
+                }
+            }
         }
 
         if (!run_sinmap && !run_rupture)
@@ -1080,6 +1235,23 @@ int main(int argc, char* argv[])
                 write_raster(rup.length, base + "_rupture_length.tif");
                 write_raster(rup.rupture_slope, base + "_rupture_slope.tif");
                 write_raster(rup.topographic_slope, base + "_rupture_topographic_slope.tif");
+            }
+
+            if (use_uncertainty)
+            {
+                const lsdtt::rupture_probability_rasters pf = lsdtt::compute_rupture_failure_probability(
+                    *d8, input_dem, channel, region, samples_by_region, ii.at("n_threads"), water_table_depth);
+                std::cout << "Rupture probability of failure: " << pf.max_samples
+                          << " (c, mu) combinations per cell (equal density); " << pf.n_possible_failure
+                          << " cells with Pf > 0, " << pf.n_certain_failure << " with Pf = 1, of "
+                          << pf.n_sources << " (catalogues use the central values)\n";
+                lsdtt::lsdtt_run_record::add_provenance("rupture_uncertainty_combinations", std::to_string(pf.max_samples));
+                lsdtt::lsdtt_run_record::add_provenance("rupture_cells_pf_positive", std::to_string(pf.n_possible_failure));
+                lsdtt::lsdtt_run_record::add_provenance("rupture_cells_pf_one", std::to_string(pf.n_certain_failure));
+                lsdtt::lsdtt_run_record::add_provenance("rupture_catalogue_parameters", "central values");
+                write_raster(pf.failure_probability, base + "_rupture_failure_probability.tif");
+                write_raster(pf.mean_safety_factor, base + "_rupture_safety_factor_mean.tif");
+                write_raster(pf.sd_safety_factor, base + "_rupture_safety_factor_sd.tif");
             }
 
             const bool want_catalogue = bf.at("write_landslide_catalogue");

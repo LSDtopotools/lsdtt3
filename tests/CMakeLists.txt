@@ -2923,6 +2923,38 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# Probability of failure of the rupture planes (parameter_uncertainty). The
+# numerics are in lsdtt-test-slope-stability-rupture-probability; these carry
+# the plumbing, output names and the per-region normal path.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_uncertainty
+    lsdtt-slope-stability
+    slope_stability_uncertainty.param.in
+    ssu_rupture_failure_probability.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssu_rupture_safety_factor_mean.tif
+    --expect ssu_rupture_safety_factor_sd.tif
+    --expect ssu_rupture_safety_factor.tif
+    --expect ssu_landslide_catalogue.csv
+    --stdout-contains "Rupture probability of failure: 25 (c, mu) combinations per cell"
+    --stdout-contains "(catalogues use the central values)"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_uncertainty PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_uncertainty_regions
+    lsdtt-slope-stability
+    slope_stability_uncertainty_regions.param.in
+    ssur_rupture_failure_probability.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect ssur_rupture_safety_factor_sd.tif
+    --expect-absent ssur_landslide_catalogue.csv
+    --stdout-contains "Rupture probability of failure: 9 (c, mu) combinations per cell"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_uncertainty_regions PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
 # The water table from the Dupuit - Boussinesq aquifer, steady and
 # transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
 # plumbing, output names and the time series.
@@ -2985,7 +3017,11 @@ foreach(_ss_case_message
         "rupture_bad_neighbours|rupture_min_daylight_neighbours must be 0 to 8"
         "groundwater_bad_method|water_table_method must be none, dupuit_steady or dupuit_transient"
         "groundwater_no_series|dupuit_transient needs groundwater_recharge_series_fname"
-        "groundwater_bad_times|groundwater_output_times_s must be positive and increasing")
+        "groundwater_bad_times|groundwater_output_times_s must be positive and increasing"
+        "uncertainty_bad_method|parameter_uncertainty must be none or equal_density"
+        "uncertainty_bad_distribution|rupture_cohesion_distribution must be uniform or normal"
+        "uncertainty_bad_bounds|rupture_cohesion_pa_min must not exceed rupture_cohesion_pa_max"
+        "uncertainty_bad_samples|uncertainty_samples_per_parameter must be at least 1")
     string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
     list(GET _ss_pair 0 _ss_case)
     list(GET _ss_pair 1 _ss_message)
@@ -6500,6 +6536,17 @@ add_executable(lsdtt-test-slope-stability-rupture cpp/test_slope_stability_ruptu
 target_link_libraries(lsdtt-test-slope-stability-rupture PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_rupture COMMAND lsdtt-test-slope-stability-rupture)
 lsdtt_set_tests_properties(unit_slope_stability_rupture PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: probability of failure of planar rupture surfaces
+# (equal-density samples of cohesion and friction): the deterministic limit;
+# on a plane, Pf against the exact probability from the continuous uniform and
+# truncated-normal distributions, within the trapezoid-rule bound; water
+# table, regions, threads, bad inputs.
+add_executable(lsdtt-test-slope-stability-rupture-probability cpp/test_slope_stability_rupture_probability.cpp)
+target_link_libraries(lsdtt-test-slope-stability-rupture-probability PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_rupture_probability COMMAND lsdtt-test-slope-stability-rupture-probability)
+lsdtt_set_tests_properties(unit_slope_stability_rupture_probability PROPERTIES
     LABELS "slope_stability")
 
 # Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):

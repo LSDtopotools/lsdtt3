@@ -123,6 +123,36 @@ driving stresses. Length and width are the axes of the ellipse with the same
 second moments as the landslide's cells. These catalogues are statistics of
 potential landslides; they are not maps of individual landslides.
 
+## Probability of failure
+
+With `parameter_uncertainty: equal_density`, cohesion and the friction
+coefficient are uncertain, each uniform (between `_min` and `_max`) or normal.
+A normal parameter has its mean at the central value and is truncated at
+mean ± 3 SD and at 0.
+
+- Each parameter takes `uncertainty_samples_per_parameter` values at equal
+  intervals of its distribution's CDF, with trapezoid weights. This is the
+  equal-density strategy of r.slope.stability (Mergili et al. 2014), with exact
+  quantiles. Every combination of the two is used, and the weights multiply.
+- For each cell and each combination, the rupture-plane search is repeated in
+  full, so the daylight point may differ between combinations.
+- The probability of failure is the weighted fraction of combinations with a
+  factor of safety of at most 1. The weighted mean and SD of the factor of
+  safety are written as well.
+- Density and the water table are fixed. With `dupuit_transient`, the water
+  table is the one at the last output time.
+- The deterministic rasters and the landslide catalogues use the central
+  values, `rupture_cohesion_pa` and `rupture_friction_coefficient`.
+- A region table may set the bounds and SDs per region: the
+  `rupture_cohesion_pa_min`, `_max` and `_sd` and the
+  `rupture_friction_coefficient_min`, `_max` and `_sd` columns.
+- The probability is a trapezoid rule on a step function, so its error is at
+  most about 1/(n − 1) for n values per parameter. The default of 5 values
+  gives 25 combinations and an error of up to about 0.25. Use more values where
+  the probability itself matters.
+- The cost is roughly the number of combinations times the deterministic
+  search. The downslope path is walked once per cell.
+
 ## Relation to the topographic wetness index
 
 With the same slope and drainage area, SINMAP's wetness and the topographic
@@ -160,7 +190,9 @@ this CLI uses the D-infinity facet slope on the carved-then-filled surface.
 6. Build a D8 flow graph on the routing surface. Mark channel cells with
    `threshold_contributing_pixels`, and find each hillslope cell's optimal
    planar rupture surface.
-7. Group unstable cells into landslides by shared daylight point, and write
+7. With `parameter_uncertainty`, repeat the search for each (c, μ)
+   combination and write the probability of failure.
+8. Group unstable cells into landslides by shared daylight point, and write
    the two catalogues.
 
 ## Usage
@@ -188,6 +220,8 @@ lsdtt-slope-stability -h
 | `<write_fname>_rupture_unstable.tif` | 1 where the factor of safety is at most 1, else 0 |
 | `<write_fname>_rupture_length.tif` | horizontal distance to the daylight point (m) |
 | `<write_fname>_rupture_slope.tif`, `_rupture_topographic_slope.tif` | gradient of the rupture plane and of the line from the cell to the daylight point (m/m) |
+| `<write_fname>_rupture_failure_probability.tif` | probability that the factor of safety is at most 1 over the (c, μ) combinations (`parameter_uncertainty`) |
+| `<write_fname>_rupture_safety_factor_mean.tif`, `_rupture_safety_factor_sd.tif` | weighted mean and SD of the factor of safety over the combinations |
 | `<write_fname>_landslide_catalogue.csv` | one row per daylight point: area, depth, volume, safety factors, centroid, length, width, perimeter |
 | `<write_fname>_landslide_catalogue_amalgamated.csv` | the same for touching landslides merged |
 | `<write_fname>_landslide_label.tif`, `_landslide_label_amalgamated.tif` | catalogue id of each landslide cell |
@@ -283,7 +317,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
-| `run_rupture_planes` | `bool` | `true` | `switch` | - | Compute planar rupture surfaces after scaLr (Steer et al. 2026). | For each hillslope cell R, every cell D down its D8 path (stopping before the first channel cell) is a candidate daylight point; a plane from depth h below R to D gives an infinite-slope safety factor at R, minimised in closed form over h, and the D with the lowest factor is kept. Outputs the potential rupture depth and its safety factor per cell. Elevation differences come from the input DEM (after interior nodata handling); paths follow the routing surface. Dry: no pore pressure yet. |
+| `run_rupture_planes` | `bool` | `true` | `switch` | - | Compute planar rupture surfaces after scaLr (Steer et al. 2026). | For each hillslope cell R, every cell D down its D8 path (stopping before the first channel cell) is a candidate daylight point; a plane from depth h below R to D gives an infinite-slope safety factor at R, minimised in closed form over h, and the D with the lowest factor is kept. Outputs the potential rupture depth and its safety factor per cell. Elevation differences come from the input DEM (after interior nodata handling); paths follow the routing surface. Pore pressure from water_table_method. |
 | `rupture_cohesion_pa` | `float` | `1000` | `param` | `run_rupture_planes` | Cohesion c of the slope material (Pa). | scaLr's reference value is 1 kPa, deliberately low as an apparent strength during a triggering event (Steer et al. 2026, section 3). Rupture depth rises with cohesion. |
 | `rupture_friction_coefficient` | `float` | `0.7002075` | `param` | `run_rupture_planes` | Friction coefficient mu = tan(phi) of the slope material (dimensionless). | 0.700 = tan 35 degrees, scaLr's reference value. |
 | `rupture_density_kg_m3` | `float` | `2600` | `param` | `run_rupture_planes` | Bulk density rho of the slope material (kg/m3). | As in scaLr. Gravity is 9.81 m/s2. |
@@ -294,6 +328,21 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Rupture uncertainty
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `parameter_uncertainty` | `string` | `none` | `param` | `run_rupture_planes` | Probability of failure of the rupture planes from uncertain cohesion and friction. | none: deterministic only. equal_density: uncertainty_samples_per_parameter values of cohesion and of the friction coefficient at equal intervals of each distribution's CDF, with trapezoid weights (the equal-density strategy of r.slope.stability, Mergili et al. 2014), all combinations. For each cell and each combination the rupture-plane search is repeated exactly (the daylight point may differ between combinations). Writes &lt;write_fname&gt;_rupture_failure_probability.tif (the weighted fraction of combinations with F &lt;= 1), _rupture_safety_factor_mean.tif and _rupture_safety_factor_sd.tif (weighted mean and SD of F). Density and the water table are fixed (with dupuit_transient, the water table at the last output time). The deterministic rasters and the landslide catalogues use the central values (rupture_cohesion_pa, rupture_friction_coefficient). Cost: about the number of combinations times the deterministic search. |
+| `rupture_cohesion_distribution` | `string` | `uniform` | `param` | `parameter_uncertainty` | Distribution of cohesion for parameter_uncertainty. | uniform: between rupture_cohesion_pa_min and _max. normal: mean rupture_cohesion_pa, SD rupture_cohesion_pa_sd, truncated to mean +- 3 SD and at 0. Per region from the region table if it has these columns. |
+| `rupture_cohesion_pa_min` | `float` | `500` | `param` | `rupture_cohesion_distribution=uniform` | Lower bound of uniform cohesion (Pa). | - |
+| `rupture_cohesion_pa_max` | `float` | `1500` | `param` | `rupture_cohesion_distribution=uniform` | Upper bound of uniform cohesion (Pa). | - |
+| `rupture_cohesion_pa_sd` | `float` | `250` | `param` | `rupture_cohesion_distribution=normal` | SD of normal cohesion (Pa); the mean is rupture_cohesion_pa. | 0 makes cohesion certain. |
+| `rupture_friction_coefficient_distribution` | `string` | `uniform` | `param` | `parameter_uncertainty` | Distribution of the friction coefficient for parameter_uncertainty. | uniform: between rupture_friction_coefficient_min and _max. normal: mean rupture_friction_coefficient, SD rupture_friction_coefficient_sd, truncated to mean +- 3 SD and at 0. Per region from the region table if it has these columns. |
+| `rupture_friction_coefficient_min` | `float` | `0.6` | `param` | `rupture_friction_coefficient_distribution=uniform` | Lower bound of the uniform friction coefficient (dimensionless). | - |
+| `rupture_friction_coefficient_max` | `float` | `0.8` | `param` | `rupture_friction_coefficient_distribution=uniform` | Upper bound of the uniform friction coefficient (dimensionless). | - |
+| `rupture_friction_coefficient_sd` | `float` | `0.05` | `param` | `rupture_friction_coefficient_distribution=normal` | SD of the normal friction coefficient; the mean is rupture_friction_coefficient. | 0 makes friction certain. |
+| `uncertainty_samples_per_parameter` | `int` | `5` | `param` | `parameter_uncertainty` | Number of equal-density values per uncertain parameter. | 5 gives 25 combinations. The error in the probability of failure is at most about 1/(n - 1) (the trapezoid rule on a step); 1 uses the median only. |
 
 ### Landslide catalogues
 

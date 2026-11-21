@@ -75,7 +75,18 @@
 // Speed: along a path, a pair whose wet lower bound (below) is not below the
 // best F found so far is not searched; this cannot change the result.
 //
-// Not here yet: uncertainty (probability of failure).
+// UNCERTAINTY (probability of failure). Cohesion and the friction coefficient
+// are uncertain; density, gravity and the water table are held fixed. Each
+// region carries a list of (c, mu) samples with weights summing to 1, normally
+// the tensor product of two equal-density samples (src/utils
+// lsdtt_distributions). For each source cell and each sample the search is the
+// deterministic one, exact: the minimum of F over every daylight candidate,
+// so the daylight point may differ between samples. The path is walked once
+// and every sample is evaluated at each candidate. Per cell:
+//   Pf     = sum_s w_s [F_min,s <= 1]   (<= 1, matching `unstable`)
+//   mean F = sum_s w_s F_min,s,   SD F = sqrt(sum_s w_s (F_min,s - mean)^2)
+// A single sample of weight 1 reproduces compute_rupture_planes exactly.
+// Catalogues are built from the central-value run only.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -87,6 +98,7 @@
 
 #include "../core/lsdtt_flow_base.hpp"
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_distributions.hpp"
 
 namespace lsdtt
 {
@@ -146,6 +158,47 @@ struct rupture_pair
 // part is empty.
 [[nodiscard]] double rupture_wet_lower_bound(
     double dx, double dz, double water_table_depth, const rupture_parameters& p);
+
+// One (c, mu) sample: the parameters to use and the sample's weight.
+struct rupture_parameter_sample
+{
+    rupture_parameters parameters;
+    double weight = 1.0;
+};
+
+// The tensor product of equal-density samples of cohesion (n_cohesion values)
+// and friction coefficient (n_friction values) about `central` (which supplies
+// density, gravity and water density). Weights multiply and sum to 1; a
+// zero-width distribution gives one value. Cohesion-major order. Throws
+// std::invalid_argument for invalid samples (e.g. a negative bound).
+[[nodiscard]] std::vector<rupture_parameter_sample> rupture_parameter_samples(
+    const rupture_parameters& central,
+    const equal_density_distribution& cohesion, int n_cohesion,
+    const equal_density_distribution& friction, int n_friction);
+
+struct rupture_probability_rasters
+{
+    lsdtt_raster_cpu failure_probability;   // P(F_min <= 1)
+    lsdtt_raster_cpu mean_safety_factor;    // weighted mean of F_min over samples
+    lsdtt_raster_cpu sd_safety_factor;      // weighted SD of F_min over samples
+    std::int64_t n_sources = 0;             // cells with a daylight candidate
+    std::int64_t n_certain_failure = 0;     // Pf == 1 (to round-off, >= 1 - 1e-12)
+    std::int64_t n_possible_failure = 0;    // Pf > 0
+    std::size_t max_samples = 0;            // the largest sample list used
+};
+
+// As compute_rupture_planes, with per-region sample lists in place of one
+// parameter set. Same mask (the candidates do not depend on the parameters).
+// Throws std::invalid_argument as compute_rupture_planes, and for an empty
+// sample list or weights not summing to 1 (to 1e-9).
+[[nodiscard]] rupture_probability_rasters compute_rupture_failure_probability(
+    const lsdtt_flow_base& flow,
+    const lsdtt_raster_cpu& geometry,
+    const std::vector<std::uint8_t>& channel,
+    const std::vector<std::int32_t>& region,
+    const std::map<std::int32_t, std::vector<rupture_parameter_sample>>& samples_by_region,
+    int n_threads = 0,
+    const std::vector<double>& water_table_depth = {});
 
 inline constexpr std::int32_t k_rupture_region_nodata = std::numeric_limits<std::int32_t>::min();
 

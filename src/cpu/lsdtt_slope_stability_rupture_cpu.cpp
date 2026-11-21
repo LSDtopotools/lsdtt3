@@ -132,6 +132,78 @@ rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rup
     return out;
 }
 
+namespace
+{
+
+// Checks shared by compute_rupture_planes and compute_rupture_failure_probability.
+// has_id(id): a parameter row / sample list exists for region id.
+template <class HasId>
+void check_rupture_inputs(const lsdtt_flow_base& flow, const lsdtt_raster_cpu& geometry,
+                          const std::vector<std::uint8_t>& channel, const std::vector<std::int32_t>& region,
+                          std::size_t n_sets, const std::vector<double>& water_table_depth, HasId has_id,
+                          const char* fn)
+{
+    const lsdtt_raster_meta& meta = geometry.get_meta();
+    const int nr = meta.n_rows, nc = meta.n_cols;
+    const std::size_t n = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
+    const std::string f(fn);
+    if (flow.n_rows() != nr || flow.n_cols() != nc)
+        throw std::invalid_argument(f + ": the flow and geometry grids differ");
+    if (channel.size() != n)
+        throw std::invalid_argument(f + ": the channel mask differs from the grid");
+    if (!region.empty() && region.size() != n)
+        throw std::invalid_argument(f + ": the region grid differs from the grid");
+    if (n_sets == 0)
+        throw std::invalid_argument(f + ": no parameter set given");
+    if (!water_table_depth.empty() && water_table_depth.size() != n)
+        throw std::invalid_argument(f + ": the water-table grid differs from the grid");
+    if (region.empty() && n_sets != 1)
+        throw std::invalid_argument(f + ": without a region grid exactly one parameter set is used");
+    if (region.empty()) return;
+    const std::vector<std::uint8_t>& zm = geometry.get_mask();
+    std::set<std::int32_t> missing;
+    for (std::size_t i = 0; i < n; ++i)
+        if (zm[i] && flow.is_valid_cell(static_cast<std::int64_t>(i)) && !channel[i]
+            && region[i] != k_rupture_region_nodata && !has_id(region[i]))
+            missing.insert(region[i]);
+    if (!missing.empty())
+    {
+        std::ostringstream msg;
+        msg << f << ": region ids with no parameter row:";
+        int shown = 0;
+        for (std::int32_t id : missing)
+        {
+            if (shown++ == 20) { msg << " ..."; break; }
+            msg << ' ' << id;
+        }
+        throw std::invalid_argument(msg.str());
+    }
+}
+
+// Visit every daylight candidate of source i: visit(dx, dz, flat index of D).
+// The walk follows receivers and stops before a channel or nodata cell.
+template <class Visit>
+void walk_daylight_candidates(const lsdtt_flow_base& flow, const std::vector<float>& z,
+                              const std::vector<std::uint8_t>& zm, const std::vector<std::uint8_t>& channel,
+                              int nc, double b, std::int64_t ii, std::int64_t max_steps, Visit visit)
+{
+    const int ri = static_cast<int>(ii / nc), ci = static_cast<int>(ii % nc);
+    const double zi = static_cast<double>(z[static_cast<std::size_t>(ii)]);
+    std::int64_t pflat = flow.receiver_of_unchecked(ii);
+    for (std::int64_t step = 0; pflat >= 0 && step < max_steps; ++step)
+    {
+        const std::size_t pi = static_cast<std::size_t>(pflat);
+        if (channel[pi] || !zm[pi]) break;     // walk stays on the hillslope
+        const int rp = static_cast<int>(pflat / nc), cp = static_cast<int>(pflat % nc);
+        const double dx = b * std::hypot(static_cast<double>(rp - ri), static_cast<double>(cp - ci));
+        const double dz = zi - static_cast<double>(z[pi]);
+        visit(dx, dz, pflat);
+        pflat = flow.receiver_of_unchecked(pflat);
+    }
+}
+
+} // namespace
+
 rupture_rasters compute_rupture_planes(
     const lsdtt_flow_base& flow,
     const lsdtt_raster_cpu& geometry,
@@ -141,21 +213,8 @@ rupture_rasters compute_rupture_planes(
     int n_threads,
     const std::vector<double>& water_table_depth)
 {
-    const lsdtt_raster_meta& meta = geometry.get_meta();
-    const int nr = meta.n_rows, nc = meta.n_cols;
-    const std::size_t n = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
-    if (flow.n_rows() != nr || flow.n_cols() != nc)
-        throw std::invalid_argument("compute_rupture_planes: the flow and geometry grids differ");
-    if (channel.size() != n)
-        throw std::invalid_argument("compute_rupture_planes: the channel mask differs from the grid");
-    if (!region.empty() && region.size() != n)
-        throw std::invalid_argument("compute_rupture_planes: the region grid differs from the grid");
-    if (by_region.empty())
-        throw std::invalid_argument("compute_rupture_planes: no parameter set given");
-    if (!water_table_depth.empty() && water_table_depth.size() != n)
-        throw std::invalid_argument("compute_rupture_planes: the water-table grid differs from the grid");
-    if (region.empty() && by_region.size() != 1)
-        throw std::invalid_argument("compute_rupture_planes: without a region grid exactly one parameter set is used");
+    check_rupture_inputs(flow, geometry, channel, region, by_region.size(), water_table_depth,
+                         [&](std::int32_t id) { return by_region.count(id) > 0; }, "compute_rupture_planes");
     for (const auto& kv : by_region)
     {
         try { validate_rupture_parameters(kv.second); }
@@ -164,33 +223,15 @@ rupture_rasters compute_rupture_planes(
             throw std::invalid_argument(std::string(e.what()) + " (region " + std::to_string(kv.first) + ")");
         }
     }
-
+    const lsdtt_raster_meta& meta = geometry.get_meta();
+    const int nc = meta.n_cols;
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(nc);
     const std::vector<float>& z = geometry.get_data();
     const std::vector<std::uint8_t>& zm = geometry.get_mask();
     auto is_source = [&](std::size_t i)
     {
         return zm[i] && flow.is_valid_cell(static_cast<std::int64_t>(i)) && !channel[i];
     };
-
-    if (!region.empty())
-    {
-        std::set<std::int32_t> missing;
-        for (std::size_t i = 0; i < n; ++i)
-            if (is_source(i) && region[i] != k_rupture_region_nodata && !by_region.count(region[i]))
-                missing.insert(region[i]);
-        if (!missing.empty())
-        {
-            std::ostringstream msg;
-            msg << "compute_rupture_planes: region ids with no parameter row:";
-            int shown = 0;
-            for (std::int32_t id : missing)
-            {
-                if (shown++ == 20) { msg << " ..."; break; }
-                msg << ' ' << id;
-            }
-            throw std::invalid_argument(msg.str());
-        }
-    }
 
     const float nd = static_cast<float>(meta.no_data_value);
     std::vector<float> fs(n, nd), dep(n, nd), srup(n, nd), stopo(n, nd), len(n, nd), uns(n, nd);
@@ -215,35 +256,24 @@ rupture_rasters compute_rupture_planes(
         if (!is_source(i)) continue;
         if (!single && region[i] == k_rupture_region_nodata) continue;
         const rupture_parameters& p = single ? *single : by_region.at(region[i]);
-
-        const int ri = static_cast<int>(ii / nc), ci = static_cast<int>(ii % nc);
-        const double zi = static_cast<double>(z[i]);
         const double dw = water_table_depth.empty() ? std::numeric_limits<double>::quiet_NaN()
                                                     : water_table_depth[i];
         double best_f = k_inf, best_h = 0.0, best_dx = 0.0, best_dz = 0.0;
         std::int64_t best_d = -1;
-
-        std::int64_t pflat = flow.receiver_of_unchecked(ii);
-        for (std::int64_t step = 0; pflat >= 0 && step < max_steps; ++step)
-        {
-            const std::size_t pi = static_cast<std::size_t>(pflat);
-            if (channel[pi] || !zm[pi]) break;     // walk stays on the hillslope
-            const int rp = static_cast<int>(pflat / nc), cp = static_cast<int>(pflat % nc);
-            const double dx = b * std::hypot(static_cast<double>(rp - ri), static_cast<double>(cp - ci));
-            const double dz = zi - static_cast<double>(z[pi]);
-            // best_f as the cutoff: a pair whose wet bound cannot beat it skips
-            // its Brent search (the result is then not used either way).
-            const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p, best_f);
-            if (rp_res.admissible && rp_res.safety_factor < best_f)
-            {
-                best_f = rp_res.safety_factor;
-                best_h = rp_res.depth;
-                best_dx = dx;
-                best_dz = dz;
-                best_d = pflat;
-            }
-            pflat = flow.receiver_of_unchecked(pflat);
-        }
+        walk_daylight_candidates(flow, z, zm, channel, nc, b, ii, max_steps,
+            [&](double dx, double dz, std::int64_t pflat) {
+                // best_f as the cutoff: a pair whose wet bound cannot beat it skips
+                // its Brent search (the result is then not used either way).
+                const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p, best_f);
+                if (rp_res.admissible && rp_res.safety_factor < best_f)
+                {
+                    best_f = rp_res.safety_factor;
+                    best_h = rp_res.depth;
+                    best_dx = dx;
+                    best_dz = dz;
+                    best_d = pflat;
+                }
+            });
         if (best_d < 0) continue;
 
         ++n_sources;
@@ -273,6 +303,141 @@ rupture_rasters compute_rupture_planes(
     out.n_sources = n_sources;
     out.n_unstable = n_unstable;
     out.n_channel = n_channel;
+    return out;
+}
+
+std::vector<rupture_parameter_sample> rupture_parameter_samples(
+    const rupture_parameters& central,
+    const equal_density_distribution& cohesion, int n_cohesion,
+    const equal_density_distribution& friction, int n_friction)
+{
+    const equal_density_sample sc = equal_density_samples(cohesion, n_cohesion);
+    const equal_density_sample sm = equal_density_samples(friction, n_friction);
+    std::vector<rupture_parameter_sample> out;
+    out.reserve(sc.values.size() * sm.values.size());
+    for (std::size_t a = 0; a < sc.values.size(); ++a)
+        for (std::size_t k = 0; k < sm.values.size(); ++k)
+        {
+            rupture_parameter_sample s;
+            s.parameters = central;
+            s.parameters.cohesion_pa = sc.values[a];
+            s.parameters.friction_coefficient = sm.values[k];
+            s.weight = sc.weights[a] * sm.weights[k];
+            validate_rupture_parameters(s.parameters);
+            out.push_back(s);
+        }
+    return out;
+}
+
+rupture_probability_rasters compute_rupture_failure_probability(
+    const lsdtt_flow_base& flow,
+    const lsdtt_raster_cpu& geometry,
+    const std::vector<std::uint8_t>& channel,
+    const std::vector<std::int32_t>& region,
+    const std::map<std::int32_t, std::vector<rupture_parameter_sample>>& samples_by_region,
+    int n_threads,
+    const std::vector<double>& water_table_depth)
+{
+    check_rupture_inputs(flow, geometry, channel, region, samples_by_region.size(), water_table_depth,
+                         [&](std::int32_t id) { return samples_by_region.count(id) > 0; },
+                         "compute_rupture_failure_probability");
+    std::size_t max_samples = 0;
+    for (const auto& kv : samples_by_region)
+    {
+        const std::string where = " (region " + std::to_string(kv.first) + ")";
+        if (kv.second.empty())
+            throw std::invalid_argument("compute_rupture_failure_probability: empty sample list" + where);
+        double wsum = 0.0;
+        for (const rupture_parameter_sample& smp : kv.second)
+        {
+            try { validate_rupture_parameters(smp.parameters); }
+            catch (const std::invalid_argument& e) { throw std::invalid_argument(std::string(e.what()) + where); }
+            if (!std::isfinite(smp.weight) || smp.weight < 0.0)
+                throw std::invalid_argument("compute_rupture_failure_probability: negative or non-finite weight" + where);
+            wsum += smp.weight;
+        }
+        if (std::fabs(wsum - 1.0) > 1e-9)
+            throw std::invalid_argument("compute_rupture_failure_probability: weights do not sum to 1" + where);
+        max_samples = std::max(max_samples, kv.second.size());
+    }
+
+    const lsdtt_raster_meta& meta = geometry.get_meta();
+    const int nc = meta.n_cols;
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * static_cast<std::size_t>(nc);
+    const std::vector<float>& z = geometry.get_data();
+    const std::vector<std::uint8_t>& zm = geometry.get_mask();
+    const float nd = static_cast<float>(meta.no_data_value);
+    std::vector<float> pf(n, nd), mean_f(n, nd), sd_f(n, nd);
+    std::vector<std::uint8_t> m(n, 0);
+    const double b = meta.cell_size;
+    const std::vector<rupture_parameter_sample>* single = region.empty() ? &samples_by_region.begin()->second : nullptr;
+    const std::int64_t max_steps = static_cast<std::int64_t>(n);
+    std::int64_t n_sources = 0, n_certain = 0, n_possible = 0;
+
+#ifdef _OPENMP
+    const int threads = (n_threads > 0) ? n_threads : omp_get_max_threads();
+#pragma omp parallel num_threads(threads) reduction(+ : n_sources, n_certain, n_possible)
+#else
+    (void)n_threads;
+#endif
+    {
+        std::vector<double> best(max_samples);
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 64)
+#endif
+        for (std::int64_t ii = 0; ii < static_cast<std::int64_t>(n); ++ii)
+        {
+            const std::size_t i = static_cast<std::size_t>(ii);
+            if (!zm[i] || channel[i] || !flow.is_valid_cell(ii)) continue;
+            if (!single && region[i] == k_rupture_region_nodata) continue;
+            const std::vector<rupture_parameter_sample>& smp = single ? *single : samples_by_region.at(region[i]);
+            const std::size_t ns = smp.size();
+            const double dw = water_table_depth.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                                        : water_table_depth[i];
+            std::fill(best.begin(), best.begin() + static_cast<std::ptrdiff_t>(ns), k_inf);
+            bool any = false;
+            walk_daylight_candidates(flow, z, zm, channel, nc, b, ii, max_steps,
+                [&](double dx, double dz, std::int64_t) {
+                    if (!(dx > 0.0) || !(dz > 0.0)) return;   // inadmissible for every sample
+                    any = true;
+                    for (std::size_t s = 0; s < ns; ++s)
+                    {
+                        const rupture_pair r = rupture_optimal_depth_wet(dx, dz, dw, smp[s].parameters, best[s]);
+                        if (r.safety_factor < best[s]) best[s] = r.safety_factor;
+                    }
+                });
+            if (!any) continue;
+            double p_fail = 0.0, mean = 0.0;
+            for (std::size_t s = 0; s < ns; ++s)
+            {
+                if (best[s] <= 1.0) p_fail += smp[s].weight;
+                mean += smp[s].weight * best[s];
+            }
+            double var = 0.0;
+            for (std::size_t s = 0; s < ns; ++s)
+                var += smp[s].weight * (best[s] - mean) * (best[s] - mean);
+            ++n_sources;
+            if (p_fail >= 1.0 - 1e-12) ++n_certain;
+            if (p_fail > 0.0) ++n_possible;
+            m[i] = 1;
+            pf[i] = static_cast<float>(std::min(1.0, p_fail));
+            mean_f[i] = static_cast<float>(mean);
+            sd_f[i] = static_cast<float>(std::sqrt(var));
+        }
+    }
+
+    auto make = [&](std::vector<float>&& v)
+    {
+        return lsdtt_raster_cpu(std::move(v), std::vector<std::uint8_t>(m), meta);
+    };
+    rupture_probability_rasters out;
+    out.failure_probability = make(std::move(pf));
+    out.mean_safety_factor  = make(std::move(mean_f));
+    out.sd_safety_factor    = make(std::move(sd_f));
+    out.n_sources = n_sources;
+    out.n_certain_failure = n_certain;
+    out.n_possible_failure = n_possible;
+    out.max_samples = max_samples;
     return out;
 }
 
