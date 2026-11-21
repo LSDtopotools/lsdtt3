@@ -569,6 +569,8 @@ lsdtt_evidence(unit_uniform_combination_cdfs unit exact_solution differential pr
 lsdtt_evidence(unit_equal_density_sampling unit exact_solution property negative)  # CDF levels k/(n-1), closed-form means and probabilities; weights sum to 1; bad arguments throw
 lsdtt_evidence(unit_slope_stability_sinmap unit exact_solution differential property metamorphic negative)  # SINMAP equations and analytic surfaces (plane, cone, bowl); Monte Carlo of P(FS>1) in the test; SI/P ends, monotone in a; 1 vs 4 threads; bad parameters and missing region ids throw
 lsdtt_evidence(unit_slope_stability_rupture unit exact_solution differential property metamorphic negative)  # scaLr eq. 3 minimum by closed form vs Brent + dense search in the test; plane and parabola profiles; Fig. 4 trends; 1 vs 4 threads; bad parameters and region ids throw
+lsdtt_evidence(unit_slope_stability_catalogue unit exact_solution property negative)  # grouping rules on hand-built rupture results; rectangle statistics in closed form; catalogue invariants through the pipeline; bad option throws
+lsdtt_evidence(unit_slope_stability_groundwater_dupuit unit exact_solution differential property negative)  # Dupuit mound/divide, kinematic plane = SINMAP wetness, exponential = TOPMODEL relation, linear decay; RK4 of the update ODE in the test; exact water budget; bad parameters throw
 lsdtt_evidence(unit_brent_minimiser unit exact_solution differential negative)  # known minima and the scaLr closed-form depth; 2e6-point grid search inside the test; bad arguments throw
 lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4
 lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)

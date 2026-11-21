@@ -7,3 +7,5 @@ n_threads: 2
 run_sinmap: false
 threshold_contributing_pixels: 200
 rupture_cohesion_pa: 2000
+rupture_min_daylight_neighbours: 0
+write_landslide_label_rasters: false

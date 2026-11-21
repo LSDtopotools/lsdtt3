@@ -18,6 +18,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "../utils/lsdtt_numeric_utils.hpp"
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -41,6 +43,8 @@ void validate_rupture_parameters(const rupture_parameters& p)
         throw std::invalid_argument("rupture: density must be finite and > 0 (kg/m3)");
     if (!finite(p.gravity_m_s2) || !(p.gravity_m_s2 > 0.0))
         throw std::invalid_argument("rupture: gravity must be finite and > 0 (m/s2)");
+    if (!finite(p.water_density_kg_m3) || p.water_density_kg_m3 < 0.0)
+        throw std::invalid_argument("rupture: water density must be finite and >= 0 (kg/m3)");
 }
 
 double rupture_safety_factor(double h, double dx, double dz, const rupture_parameters& p)
@@ -73,13 +77,64 @@ rupture_pair rupture_optimal_depth(double dx, double dz, const rupture_parameter
     return out;
 }
 
+double rupture_safety_factor_wet(double h, double dx, double dz, double d,
+                                 const rupture_parameters& p)
+{
+    const double dry = rupture_safety_factor(h, dx, dz, p);
+    if (!std::isfinite(dry) || !std::isfinite(d) || h <= d) return dry;
+    const double s = dz - h;
+    return dry - p.friction_coefficient * (p.water_density_kg_m3 / p.density_kg_m3)
+                 * ((h - d) / h) * (dx * dx + s * s) / (dx * s);
+}
+
+rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rupture_parameters& p)
+{
+    if (!std::isfinite(d) || d >= dz) return rupture_optimal_depth(dx, dz, p);
+    rupture_pair out;
+    if (!(dx > 0.0) || !(dz > 0.0)) return out;
+    out.admissible = true;
+    auto F = [&](double h) { return rupture_safety_factor_wet(h, dx, dz, d, p); };
+
+    // Dry part, (0, d]: the dry optimum if it lies above the water table,
+    // otherwise the boundary h = d (F is continuous there).
+    if (d > 0.0)
+    {
+        const rupture_pair dry = rupture_optimal_depth(dx, dz, p);
+        const double h = (dry.depth > 0.0 && dry.depth < d) ? dry.depth : d;
+        const double f = (dry.depth > 0.0 && dry.depth < d) ? dry.safety_factor : F(d);
+        if (f < out.safety_factor) { out.safety_factor = f; out.depth = h; }
+    }
+    // Wet part, (max(d, 0), dz): scan, then refine around the best scan point.
+    const double lo = std::max(d, 0.0), hi = dz;
+    const int n_scan = 32;
+    const double step = (hi - lo) / n_scan;
+    double best_f = std::numeric_limits<double>::infinity();
+    int best_k = -1;
+    for (int k = 1; k < n_scan; ++k)
+    {
+        const double f = F(lo + k * step);
+        if (f < best_f) { best_f = f; best_k = k; }
+    }
+    if (best_k > 0)
+    {
+        const double a = lo + (best_k - 1) * step, b = lo + (best_k + 1) * step;
+        const brent_minimum m = minimise_brent_bounded(F, std::max(a, lo + 1e-12 * dz), std::min(b, hi * (1.0 - 1e-12)),
+                                                       1e-9 * dz, 200);
+        const double f = (m.f < best_f) ? m.f : best_f;
+        const double h = (m.f < best_f) ? m.x : lo + best_k * step;
+        if (f < out.safety_factor) { out.safety_factor = f; out.depth = h; }
+    }
+    return out;
+}
+
 rupture_rasters compute_rupture_planes(
     const lsdtt_flow_base& flow,
     const lsdtt_raster_cpu& geometry,
     const std::vector<std::uint8_t>& channel,
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
-    int n_threads)
+    int n_threads,
+    const std::vector<double>& water_table_depth)
 {
     const lsdtt_raster_meta& meta = geometry.get_meta();
     const int nr = meta.n_rows, nc = meta.n_cols;
@@ -92,6 +147,8 @@ rupture_rasters compute_rupture_planes(
         throw std::invalid_argument("compute_rupture_planes: the region grid differs from the grid");
     if (by_region.empty())
         throw std::invalid_argument("compute_rupture_planes: no parameter set given");
+    if (!water_table_depth.empty() && water_table_depth.size() != n)
+        throw std::invalid_argument("compute_rupture_planes: the water-table grid differs from the grid");
     if (region.empty() && by_region.size() != 1)
         throw std::invalid_argument("compute_rupture_planes: without a region grid exactly one parameter set is used");
     for (const auto& kv : by_region)
@@ -156,6 +213,8 @@ rupture_rasters compute_rupture_planes(
 
         const int ri = static_cast<int>(ii / nc), ci = static_cast<int>(ii % nc);
         const double zi = static_cast<double>(z[i]);
+        const double dw = water_table_depth.empty() ? std::numeric_limits<double>::quiet_NaN()
+                                                    : water_table_depth[i];
         double best_f = k_inf, best_h = 0.0, best_dx = 0.0, best_dz = 0.0;
         std::int64_t best_d = -1;
 
@@ -167,7 +226,7 @@ rupture_rasters compute_rupture_planes(
             const int rp = static_cast<int>(pflat / nc), cp = static_cast<int>(pflat % nc);
             const double dx = b * std::hypot(static_cast<double>(rp - ri), static_cast<double>(cp - ci));
             const double dz = zi - static_cast<double>(z[pi]);
-            const rupture_pair rp_res = rupture_optimal_depth(dx, dz, p);
+            const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p);
             if (rp_res.admissible && rp_res.safety_factor < best_f)
             {
                 best_f = rp_res.safety_factor;

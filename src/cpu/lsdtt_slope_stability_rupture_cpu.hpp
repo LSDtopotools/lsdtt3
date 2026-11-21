@@ -53,8 +53,22 @@
 // (carved / filled) surface. A carved or filled path can therefore pass a cell
 // higher than R on the geometry surface; that candidate is skipped.
 //
-// Not here yet (plan_slope_stability.md): pore pressure (Appendix A, Phase 4),
-// landslide catalogues (Phase 3), uncertainty (Phase P).
+// PORE PRESSURE (paper Appendix A). With a hydrostatic water table at depth d
+// below R, psi = rho_w g (h - d) for h > d, and F = (c + mu (sigma_n - psi)) / tau
+// (eq. A1). Developing it gives
+//
+//   F_wet(h) = F(h) - mu (rho_w / rho) ((h - d) / h) (dx^2 + (dz - h)^2) / (dx (dz - h)),  h > d.
+//
+// The paper's printed eq. A2 has (h - d) where this has (h - d) / h: as printed
+// the term has units of metres, so A2 is dimensionally inconsistent; the form
+// here follows from A1 and the stresses of eq. 2 (tau = rho g h cos sin).
+// There is no usable closed-form minimum (the authors' Maple solution runs to
+// about 200,000 characters). F_wet has a kink at h = d, so the minimum is taken
+// separately on (0, min(d, dz)), where the dry closed form applies, and on
+// (d, dz), by a 32-point scan refined with Brent's method (src/utils), and the
+// lower kept. d >= dz is the dry case exactly.
+//
+// Not here yet (plan_slope_stability.md): uncertainty (Phase P).
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -76,6 +90,7 @@ struct rupture_parameters
     double friction_coefficient = 0.70020753820970977;  // mu = tan 35 (paper reference)
     double density_kg_m3 = 2600.0;                      // rho
     double gravity_m_s2 = 9.81;                         // g
+    double water_density_kg_m3 = 1000.0;                // rho_w (pore pressure only)
 };
 
 // Throws std::invalid_argument naming the field: c >= 0, mu >= 0, rho > 0,
@@ -96,6 +111,18 @@ struct rupture_pair
 // The optimal depth h* and F(h*) for one (R, D) pair (formula above).
 [[nodiscard]] rupture_pair rupture_optimal_depth(
     double dx, double dz, const rupture_parameters& p);
+
+// F_wet(h) with the water table at depth water_table_depth below R (formula
+// above; equal to rupture_safety_factor for h <= water_table_depth).
+// water_table_depth may be negative (ponded): the pore pressure is then
+// counted from h = 0 upwards in the same hydrostatic form.
+[[nodiscard]] double rupture_safety_factor_wet(
+    double h, double dx, double dz, double water_table_depth, const rupture_parameters& p);
+
+// The minimum of F_wet over 0 < h < dz (see PORE PRESSURE above). A
+// non-finite water_table_depth means dry.
+[[nodiscard]] rupture_pair rupture_optimal_depth_wet(
+    double dx, double dz, double water_table_depth, const rupture_parameters& p);
 
 inline constexpr std::int32_t k_rupture_region_nodata = std::numeric_limits<std::int32_t>::min();
 
@@ -121,6 +148,9 @@ struct rupture_rasters
 // region:     empty, or one id per cell selecting a parameter set from
 //             by_region (the set at R applies); k_rupture_region_nodata cells
 //             are left out. With an empty region, by_region holds one entry.
+// water_table_depth: empty (dry), or one depth (m) below the geometry
+//             surface per cell; the value at R applies to every candidate
+//             plane from R. Non-finite = dry at that cell.
 // OpenMP over sources; the result does not depend on n_threads.
 // Throws std::invalid_argument on grid mismatches, invalid parameters, or a
 // valid source whose region id has no entry.
@@ -130,6 +160,7 @@ struct rupture_rasters
     const std::vector<std::uint8_t>& channel,
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
-    int n_threads = 0);
+    int n_threads = 0,
+    const std::vector<double>& water_table_depth = {});
 
 } // namespace lsdtt

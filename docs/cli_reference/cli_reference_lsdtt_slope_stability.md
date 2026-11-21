@@ -72,7 +72,50 @@ replica:
 - Channel cells are those with at least `threshold_contributing_pixels`
   contributing pixels. The walk stops before the first channel cell, and
   channel cells are not sources.
-- There is no pore pressure yet: the material is dry.
+- Pore pressure is hydrostatic below a water table (`water_table_method`, see
+  below). The scaLr paper's printed eq. A2 has (h − d) where its own eq. A1
+  gives (h − d)/h; as printed, the term has units of metres. lsdtt3 uses the
+  form derived from A1. With water, the minimum is no longer closed-form: it is
+  found numerically on each side of the water table.
+
+## Groundwater
+
+The water table for pore pressure comes from a Dupuit - Boussinesq model of an
+unconfined aquifer. It follows the Landlab GroundwaterDupuitPercolator (Litwin
+et al. 2020): the aquifer lies on an impermeable base `regolith_thickness_metres`
+below the surface, water flows down the water-table gradient, and water returns
+to the surface where the regolith saturates.
+
+- Channel cells are seepage outlets, with the water table at the surface. The
+  raster edge and nodata cells are no-flux.
+- `dupuit_steady` gives the steady state under a constant recharge.
+- `dupuit_transient` starts from that steady state, runs a recharge series and
+  evaluates the rupture planes at each output time. It writes a time series of
+  storage, saturated cells and unstable cells.
+- With `groundwater_transmissivity_profile: exponential`, conductivity decays
+  with depth as TOPMODEL assumes. The steady state then follows TOPMODEL's
+  index relation, with sin β cos β in place of tan β.
+- With uniform conductivity and a steep, thin aquifer, the steady saturation
+  equals SINMAP's steady-state wetness.
+
+## Potential-landslide catalogues
+
+A landslide is the set of unstable cells (factor of safety at most 1) that
+share a daylight point. Like scaLr's code, lsdtt3 does two things the paper
+does not describe:
+
+- Every daylight point also joins its own landslide when its own factor of
+  safety is at most 1.
+- With `rupture_min_daylight_neighbours` (default 2), a daylight point is kept
+  only if at least that many of its 8 neighbours share it, stable or not. This
+  removes single lines of cells down one flow path.
+
+Touching landslides are then merged (8-connected) into an amalgamated
+catalogue, which is what a mapper would see. Volume is area × mean depth. The
+landslide safety factor is scaLr's eq. 7, the summed resisting over the summed
+driving stresses. Length and width are the axes of the ellipse with the same
+second moments as the landslide's cells. These catalogues are statistics of
+potential landslides; they are not maps of individual landslides.
 
 ## Relation to the topographic wetness index
 
@@ -111,6 +154,8 @@ this CLI uses the D-infinity facet slope on the carved-then-filled surface.
 6. Build a D8 flow graph on the routing surface. Mark channel cells with
    `threshold_contributing_pixels`, and find each hillslope cell's optimal
    planar rupture surface.
+7. Group unstable cells into landslides by shared daylight point, and write
+   the two catalogues.
 
 ## Usage
 
@@ -137,6 +182,12 @@ lsdtt-slope-stability -h
 | `<write_fname>_rupture_unstable.tif` | 1 where the factor of safety is at most 1, else 0 |
 | `<write_fname>_rupture_length.tif` | horizontal distance to the daylight point (m) |
 | `<write_fname>_rupture_slope.tif`, `_rupture_topographic_slope.tif` | gradient of the rupture plane and of the line from the cell to the daylight point (m/m) |
+| `<write_fname>_landslide_catalogue.csv` | one row per daylight point: area, depth, volume, safety factors, centroid, length, width, perimeter |
+| `<write_fname>_landslide_catalogue_amalgamated.csv` | the same for touching landslides merged |
+| `<write_fname>_landslide_label.tif`, `_landslide_label_amalgamated.tif` | catalogue id of each landslide cell |
+| `<write_fname>_water_table_depth.tif`, `_saturated_thickness.tif`, `_seepage.tif` | the groundwater state used for pore pressure |
+| `<write_fname>_t<time>s_water_table_depth.tif`, `_t<time>s_rupture_safety_factor.tif` | the same at each transient output time |
+| `<write_fname>_groundwater_time_series.csv` | storage, saturated cells and unstable cells at each output time |
 
 Flat cells are class 1 (unconditionally stable) and nodata in the stability
 index and factor-of-safety rasters.
@@ -237,5 +288,31 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `threshold_contributing_pixels` | `int` | `1000` | `param` | - | Contributing-pixel threshold defining a channel head. | The total number of upslope contributing pixels from the flow-routing object, not the number of direct donors to a pixel. Reduce this value to extract a denser network. This is a PIXEL COUNT and therefore depends on the grid resolution: the equivalent drainage area is threshold_contributing_pixels x cell area. Where a genuine area is wanted instead, the convention is &lt;what&gt;_area_threshold_m2. |
+
+### Landslide catalogues
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `rupture_min_daylight_neighbours` | `int` | `2` | `param` | `run_rupture_planes` | Fewest neighbours of a daylight point that must share it, or its landslide is dropped. | Removes "1-D landslides", single lines of cells down one flow path, as the scaLr code does (its iopt = 2; the paper does not describe it). The 8 neighbours of the daylight point D are counted if their daylight point is D, stable or not. 0 keeps every landslide. 0 to 8. |
+| `write_landslide_catalogue` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the potential-landslide catalogues as CSV. | A landslide is the unstable cells (F &lt;= 1) that share a daylight point, as in scaLr (every daylight point also joins its own landslide if its own F &lt;= 1, as the scaLr code does). &lt;write_fname&gt;_landslide_catalogue.csv: one row per daylight point; _landslide_catalogue_amalgamated.csv: touching landslides merged (8-connected), as a mapper would see them. Columns: area, mean and max depth, volume (area x mean depth), mean F, the landslide safety factor (scaLr eq. 7), centroid, length and width (axes of the ellipse with the same second moments), perimeter. These are statistics of potential landslides, not maps of individual ones (Steer et al. 2026, section 4.1). |
+| `write_landslide_label_rasters` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the landslide id rasters behind the catalogues. | &lt;write_fname&gt;_landslide_label.tif and _landslide_label_amalgamated.tif: the catalogue id of each landslide cell, nodata elsewhere. For checking the statistics. |
+
+### Groundwater
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `water_table_method` | `string` | `none` | `param` | - | Where the water table for pore pressure in the rupture planes comes from. | none: dry. dupuit_steady: the steady state of a Dupuit - Boussinesq aquifer on an impermeable base (regolith_thickness_metres below the surface) under groundwater_recharge_m_per_s, after the Landlab GroundwaterDupuitPercolator (Litwin et al. 2020); channel cells (threshold_contributing_pixels) are seepage outlets with the water table at the surface, the raster edge and nodata are no-flux. dupuit_transient: start from that steady state and run the recharge series in groundwater_recharge_series_fname, evaluating the rupture planes at each of groundwater_output_times_s. Pore pressure is hydrostatic below the water table (scaLr Appendix A, corrected). SINMAP keeps its own steady-state wetness. |
+| `regolith_thickness_metres` | `float` | `2.0` | `param` | `water_table_method` | Thickness (m) of the permeable regolith above the impermeable base. | Measured vertically. Used where regolith_thickness_fname is empty. |
+| `regolith_thickness_fname` | `string` | - | `param` | `water_table_method` | Raster of regolith thickness (m), same grid as the DEM. | Cells with nodata or a thickness &lt;= 0 are outside the aquifer. A relative path is read from read_path. |
+| `groundwater_hydraulic_conductivity_m_per_s` | `float` | `0.001` | `param` | `water_table_method` | Saturated hydraulic conductivity K (m/s); at the surface for the exponential profile. | Landlab's default. Sands are about 1e-5 to 1e-3, silts 1e-8 to 1e-6. |
+| `groundwater_drainable_porosity` | `float` | `0.2` | `param` | `water_table_method` | Drainable porosity n (0 to 1]. | Landlab's default. |
+| `groundwater_transmissivity_profile` | `string` | `uniform` | `param` | `water_table_method` | How conductivity varies with depth: uniform or exponential. | uniform: T = K h (Landlab). exponential: K = K0 exp(-depth / z_m), as TOPMODEL assumes; with it the steady state follows TOPMODEL's index relation with sin cos in place of tan. |
+| `groundwater_conductivity_decay_depth_metres` | `float` | `1.0` | `param` | `groundwater_transmissivity_profile=exponential` | Decay depth z_m (m) of the exponential conductivity profile. | TOPMODEL's m = drainable porosity x z_m. |
+| `groundwater_recharge_m_per_s` | `float` | `1e-08` | `param` | `water_table_method` | Recharge f (m/s) for the steady state (dupuit_steady), and the antecedent state of dupuit_transient. | 1e-8 m/s is about 0.9 mm/day. For a design storm use the effective recharge of the critical wet period. |
+| `groundwater_recharge_series_fname` | `string` | - | `param` | `water_table_method=dupuit_transient` | CSV recharge series for dupuit_transient: columns time_s, recharge_m_per_s. | Piecewise constant: each rate applies from its time to the next; the first time must be 0, times increasing; the last rate continues to the last output time. A relative path is read from read_path. |
+| `groundwater_output_times_s` | `string` | - | `param` | `water_table_method=dupuit_transient` | Comma-separated times (s) at which dupuit_transient writes the water table and rupture safety factor. | &lt;write_fname&gt;_t&lt;time&gt;s_water_table_depth.tif and, with run_rupture_planes, _t&lt;time&gt;s_rupture_safety_factor.tif, plus one row each in &lt;write_fname&gt;_groundwater_time_series.csv. The full outputs are written for the last time. |
+| `groundwater_steady_tolerance` | `float` | `1e-06` | `param` | `water_table_method` | Steady state reached when max \|n dh/dt\| &lt;= this x max recharge. | Relative to the recharge rate. |
+| `groundwater_max_substeps` | `int` | `10000000` | `param` | `water_table_method` | Most substeps in the march to steady state before giving up. | Substeps are limited by Courant and von Neumann conditions; fine grids and conductive regolith need many. |
+| `write_groundwater_rasters` | `bool` | `true` | `switch` | `water_table_method` | Write the groundwater rasters. | &lt;write_fname&gt;_water_table_depth.tif (m below the surface), _saturated_thickness.tif (m above the base) and _seepage.tif (return flow, m/s). |
 
 <!-- END GENERATED CLI PARAMETERS -->

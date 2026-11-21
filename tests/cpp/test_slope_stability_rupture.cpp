@@ -213,6 +213,61 @@ int main()
               && throws([] { validate_rupture_parameters({std::nan(""), 0.7, 2600.0, 9.81}); }));
     }
 
+    // ------------------------------------------------------- pore pressure
+    {
+        // F_wet against the stresses built separately (paper eq. A1):
+        // sigma_n = rho g h cos^2, tau = rho g h cos sin, psi = rho_w g (h - d).
+        splitmix64_stream rng(77);
+        double worst = 0.0;
+        for (int k = 0; k < 500; ++k)
+        {
+            const double dx = 10.0 + 200.0 * rng.uniform01(), dz = dx * (0.1 + 1.2 * rng.uniform01());
+            const double h = dz * (0.01 + 0.98 * rng.uniform01()), d = dz * rng.uniform01();
+            const rupture_parameters p{3000.0 * rng.uniform01(), 0.4 + 0.6 * rng.uniform01(), 2600.0, 9.81, 1000.0};
+            const double th = std::atan((dz - h) / dx);
+            const double sn = p.density_kg_m3 * p.gravity_m_s2 * h * std::cos(th) * std::cos(th);
+            const double tau = p.density_kg_m3 * p.gravity_m_s2 * h * std::cos(th) * std::sin(th);
+            const double psi = (h > d) ? p.water_density_kg_m3 * p.gravity_m_s2 * (h - d) : 0.0;
+            const double direct = (p.cohesion_pa + p.friction_coefficient * (sn - psi)) / tau;
+            worst = std::max(worst, std::fabs(rupture_safety_factor_wet(h, dx, dz, d, p) - direct) / std::max(1.0, std::fabs(direct)));
+        }
+        check("pore pressure: F_wet equals (c + mu (sigma_n - psi)) / tau built from the stresses (A1)", worst < 1e-12,
+              "max relative " + num(worst));
+
+        // The wet optimum against a dense search; dry when d >= dz; monotone in d.
+        double worst_opt = 0.0;
+        bool never_worse = true, dry_ok = true, mono = true;
+        for (int k = 0; k < 120; ++k)
+        {
+            const double dx = 20.0 + 150.0 * rng.uniform01(), dz = dx * (0.2 + 1.0 * rng.uniform01());
+            const rupture_parameters p{200.0 + 5000.0 * rng.uniform01(), 0.5 + 0.4 * rng.uniform01(), 2600.0, 9.81, 1000.0};
+            double prev = std::numeric_limits<double>::infinity();
+            for (double frac : {1.5, 1.0, 0.6, 0.3, 0.1, 0.0})
+            {
+                const double d = frac * dz;
+                const rupture_pair r = rupture_optimal_depth_wet(dx, dz, d, p);
+                if (frac >= 1.0)
+                {
+                    const rupture_pair dry = rupture_optimal_depth(dx, dz, p);
+                    dry_ok &= r.safety_factor == dry.safety_factor && r.depth == dry.depth;
+                }
+                double best = std::numeric_limits<double>::infinity();
+                for (int i = 1; i < 200000; ++i)
+                    best = std::min(best, rupture_safety_factor_wet(dz * i / 200000.0, dx, dz, d, p));
+                worst_opt = std::max(worst_opt, std::fabs(r.safety_factor - best) / std::max(1.0, std::fabs(best)));
+                never_worse &= r.safety_factor <= best + 1e-9 * std::max(1.0, std::fabs(best));
+                mono &= r.safety_factor <= prev + 1e-9;
+                prev = r.safety_factor;
+            }
+        }
+        check("pore pressure: the wet optimum matches a 2e5-point search and is never worse", worst_opt < 1e-6 && never_worse,
+              "max relative " + num(worst_opt));
+        check("pore pressure: a water table at or below dz is the dry case exactly", dry_ok);
+        check("pore pressure: a shallower water table never raises F_min", mono);
+        check("pore pressure: negative water density throws",
+              throws([] { validate_rupture_parameters({1000.0, 0.7, 2600.0, 9.81, -1.0}); }));
+    }
+
     // -------------------------------------------------------- planar hillslope
     {
         // Plane falling to the south (row index), gradient S0; the bottom rows
@@ -342,6 +397,29 @@ int main()
         bad[5] = 9;
         check("regions: a source whose region id has no parameter row throws",
               throws([&] { (void)compute_rupture_planes(*g.flow, g.dem, channel, bad, table); }));
+    }
+
+    // ------------------------------------- water table through compute_rupture_planes
+    {
+        const int nr = 7, nc = 70;
+        const double cs = 10.0, Lc = 400.0, z0 = 1000.0;
+        test_grid g = make_grid(nr, nc, cs, [&](int, int c) { const double x = (c + 0.5) * cs; return z0 - x * x / (2.0 * Lc); });
+        std::vector<std::uint8_t> channel(static_cast<std::size_t>(nr) * nc, 0);
+        for (int r = 0; r < nr; ++r) channel[static_cast<std::size_t>(r) * nc + nc - 1] = 1;
+        const std::map<std::int32_t, rupture_parameters> pr{{0, {30000.0, 0.9, rho, gr}}};   // strong enough that some cells are stable dry
+        const std::size_t n = channel.size();
+        const rupture_rasters dry = compute_rupture_planes(*g.flow, g.dem, channel, {}, pr);
+        const rupture_rasters deep = compute_rupture_planes(*g.flow, g.dem, channel, {}, pr, 0,
+                                                            std::vector<double>(n, std::numeric_limits<double>::infinity()));
+        const rupture_rasters wet = compute_rupture_planes(*g.flow, g.dem, channel, {}, pr, 0, std::vector<double>(n, 0.0));
+        bool lower = true;
+        for (std::size_t i = 0; i < n; ++i)
+            if (dry.safety_factor.get_mask()[i]) lower &= wet.safety_factor.get_data()[i] <= dry.safety_factor.get_data()[i];
+        check("water table: an infinitely deep water table reproduces the dry rasters exactly",
+              deep.safety_factor.get_data() == dry.safety_factor.get_data() && deep.depth.get_data() == dry.depth.get_data());
+        check("water table: a water table at the surface lowers F everywhere and adds unstable cells",
+              lower && wet.n_unstable > dry.n_unstable,
+              "unstable dry " + std::to_string(dry.n_unstable) + ", saturated " + std::to_string(wet.n_unstable));
     }
 
     // ---------------------------------------- geometry above the source is skipped

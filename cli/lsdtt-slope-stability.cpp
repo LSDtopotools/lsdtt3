@@ -61,11 +61,13 @@
 #include "../src/core/lsdtt_raster_warp.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
 #include "../src/cpu/lsdtt_flowgraph_cpu.hpp"
+#include "../src/cpu/lsdtt_groundwater_dupuit_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_breach_least_cost_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_sinmap_cpu.hpp"
 
@@ -495,6 +497,124 @@ int main(int argc, char* argv[])
         "(dz/dx). Channel cells and cells with no admissible D are nodata.",
         "Rupture planes", "switch", "run_rupture_planes"};
 
+    // --- Landslide catalogues -----------------------------------------------------
+    int_default_map["rupture_min_daylight_neighbours"] = 2;
+    help_map["rupture_min_daylight_neighbours"] = {"int", "2",
+        "Fewest neighbours of a daylight point that must share it, or its landslide is dropped.",
+        "Removes \"1-D landslides\", single lines of cells down one flow path, as the "
+        "scaLr code does (its iopt = 2; the paper does not describe it). The 8 "
+        "neighbours of the daylight point D are counted if their daylight point is "
+        "D, stable or not. 0 keeps every landslide. 0 to 8.",
+        "Landslide catalogues", "param", "run_rupture_planes"};
+    bool_default_map["write_landslide_catalogue"] = true;
+    help_map["write_landslide_catalogue"] = {"bool", "true",
+        "Write the potential-landslide catalogues as CSV.",
+        "A landslide is the unstable cells (F <= 1) that share a daylight point, as "
+        "in scaLr (every daylight point also joins its own landslide if its own "
+        "F <= 1, as the scaLr code does). <write_fname>_landslide_catalogue.csv: one "
+        "row per daylight point; _landslide_catalogue_amalgamated.csv: touching "
+        "landslides merged (8-connected), as a mapper would see them. Columns: "
+        "area, mean and max depth, volume (area x mean depth), mean F, the landslide "
+        "safety factor (scaLr eq. 7), centroid, length and width (axes of the "
+        "ellipse with the same second moments), perimeter. These are statistics of "
+        "potential landslides, not maps of individual ones (Steer et al. 2026, "
+        "section 4.1).",
+        "Landslide catalogues", "switch", "run_rupture_planes"};
+    bool_default_map["write_landslide_label_rasters"] = true;
+    help_map["write_landslide_label_rasters"] = {"bool", "true",
+        "Write the landslide id rasters behind the catalogues.",
+        "<write_fname>_landslide_label.tif and _landslide_label_amalgamated.tif: "
+        "the catalogue id of each landslide cell, nodata elsewhere. For checking "
+        "the statistics.",
+        "Landslide catalogues", "switch", "run_rupture_planes"};
+
+    // --- Groundwater (Dupuit - Boussinesq water table for pore pressure) --------
+    string_default_map["water_table_method"] = "none";
+    help_map["water_table_method"] = {"string", "none",
+        "Where the water table for pore pressure in the rupture planes comes from.",
+        "none: dry. dupuit_steady: the steady state of a Dupuit - Boussinesq aquifer "
+        "on an impermeable base (regolith_thickness_metres below the surface) under "
+        "groundwater_recharge_m_per_s, after the Landlab GroundwaterDupuitPercolator "
+        "(Litwin et al. 2020); channel cells (threshold_contributing_pixels) are "
+        "seepage outlets with the water table at the surface, the raster edge and "
+        "nodata are no-flux. dupuit_transient: start from that steady state and run "
+        "the recharge series in groundwater_recharge_series_fname, evaluating the "
+        "rupture planes at each of groundwater_output_times_s. Pore pressure is "
+        "hydrostatic below the water table (scaLr Appendix A, corrected). SINMAP "
+        "keeps its own steady-state wetness.",
+        "Groundwater", "param", ""};
+    float_default_map["regolith_thickness_metres"] = 2.0f;
+    help_map["regolith_thickness_metres"] = {"float", "2.0",
+        "Thickness (m) of the permeable regolith above the impermeable base.",
+        "Measured vertically. Used where regolith_thickness_fname is empty.",
+        "Groundwater", "param", "water_table_method"};
+    string_default_map["regolith_thickness_fname"] = "";
+    help_map["regolith_thickness_fname"] = {"string", "",
+        "Raster of regolith thickness (m), same grid as the DEM.",
+        "Cells with nodata or a thickness <= 0 are outside the aquifer. A relative "
+        "path is read from read_path.",
+        "Groundwater", "param", "water_table_method"};
+    float_default_map["groundwater_hydraulic_conductivity_m_per_s"] = 1.0e-3f;
+    help_map["groundwater_hydraulic_conductivity_m_per_s"] = {"float", "0.001",
+        "Saturated hydraulic conductivity K (m/s); at the surface for the exponential profile.",
+        "Landlab's default. Sands are about 1e-5 to 1e-3, silts 1e-8 to 1e-6.",
+        "Groundwater", "param", "water_table_method"};
+    float_default_map["groundwater_drainable_porosity"] = 0.2f;
+    help_map["groundwater_drainable_porosity"] = {"float", "0.2",
+        "Drainable porosity n (0 to 1].", "Landlab's default.",
+        "Groundwater", "param", "water_table_method"};
+    string_default_map["groundwater_transmissivity_profile"] = "uniform";
+    help_map["groundwater_transmissivity_profile"] = {"string", "uniform",
+        "How conductivity varies with depth: uniform or exponential.",
+        "uniform: T = K h (Landlab). exponential: K = K0 exp(-depth / z_m), as "
+        "TOPMODEL assumes; with it the steady state follows TOPMODEL's index "
+        "relation with sin cos in place of tan.",
+        "Groundwater", "param", "water_table_method"};
+    float_default_map["groundwater_conductivity_decay_depth_metres"] = 1.0f;
+    help_map["groundwater_conductivity_decay_depth_metres"] = {"float", "1.0",
+        "Decay depth z_m (m) of the exponential conductivity profile.",
+        "TOPMODEL's m = drainable porosity x z_m.",
+        "Groundwater", "param", "groundwater_transmissivity_profile=exponential"};
+    float_default_map["groundwater_recharge_m_per_s"] = 1.0e-8f;
+    help_map["groundwater_recharge_m_per_s"] = {"float", "1e-08",
+        "Recharge f (m/s) for the steady state (dupuit_steady), and the antecedent state of dupuit_transient.",
+        "1e-8 m/s is about 0.9 mm/day. For a design storm use the effective recharge of "
+        "the critical wet period.",
+        "Groundwater", "param", "water_table_method"};
+    string_default_map["groundwater_recharge_series_fname"] = "";
+    help_map["groundwater_recharge_series_fname"] = {"string", "",
+        "CSV recharge series for dupuit_transient: columns time_s, recharge_m_per_s.",
+        "Piecewise constant: each rate applies from its time to the next; the first "
+        "time must be 0, times increasing; the last rate continues to the last output "
+        "time. A relative path is read from read_path.",
+        "Groundwater", "param", "water_table_method=dupuit_transient"};
+    string_default_map["groundwater_output_times_s"] = "";
+    help_map["groundwater_output_times_s"] = {"string", "",
+        "Comma-separated times (s) at which dupuit_transient writes the water table and rupture safety factor.",
+        "<write_fname>_t<time>s_water_table_depth.tif and, with run_rupture_planes, "
+        "_t<time>s_rupture_safety_factor.tif, plus one row each in "
+        "<write_fname>_groundwater_time_series.csv. The full outputs are written for "
+        "the last time.",
+        "Groundwater", "param", "water_table_method=dupuit_transient"};
+    float_default_map["groundwater_steady_tolerance"] = 1.0e-6f;
+    help_map["groundwater_steady_tolerance"] = {"float", "1e-06",
+        "Steady state reached when max |n dh/dt| <= this x max recharge.",
+        "Relative to the recharge rate.",
+        "Groundwater", "param", "water_table_method"};
+    int_default_map["groundwater_max_substeps"] = 10000000;
+    help_map["groundwater_max_substeps"] = {"int", "10000000",
+        "Most substeps in the march to steady state before giving up.",
+        "Substeps are limited by Courant and von Neumann conditions; fine grids and "
+        "conductive regolith need many.",
+        "Groundwater", "param", "water_table_method"};
+    bool_default_map["write_groundwater_rasters"] = true;
+    help_map["write_groundwater_rasters"] = {"bool", "true",
+        "Write the groundwater rasters.",
+        "<write_fname>_water_table_depth.tif (m below the surface), "
+        "_saturated_thickness.tif (m above the base) and _seepage.tif (return "
+        "flow, m/s).",
+        "Groundwater", "switch", "water_table_method"};
+
     if (cli_args.help_requested)
     {
         lsdtt::lsdtt_param_parser::print_terminal_help(k_tool_name, k_status, k_citation, help_map, cli_args);
@@ -563,6 +683,69 @@ int main(int argc, char* argv[])
         const bool run_rupture = bf.at("run_rupture_planes");
         if (run_rupture && ii.at("threshold_contributing_pixels") < 1)
             throw std::runtime_error("threshold_contributing_pixels must be at least 1");
+        if (ii.at("rupture_min_daylight_neighbours") < 0 || ii.at("rupture_min_daylight_neighbours") > 8)
+            throw std::runtime_error("rupture_min_daylight_neighbours must be 0 to 8");
+        const std::string water_table_method = sf.at("water_table_method");
+        if (water_table_method != "none" && water_table_method != "dupuit_steady" && water_table_method != "dupuit_transient")
+            throw std::runtime_error("water_table_method must be none, dupuit_steady or dupuit_transient");
+        const bool use_groundwater = water_table_method != "none";
+        lsdtt::groundwater_dupuit_parameters gw;
+        gw.hydraulic_conductivity_m_per_s = ff.at("groundwater_hydraulic_conductivity_m_per_s");
+        gw.drainable_porosity = ff.at("groundwater_drainable_porosity");
+        gw.conductivity_decay_depth_metres = ff.at("groundwater_conductivity_decay_depth_metres");
+        {
+            const std::string prof = sf.at("groundwater_transmissivity_profile");
+            if (prof == "uniform") gw.profile = lsdtt::groundwater_transmissivity_profile::uniform;
+            else if (prof == "exponential") gw.profile = lsdtt::groundwater_transmissivity_profile::exponential;
+            else throw std::runtime_error("groundwater_transmissivity_profile must be uniform or exponential");
+        }
+        std::vector<std::pair<double, double>> recharge_series;
+        std::vector<double> output_times;
+        if (use_groundwater)
+        {
+            lsdtt::validate_groundwater_dupuit_parameters(gw);
+            if (!(ff.at("regolith_thickness_metres") > 0.0f) && sf.at("regolith_thickness_fname").empty())
+                throw std::runtime_error("regolith_thickness_metres must be > 0");
+            if (!(ff.at("groundwater_recharge_m_per_s") >= 0.0f))
+                throw std::runtime_error("groundwater_recharge_m_per_s must be >= 0");
+            if (water_table_method == "dupuit_steady" && !(ff.at("groundwater_recharge_m_per_s") > 0.0f))
+                throw std::runtime_error("dupuit_steady needs groundwater_recharge_m_per_s > 0");
+            if (!(ff.at("groundwater_steady_tolerance") > 0.0f))
+                throw std::runtime_error("groundwater_steady_tolerance must be > 0");
+        }
+        if (water_table_method == "dupuit_transient")
+        {
+            if (sf.at("groundwater_recharge_series_fname").empty())
+                throw std::runtime_error("dupuit_transient needs groundwater_recharge_series_fname");
+            const std::string path = resolve_input(parser.get_read_path(), sf.at("groundwater_recharge_series_fname"));
+            const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(path);
+            if (!lsdtt::csv_has_column(t, "time_s") || !lsdtt::csv_has_column(t, "recharge_m_per_s"))
+                throw std::runtime_error(path + ": the recharge series needs columns time_s and recharge_m_per_s");
+            for (std::size_t k = 0; k < t.rows.size(); ++k)
+            {
+                const int line = static_cast<int>(k) + 2;
+                const double tt = lsdtt::csv_row_double_required(t.rows[k], "time_s", path, line);
+                const double rr = lsdtt::csv_row_double_required(t.rows[k], "recharge_m_per_s", path, line);
+                if (rr < 0.0) throw std::runtime_error(path + ": negative recharge on line " + std::to_string(line));
+                if (k == 0 && tt != 0.0) throw std::runtime_error(path + ": the first time must be 0");
+                if (k > 0 && !(tt > recharge_series.back().first))
+                    throw std::runtime_error(path + ": times must increase (line " + std::to_string(line) + ")");
+                recharge_series.emplace_back(tt, rr);
+            }
+            if (recharge_series.empty()) throw std::runtime_error(path + ": the recharge series has no rows");
+            std::stringstream ss(sf.at("groundwater_output_times_s"));
+            std::string tok;
+            while (std::getline(ss, tok, ','))
+            {
+                if (tok.find_first_not_of(" \t") == std::string::npos) continue;
+                const double v = std::stod(tok);
+                if (!(v > 0.0) || (!output_times.empty() && !(v > output_times.back())))
+                    throw std::runtime_error("groundwater_output_times_s must be positive and increasing");
+                output_times.push_back(v);
+            }
+            if (output_times.empty())
+                throw std::runtime_error("dupuit_transient needs groundwater_output_times_s");
+        }
 
         std::map<std::int32_t, lsdtt::sinmap_parameters> by_region;
         std::map<std::int32_t, lsdtt::rupture_parameters> rupture_by_region;
@@ -749,7 +932,7 @@ int main(int argc, char* argv[])
         // ---------------------------------------------------------------------
         // Step 4: planar rupture surfaces (D8 on the routing surface).
         // ---------------------------------------------------------------------
-        if (run_rupture)
+        if (run_rupture || use_groundwater)
         {
             lsdtt::lsdtt_flowinfo_options d8o;
             d8o.boundary_conditions = sf.at("boundary_conditions");
@@ -761,8 +944,129 @@ int main(int argc, char* argv[])
             std::vector<std::uint8_t> channel(npix.data.size(), 0);
             for (std::size_t i = 0; i < channel.size(); ++i)
                 channel[i] = (npix.mask[i] && static_cast<double>(npix.data[i]) >= threshold) ? 1 : 0;
+            // -----------------------------------------------------------------
+            // Groundwater: the water table for pore pressure.
+            // -----------------------------------------------------------------
+            std::vector<double> water_table_depth;   // empty = dry
+            if (use_groundwater)
+            {
+                const lsdtt::lsdtt_raster_meta& meta = input_dem.get_meta();
+                const std::size_t n = input_dem.get_data().size();
+                std::vector<double> surface(n), basez(n);
+                std::vector<std::uint8_t> valid(input_dem.get_mask());
+                std::vector<double> thick(n, ff.at("regolith_thickness_metres"));
+                if (!sf.at("regolith_thickness_fname").empty())
+                {
+                    const lsdtt::lsdtt_raster_cpu rt = read_raster(resolve_input(parser.get_read_path(), sf.at("regolith_thickness_fname")));
+                    require_same_grid(meta, rt.get_meta(), "regolith_thickness_fname");
+                    for (std::size_t i = 0; i < n; ++i)
+                    {
+                        thick[i] = rt.get_data()[i];
+                        if (!rt.get_mask()[i] || !std::isfinite(thick[i]) || !(thick[i] > 0.0)) valid[i] = 0;
+                    }
+                }
+                for (std::size_t i = 0; i < n; ++i)
+                {
+                    surface[i] = input_dem.get_data()[i];
+                    basez[i] = surface[i] - thick[i];
+                }
+                lsdtt::lsdtt_groundwater_dupuit aquifer(meta, surface, basez, valid, channel, {}, gw);
+                const std::vector<double> f_antecedent(n, ff.at("groundwater_recharge_m_per_s"));
+                if (ff.at("groundwater_recharge_m_per_s") > 0.0f)
+                {
+                    const auto rep = aquifer.run_to_steady(f_antecedent, ff.at("groundwater_steady_tolerance"),
+                                                           ii.at("groundwater_max_substeps"));
+                    std::cout << "Groundwater steady state: " << (rep.converged ? "converged" : "NOT converged")
+                              << " after " << rep.substeps << " substeps (" << number_string(rep.time)
+                              << " s of pseudo-time), residual " << number_string(rep.residual) << "\n";
+                    lsdtt::lsdtt_run_record::add_provenance("groundwater_steady_substeps", std::to_string(rep.substeps));
+                    if (!rep.converged)
+                        throw std::runtime_error("the groundwater steady state did not converge within groundwater_max_substeps "
+                                                 "(raise it, or groundwater_steady_tolerance)");
+                }
+
+                auto wt_raster = [&](const std::vector<double>& v) {
+                    const float nd = static_cast<float>(meta.no_data_value);
+                    std::vector<float> out(n, nd);
+                    std::vector<std::uint8_t> m(n, 0);
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (std::isfinite(v[i])) { out[i] = static_cast<float>(v[i]); m[i] = 1; }
+                    return lsdtt::lsdtt_raster_cpu(std::move(out), std::move(m), meta);
+                };
+
+                if (water_table_method == "dupuit_transient")
+                {
+                    const std::string ts_path = base + "_groundwater_time_series.csv";
+                    std::ofstream ts(ts_path);
+                    if (!ts) throw std::runtime_error("Cannot write " + ts_path);
+                    ts << "time_s,storage_m3,saturated_cells,rupture_unstable_cells\n";
+                    double t_now = 0.0;
+                    for (double t_out : output_times)
+                    {
+                        // Run the series up to t_out, piecewise constant.
+                        while (t_now < t_out)
+                        {
+                            std::size_t k = 0;
+                            while (k + 1 < recharge_series.size() && recharge_series[k + 1].first <= t_now) ++k;
+                            const double seg_end = (k + 1 < recharge_series.size())
+                                                     ? std::min(t_out, recharge_series[k + 1].first) : t_out;
+                            aquifer.run(seg_end - t_now, std::vector<double>(n, recharge_series[k].second));
+                            t_now = seg_end;
+                        }
+                        const std::vector<double> dw = aquifer.water_table_depth();
+                        std::int64_t n_sat = 0;
+                        for (double v : dw) if (std::isfinite(v) && v <= 1e-3) ++n_sat;
+                        std::ostringstream lab;
+                        lab << "_t" << std::setprecision(12) << t_out << "s";
+                        if (t_out != output_times.back())
+                        {
+                            write_raster(wt_raster(dw), base + lab.str() + "_water_table_depth.tif");
+                            std::int64_t n_unst = -1;
+                            if (run_rupture)
+                            {
+                                const lsdtt::rupture_rasters r_t = lsdtt::compute_rupture_planes(
+                                    *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), dw);
+                                write_raster(r_t.safety_factor, base + lab.str() + "_rupture_safety_factor.tif");
+                                n_unst = r_t.n_unstable;
+                            }
+                            ts << number_string(t_out) << ',' << number_string(aquifer.storage()) << ',' << n_sat << ','
+                               << n_unst << '\n';
+                        }
+                        else
+                        {
+                            // The last time: its rupture count is written after the full evaluation below.
+                            ts << number_string(t_out) << ',' << number_string(aquifer.storage()) << ',' << n_sat << ',';
+                        }
+                    }
+                    ts.close();
+                    std::cout << "  wrote " << ts_path << "\n";
+                }
+                water_table_depth = aquifer.water_table_depth();
+                const lsdtt::groundwater_budget& bud = aquifer.budget();
+                std::cout << "Groundwater budget (m3): recharge " << number_string(bud.recharge_in) << ", storage change "
+                          << number_string(bud.storage_change) << ", to channels " << number_string(bud.outflow_fixed_head)
+                          << ", seepage " << number_string(bud.seepage_out) << "\n";
+                if (bf.at("write_groundwater_rasters"))
+                {
+                    write_raster(wt_raster(water_table_depth), base + "_water_table_depth.tif");
+                    std::vector<double> th(aquifer.thickness());
+                    std::vector<double> sp(aquifer.seepage());
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (!std::isfinite(water_table_depth[i])) { th[i] = sp[i] = std::numeric_limits<double>::quiet_NaN(); }
+                    write_raster(wt_raster(th), base + "_saturated_thickness.tif");
+                    write_raster(wt_raster(sp), base + "_seepage.tif");
+                }
+            }
+
+            if (run_rupture)
+            {
             const lsdtt::rupture_rasters rup = lsdtt::compute_rupture_planes(
-                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"));
+                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), water_table_depth);
+            if (water_table_method == "dupuit_transient")
+            {
+                std::ofstream ts(base + "_groundwater_time_series.csv", std::ios::app);
+                ts << rup.n_unstable << '\n';
+            }
             std::cout << "Rupture planes: " << rup.n_sources << " hillslope cells with a daylight point, "
                       << rup.n_unstable << " unstable (F <= 1); " << rup.n_channel << " channel cells\n";
             lsdtt::lsdtt_run_record::add_provenance("rupture_sources", std::to_string(rup.n_sources));
@@ -776,6 +1080,70 @@ int main(int argc, char* argv[])
                 write_raster(rup.length, base + "_rupture_length.tif");
                 write_raster(rup.rupture_slope, base + "_rupture_slope.tif");
                 write_raster(rup.topographic_slope, base + "_rupture_topographic_slope.tif");
+            }
+
+            const bool want_catalogue = bf.at("write_landslide_catalogue");
+            const bool want_labels = bf.at("write_landslide_label_rasters");
+            if (want_catalogue || want_labels)
+            {
+                const lsdtt::landslide_catalogues cat = lsdtt::build_landslide_catalogues(
+                    rup, dem.get_meta(), region, rupture_by_region, ii.at("rupture_min_daylight_neighbours"));
+                std::cout << "Landslide catalogues: " << cat.by_daylight.size() << " by daylight point ("
+                          << cat.n_daylight_points_removed << " of " << cat.n_daylight_points
+                          << " daylight points dropped by the 1-D rule), " << cat.amalgamated.size()
+                          << " amalgamated, " << cat.n_landslide_cells << " cells\n";
+                lsdtt::lsdtt_run_record::add_provenance("landslides_by_daylight", std::to_string(cat.by_daylight.size()));
+                lsdtt::lsdtt_run_record::add_provenance("landslides_amalgamated", std::to_string(cat.amalgamated.size()));
+                lsdtt::lsdtt_run_record::add_provenance("daylight_points_removed_1d", std::to_string(cat.n_daylight_points_removed));
+                if (want_labels)
+                {
+                    auto label_raster = [&](const std::vector<std::int32_t>& lab) {
+                        const float nd = static_cast<float>(dem.get_meta().no_data_value);
+                        std::vector<float> v(lab.size(), nd);
+                        std::vector<std::uint8_t> m(lab.size(), 0);
+                        for (std::size_t i = 0; i < lab.size(); ++i)
+                            if (lab[i] > 0) { v[i] = static_cast<float>(lab[i]); m[i] = 1; }
+                        return lsdtt::lsdtt_raster_cpu(std::move(v), std::move(m), dem.get_meta());
+                    };
+                    write_raster(label_raster(cat.label), base + "_landslide_label.tif");
+                    write_raster(label_raster(cat.label_amalgamated), base + "_landslide_label_amalgamated.tif");
+                }
+                if (want_catalogue)
+                {
+                    auto write_catalogue = [&](const std::vector<lsdtt::landslide_record>& rows,
+                                               const std::string& path, bool by_daylight) {
+                        std::ofstream out(path);
+                        if (!out) throw std::runtime_error("Cannot write " + path);
+                        out << "landslide_id,";
+                        out << (by_daylight ? "daylight_x,daylight_y," : "n_daylight_points,");
+                        out << "n_cells,area_m2,mean_depth_m,max_depth_m,volume_m3,mean_safety_factor,"
+                               "landslide_safety_factor,centroid_x,centroid_y,length_m,width_m,length_to_width,perimeter_m";
+                        out << (by_daylight ? ",n_pieces\n" : "\n");
+                        for (const auto& r : rows)
+                        {
+                            out << r.id << ',';
+                            if (by_daylight) out << number_string(r.daylight_x) << ',' << number_string(r.daylight_y) << ',';
+                            else out << r.n_daylight_points << ',';
+                            out << r.n_cells << ',' << number_string(r.area_m2) << ',' << number_string(r.mean_depth_m) << ','
+                                << number_string(r.max_depth_m) << ',' << number_string(r.volume_m3) << ','
+                                << number_string(r.mean_safety_factor) << ',' << number_string(r.landslide_safety_factor) << ','
+                                << number_string(r.centroid_x) << ',' << number_string(r.centroid_y) << ','
+                                << number_string(r.length_m) << ',' << number_string(r.width_m) << ','
+                                << number_string(r.length_to_width) << ',' << number_string(r.perimeter_m);
+                            if (by_daylight) out << ',' << r.n_pieces;
+                            out << '\n';
+                        }
+                        std::cout << "  wrote " << path << "\n";
+                    };
+                    write_catalogue(cat.by_daylight, base + "_landslide_catalogue.csv", true);
+                    write_catalogue(cat.amalgamated, base + "_landslide_catalogue_amalgamated.csv", false);
+                }
+            }
+            }   // run_rupture
+            else if (water_table_method == "dupuit_transient")
+            {
+                std::ofstream ts(base + "_groundwater_time_series.csv", std::ios::app);
+                ts << -1 << '\n';
             }
         }
 

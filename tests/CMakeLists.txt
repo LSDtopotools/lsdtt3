@@ -2838,6 +2838,7 @@ add_test(NAME fixture_slope_stability_inputs
         "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table.csv"
         "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_bad_column.csv"
         "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_missing_id.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_recharge_series.csv"
         "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}/")
 lsdtt_set_tests_properties(fixture_slope_stability_inputs PROPERTIES
     LABELS "fixture;slope_stability"
@@ -2868,6 +2869,13 @@ add_lsdtt_cli_smoke_test(
     --expect ss_rupture_slope.tif
     --expect ss_rupture_topographic_slope.tif
     --expect-raster-values ss_rupture_unstable.tif:0,1
+    --expect ss_landslide_catalogue.csv
+    --expect ss_landslide_catalogue_amalgamated.csv
+    --expect ss_landslide_label.tif
+    --expect ss_landslide_label_amalgamated.tif
+    --expect-file-contains "ss_landslide_catalogue.csv:landslide_id,daylight_x,daylight_y,n_cells,area_m2,mean_depth_m"
+    --expect-file-contains "ss_landslide_catalogue_amalgamated.csv:landslide_id,n_daylight_points,n_cells"
+    --stdout-contains "Landslide catalogues: "
     --stdout-contains "Rupture planes: "
     --stdout-contains "Conditioned pixels: 1646 filled, 2492 carved"
     # All six classes occur on this DEM with SINMAP's default bounds (measured
@@ -2907,10 +2915,50 @@ add_lsdtt_cli_smoke_test(
     --expect ssp_rupture_safety_factor.tif
     --expect-absent ssp_sinmap_stability_index.tif
     --expect-absent ssp_sinmap_class_areas.csv
+    --expect-absent ssp_landslide_label.tif
+    --expect ssp_landslide_catalogue.csv
     --stdout-contains "Rupture planes: "
+    --stdout-contains "0 of "
 )
 lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
+
+# Phase 4: the water table from the Dupuit - Boussinesq aquifer, steady and
+# transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
+# plumbing, output names and the time series.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_steady
+    lsdtt-slope-stability
+    slope_stability_groundwater_steady.param.in
+    ssg_water_table_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssg_saturated_thickness.tif
+    --expect ssg_seepage.tif
+    --expect ssg_rupture_safety_factor.tif
+    --expect ssg_landslide_catalogue.csv
+    --stdout-contains "Groundwater steady state: converged"
+    --stdout-contains "Groundwater budget (m3): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_steady PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_transient
+    lsdtt-slope-stability
+    slope_stability_groundwater_transient.param.in
+    sst_groundwater_time_series.csv
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sst_t3600s_water_table_depth.tif
+    --expect sst_t3600s_rupture_safety_factor.tif
+    --expect sst_t43200s_water_table_depth.tif
+    --expect sst_water_table_depth.tif
+    --expect sst_rupture_safety_factor.tif
+    --expect-absent sst_t172800s_water_table_depth.tif
+    --expect-file-contains "sst_groundwater_time_series.csv:time_s,storage_m3,saturated_cells,rupture_unstable_cells"
+    --expect-file-contains "sst_groundwater_time_series.csv:\n172800,"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_transient PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
 
 add_lsdtt_cli_smoke_test(
     smoke_slope_stability_edge_exclusion
@@ -2933,7 +2981,11 @@ foreach(_ss_case_message
         "region_without_table|must be given together"
         "region_not_integer|region ids must be integers"
         "rupture_bad_cohesion|rupture: cohesion must be finite and >= 0"
-        "rupture_bad_threshold|threshold_contributing_pixels must be at least 1")
+        "rupture_bad_threshold|threshold_contributing_pixels must be at least 1"
+        "rupture_bad_neighbours|rupture_min_daylight_neighbours must be 0 to 8"
+        "groundwater_bad_method|water_table_method must be none, dupuit_steady or dupuit_transient"
+        "groundwater_no_series|dupuit_transient needs groundwater_recharge_series_fname"
+        "groundwater_bad_times|groundwater_output_times_s must be positive and increasing")
     string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
     list(GET _ss_pair 0 _ss_case)
     list(GET _ss_pair 1 _ss_message)
@@ -6449,6 +6501,25 @@ target_link_libraries(lsdtt-test-slope-stability-rupture PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_rupture COMMAND lsdtt-test-slope-stability-rupture)
 lsdtt_set_tests_properties(unit_slope_stability_rupture PROPERTIES
     LABELS "slope_stability")
+
+# Slope stability, Phase 3: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
+# each grouping rule on hand-built rupture results, statistics against closed
+# forms, and catalogue properties through compute_rupture_planes.
+add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
+target_link_libraries(lsdtt-test-slope-stability-catalogue PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-catalogue)
+lsdtt_set_tests_properties(unit_slope_stability_catalogue PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability, Phase 4: the Dupuit - Boussinesq groundwater component
+# (src/cpu/lsdtt_groundwater_dupuit_cpu) against Dupuit mound and divide,
+# kinematic and TOPMODEL steady states, linear transient decay, the water
+# budget and the thickness update's ODE.
+add_executable(lsdtt-test-groundwater-dupuit cpp/test_groundwater_dupuit.cpp)
+target_link_libraries(lsdtt-test-groundwater-dupuit PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_groundwater_dupuit COMMAND lsdtt-test-groundwater-dupuit)
+lsdtt_set_tests_properties(unit_slope_stability_groundwater_dupuit PROPERTIES
+    LABELS "slope_stability;distributed_hydrology")
 
 add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
 target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
