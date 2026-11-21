@@ -1,0 +1,5 @@
+# Failure: a geographic (EPSG:4326) DEM.
+read_path: __READ_PATH__
+read_fname: tiny30_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ssg

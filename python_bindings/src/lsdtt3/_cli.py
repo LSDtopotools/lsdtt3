@@ -22,6 +22,7 @@ _DRIVERS = frozenset(
     {
         "lsdtt-raster-preprocessing", "lsdtt-synthetic-surfaces",
         "lsdtt-synthetic-networks", "lsdtt-surface-metrics", "lsdtt-slope-area",
+        "lsdtt-slope-stability",
         "lsdtt-channel-extraction", "lsdtt-internal-drainage",
         "lsdtt-hillslope-channel-coupling", "lsdtt-drainage-analysis",
         "lsdtt-distributed-hydrology", "lsdtt-feature-finder", "lsdtt-mountain-front", "lsdtt-outlet-matching",

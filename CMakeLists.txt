@@ -459,6 +459,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_chi_step_changes_cpu.cpp
     src/cpu/lsdtt_channel_gradient_cpu.cpp
     src/cpu/lsdtt_slope_area_cpu.cpp
+    src/cpu/lsdtt_slope_stability_sinmap_cpu.cpp
     src/cpu/lsdtt_channel_point_attributes_cpu.cpp
     src/cpu/lsdtt_sea_mask_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp
@@ -662,6 +663,7 @@ lsdtt_cli(lsdtt-synthetic-surfaces cli/lsdtt-synthetic-surfaces.cpp)
 lsdtt_cli(lsdtt-synthetic-networks     cli/lsdtt-synthetic-networks.cpp)
 lsdtt_cli(lsdtt-surface-metrics        cli/lsdtt-surface-metrics.cpp)
 lsdtt_cli(lsdtt-slope-area             cli/lsdtt-slope-area.cpp)
+lsdtt_cli(lsdtt-slope-stability        cli/lsdtt-slope-stability.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
 lsdtt_cli(lsdtt-hillslope-channel-coupling cli/lsdtt-hillslope-channel-coupling.cpp)

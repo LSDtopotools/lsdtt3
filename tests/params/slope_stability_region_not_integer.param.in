@@ -1,0 +1,7 @@
+# Failure: a region raster that is not integer (the DEM itself).
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssb
+slope_stability_region_fname: basin_stats_diamond_square.tif
+slope_stability_region_table_fname: slope_stability_region_table.csv

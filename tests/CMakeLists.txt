@@ -2815,6 +2815,126 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
+# lsdtt-slope-stability (Phase 1: SINMAP)
+#
+# The numerics are tested in the lsdtt-test-slope-stability-sinmap driver
+# (equations, Monte Carlo, analytic surfaces, regions, threads). These CLI tests
+# carry the plumbing: the carve-then-fill front end, output names, the region
+# raster and table reader, edge exclusion and the refusals.
+#
+# The region tests need the DEM, the region raster and the tables in ONE
+# read_path, so a setup step copies them together (as fixture_basin_stats_outlets
+# does). tests/data/slope_stability_regions.tif is on the basin_stats fixture
+# grid (Watopia UTM 58S, 200 x 200, 30 m): west half id 1, east half id 7, the
+# ten northern rows nodata.
+# =============================================================================
+set(LSDTT_SLOPE_STABILITY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_fixture")
+# cmake -E copy needs the target directory to exist when it copies several files.
+file(MAKE_DIRECTORY "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}")
+add_test(NAME fixture_slope_stability_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_diamond_square.tif"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_regions.tif"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_bad_column.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_missing_id.csv"
+        "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}/")
+lsdtt_set_tests_properties(fixture_slope_stability_inputs PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_fixture
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability
+    lsdtt-slope-stability
+    slope_stability_smoke.param.in
+    ss_sinmap_stability_index.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ss_sinmap_stability_class.tif
+    --expect ss_sinmap_probability_stable.tif
+    --expect ss_sinmap_fs_min.tif
+    --expect ss_sinmap_fs_max.tif
+    --expect ss_sinmap_saturation.tif
+    --expect ss_specific_catchment_area.tif
+    --expect ss_dinf_slope.tif
+    --expect ss_conditioned_pixels.tif
+    --expect ss_sinmap_class_areas.csv
+    --expect ss_sinmap_slope_area_curves.csv
+    --expect-absent ss_edge_contaminated.tif
+    --stdout-contains "Conditioned pixels: 1646 filled, 2492 carved"
+    # All six classes occur on this DEM with SINMAP's default bounds (measured
+    # 2026-11-21: 56.6 % stable ... 0.17 % defended).
+    --expect-raster-values ss_sinmap_stability_class.tif:1,2,3,4,5,6
+    --expect-raster-stat ss_sinmap_probability_stable.tif:min:0:0
+    --expect-raster-stat ss_sinmap_probability_stable.tif:max:1:1
+    --expect-file-contains "ss_sinmap_class_areas.csv:region_id,stability_class,n_cells,area_m2,fraction_of_region"
+    --expect-file-contains "ss_sinmap_slope_area_curves.csv:0,fs_min_1.0,"
+    --expect-file-contains "ss_sinmap_slope_area_curves.csv:0,never_saturated_below,"
+)
+lsdtt_set_tests_properties(smoke_slope_stability PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_regions
+    lsdtt-slope-stability
+    slope_stability_regions.param.in
+    ssr_sinmap_stability_index.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect ssr_sinmap_class_areas.csv
+    --expect-file-contains "ssr_sinmap_class_areas.csv:\n1,"
+    --expect-file-contains "ssr_sinmap_class_areas.csv:\n7,"
+    --expect-file-not-contains "ssr_sinmap_class_areas.csv:\n0,"
+    --expect-file-contains "ssr_sinmap_slope_area_curves.csv:\n7,fs_max_1.0,"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_regions PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_edge_exclusion
+    lsdtt-slope-stability
+    slope_stability_edge.param.in
+    sse_edge_contaminated.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sse_sinmap_stability_index.tif
+    --expect-absent sse_sinmap_slope_area_curves.csv
+    --expect-raster-values sse_edge_contaminated.tif:0,1
+    --stdout-contains "excluded as edge-contaminated"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_edge_exclusion PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+foreach(_ss_case_message
+        "bad_bounds|SINMAP: dimensionless cohesion minimum exceeds its maximum"
+        "region_bad_column|unknown column 'sinmap_cohesion_min'"
+        "region_missing_id|region ids with no parameter row: 7"
+        "region_without_table|must be given together"
+        "region_not_integer|region ids must be integers")
+    string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
+    list(GET _ss_pair 0 _ss_case)
+    list(GET _ss_pair 1 _ss_message)
+    add_lsdtt_cli_smoke_test(
+        failure_slope_stability_${_ss_case}
+        lsdtt-slope-stability
+        slope_stability_${_ss_case}.param.in
+        ssb_sinmap_stability_index.tif
+        --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "${_ss_message}"
+    )
+    lsdtt_set_tests_properties(failure_slope_stability_${_ss_case} PROPERTIES
+        FIXTURES_REQUIRED slope_stability_fixture)
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    failure_slope_stability_geographic_dem
+    lsdtt-slope-stability
+    slope_stability_geographic_dem.param.in
+    ssg_sinmap_stability_index.tif
+    --expect-failure
+    --stderr-contains "only works on projected data"
+)
+
+# =============================================================================
 # lsdtt-outlet-matching
 #
 # No test until 2026-10-14. Reference = the basin_stats fixture DEM (30 m) and
@@ -6285,6 +6405,15 @@ target_link_libraries(lsdtt-test-equal-density-sampling PRIVATE lsdtt3_cpu)
 add_test(NAME unit_equal_density_sampling COMMAND lsdtt-test-equal-density-sampling)
 lsdtt_set_tests_properties(unit_equal_density_sampling PROPERTIES
     LABELS "statistics;slope_stability")
+
+# Slope stability, Phase 1: the SINMAP component (src/cpu/lsdtt_slope_stability_sinmap_cpu)
+# against its own equations, Monte Carlo, and analytic surfaces (plane, cone,
+# convergent bowl); regions, exclusion, thread independence, SA-plot curves.
+add_executable(lsdtt-test-slope-stability-sinmap cpp/test_slope_stability_sinmap.cpp)
+target_link_libraries(lsdtt-test-slope-stability-sinmap PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_sinmap COMMAND lsdtt-test-slope-stability-sinmap)
+lsdtt_set_tests_properties(unit_slope_stability_sinmap PROPERTIES
+    LABELS "slope_stability")
 
 add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
 target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
@@ -12467,6 +12596,8 @@ set(LSDTT_DOMAIN_RULES
     "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
+    # lsdtt-slope-stability (SINMAP, scaLr, curved surfaces): its own domain.
+    "slope_stability"        "slope_stability"
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
     "streamlines"            "streamlines"

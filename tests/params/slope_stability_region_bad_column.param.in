@@ -1,0 +1,7 @@
+# Failure: the region table has a misspelt parameter column.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssb
+slope_stability_region_fname: slope_stability_regions.tif
+slope_stability_region_table_fname: slope_stability_region_table_bad_column.csv

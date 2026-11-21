@@ -1,0 +1,13 @@
+# lsdtt-slope-stability with a region raster (west half 1, east half 7, a
+# nodata strip along the north edge) and a region table that overrides some
+# SINMAP parameters per region; the rest come from this file.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssr
+n_threads: 2
+slope_stability_region_fname: slope_stability_regions.tif
+slope_stability_region_table_fname: slope_stability_region_table.csv
+sinmap_friction_coefficient_min: 0.6
+sinmap_friction_coefficient_max: 0.9
+write_sinmap_rasters: true
