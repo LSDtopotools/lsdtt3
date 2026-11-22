@@ -907,11 +907,14 @@ channel_attribute_join_result join_channel_attributes(
     const std::vector<std::uint8_t>& elevation_mask,
     const std::vector<std::uint8_t>& channel_mask,
     const channel_attribute_table&   table,
-    double                           max_snap_distance_m)
+    double                           max_snap_distance_m,
+    double                           max_gap_fill_distance_m)
 {
-    if (!std::isfinite(max_snap_distance_m) || max_snap_distance_m < 0.0)
+    if (!std::isfinite(max_snap_distance_m) || max_snap_distance_m < 0.0 ||
+        !std::isfinite(max_gap_fill_distance_m) || max_gap_fill_distance_m < 0.0)
         throw std::invalid_argument(
-            "join_channel_attributes: max_snap_distance_m must be finite and not negative");
+            "join_channel_attributes: the snap and gap-fill distances must be finite and "
+            "not negative");
     if (!flow.has_s_vector())
         throw std::runtime_error("join_channel_attributes: s_vector not built");
 
@@ -942,6 +945,7 @@ channel_attribute_join_result join_channel_attributes(
     const double cs = meta.cell_size;
     const double tolerance = 1.0 + 1e-12;
     const double limit = max_snap_distance_m * tolerance;
+    const double gap_limit = max_gap_fill_distance_m * tolerance;
     const lsdtt_xy origin = cell_center_from_row_col(meta, 0, 0);
     const double step_x = nc > 1 ? cell_center_from_row_col(meta, 0, 1).x - origin.x : cs;
     const double step_y = nr > 1 ? cell_center_from_row_col(meta, 1, 0).y - origin.y : -cs;
@@ -1104,8 +1108,8 @@ channel_attribute_join_result join_channel_attributes(
                     return cs * (std::abs(n_cardinal[k] - n_cardinal[o]) +
                                  std::sqrt(2.0) * std::abs(n_diagonal[k] - n_diagonal[o]));
                 };
-                const bool has_below = below[k] >= 0 && length(below[k]) <= limit;
-                const bool has_above = above[k] >= 0 && length(above[k]) <= limit;
+                const bool has_below = below[k] >= 0 && length(below[k]) <= gap_limit;
+                const bool has_above = above[k] >= 0 && length(above[k]) <= gap_limit;
                 if (!has_below && !has_above) { ++column.n_missing; continue; }
 
                 double value;
@@ -1138,6 +1142,67 @@ channel_attribute_join_result join_channel_attributes(
             }
         }
         out.columns.push_back(std::move(column));
+    }
+    return out;
+}
+
+hillslope_channel_pixel_summary summarise_hillslopes_by_channel_pixel(
+    const std::vector<std::int64_t>& channel_flat,
+    const lsdtt_raster_result&       values)
+{
+    const std::size_t n = channel_flat.size();
+    if (values.data.size() != n || values.mask.size() != n)
+        throw std::invalid_argument(
+            "summarise_hillslopes_by_channel_pixel: arrays must have one value per grid cell");
+
+    // Counting sort: one pass to size each channel pixel's bucket, one to fill.
+    std::vector<std::int32_t> row_of(n, -1);
+    hillslope_channel_pixel_summary out;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const std::int64_t link = channel_flat[i];
+        if (link >= 0 && static_cast<std::uint64_t>(link) >= n)
+            throw std::invalid_argument(
+                "summarise_hillslopes_by_channel_pixel: channel_flat is off the grid");
+        if (link != static_cast<std::int64_t>(i)) continue;
+        row_of[i] = static_cast<std::int32_t>(out.flat.size());
+        out.flat.push_back(link);
+    }
+    const std::size_t m = out.flat.size();
+    out.n_hillslope.assign(m, 0);
+    out.n_with_value.assign(m, 0);
+    out.median.assign(m, std::numeric_limits<double>::quiet_NaN());
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const std::int64_t link = channel_flat[i];
+        if (link < 0 || link == static_cast<std::int64_t>(i)) continue;
+        const std::int32_t row = row_of[static_cast<std::size_t>(link)];
+        if (row < 0) continue;
+        ++out.n_hillslope[static_cast<std::size_t>(row)];
+        if (values.mask[i] != 0u && std::isfinite(values.data[i]))
+            ++out.n_with_value[static_cast<std::size_t>(row)];
+    }
+    std::vector<std::size_t> offset(m + 1, 0);
+    for (std::size_t r = 0; r < m; ++r)
+        offset[r + 1] = offset[r] + static_cast<std::size_t>(out.n_with_value[r]);
+    std::vector<double> pool(offset[m]);
+    std::vector<std::size_t> next(offset.begin(), offset.end() - 1);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const std::int64_t link = channel_flat[i];
+        if (link < 0 || link == static_cast<std::int64_t>(i)) continue;
+        const std::int32_t row = row_of[static_cast<std::size_t>(link)];
+        if (row < 0 || values.mask[i] == 0u || !std::isfinite(values.data[i])) continue;
+        pool[next[static_cast<std::size_t>(row)]++] = values.data[i];
+    }
+    std::vector<double> group;
+    for (std::size_t r = 0; r < m; ++r)
+    {
+        if (offset[r] == offset[r + 1]) continue;
+        group.assign(pool.begin() + static_cast<std::ptrdiff_t>(offset[r]),
+                     pool.begin() + static_cast<std::ptrdiff_t>(offset[r + 1]));
+        out.median[r] = compute_median_in_place(group);
     }
     return out;
 }

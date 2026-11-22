@@ -128,6 +128,7 @@ nav:
       - Channel network analysis: cli_reference/cli_reference_lsdtt_channel_network_analysis.md
       - Slope-area analysis: cli_reference/cli_reference_lsdtt_slope_area.md
       - Slope stability: cli_reference/cli_reference_lsdtt_slope_stability.md
+      - Hillslope-channel tagging: cli_reference/cli_reference_lsdtt_hillslope_channel_tagging.md
       - Chi analysis: cli_reference/cli_reference_lsdtt_chi_analysis.md
       - Cross sections: cli_reference/cli_reference_lsdtt_cross_sections.md
       - Bankfull width: cli_reference/cli_reference_lsdtt_bankfull_width.md

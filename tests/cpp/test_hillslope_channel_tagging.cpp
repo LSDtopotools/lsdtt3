@@ -1314,7 +1314,7 @@ void test_attributes()
     lsdtt_raster_meta flow_meta = y.meta;
     const lsdtt_flowinfo flow = make_flow(y.z, y.mask, flow_meta, "oooo");
     const auto join = [&](const channel_attribute_table& t, double limit) {
-        return join_channel_attributes(flow, y.mask, y.channel, t, limit);
+        return join_channel_attributes(flow, y.mask, y.channel, t, limit, limit);
     };
 
     std::vector<std::int64_t> channel_pixels;
@@ -1509,6 +1509,51 @@ void test_attributes()
         const auto diag = join(exact_table({{y.flat(5, 3), 6.0}}), 15.0);
         check("diagonal steps count as sqrt(2) cells",
               diag.columns[0].mask[y.flat(6, 4)] == 1u && diag.columns[0].mask[y.flat(7, 5)] == 0u);
+    }
+
+    // The snap and gap-fill limits are independent.
+    {
+        const std::int64_t f = y.flat(15, 8);
+        const lsdtt_xy c = y.centre(f);
+        const auto no_fill = join_channel_attributes(flow, y.mask, y.channel, point_table(c.x + 30.0, c.y, 4.0), 30.0, 0.0);
+        check("gap limit 0: the point snaps and nothing is filled",
+              no_fill.columns[0].n_direct == 1 && no_fill.columns[0].n_filled == 0);
+        const auto long_fill = join_channel_attributes(flow, y.mask, y.channel, exact_table({{f, 4.0}}), 0.0, 40.0);
+        check("snap limit 0 does not limit filling",
+              long_fill.columns[0].mask[y.flat(19, 8)] == 1u && long_fill.columns[0].mask[y.flat(20, 8)] == 0u);
+        check("a negative gap limit is refused", refuses([&] {
+            (void)join_channel_attributes(flow, y.mask, y.channel, exact_table({}), 10.0, -1.0); }));
+    }
+
+    // nodata_value.
+    {
+        const std::string a = std::to_string(y.flat(15, 8)), b = std::to_string(y.flat(16, 8));
+        write_text(dir + "/nodata.csv", "row,col,flat,v\n15,8," + a + ",-9999\n16,8," + b + ",-1\n");
+        const auto usual = read_channel_attribute_table(dir + "/nodata.csv", y.meta, {"v"});
+        check("the default nodata value is held as NaN", std::isnan(usual.values[0][0]) && usual.values[0][1] == -1.0);
+        const auto custom = read_channel_attribute_table(dir + "/nodata.csv", y.meta, {"v"}, -1.0);
+        check("a chosen nodata value is held as NaN", custom.values[0][0] == -9999.0 && std::isnan(custom.values[0][1]));
+    }
+
+    // One row per channel pixel.
+    {
+        lsdtt_raster_result values;
+        values.meta = y.meta;
+        values.data.assign(n, 0.f);
+        values.mask.assign(n, 0u);
+        std::vector<std::int64_t> link(n, -1);
+        const std::int64_t c1 = y.flat(15, 8), c2 = y.flat(16, 8);
+        link[c1] = c1; link[c2] = c2;
+        const std::vector<std::pair<std::int64_t, float>> pixels{{y.flat(15, 7), 1.f}, {y.flat(15, 6), 3.f}, {y.flat(15, 5), 8.f}};
+        for (const auto& p : pixels) { link[p.first] = c1; values.data[p.first] = p.second; values.mask[p.first] = 1u; }
+        link[y.flat(15, 4)] = c1;  // drains to c1, no value
+        const auto summary = summarise_hillslopes_by_channel_pixel(link, values);
+        check("summary has one row per channel pixel", summary.flat == std::vector<std::int64_t>{c1, c2});
+        check("summary counts and median", summary.n_hillslope[0] == 4 && summary.n_with_value[0] == 3 && summary.median[0] == 3.0);
+        check("a channel pixel with no hillslope has no median", summary.n_hillslope[1] == 0 && std::isnan(summary.median[1]));
+        std::vector<std::int64_t> bad = link;
+        bad[0] = static_cast<std::int64_t>(n);
+        check("a summary link off the grid is refused", refuses([&] { (void)summarise_hillslopes_by_channel_pixel(bad, values); }));
     }
 
     // Refusals.

@@ -68,6 +68,7 @@ core lsdtt-flat-surface-finder
 core lsdtt-fluvial-surfaces
 core lsdtt-graphflood
 core lsdtt-hillslope-channel-coupling
+core lsdtt-hillslope-channel-tagging
 core lsdtt-internal-drainage
 core lsdtt-lem
 core lsdtt-lithology-erodibility

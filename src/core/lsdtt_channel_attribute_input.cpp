@@ -306,7 +306,8 @@ void read_vector(const std::string& path, const lsdtt_raster_meta& meta, channel
 channel_attribute_table read_channel_attribute_table(
     const std::string&              path,
     const lsdtt_raster_meta&        meta,
-    const std::vector<std::string>& columns)
+    const std::vector<std::string>& columns,
+    double                          nodata_value)
 {
     if (columns.empty())
         throw std::invalid_argument("read_channel_attribute_table: no columns requested");
@@ -320,6 +321,11 @@ channel_attribute_table read_channel_attribute_table(
     t.values.resize(columns.size());
     if (has_csv_suffix(path)) read_csv(path, meta, t);
     else                      read_vector(path, meta, t);
+
+    const float nodata = static_cast<float>(nodata_value);
+    for (auto& column : t.values)
+        for (double& v : column)
+            if (std::isfinite(v) && static_cast<float>(v) == nodata) v = k_nan;
     return t;
 }
 

@@ -299,6 +299,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_dem_grouping.cpp
     src/core/lsdtt_csv_table.cpp
     src/core/lsdtt_channel_attribute_input.cpp
+    src/core/lsdtt_channel_network_ingest.cpp
     src/core/lsdtt_distributed_hydrology_forcing.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
@@ -674,6 +675,7 @@ lsdtt_cli(lsdtt-slope-stability        cli/lsdtt-slope-stability.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
 lsdtt_cli(lsdtt-hillslope-channel-coupling cli/lsdtt-hillslope-channel-coupling.cpp)
+lsdtt_cli(lsdtt-hillslope-channel-tagging cli/lsdtt-hillslope-channel-tagging.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)
 lsdtt_cli(lsdtt-distributed-hydrology  cli/lsdtt-distributed-hydrology.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)

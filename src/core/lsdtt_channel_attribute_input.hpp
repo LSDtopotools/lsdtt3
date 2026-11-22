@@ -24,8 +24,8 @@
 //   line geometry       reprojected, then sampled every half cell. Every sample
 //                       carries the line's values.
 //
-// Requested columns must exist and be numeric. Empty, NaN and infinite values
-// are held as NaN, never 0. A value such as -9999 is NOT recognised as nodata.
+// Requested columns must exist and be numeric. Empty, NaN and infinite values,
+// and values equal to nodata_value (compared as float32), are held as NaN, never 0.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -62,6 +62,7 @@ struct channel_attribute_table
 [[nodiscard]] channel_attribute_table read_channel_attribute_table(
     const std::string&              path,
     const lsdtt_raster_meta&        meta,
-    const std::vector<std::string>& columns);
+    const std::vector<std::string>& columns,
+    double                          nodata_value = -9999.0);
 
 } // namespace lsdtt

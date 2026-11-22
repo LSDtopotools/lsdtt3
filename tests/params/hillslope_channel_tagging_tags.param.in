@@ -1,0 +1,15 @@
+# lsdtt-hillslope-channel-tagging: chi, k_sn and an imported attribute.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: hcg
+threshold_contributing_pixels: 100
+n_threads: 1
+write_output_format: gtiff
+tag_chi: true
+tag_k_sn: true
+basin_outlet_fname: basin_stats_outlets.csv
+basin_outlet_contributing_pixels_threshold: 100
+channel_attributes_fname: hillslope_tagging_channel_attributes.csv
+channel_attribute_columns: sinuosity
+channel_attribute_max_gap_fill_distance_metres: 0

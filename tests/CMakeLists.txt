@@ -2815,6 +2815,82 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
+# lsdtt-hillslope-channel-tagging
+#
+# The numerics are in lsdtt-test-hillslope-channel-tagging. These tests carry the
+# plumbing: the routing front end, output names, the basin and attribute inputs
+# and the refusals.
+# =============================================================================
+set(LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/hillslope_tagging_fixture")
+file(MAKE_DIRECTORY "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}")
+add_test(NAME fixture_hillslope_tagging_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_diamond_square.tif"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_outlets.csv"
+        "${LSDTT_TEST_DATA_DIR}/hillslope_tagging_channel_attributes.csv"
+        "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}/")
+lsdtt_set_tests_properties(fixture_hillslope_tagging_inputs PROPERTIES
+    LABELS "fixture;hillslope_tagging"
+    FIXTURES_SETUP hillslope_tagging_fixture
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+function(add_hillslope_tagging_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-hillslope-channel-tagging
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            LABELS "cli;hillslope_tagging"
+            FIXTURES_REQUIRED hillslope_tagging_fixture)
+    endif()
+endfunction()
+
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging
+    hillslope_channel_tagging_smoke.param.in hct_relative_height.tif
+    --expect hct_ridge_relief.tif
+    --expect hct_HAND.tif
+    --expect-absent hct_ridge_status.tif
+    --expect-file-contains "hct_channel_pixel_summary.csv:flat,row,col,latitude,longitude,n_hillslope_pixels"
+    --stdout-contains "Hillslope pixels: "
+    --expect-raster-stat hct_ridge_relief.tif:min:0:100000)
+
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging_aspect_ray
+    hillslope_channel_tagging_aspect_ray.param.in hcr_relative_height.tif
+    --expect hcr_ridge_status.tif
+    --stdout-contains "Rays: crest on a divide "
+    --expect-raster-stat hcr_relative_height.tif:min:0:0.01
+    --expect-raster-stat hcr_relative_height.tif:max:0.99:1
+    --expect-raster-values hcr_ridge_status.tif:0,1,3,4,5,6)
+
+# Two records on one pixel give their median (2.0), and -9999 and an empty cell
+# are nodata, so sinuosity spans 1.5 to 2.0 with the gap fill off.
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging_tags
+    hillslope_channel_tagging_tags.param.in hcg_tag_chi.tif
+    --expect hcg_tag_k_sn.tif
+    --expect hcg_tag_sinuosity.tif
+    --stdout-contains "Basins: 27 candidates, 19 kept"
+    --stdout-contains "have a record"
+    --stdout-contains "2 have a record (1 with several), 0 gap-filled"
+    --expect-raster-stat hcg_tag_sinuosity.tif:min:1.5:1.5
+    --expect-raster-stat hcg_tag_sinuosity.tif:max:2:2)
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_no_baselevel
+    hillslope_channel_tagging_no_baselevel.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "chi_max_outlet_elevation_metres")
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_ray_grouping
+    hillslope_channel_tagging_ray_grouping.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "does not apply to aspect_ray")
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_missing_column
+    hillslope_channel_tagging_missing_column.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "column 'curvature'")
+
+# =============================================================================
 # lsdtt-slope-stability: SINMAP
 #
 # The numerics are tested in the lsdtt-test-slope-stability-sinmap driver

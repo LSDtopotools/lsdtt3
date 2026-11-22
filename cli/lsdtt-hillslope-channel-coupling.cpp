@@ -72,7 +72,7 @@
 #include <utility>
 #include <vector>
 
-#include "../src/core/lsdtt_csv_table.hpp"
+#include "../src/core/lsdtt_channel_network_ingest.hpp"
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_common_parameters.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
@@ -764,102 +764,16 @@ int main(int argc, char* argv[])
             // threshold.
             std::cout << "Ingesting channel network from " << chan_file << "\n";
 
-            std::vector<std::pair<int,int>> pts;
-            const std::string ext = chan_file.size() >= 4
-                ? lower(chan_file.substr(chan_file.size() - 4)) : std::string();
-
-            if (ext == ".csv")
-            {
-                const lsdtt::lsdtt_csv_table t = lsdtt::load_csv_table(chan_file);
-                if (!lsdtt::csv_has_column(t, "row") || !lsdtt::csv_has_column(t, "col"))
-                    throw std::invalid_argument(
-                        "channel_network_fname " + chan_file + " has no 'row'/'col' "
-                        "columns. Write it with lsdtt-channel-extraction's "
-                        "write_channel_network_points.");
-                int line = 1;
-                for (const auto& r : t.rows)
-                {
-                    ++line;
-                    pts.emplace_back(
-                        static_cast<int>(lsdtt::csv_row_double_required(r, "row", chan_file, line)),
-                        static_cast<int>(lsdtt::csv_row_double_required(r, "col", chan_file, line)));
-                }
-            }
-            else
-            {
-                lsdtt::lsdtt_data_loader vl;
-                vl.open_vector(chan_file);
-                const auto names = vl.get_layer_names();
-                if (names.empty())
-                    throw std::invalid_argument(
-                        "channel_network_fname " + chan_file + " has no layers");
-                const lsdtt::lsdtt_vector_layer layer = vl.read_vector_layer(names.front());
-                const int i_row = layer.schema.index_of("row");
-                const int i_col = layer.schema.index_of("col");
-                if (i_row < 0 || i_col < 0)
-                    throw std::invalid_argument(
-                        "channel_network_fname " + chan_file + " has no 'row'/'col' "
-                        "fields. Write it with lsdtt-channel-extraction's "
-                        "write_channel_network_points.");
-                for (const auto& rec : layer.records)
-                    pts.emplace_back(
-                        static_cast<int>(std::get<std::int64_t>(rec.field_values[i_row])),
-                        static_cast<int>(std::get<std::int64_t>(rec.field_values[i_col])));
-            }
-
-            if (pts.empty())
-                throw std::runtime_error(
-                    "channel_network_fname " + chan_file + " contained no points");
-
-            // The row/col indices are row-major on the grid the network was
-            // extracted from. Reject an out-of-range index rather than wrapping
-            // it into a wrong pixel -- a network from a different DEM must not
-            // be silently accepted.
-            std::int64_t n_bad = 0, n_invalid = 0;
-            for (const auto& rc : pts)
-            {
-                if (rc.first < 0 || rc.first >= nr || rc.second < 0 || rc.second >= nc)
-                { ++n_bad; continue; }
-                const std::size_t k =
-                    static_cast<std::size_t>(rc.first) * nc + rc.second;
-                if (!flow.is_valid_cell(static_cast<std::int64_t>(k)))
-                { ++n_invalid; continue; }
-                if (chan_data[k] == 0.0f) { chan_data[k] = 1.0f; ++n_channel; }
-            }
-            if (n_bad > 0)
-                throw std::runtime_error(
-                    "channel_network_fname has " + std::to_string(n_bad) +
-                    " points outside this DEM (" + std::to_string(nr) + "x" +
-                    std::to_string(nc) + "). It was extracted on a different "
-                    "grid; row/col are row-major on that grid and cannot be "
-                    "reused here.");
-
-            if (n_invalid > 0)
-                std::cout << "Dropped " << n_invalid << " ingested channel points "
+            const lsdtt::lsdtt_ingested_channel_network ingested =
+                lsdtt::ingest_channel_network_points(chan_file, flow);
+            n_channel = ingested.n_channel;
+            for (std::size_t k = 0; k < ncell; ++k)
+                if (ingested.mask[k] != 0u) chan_data[k] = 1.0f;
+            if (ingested.n_on_nodata > 0)
+                std::cout << "Dropped " << ingested.n_on_nodata << " ingested channel points "
                              "that fall on nodata in this DEM. If that count is "
                              "large the network was extracted BEFORE the DEM was "
                              "masked, and should be re-extracted.\n";
-            if (n_channel == 0)
-            {
-                // Two different causes, and blaming the wrong one sends the user
-                // to re-extract a network that was never the problem. If NO
-                // point had usable geometry the file is the issue; if points
-                // were read but all landed on nodata, the DEM is.
-                if (pts.empty())
-                    throw std::runtime_error(
-                        "channel_network_fname: no usable POINT geometry was read "
-                        "from '" + chan_file + "'. Multipart points are supported "
-                        "and split automatically, so this is either an empty "
-                        "layer or a geometry type that is not points - check that "
-                        "the file is the *_channel_network_points output and not "
-                        "the *_channel_network_lines one.");
-
-                throw std::runtime_error(
-                    "channel_network_fname: all " + std::to_string(pts.size()) +
-                    " ingested channel points fell on nodata in this DEM. The "
-                    "network was extracted on a different (or unmasked) DEM - "
-                    "re-extract it on the same one.");
-            }
 
             // Sources are the channel cells with no channel donor. Derived
             // rather than ingested, because the points file carries the whole
@@ -886,7 +800,7 @@ int main(int argc, char* argv[])
                     if (!has_channel_donor) sources.push_back(flat);
                 }
 
-            std::cout << "Ingested " << pts.size() << " channel points -> "
+            std::cout << "Ingested " << ingested.n_points << " channel points -> "
                       << n_channel << " channel pixels, " << sources.size()
                       << " derived heads\n";
         }

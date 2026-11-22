@@ -350,8 +350,8 @@ struct hillslope_chi_tag_result
 // once per pixel however many of its samples land there.
 //
 // GAPS. A channel pixel with no record takes the nearest record on its own
-// junction-to-junction link, by D8 channel distance, up to max_snap_distance_m.
-// Equidistant records give their median. A junction belongs to the link below
+// junction-to-junction link, by D8 channel distance, up to
+// max_gap_fill_distance_m (0 turns filling off). Equidistant records give their median. A junction belongs to the link below
 // it, so filling never crosses a junction. Filled values are never used as
 // sources. Longer gaps stay nodata.
 // =============================================================================
@@ -380,13 +380,34 @@ struct channel_attribute_join_result
 };
 
 // Throws std::invalid_argument for a wrong array size, an inconsistent table, a
-// sample off the grid, or a negative or non-finite max_snap_distance_m;
+// sample off the grid, or a negative or non-finite distance limit;
 // std::runtime_error if the flow object has no s_vector.
 [[nodiscard]] channel_attribute_join_result join_channel_attributes(
     const lsdtt_flowinfo&            flow,
     const std::vector<std::uint8_t>& elevation_mask,
     const std::vector<std::uint8_t>& channel_mask,
     const channel_attribute_table&   table,
-    double                           max_snap_distance_m);
+    double                           max_snap_distance_m,
+    double                           max_gap_fill_distance_m);
+
+// =============================================================================
+// ONE ROW PER CHANNEL PIXEL
+//
+// How many hillslope pixels drain to each channel pixel, and the median of a
+// hillslope raster (for example relative height) over those with a value.
+// Rows are in ascending flat order. median is NaN where no pixel has a value.
+// =============================================================================
+struct hillslope_channel_pixel_summary
+{
+    std::vector<std::int64_t> flat;
+    std::vector<std::int64_t> n_hillslope;
+    std::vector<std::int64_t> n_with_value;
+    std::vector<double>       median;
+};
+
+// Throws std::invalid_argument for a wrong array size or a link off the grid.
+[[nodiscard]] hillslope_channel_pixel_summary summarise_hillslopes_by_channel_pixel(
+    const std::vector<std::int64_t>& channel_flat,
+    const lsdtt_raster_result&       values);
 
 } // namespace lsdtt

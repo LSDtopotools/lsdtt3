@@ -350,55 +350,9 @@ int main(int argc, char* argv[])
         "Minimum slope imposed during pit filling.",
         "Used when fill_before_routing is true.",
         "DEM preparation", "param", "fill_before_routing"};
-    bool_default_map["breach_before_fill"] = true;
-    help_map["breach_before_fill"] = {"bool", "true",
-        "Breach (carve) depressions before filling pits.",
-        "The carve comes first, then the fill (fill_before_routing) takes only the "
-        "pits the carve could not solve, so large filled areas (and their "
-        "artificially low slopes) are avoided. SINMAP itself only fills: false "
-        "reproduces that.",
-        "DEM preparation", "switch", ""};
-    string_default_map["breach_algorithm_choice"] = "least_cost";
-    help_map["breach_algorithm_choice"] = {"string", "least_cost",
-        "Algorithm for depression breaching.",
-        "lindsay2016: Lindsay (2016) efficient breaching. "
-        "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
-        "DEM preparation", "param", "breach_before_fill"};
-    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
-    help_map["breach_lc_max_dist"] = {"int", "1000 (outlet) / 100 (whitebox)",
-        "Maximum breach path length in cells for least-cost breaching.",
-        "Counted in steps from the pit. Pits that need a longer path are left "
-        "unbreached (and filled if fill_before_routing is true). 1 to 32767. If "
-        "not set, 1000 with breach_lc_edge_policy outlet and 100 with whitebox. "
-        "Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
-    help_map["breach_lc_max_cost"] = {"float", "unlimited",
-        "Maximum cost of a least-cost breach path.",
-        "The summed depth each cell on the path is lowered (m; m x cells with "
-        "breach_lc_minimize_dist). A pit whose cheapest path costs more is left "
-        "unbreached. Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    bool_default_map["breach_lc_minimize_dist"] = false;
-    help_map["breach_lc_minimize_dist"] = {"bool", "false",
-        "Weight least-cost breach paths by their length.",
-        "false: a path costs the total depth lowered (m). true: each step is "
-        "weighted by its length in cells. Only used when breach_algorithm_choice "
-        "is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    string_default_map["breach_lc_edge_policy"] = "outlet";
-    help_map["breach_lc_edge_policy"] = {"string", "outlet",
-        "Whether a least-cost breach may drain off the raster edge.",
-        "outlet: the raster edge is an outlet. whitebox: it is not (as in "
-        "WhiteboxTools). Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    float_default_map["breach_lc_flat_increment"] = 0.0f;
-    help_map["breach_lc_flat_increment"] = {"float", "0.0",
-        "Elevation drop (m) per cell along a least-cost breach channel.",
-        "0 or less selects the automatic value (twice the float32 spacing at the "
-        "largest absolute elevation). Only used when breach_algorithm_choice is "
-        "least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
+    lsdtt::declare_breach_before_fill_parameters(bool_default_map, int_default_map, float_default_map,
+                                                 string_default_map, help_map,
+                                                 lsdtt::k_breach_lc_default_max_dist_outlet);
     bool_default_map["write_conditioned_pixels_raster"] = false;
     help_map["write_conditioned_pixels_raster"] = {"bool", "false",
         "Write the conditioned-pixels raster.",
