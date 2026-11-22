@@ -22,7 +22,6 @@
 #include <iomanip>
 #include <limits>
 #include <unordered_map>
-#include <map>
 #include <unordered_set>
 #include <utility>
 
@@ -661,88 +660,6 @@ void write_hilltop_metrics_csv(
 // =============================================================================
 // PHASE 5 -- THE CHI JOIN
 // =============================================================================
-
-lsdtt_channel_property_map build_channel_property_map(
-    const lsdtt_chi_network_fit_node_table&    nodes,
-    const lsdtt_chi_network_fit_segment_table& segments,
-    const std::vector<float>*                  flow_distance,
-    const std::vector<float>*                  drainage_area)
-{
-    lsdtt_channel_property_map out;
-    const std::size_t n_nodes = nodes.flat.size();
-    if (n_nodes == 0) return out;
-    out.reserve(n_nodes * 2);
-
-    // Index the segments by (basin_index, branch_id) so the containment test is
-    // done within a branch rather than across the whole network -- chi
-    // intervals from different branches overlap and matching across them would
-    // silently attach the wrong k_sn.
-    struct seg_ref { double lo, hi, k_sn; std::int32_t segment_id; };
-    std::map<std::pair<std::int32_t, std::int32_t>, std::vector<seg_ref>> by_group;
-
-    const std::size_t n_seg = segments.segment_id.size();
-    for (std::size_t s = 0; s < n_seg; ++s)
-    {
-        double lo = static_cast<double>(segments.downstream_chi[s]);
-        double hi = static_cast<double>(segments.upstream_chi[s]);
-        if (lo > hi) std::swap(lo, hi);   // endpoints are stored in either order
-        by_group[{segments.basin_index[s], segments.branch_id[s]}].push_back(
-            seg_ref{lo, hi, static_cast<double>(segments.k_sn[s]),
-                    segments.segment_id[s]});
-    }
-
-    for (std::size_t i = 0; i < n_nodes; ++i)
-    {
-        lsdtt_channel_properties props;
-        props.basin_index = nodes.basin_index[i];
-        props.branch_id   = nodes.branch_id[i];
-        props.chi         = static_cast<double>(nodes.chi[i]);
-        props.channel_elevation =
-            static_cast<double>(nodes.observed_elevation[i]);
-
-        const std::int64_t flat = nodes.flat[i];
-        if (flat >= 0)
-        {
-            if (flow_distance && static_cast<std::size_t>(flat) < flow_distance->size())
-                props.flow_distance_m = (*flow_distance)[static_cast<std::size_t>(flat)];
-            if (drainage_area && static_cast<std::size_t>(flat) < drainage_area->size())
-                props.drainage_area_m2 = (*drainage_area)[static_cast<std::size_t>(flat)];
-        }
-
-        const auto git = by_group.find({nodes.basin_index[i], nodes.branch_id[i]});
-        if (git != by_group.end() && !git->second.empty())
-        {
-            const double chi = props.chi;
-            const seg_ref* chosen = nullptr;
-            for (const auto& sr : git->second)
-                if (chi >= sr.lo && chi <= sr.hi) { chosen = &sr; break; }
-
-            if (!chosen)
-            {
-                // Just outside every interval: endpoint rounding. Take the
-                // nearest segment in this branch rather than dropping the node,
-                // which is what lsdviztools3's assign_node_ksn does.
-                double best = std::numeric_limits<double>::max();
-                for (const auto& sr : git->second)
-                {
-                    const double d = chi < sr.lo ? (sr.lo - chi)
-                                   : chi > sr.hi ? (chi - sr.hi) : 0.0;
-                    if (d < best) { best = d; chosen = &sr; }
-                }
-            }
-
-            if (chosen)
-            {
-                props.k_sn       = chosen->k_sn;
-                props.segment_id = chosen->segment_id;
-            }
-        }
-
-        if (flat >= 0) out[flat] = props;
-    }
-
-    return out;
-}
 
 std::int64_t attach_channel_properties(
     lsdtt_hillslope_metrics_result&   metrics,
