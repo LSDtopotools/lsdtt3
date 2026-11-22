@@ -6743,6 +6743,14 @@ add_test(NAME unit_slope_stability_groundwater_dupuit COMMAND lsdtt-test-groundw
 lsdtt_set_tests_properties(unit_slope_stability_groundwater_dupuit PROPERTIES
     LABELS "slope_stability;distributed_hydrology")
 
+# Hillslope pixels linked to a channel pixel and a ridge pixel by D8
+# (src/cpu/lsdtt_hillslope_channel_tagging_cpu): ridge relief and relative height.
+add_executable(lsdtt-test-hillslope-channel-tagging cpp/test_hillslope_channel_tagging.cpp)
+target_link_libraries(lsdtt-test-hillslope-channel-tagging PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_channel_tagging COMMAND lsdtt-test-hillslope-channel-tagging)
+lsdtt_set_tests_properties(unit_hillslope_channel_tagging PROPERTIES
+    LABELS "hillslope_tagging")
+
 # Power-law tail fits (Clauset et al. 2009 MLE with KS choice of x_min) and the
 # log-binned probability density, for frequency-area plots (src/utils).
 add_executable(lsdtt-test-power-law-tail-fit cpp/test_power_law_tail_fit.cpp)
