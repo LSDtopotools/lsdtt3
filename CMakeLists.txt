@@ -298,6 +298,7 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
     src/core/lsdtt_csv_table.cpp
+    src/core/lsdtt_channel_attribute_input.cpp
     src/core/lsdtt_distributed_hydrology_forcing.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp

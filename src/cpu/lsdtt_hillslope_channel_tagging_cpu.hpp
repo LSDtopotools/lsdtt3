@@ -89,6 +89,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../core/lsdtt_channel_attribute_input.hpp"
 #include "../core/lsdtt_raster_result.hpp"
 #include "lsdtt_chi_extraction_cpu.hpp"
 #include "lsdtt_chi_network_analysis_cpu.hpp"
@@ -334,5 +335,58 @@ struct hillslope_chi_tag_result
     const std::vector<std::int64_t>& channel_flat,
     const hillslope_tag_basins&      basins,
     const hillslope_chi_tag_options& options);
+
+// =============================================================================
+// IMPORTED CHANNEL ATTRIBUTES
+//
+// Joins a table (read_channel_attribute_table) to channel pixels:
+//
+//   exact pixel  must be a channel pixel, otherwise dropped and counted.
+//   coordinates  the nearest channel pixel centre within max_snap_distance_m
+//                (inclusive; ties go to the lower flat index). Further samples
+//                are dropped.
+//
+// Several records on one pixel give their median, ignoring NaN. A line counts
+// once per pixel however many of its samples land there.
+//
+// GAPS. A channel pixel with no record takes the nearest record on its own
+// junction-to-junction link, by D8 channel distance, up to max_snap_distance_m.
+// Equidistant records give their median. A junction belongs to the link below
+// it, so filling never crosses a junction. Filled values are never used as
+// sources. Longer gaps stay nodata.
+// =============================================================================
+struct channel_attribute_column
+{
+    std::string name;
+    std::vector<float>        values;  // one per grid cell
+    std::vector<std::uint8_t> mask;    // 1 on channel pixels with a value
+    std::int64_t n_direct           = 0;  // channel pixels with a record
+    std::int64_t n_multiple_records = 0;  // of those, with more than one
+    std::int64_t n_filled           = 0;  // channel pixels gap-filled
+    std::int64_t n_missing          = 0;  // channel pixels left as nodata
+};
+
+struct channel_attribute_join_result
+{
+    std::vector<channel_attribute_column> columns;
+    std::int64_t n_channel_pixels  = 0;
+    std::int64_t n_records         = 0;
+    std::int64_t n_records_matched = 0;  // at least one sample on a channel pixel
+    std::int64_t n_records_dropped = 0;
+    // Matched records with a sample moved more than one cell size.
+    std::int64_t n_records_snapped_beyond_one_cell = 0;
+    // Samples with an exact pixel that is not a channel pixel.
+    std::int64_t n_exact_samples_off_channel = 0;
+};
+
+// Throws std::invalid_argument for a wrong array size, an inconsistent table, a
+// sample off the grid, or a negative or non-finite max_snap_distance_m;
+// std::runtime_error if the flow object has no s_vector.
+[[nodiscard]] channel_attribute_join_result join_channel_attributes(
+    const lsdtt_flowinfo&            flow,
+    const std::vector<std::uint8_t>& elevation_mask,
+    const std::vector<std::uint8_t>& channel_mask,
+    const channel_attribute_table&   table,
+    double                           max_snap_distance_m);
 
 } // namespace lsdtt

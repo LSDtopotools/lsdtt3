@@ -25,6 +25,8 @@
 //   * tags: exact values through the D8 link, partial coverage and exclusion
 //     counts, the choice of valid basins for chi, chi and k_sn against the
 //     hilltop join;
+//   * imported attributes: CSV and FlatGeobuf, exact, coordinate and line joins,
+//     reprojection, medians, gap filling along a link, refusals;
 //   * refusals.
 //
 // Usage: lsdtt-test-hillslope-channel-tagging
@@ -35,14 +37,20 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "../../src/core/lsdtt_channel_attribute_input.hpp"
+#include "../../src/core/lsdtt_data_loader.hpp"
 #include "../../src/core/lsdtt_raster_meta.hpp"
+#include "../../src/core/lsdtt_vector_utils.hpp"
 #include "../../src/cpu/lsdtt_flowinfo_cpu.hpp"
 #include "../../src/cpu/lsdtt_chi_extraction_cpu.hpp"
 #include "../../src/cpu/lsdtt_chi_network_analysis_cpu.hpp"
@@ -50,6 +58,7 @@
 #include "../../src/cpu/lsdtt_hilltop_flow_routing_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
+#include "../../src/utils/lsdtt_raster_geometry.hpp"
 
 using namespace lsdtt;
 
@@ -1200,6 +1209,355 @@ void test_tags()
               no_tags.chi.n_excluded == all.n_hillslope_tagged);
 }
 
+// A Y-shaped network: a main stem in column 8 from the junction at row 10, and
+// two diagonal tributaries above it.
+struct y_network
+{
+    lsdtt_raster_meta meta;
+    std::vector<float> z;
+    std::vector<std::uint8_t> mask, channel;
+    int nr, nc;
+    std::int64_t flat(int r, int c) const { return static_cast<std::int64_t>(r) * nc + c; }
+    lsdtt_xy centre(std::int64_t f) const { return cell_center_from_row_col(meta, static_cast<int>(f / nc), static_cast<int>(f % nc)); }
+};
+
+y_network make_y_network()
+{
+    const int nr = 22, nc = 17;
+    y_network y{make_meta(nr, nc, 10.0), std::vector<float>(nr * nc),
+                std::vector<std::uint8_t>(nr * nc, 1u), std::vector<std::uint8_t>(nr * nc, 0u), nr, nc};
+    y.meta.set_crs_from_epsg(32633);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+        {
+            int offset;
+            if (r >= 10) offset = std::abs(c - 8);
+            else
+            {
+                const int spread = 10 - r;
+                offset = std::min(std::abs(c - (8 - spread)), std::abs(c - (8 + spread)));
+            }
+            y.z[r * nc + c] = static_cast<float>(100.0 + 5.0 * offset + 1.0 * (nr - 1 - r));
+            if (offset == 0 && r >= 2) y.channel[r * nc + c] = 1u;
+        }
+    return y;
+}
+
+channel_attribute_table exact_table(const std::vector<std::pair<std::int64_t, double>>& records)
+{
+    channel_attribute_table t;
+    t.columns = {"v"};
+    t.values.resize(1);
+    t.n_records = static_cast<std::int64_t>(records.size());
+    for (std::size_t k = 0; k < records.size(); ++k)
+    {
+        t.values[0].push_back(records[k].second);
+        t.sample_record.push_back(static_cast<std::int64_t>(k));
+        t.sample_flat.push_back(records[k].first);
+        t.sample_x.push_back(0.0);
+        t.sample_y.push_back(0.0);
+    }
+    return t;
+}
+
+channel_attribute_table point_table(double x, double y, double v)
+{
+    channel_attribute_table t;
+    t.columns = {"v"};
+    t.values = {{v}};
+    t.n_records = 1;
+    t.sample_record = {0};
+    t.sample_flat = {-1};
+    t.sample_x = {x};
+    t.sample_y = {y};
+    return t;
+}
+
+void write_text(const std::string& path, const std::string& text)
+{
+    std::ofstream f(path);
+    f << text;
+}
+
+lsdtt_vector_schema value_schema(bool with_pixel)
+{
+    lsdtt_vector_schema schema;
+    if (with_pixel)
+    {
+        schema.field_names = {"row", "col", "flat"};
+        schema.field_types = {lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+                              lsdtt_vector_field_type::int64_type};
+    }
+    schema.field_names.push_back("v");
+    schema.field_types.push_back(lsdtt_vector_field_type::double_type);
+    return schema;
+}
+
+bool same_column(const channel_attribute_column& a, const channel_attribute_column& b)
+{
+    return a.mask == b.mask && a.values == b.values;
+}
+
+template <typename F>
+bool refuses(F&& f)
+{
+    try { f(); }
+    catch (const std::invalid_argument&) { return true; }
+    return false;
+}
+
+void test_attributes()
+{
+    std::cout << "\n--- imported attributes ---\n";
+    const y_network y = make_y_network();
+    const std::size_t n = y.z.size();
+    lsdtt_raster_meta flow_meta = y.meta;
+    const lsdtt_flowinfo flow = make_flow(y.z, y.mask, flow_meta, "oooo");
+    const auto join = [&](const channel_attribute_table& t, double limit) {
+        return join_channel_attributes(flow, y.mask, y.channel, t, limit);
+    };
+
+    std::vector<std::int64_t> channel_pixels;
+    for (std::size_t i = 0; i < n; ++i)
+        if (y.channel[i]) channel_pixels.push_back(static_cast<std::int64_t>(i));
+    const auto value_of = [](std::int64_t f) { return 0.5 * static_cast<double>(f) + 1.0; };
+
+    const std::string dir = (std::filesystem::temp_directory_path() /
+                             ("lsdtt_test_channel_attributes_" + std::to_string(std::random_device{}()))).string();
+    std::filesystem::create_directories(dir);
+
+    // Exact CSV, as written by write_channel_network_points.
+    {
+        std::string text = "row,col,flat,latitude,longitude,v\n";
+        std::string coords_text = "latitude,longitude,v\n";
+        lsdtt_raster_meta wgs84;
+        wgs84.set_crs_from_epsg(4326);
+        const lsdtt_coordinate_transform to_ll(y.meta.crs_wkt, wgs84.crs_wkt);
+        for (const auto f : channel_pixels)
+        {
+            const lsdtt_xy c = y.centre(f);
+            const lsdtt_xy ll = to_ll.transform_xy(c.x, c.y);
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "%d,%d,%lld,%.10f,%.10f,%.3f\n", static_cast<int>(f / y.nc),
+                          static_cast<int>(f % y.nc), static_cast<long long>(f), ll.y, ll.x, value_of(f));
+            text += buf;
+            std::snprintf(buf, sizeof(buf), "%.10f,%.10f,%.3f\n", ll.y, ll.x, value_of(f));
+            coords_text += buf;
+        }
+        write_text(dir + "/exact.csv", text);
+        write_text(dir + "/coords.csv", coords_text);
+
+        const auto exact = join(read_channel_attribute_table(dir + "/exact.csv", y.meta, {"v"}), 0.0);
+        bool ok = exact.columns[0].n_direct == static_cast<std::int64_t>(channel_pixels.size());
+        for (const auto f : channel_pixels)
+            ok = ok && exact.columns[0].mask[f] && exact.columns[0].values[f] == static_cast<float>(value_of(f));
+        check("exact CSV join gives every channel pixel its value", ok);
+        check("exact join counts", exact.n_records_matched == exact.n_records && exact.n_records_dropped == 0);
+
+        const auto coords = join(read_channel_attribute_table(dir + "/coords.csv", y.meta, {"v"}), 5.0);
+        check("latitude and longitude give the same tags as the exact join", same_column(coords.columns[0], exact.columns[0]));
+
+        // FlatGeobuf with pixel columns, in the DEM CRS.
+        {
+            lsdtt_data_loader w;
+            w.begin_vector_write(dir + "/exact.fgb", "a", value_schema(true), y.meta.crs_wkt, vector_output_format::flatgeobuf);
+            for (const auto f : channel_pixels)
+            {
+                const lsdtt_xy c = y.centre(f);
+                w.write_point(c.x, c.y, {std::int64_t(f / y.nc), std::int64_t(f % y.nc), std::int64_t(f), value_of(f)});
+            }
+            w.finish_vector_write();
+        }
+        const auto exact_fgb = join(read_channel_attribute_table(dir + "/exact.fgb", y.meta, {"v"}), 0.0);
+        check("exact FlatGeobuf equals exact CSV", same_column(exact_fgb.columns[0], exact.columns[0]));
+
+        // FlatGeobuf with coordinates only, in another CRS.
+        {
+            lsdtt_raster_meta wgs;
+            wgs.set_crs_from_epsg(4326);
+            const lsdtt_coordinate_transform to_wgs(y.meta.crs_wkt, wgs.crs_wkt);
+            lsdtt_data_loader w;
+            w.begin_vector_write(dir + "/wgs.fgb", "a", value_schema(false), wgs.crs_wkt, vector_output_format::flatgeobuf);
+            for (const auto f : channel_pixels)
+            {
+                const lsdtt_xy c = y.centre(f);
+                const lsdtt_xy p = to_wgs.transform_xy(c.x, c.y);
+                w.write_point(p.x, p.y, {value_of(f)});
+            }
+            w.finish_vector_write();
+        }
+        const auto reprojected = join(read_channel_attribute_table(dir + "/wgs.fgb", y.meta, {"v"}), 5.0);
+        check("a file in another CRS gives the same tags", same_column(reprojected.columns[0], exact.columns[0]));
+
+        // Hillslopes take the imported values through the D8 link.
+        const auto relief = compute_hillslope_relief(flow, y.z, y.mask, y.channel);
+        const auto tagged = tag_hillslopes_from_channel(y.meta, relief.channel_flat, y.mask,
+                                                        exact.columns[0].values, exact.columns[0].mask);
+        bool through_link = tagged.n_hillslope_tagged > 100;
+        for (std::size_t i = 0; i < n; ++i)
+            if (relief.channel_flat[i] >= 0 && !y.channel[i])
+                through_link = through_link && tagged.tag.mask[i] &&
+                               tagged.tag.data[i] == static_cast<float>(value_of(relief.channel_flat[i]));
+        check("hillslopes take the imported value of their channel pixel", through_link);
+    }
+
+    // Snap distance: 30 m east of a main stem pixel centre, on a row with no
+    // nearer channel pixel.
+    {
+        const std::int64_t f = y.flat(15, 8);
+        const lsdtt_xy c = y.centre(f);
+        const auto inside = join(point_table(c.x + 30.0, c.y, 4.0), 30.0);
+        const auto outside = join(point_table(c.x + 30.0, c.y, 4.0), 29.99);
+        check("a point exactly at the snap distance joins", inside.columns[0].n_direct == 1 && inside.columns[0].mask[f]);
+        check("a snap of three cells is reported", inside.n_records_snapped_beyond_one_cell == 1);
+        check("a point just beyond it is dropped and counted", outside.columns[0].n_direct == 0 && outside.n_records_dropped == 1);
+        const auto nearby = join(point_table(c.x + 5.0, c.y, 4.0), 30.0);
+        check("a snap within one cell is not reported as moved", nearby.n_records_snapped_beyond_one_cell == 0);
+        const auto off_grid = join(point_table(c.x + 95.0, c.y, 4.0), 95.0);
+        check("a point off the grid can still snap", off_grid.columns[0].mask[f] == 1u);
+    }
+
+    // Medians.
+    {
+        const std::int64_t f = y.flat(15, 8);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const auto odd = join(exact_table({{f, 9.0}, {f, 1.0}, {f, 4.0}}), 0.0);
+        const auto even = join(exact_table({{f, 9.0}, {f, 1.0}, {f, 4.0}, {f, 6.0}}), 0.0);
+        const auto with_nan = join(exact_table({{f, 9.0}, {f, nan}, {f, 1.0}}), 0.0);
+        const auto all_nan = join(exact_table({{f, nan}}), 0.0);
+        check("odd records give the median", odd.columns[0].values[f] == 4.f && odd.columns[0].n_multiple_records == 1);
+        check("even records give the mean of the middle two", even.columns[0].values[f] == 5.f);
+        check("NaN is ignored in the median", with_nan.columns[0].values[f] == 5.f);
+        check("a NaN value stays nodata", all_nan.columns[0].mask[f] == 0u && all_nan.columns[0].n_direct == 0);
+        const auto off = join(exact_table({{y.flat(15, 2), 3.0}}), 100.0);
+        check("an exact record off the network is dropped and counted",
+              off.n_exact_samples_off_channel == 1 && off.n_records_dropped == 1);
+    }
+
+    // Lines.
+    {
+        const lsdtt_xy top = y.centre(y.flat(11, 8)), bottom = y.centre(y.flat(21, 8));
+        lsdtt_data_loader w;
+        w.begin_vector_write(dir + "/lines.fgb", "a", value_schema(false), y.meta.crs_wkt, vector_output_format::flatgeobuf);
+        w.write_line({top, bottom}, {3.0});
+        // Runs over the same pixels many times: it must still count once per pixel.
+        w.write_line({top, bottom, top, bottom, top}, {9.0});
+        w.finish_vector_write();
+        const auto both = join(read_channel_attribute_table(dir + "/lines.fgb", y.meta, {"v"}), 1.0);
+        bool ok = true;
+        for (int r = 11; r <= 21; ++r)
+            ok = ok && both.columns[0].mask[y.flat(r, 8)] && both.columns[0].values[y.flat(r, 8)] == 6.f;
+        check("overlapping lines give the median, one vote per line per pixel", ok);
+
+        lsdtt_data_loader w1;
+        w1.begin_vector_write(dir + "/line.fgb", "a", value_schema(false), y.meta.crs_wkt, vector_output_format::flatgeobuf);
+        w1.write_line({top, bottom}, {3.0});
+        w1.finish_vector_write();
+        const auto single = join(read_channel_attribute_table(dir + "/line.fgb", y.meta, {"v"}), 1.0);
+        bool ok1 = single.n_records == 1 && single.n_records_matched == 1;
+        for (int r = 11; r <= 21; ++r)
+            ok1 = ok1 && single.columns[0].values[y.flat(r, 8)] == 3.f;
+        check("every channel pixel under a line takes its value", ok1);
+
+        lsdtt_data_loader w2;
+        w2.begin_vector_write(dir + "/multi.fgb", "a", value_schema(false), y.meta.crs_wkt, vector_output_format::flatgeobuf);
+        w2.write_multiline({{y.centre(y.flat(11, 8)), y.centre(y.flat(13, 8))},
+                            {y.centre(y.flat(17, 8)), y.centre(y.flat(19, 8))}}, {5.0});
+        w2.finish_vector_write();
+        const auto multi = join(read_channel_attribute_table(dir + "/multi.fgb", y.meta, {"v"}), 1.0);
+        check("a multipart line is one record", multi.n_records == 1 && multi.columns[0].values[y.flat(12, 8)] == 5.f &&
+                                                   multi.columns[0].values[y.flat(18, 8)] == 5.f);
+    }
+
+    // Empty and NaN attributes in a file.
+    {
+        const std::int64_t a = y.flat(15, 8), b = y.flat(16, 8);
+        write_text(dir + "/blank.csv", "row,col,flat,v\n15,8," + std::to_string(a) + ",\n16,8," +
+                                           std::to_string(b) + ",nan\n");
+        const auto blank = join(read_channel_attribute_table(dir + "/blank.csv", y.meta, {"v"}), 0.0);
+        check("empty and NaN values stay nodata, not 0",
+              blank.columns[0].mask[a] == 0u && blank.columns[0].mask[b] == 0u && blank.columns[0].n_direct == 0);
+    }
+
+    // Gap filling.
+    {
+        const auto gap = join(exact_table({{y.flat(12, 8), 2.0}, {y.flat(18, 8), 8.0}}), 100.0);
+        const auto& g = gap.columns[0];
+        check("a gap takes the nearest record on its link",
+              g.values[y.flat(13, 8)] == 2.f && g.values[y.flat(14, 8)] == 2.f &&
+                  g.values[y.flat(16, 8)] == 8.f && g.values[y.flat(17, 8)] == 8.f);
+        check("equidistant records give their median", g.values[y.flat(15, 8)] == 5.f);
+        check("filled pixels are counted", g.n_direct == 2 && g.n_filled == 10, std::to_string(g.n_filled));
+
+        const auto limited = join(exact_table({{y.flat(12, 8), 2.0}}), 20.0);
+        const auto& l = limited.columns[0];
+        check("a fill reaches the limit", l.mask[y.flat(14, 8)] == 1u && l.mask[y.flat(10, 8)] == 1u);
+        check("a gap beyond the limit stays nodata", l.mask[y.flat(15, 8)] == 0u && l.mask[y.flat(21, 8)] == 0u);
+
+        const auto main_only = join(exact_table({{y.flat(10, 8), 7.0}}), 1000.0);
+        bool no_crossing = true;
+        for (const auto f : channel_pixels)
+            if (f / y.nc < 10) no_crossing = no_crossing && main_only.columns[0].mask[f] == 0u;
+        check("a main-stem record does not fill a tributary", no_crossing);
+        check("the main stem is filled", main_only.columns[0].mask[y.flat(21, 8)] == 1u);
+
+        const auto trib = join(exact_table({{y.flat(5, 3), 6.0}}), 1000.0);
+        check("a tributary record fills its own tributary", trib.columns[0].mask[y.flat(9, 7)] == 1u);
+        check("a tributary record stops at the junction",
+              trib.columns[0].mask[y.flat(10, 8)] == 0u && trib.columns[0].mask[y.flat(9, 9)] == 0u);
+
+        const auto diag = join(exact_table({{y.flat(5, 3), 6.0}}), 15.0);
+        check("diagonal steps count as sqrt(2) cells",
+              diag.columns[0].mask[y.flat(6, 4)] == 1u && diag.columns[0].mask[y.flat(7, 5)] == 0u);
+    }
+
+    // Refusals.
+    {
+        const std::string a = std::to_string(y.flat(15, 8));
+        write_text(dir + "/bad_row.csv", "row,col,flat,v\n99,8," + a + ",1\n");
+        write_text(dir + "/bad_flat.csv", "row,col,flat,v\n15,8,3,1\n");
+        write_text(dir + "/text.csv", "row,col,flat,v\n15,8," + a + ",wide\n");
+        write_text(dir + "/no_location.csv", "v\n1\n");
+        const auto read = [&](const std::string& name, std::vector<std::string> columns = {"v"}) {
+            (void)read_channel_attribute_table(dir + "/" + name, y.meta, columns);
+        };
+        check("a row off this grid is refused", refuses([&] { read("bad_row.csv"); }));
+        check("a flat disagreeing with row and col is refused", refuses([&] { read("bad_flat.csv"); }));
+        check("a text value is refused", refuses([&] { read("text.csv"); }));
+        check("a table with no location is refused", refuses([&] { read("no_location.csv"); }));
+        check("a missing column is refused (CSV)", refuses([&] { read("exact.csv", {"w"}); }));
+        check("a missing column is refused (vector)", refuses([&] { read("exact.fgb", {"w"}); }));
+        check("no columns is refused", refuses([&] { read("exact.csv", {}); }));
+        check("a repeated column is refused", refuses([&] { read("exact.csv", {"v", "v"}); }));
+
+        lsdtt_raster_meta shifted = y.meta;
+        shifted.x_min += 500.0;
+        check("a table on a shifted grid with the same size is refused",
+              refuses([&] { (void)read_channel_attribute_table(dir + "/exact.fgb", shifted, {"v"}); }));
+
+        lsdtt_vector_schema text_schema;
+        text_schema.field_names = {"v"};
+        text_schema.field_types = {lsdtt_vector_field_type::string_type};
+        lsdtt_data_loader w;
+        w.begin_vector_write(dir + "/text.fgb", "a", text_schema, y.meta.crs_wkt, vector_output_format::flatgeobuf);
+        const lsdtt_xy c = y.centre(y.flat(15, 8));
+        w.write_point(c.x, c.y, {std::string("wide")});
+        w.finish_vector_write();
+        check("a text field is refused", refuses([&] { read("text.fgb"); }));
+
+        lsdtt_data_loader wp;
+        wp.begin_vector_write(dir + "/polygon.fgb", "a", value_schema(false), y.meta.crs_wkt, vector_output_format::flatgeobuf);
+        wp.write_polygon({{c.x, c.y}, {c.x + 10, c.y}, {c.x + 10, c.y + 10}, {c.x, c.y}}, {1.0});
+        wp.finish_vector_write();
+        check("polygon geometry is refused", refuses([&] { read("polygon.fgb"); }));
+
+        check("a negative snap distance is refused", refuses([&] { (void)join(exact_table({}), -1.0); }));
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+}
+
 } // namespace
 
 int main()
@@ -1212,6 +1570,7 @@ int main()
         test_divides();
         test_rays();
         test_tags();
+        test_attributes();
         test_refusals();
     }
     catch (const std::exception& e)

@@ -20,6 +20,8 @@
 #include <omp.h>
 #endif
 
+#include "../utils/lsdtt_raster_geometry.hpp"
+#include "../utils/lsdtt_statistics.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
 #include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_raster_surface_metrics_cpu.hpp"
@@ -220,6 +222,59 @@ ray_result trace_aspect_ray(int start_row, int start_col, double aspect_degrees,
     }
 }
 
+// The label of each pixel's channel link: the flat index of the link's most
+// downstream pixel. A junction (two or more channel donors) belongs to the link
+// below it. Hillslope pixels take the link their D8 path reaches, and a pixel
+// reaching no channel takes its outlet. Nodata is -1.
+std::vector<std::int64_t> channel_link_labels(const lsdtt_flowinfo&            flow,
+                                              const std::vector<std::uint8_t>& kind,
+                                              const std::vector<std::int64_t>& order,
+                                              std::int64_t&                    n_links)
+{
+    const std::size_t n = kind.size();
+    const auto receiver = [&](std::int64_t flat) -> std::int64_t {
+        const std::int64_t rec = flow.receiver_of_unchecked(flat);
+        if (rec < 0 || rec == flat || kind[static_cast<std::size_t>(rec)] == 0u) return -1;
+        return rec;
+    };
+
+    std::vector<std::uint8_t> channel_donors(n, 0u);
+    for (const std::int64_t flat : order)
+    {
+        if (kind[static_cast<std::size_t>(flat)] != 2u) continue;
+        const std::int64_t rec = receiver(flat);
+        if (rec >= 0 && kind[static_cast<std::size_t>(rec)] == 2u)
+            ++channel_donors[static_cast<std::size_t>(rec)];
+    }
+
+    // Receivers come before donors in the s_vector.
+    n_links = 0;
+    std::vector<std::int64_t> label(n, -1);
+    for (const std::int64_t flat : order)
+    {
+        const std::size_t i = static_cast<std::size_t>(flat);
+        if (kind[i] == 0u) continue;
+        const std::int64_t rec = receiver(flat);
+        if (rec < 0)
+        {
+            label[i] = flat;
+            if (kind[i] == 2u) ++n_links;
+            continue;
+        }
+        const std::size_t r = static_cast<std::size_t>(rec);
+        if (kind[i] == 2u && (kind[r] != 2u || channel_donors[r] >= 2u))
+        {
+            label[i] = flat;
+            ++n_links;
+        }
+        else
+        {
+            label[i] = label[r];
+        }
+    }
+    return label;
+}
+
 } // namespace
 
 hillslope_divide_edges build_hillslope_divide_edges(
@@ -247,45 +302,13 @@ hillslope_divide_edges build_hillslope_divide_edges(
         return rec;
     };
 
-    // A junction is a channel pixel with two or more channel donors.
-    std::vector<std::uint8_t> channel_donors(n, 0u);
-    for (const std::int64_t flat : order)
-    {
-        if (kind[static_cast<std::size_t>(flat)] != 2u) continue;
-        const std::int64_t rec = receiver(flat);
-        if (rec >= 0 && kind[static_cast<std::size_t>(rec)] == 2u)
-            ++channel_donors[static_cast<std::size_t>(rec)];
-    }
-
-    // Receivers come before donors in the s_vector.
     hillslope_divide_edges out;
     out.n_rows = nr;
     out.n_cols = nc;
     out.east.assign(n, 0u);
     out.south.assign(n, 0u);
-    std::vector<std::int64_t> label(n, -1);
-    for (const std::int64_t flat : order)
-    {
-        const std::size_t i = static_cast<std::size_t>(flat);
-        if (kind[i] == 0u) continue;
-        const std::int64_t rec = receiver(flat);
-        if (rec < 0)
-        {
-            label[i] = flat;
-            if (kind[i] == 2u) ++out.n_channel_links;
-            continue;
-        }
-        const std::size_t r = static_cast<std::size_t>(rec);
-        if (kind[i] == 2u && (kind[r] != 2u || channel_donors[r] >= 2u))
-        {
-            label[i] = flat;
-            ++out.n_channel_links;
-        }
-        else
-        {
-            label[i] = label[r];
-        }
-    }
+    const std::vector<std::int64_t> label =
+        channel_link_labels(flow, kind, order, out.n_channel_links);
 
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc; ++c)
@@ -876,6 +899,246 @@ hillslope_chi_tag_result compute_hillslope_chi_tags(
                                            &basins.in_selected_basin);
     out.k_sn = tag_hillslopes_from_channel(meta, channel_flat, valid, k_sn, has_k_sn,
                                            &basins.in_selected_basin);
+    return out;
+}
+
+channel_attribute_join_result join_channel_attributes(
+    const lsdtt_flowinfo&            flow,
+    const std::vector<std::uint8_t>& elevation_mask,
+    const std::vector<std::uint8_t>& channel_mask,
+    const channel_attribute_table&   table,
+    double                           max_snap_distance_m)
+{
+    if (!std::isfinite(max_snap_distance_m) || max_snap_distance_m < 0.0)
+        throw std::invalid_argument(
+            "join_channel_attributes: max_snap_distance_m must be finite and not negative");
+    if (!flow.has_s_vector())
+        throw std::runtime_error("join_channel_attributes: s_vector not built");
+
+    const lsdtt_raster_meta& meta = flow.meta();
+    const int nr = meta.n_rows, nc = meta.n_cols;
+    const std::size_t n = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
+    if (elevation_mask.size() != n || channel_mask.size() != n)
+        throw std::invalid_argument(
+            "join_channel_attributes: elevation_mask and channel_mask must have one value "
+            "per grid cell");
+    const std::size_t n_samples = table.sample_record.size();
+    if (table.sample_flat.size() != n_samples || table.sample_x.size() != n_samples ||
+        table.sample_y.size() != n_samples || table.values.size() != table.columns.size())
+        throw std::invalid_argument("join_channel_attributes: inconsistent table");
+    for (const auto& column : table.values)
+        if (static_cast<std::int64_t>(column.size()) != table.n_records)
+            throw std::invalid_argument("join_channel_attributes: inconsistent table");
+
+    const std::vector<std::uint8_t> kind = classify_cells(flow, elevation_mask, channel_mask);
+
+    channel_attribute_join_result out;
+    out.n_records = table.n_records;
+    for (std::size_t i = 0; i < n; ++i)
+        if (kind[i] == 2u) ++out.n_channel_pixels;
+
+    // Snap by rings outward. A cell in ring k is at least (k - 0.5) cells from a
+    // point inside the central cell.
+    const double cs = meta.cell_size;
+    const double tolerance = 1.0 + 1e-12;
+    const double limit = max_snap_distance_m * tolerance;
+    const lsdtt_xy origin = cell_center_from_row_col(meta, 0, 0);
+    const double step_x = nc > 1 ? cell_center_from_row_col(meta, 0, 1).x - origin.x : cs;
+    const double step_y = nr > 1 ? cell_center_from_row_col(meta, 1, 0).y - origin.y : -cs;
+    const int max_ring = static_cast<int>(std::ceil(max_snap_distance_m / cs)) + 1;
+
+    const auto snap = [&](double x, double y, double& distance) -> std::int64_t {
+        const double row_position = (y - origin.y) / step_y;
+        const double col_position = (x - origin.x) / step_x;
+        if (std::abs(row_position) > 2e9 || std::abs(col_position) > 2e9) return -1;
+        const int r0 = static_cast<int>(std::lround(row_position));
+        const int c0 = static_cast<int>(std::lround(col_position));
+        std::int64_t best = -1;
+        double best_d = std::numeric_limits<double>::infinity();
+        const auto test = [&](int r, int c) {
+            if (r < 0 || r >= nr || c < 0 || c >= nc) return;
+            const std::int64_t f = static_cast<std::int64_t>(r) * nc + c;
+            if (kind[static_cast<std::size_t>(f)] != 2u) return;
+            const double d = std::hypot(origin.x + c * step_x - x, origin.y + r * step_y - y);
+            if (d > limit) return;
+            if (d < best_d || (d == best_d && f < best)) { best_d = d; best = f; }
+        };
+        for (int ring = 0; ring <= max_ring; ++ring)
+        {
+            if (best >= 0 && (ring - 0.5) * cs > best_d) break;
+            if (ring == 0) { test(r0, c0); continue; }
+            for (int c = c0 - ring; c <= c0 + ring; ++c) { test(r0 - ring, c); test(r0 + ring, c); }
+            for (int r = r0 - ring + 1; r <= r0 + ring - 1; ++r) { test(r, c0 - ring); test(r, c0 + ring); }
+        }
+        distance = best_d;
+        return best;
+    };
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> hits;  // (flat, record)
+    hits.reserve(n_samples);
+    std::vector<std::uint8_t> matched(static_cast<std::size_t>(table.n_records), 0u);
+    std::vector<std::uint8_t> moved(static_cast<std::size_t>(table.n_records), 0u);
+    for (std::size_t s = 0; s < n_samples; ++s)
+    {
+        const std::int64_t record = table.sample_record[s];
+        if (record < 0 || record >= table.n_records)
+            throw std::invalid_argument("join_channel_attributes: inconsistent table");
+
+        std::int64_t flat = table.sample_flat[s];
+        double distance = 0.0;
+        if (flat >= 0)
+        {
+            if (static_cast<std::size_t>(flat) >= n)
+                throw std::invalid_argument("join_channel_attributes: a sample is off the grid");
+            if (kind[static_cast<std::size_t>(flat)] != 2u)
+            {
+                ++out.n_exact_samples_off_channel;
+                continue;
+            }
+        }
+        else
+        {
+            flat = snap(table.sample_x[s], table.sample_y[s], distance);
+            if (flat < 0) continue;
+        }
+        hits.emplace_back(flat, record);
+        matched[static_cast<std::size_t>(record)] = 1u;
+        if (distance > cs * tolerance) moved[static_cast<std::size_t>(record)] = 1u;
+    }
+    std::sort(hits.begin(), hits.end());
+    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+
+    for (std::size_t r = 0; r < matched.size(); ++r)
+    {
+        if (matched[r]) ++out.n_records_matched;
+        if (moved[r])   ++out.n_records_snapped_beyond_one_cell;
+    }
+    out.n_records_dropped = out.n_records - out.n_records_matched;
+
+    // Each link runs from its most downstream pixel upward: receivers come
+    // before donors in the s_vector, and a link has no branches.
+    const std::vector<std::int64_t>& order = flow.s_vector();
+    std::int64_t n_links = 0;
+    const std::vector<std::int64_t> label = channel_link_labels(flow, kind, order, n_links);
+    std::vector<std::int32_t> link_index(n, -1);
+    std::vector<std::vector<std::int64_t>> links;
+    links.reserve(static_cast<std::size_t>(n_links));
+    for (const std::int64_t flat : order)
+    {
+        if (kind[static_cast<std::size_t>(flat)] != 2u) continue;
+        const std::size_t head = static_cast<std::size_t>(label[static_cast<std::size_t>(flat)]);
+        if (link_index[head] < 0)
+        {
+            link_index[head] = static_cast<std::int32_t>(links.size());
+            links.emplace_back();
+        }
+        links[static_cast<std::size_t>(link_index[head])].push_back(flat);
+    }
+
+    for (std::size_t c = 0; c < table.columns.size(); ++c)
+    {
+        channel_attribute_column column;
+        column.name = table.columns[c];
+        column.values.assign(n, static_cast<float>(meta.no_data_value));
+        column.mask.assign(n, 0u);
+
+        // Medians. Held in double until the end, so a fill between two records
+        // is not rounded twice.
+        std::vector<double> direct(n, std::numeric_limits<double>::quiet_NaN());
+        std::vector<double> pixel_values;
+        for (std::size_t h = 0; h < hits.size();)
+        {
+            const std::int64_t flat = hits[h].first;
+            pixel_values.clear();
+            for (; h < hits.size() && hits[h].first == flat; ++h)
+            {
+                const double v = table.values[c][static_cast<std::size_t>(hits[h].second)];
+                if (std::isfinite(v)) pixel_values.push_back(v);
+            }
+            if (pixel_values.empty()) continue;
+            if (pixel_values.size() > 1) ++column.n_multiple_records;
+            ++column.n_direct;
+            direct[static_cast<std::size_t>(flat)] = compute_median_in_place(pixel_values);
+        }
+
+        for (const auto& link : links)
+        {
+            // Step counts give exact ties: a + b*sqrt(2) is equal only for equal
+            // integer pairs.
+            const std::size_t m = link.size();
+            std::vector<std::int32_t> n_cardinal(m, 0), n_diagonal(m, 0);
+            for (std::size_t k = 1; k < m; ++k)
+            {
+                const bool diagonal = link[k] / nc != link[k - 1] / nc &&
+                                      link[k] % nc != link[k - 1] % nc;
+                n_cardinal[k] = n_cardinal[k - 1] + (diagonal ? 0 : 1);
+                n_diagonal[k] = n_diagonal[k - 1] + (diagonal ? 1 : 0);
+            }
+            std::vector<std::int64_t> below(m, -1), above(m, -1);
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                if (std::isfinite(direct[static_cast<std::size_t>(link[k])]))
+                    below[k] = static_cast<std::int64_t>(k);
+                else if (k > 0)
+                    below[k] = below[k - 1];
+            }
+            for (std::size_t k = m; k-- > 0;)
+            {
+                if (std::isfinite(direct[static_cast<std::size_t>(link[k])]))
+                    above[k] = static_cast<std::int64_t>(k);
+                else if (k + 1 < m)
+                    above[k] = above[k + 1];
+            }
+
+            for (std::size_t k = 0; k < m; ++k)
+            {
+                const std::size_t i = static_cast<std::size_t>(link[k]);
+                if (std::isfinite(direct[i]))
+                {
+                    column.values[i] = static_cast<float>(direct[i]);
+                    column.mask[i] = 1u;
+                    continue;
+                }
+                const auto length = [&](std::int64_t other) {
+                    const std::size_t o = static_cast<std::size_t>(other);
+                    return cs * (std::abs(n_cardinal[k] - n_cardinal[o]) +
+                                 std::sqrt(2.0) * std::abs(n_diagonal[k] - n_diagonal[o]));
+                };
+                const bool has_below = below[k] >= 0 && length(below[k]) <= limit;
+                const bool has_above = above[k] >= 0 && length(above[k]) <= limit;
+                if (!has_below && !has_above) { ++column.n_missing; continue; }
+
+                double value;
+                if (has_below && has_above)
+                {
+                    const std::size_t b = static_cast<std::size_t>(below[k]);
+                    const std::size_t a = static_cast<std::size_t>(above[k]);
+                    const double vb = direct[static_cast<std::size_t>(link[b])];
+                    const double va = direct[static_cast<std::size_t>(link[a])];
+                    const bool tie = std::abs(n_cardinal[k] - n_cardinal[b]) == std::abs(n_cardinal[a] - n_cardinal[k]) &&
+                                     std::abs(n_diagonal[k] - n_diagonal[b]) == std::abs(n_diagonal[a] - n_diagonal[k]);
+                    if (tie)
+                    {
+                        std::vector<double> pair{vb, va};
+                        value = compute_median_in_place(pair);
+                    }
+                    else
+                    {
+                        value = length(below[k]) < length(above[k]) ? vb : va;
+                    }
+                }
+                else
+                {
+                    value = direct[static_cast<std::size_t>(link[static_cast<std::size_t>(
+                        has_below ? below[k] : above[k])])];
+                }
+                column.values[i] = static_cast<float>(value);
+                column.mask[i] = 1u;
+                ++column.n_filled;
+            }
+        }
+        out.columns.push_back(std::move(column));
+    }
     return out;
 }
 
