@@ -1,0 +1,9 @@
+# Smoke test for lsdtt-slope-stability (SINMAP) on the basin_stats fixture DEM
+# (200 x 200, 30 m, UTM 58S): carve then fill, D-infinity slope and area,
+# SINMAP's default parameter bounds.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ss
+n_threads: 1
+write_conditioned_pixels_raster: true

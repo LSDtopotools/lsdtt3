@@ -91,6 +91,7 @@ nav:
     - Analysing along a feature (oblique frames): design_and_algorithms/oblique_frames.md
     - Field points on the channel network: design_and_algorithms/channel_points.md
     - Slope-area and low-concavity reaches: design_and_algorithms/slope_area_and_low_concavity.md
+    - Slope stability: design_and_algorithms/slope_stability.md
     - Burning mapped rivers into a DEM: design_and_algorithms/burning_river_lines.md
   - Command-line reference:
     - DEM preparation:
@@ -126,6 +127,7 @@ nav:
     - Channel network analysis:
       - Channel network analysis: cli_reference/cli_reference_lsdtt_channel_network_analysis.md
       - Slope-area analysis: cli_reference/cli_reference_lsdtt_slope_area.md
+      - Slope stability: cli_reference/cli_reference_lsdtt_slope_stability.md
       - Chi analysis: cli_reference/cli_reference_lsdtt_chi_analysis.md
       - Cross sections: cli_reference/cli_reference_lsdtt_cross_sections.md
       - Bankfull width: cli_reference/cli_reference_lsdtt_bankfull_width.md
@@ -160,6 +162,7 @@ nav:
       - Floodplains, terraces, and valleys: python/fluvial_surfaces.md
       - Ridgeline profiles: python/ridgelines.md
       - Slope-area and low concavity: python/slope_area.md
+      - Slope stability: python/slope_stability.md
       - Cosmogenic erosion: python/cosmogenic.md
       - GraphFlood: python/graphflood.md
     - API reference:

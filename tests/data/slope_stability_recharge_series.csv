@@ -1,0 +1,4 @@
+time_s,recharge_m_per_s
+0,1e-8
+3600,2e-6
+43200,1e-8

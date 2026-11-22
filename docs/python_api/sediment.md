@@ -2,6 +2,296 @@
 
 This page is generated from the built Python runtime manifest. Do not edit signatures here.
 
+## `GroundwaterDupuit`
+
+An unconfined aquifer on an impermeable base: the Dupuit - Boussinesq model.
+
+lsdtt-slope-stability ``water_table_method: dupuit_steady`` and
+``dupuit_transient`` (after Landlab's GroundwaterDupuitPercolator, Litwin et
+al. 2020). The base lies ``regolith_thickness_metres`` below the surface;
+water flows down the water-table gradient; ``fixed_head`` cells (the CLI's
+channels) are seepage outlets with the water table at the surface; the
+raster edge and nodata are no-flux. Where the regolith saturates, water
+seeps out. The keyword names are the CLI's less the ``groundwater_`` prefix.
+
+Members: ``run_to_steady``, ``run``, ``set_thickness``,
+``water_table_depth``, ``saturated_thickness``, ``seepage``, ``storage``,
+``budget``, ``steady_rates``.
+
+Construct it as
+
+    GroundwaterDupuit(surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0)
+
+Parameters
+----------
+surface : Raster
+    Ground elevation (m), normally the input DEM.
+fixed_head : Raster
+    Nonzero = fixed-head (channel) cell, e.g. ``RupturePlanes.channel``.
+regolith_thickness_metres : float, default=2.0, keyword-only
+    Aquifer thickness d (m), used where ``regolith_thickness`` is None.
+regolith_thickness : Raster or None, default=None, keyword-only
+    Thickness per cell (m); nodata or <= 0 cells are left out.
+hydraulic_conductivity_m_per_s : float, default=0.001, keyword-only
+    K, or K0 at the surface for the exponential profile.
+drainable_porosity : float, default=0.2, keyword-only
+    n.
+transmissivity_profile : {"uniform", "exponential"}, default="uniform", keyword-only
+    exponential: K decays with depth over conductivity_decay_depth_metres
+    (TOPMODEL's assumption).
+conductivity_decay_depth_metres : float, default=1.0, keyword-only
+    z_m of the exponential profile.
+n_threads : int, default=0, keyword-only
+    OpenMP threads; the result does not depend on it.
+
+Attributes
+----------
+storage : float
+    Water stored, n h summed over the active cells (m^3).
+
+Methods
+-------
+budget() -> dict
+    The cumulative water budget of the explicit steady march and the runs (m^3).
+run(duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict
+    Advance the water table by ``duration_s`` under a constant recharge.
+run_to_steady(recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict
+    Find the steady water table under a constant recharge.
+saturated_thickness() -> Raster
+    Saturated thickness h (m).
+seepage() -> Raster
+    Seepage rate (m/s) from the last call.
+set_thickness(thickness: Raster) -> None
+    Set the saturated thickness h of the active cells (clipped to [0, d]).
+steady_rates() -> dict
+    The budget of the last implicit steady solve, as rates (m^3/s).
+water_table_depth() -> Raster
+    Depth of the water table below the surface (m): the input to ``FlowInfo.rupture_planes``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def __init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None
+```
+
+### Members
+
+#### `__init__`
+
+__init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None
+
+```python
+def __init__(self, surface: Raster, fixed_head: Raster, *, regolith_thickness_metres: float = 2.0, regolith_thickness: Raster | None = None, hydraulic_conductivity_m_per_s: float = 0.001, drainable_porosity: float = 0.2, transmissivity_profile: str = 'uniform', conductivity_decay_depth_metres: float = 1.0, n_threads: int = 0) -> None
+```
+
+#### `budget`
+
+budget(self) -> dict
+
+The cumulative water budget of the explicit steady march and the runs (m^3).
+
+recharge_m3 + clipped_added_m3 = storage_change_m3 + outflow_fixed_head_m3 +
+seepage_m3 to round-off. An implicit steady solve reports ``steady_rates()``
+instead and does not add to this.
+
+Parameters
+----------
+self : GroundwaterDupuit
+    The aquifer.
+
+Returns
+-------
+dict
+    ``recharge_m3, storage_change_m3, outflow_fixed_head_m3, seepage_m3,
+    clipped_added_m3``.
+
+```python
+def budget(self) -> dict
+```
+
+#### `run`
+
+run(self, duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict
+
+Advance the water table by ``duration_s`` under a constant recharge.
+
+lsdtt-slope-stability ``dupuit_transient`` runs its recharge series as one
+call per constant segment. ``budget()`` accumulates over calls.
+
+Parameters
+----------
+duration_s : float
+    Time to advance (s), > 0.
+recharge_m_per_s : float or Raster
+    Recharge f (m/s); nodata is 0.
+transient_method : {"explicit", "implicit"}, default="explicit", keyword-only
+    explicit: substeps at the stability limit (set by stability, not
+    accuracy: on coarse grids they can be hours long). implicit: backward
+    Euler, each step solved by Newton's method; first order in the step and
+    damps fast transients.
+implicit_max_dt_s : float, default=3600.0, keyword-only
+    implicit: longest step (s).
+implicit_dt_tolerance_metres : float, default=0.0, keyword-only
+    implicit: step-doubling error tolerance on the water table (m); 0 = off.
+
+Returns
+-------
+dict
+    ``transient_method``, ``steps``; implicit also ``newton_iterations``,
+    ``linear_iterations``, ``splits``, ``rejected_by_error``,
+    ``max_error_estimate_metres``.
+
+```python
+def run(self, duration_s: float, recharge_m_per_s: float | Raster, *, transient_method: str = 'explicit', implicit_max_dt_s: float = 3600.0, implicit_dt_tolerance_metres: float = 0.0) -> dict
+```
+
+#### `run_to_steady`
+
+run_to_steady(self, recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict
+
+Find the steady water table under a constant recharge.
+
+lsdtt-slope-stability ``dupuit_steady`` (and the antecedent state of
+``dupuit_transient``). Raises RuntimeError if it does not converge.
+
+Parameters
+----------
+recharge_m_per_s : float or Raster
+    Recharge f (m/s), > 0 somewhere; nodata is 0.
+steady_method : {"implicit", "explicit"}, default="implicit", keyword-only
+    implicit: solved directly by Newton's method (pseudo-transient
+    continuation with an active-set step for saturated and dry cells); tens
+    of iterations whatever the grid. explicit: the time-dependent model
+    marched until it stops changing; its steps are limited by the Courant
+    and von Neumann conditions. Both solve the same discrete equations.
+steady_tolerance : float, default=1e-06, keyword-only
+    Converged when the residual is at most this times the largest recharge.
+max_substeps : int, default=10000000, keyword-only
+    explicit: most substeps.
+max_newton_iterations : int, default=200, keyword-only
+    implicit: most Newton (pseudo-time) steps.
+
+Returns
+-------
+dict
+    ``steady_method``, ``steps``, ``residual``, ``pseudo_time_s``; implicit
+    also ``linear_iterations``, ``used_direct_solver``, ``n_saturated``,
+    ``n_dry``. The implicit solve's budget is in ``steady_rates()``.
+
+```python
+def run_to_steady(self, recharge_m_per_s: float | Raster, *, steady_method: str = 'implicit', steady_tolerance: float = 1e-06, max_substeps: int = 10000000, max_newton_iterations: int = 200) -> dict
+```
+
+#### `saturated_thickness`
+
+saturated_thickness(self) -> Raster
+
+Saturated thickness h (m).
+
+Parameters
+----------
+self : GroundwaterDupuit
+    The aquifer.
+
+Returns
+-------
+Raster
+    h (m); nodata outside the aquifer.
+
+```python
+def saturated_thickness(self) -> Raster
+```
+
+#### `seepage`
+
+seepage(self) -> Raster
+
+Seepage rate (m/s) from the last call.
+
+The implicit steady state's seepage, or the mean over the last ``run``.
+
+Parameters
+----------
+self : GroundwaterDupuit
+    The aquifer.
+
+Returns
+-------
+Raster
+    Seepage (m/s); nodata outside the aquifer.
+
+```python
+def seepage(self) -> Raster
+```
+
+#### `set_thickness`
+
+set_thickness(self, thickness: Raster) -> None
+
+Set the saturated thickness h of the active cells (clipped to [0, d]).
+
+Parameters
+----------
+thickness : Raster
+    Saturated thickness (m); nodata is 0.
+
+Returns
+-------
+None
+
+```python
+def set_thickness(self, thickness: Raster) -> None
+```
+
+#### `steady_rates`
+
+steady_rates(self) -> dict
+
+The budget of the last implicit steady solve, as rates (m^3/s).
+
+Parameters
+----------
+self : GroundwaterDupuit
+    The aquifer.
+
+Returns
+-------
+dict
+    ``recharge_m3_per_s, outflow_fixed_head_m3_per_s, seepage_m3_per_s,
+    imbalance_m3_per_s``.
+
+```python
+def steady_rates(self) -> dict
+```
+
+#### `storage`
+
+Water stored, n h summed over the active cells (m^3).
+
+#### `water_table_depth`
+
+water_table_depth(self) -> Raster
+
+Depth of the water table below the surface (m): the input to ``FlowInfo.rupture_planes``.
+
+Parameters
+----------
+self : GroundwaterDupuit
+    The aquifer.
+
+Returns
+-------
+Raster
+    Water-table depth (m); 0 where saturated; nodata outside the aquifer.
+
+```python
+def water_table_depth(self) -> Raster
+```
+
+---
+
 ## `LandslideResult`
 
 In-memory stochastic landslide-event outputs.
@@ -560,6 +850,245 @@ B. Gailleton
 
 ---
 
+## `RupturePlanes`
+
+Planar rupture surfaces (scaLr) on a DEM, from ``FlowInfo.rupture_planes``.
+
+Holds the inputs of the run, so its probability of failure, landslide
+catalogues and slip surfaces are computed from the same flow, geometry,
+channels, regions and water table.
+
+Members: ``safety_factor``, ``depth``, ``rupture_slope``,
+``topographic_slope``, ``length``, ``unstable``, ``channel``, ``daylight``,
+``n_sources``, ``n_unstable``, ``n_channel``, ``failure_probability``,
+``landslide_catalogues``, ``slip_surfaces``.
+
+Returned by ``FlowInfo.rupture_planes()``; not constructible directly.
+
+Attributes
+----------
+channel : Raster
+    The channel mask used (1 channel, 0 hillslope).
+daylight : object
+    Flat index of each cell's daylight point (numpy int64, -1 where none).
+depth : Raster
+    Optimal rupture depth h* below the source cell (m).
+length : Raster
+    Horizontal distance dx from the source to its daylight point (m).
+n_channel : int
+    Channel cells (not sources).
+n_sources : int
+    Hillslope cells with an admissible daylight point.
+n_unstable : int
+    Of the sources, those with F <= 1.
+rupture_slope : Raster
+    Gradient of the rupture plane, (dz - h*) / dx (m/m).
+safety_factor : Raster
+    Factor of safety F at the critical daylight point (the minimum over the path); nodata on channels and cells with no admissible plane.
+topographic_slope : Raster
+    Gradient from the source to its daylight point, dz / dx (m/m).
+unstable : Raster
+    1 where F <= 1, 0 where F > 1.
+
+Methods
+-------
+failure_probability(*, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+    Probability of failure of the rupture planes by equal-density sampling of cohesion and friction.
+landslide_catalogues(*, min_daylight_neighbours: int = 2) -> dict
+    The potential-landslide catalogues: by daylight point and amalgamated.
+slip_surfaces(*, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces
+    Critical slip surfaces seeded from the rupture planes.
+
+Authors
+-------
+B. Gailleton
+
+### Members
+
+#### `channel`
+
+The channel mask used (1 channel, 0 hillslope).
+
+#### `daylight`
+
+Flat index of each cell's daylight point (numpy int64, -1 where none).
+
+#### `depth`
+
+Optimal rupture depth h* below the source cell (m).
+
+#### `failure_probability`
+
+failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+
+Probability of failure of the rupture planes by equal-density sampling of cohesion and friction.
+
+lsdtt-slope-stability ``parameter_uncertainty: equal_density``, the same routine. For each cell and
+each (c, mu) sample the search is the full deterministic one, so the daylight point may differ
+between samples; Pf = sum of the weights of the samples with F_min <= 1. Exact for this model
+(no Monte Carlo error). Density and the water table are held fixed.
+
+Parameters
+----------
+cohesion_distribution : {"uniform", "normal"}, default="uniform", keyword-only
+    uniform on [cohesion_pa_min, cohesion_pa_max], or normal about the central cohesion with
+    cohesion_pa_sd, truncated to [max(0, c - 3 sd), c + 3 sd].
+cohesion_pa_min, cohesion_pa_max, cohesion_pa_sd : float, default=500.0, 1500.0, 250.0, keyword-only
+    Bounds (uniform) or standard deviation (normal) of cohesion (Pa).
+friction_coefficient_distribution : {"uniform", "normal"}, default="uniform", keyword-only
+    As cohesion_distribution, for the friction coefficient.
+friction_coefficient_min, friction_coefficient_max, friction_coefficient_sd : float, default=0.6, 0.8, 0.05, keyword-only
+    Bounds or standard deviation of the friction coefficient.
+uncertainty_samples_per_parameter : int, default=5, keyword-only
+    Equal-density samples of each parameter; their tensor product is used.
+
+A region's rupture_cohesion_pa_min (and the other bounds and SDs) in the
+region_parameters given to ``FlowInfo.rupture_planes`` override these.
+
+Returns
+-------
+dict
+    ``failure_probability`` (Raster, P(F <= 1)), ``mean_safety_factor``,
+    ``sd_safety_factor`` (Rasters, weighted over the samples), ``n_sources``,
+    ``n_possible_failure`` (Pf > 0), ``n_certain_failure`` (Pf = 1), ``n_samples``.
+
+```python
+def failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+```
+
+#### `landslide_catalogues`
+
+landslide_catalogues(self, *, min_daylight_neighbours: int = 2) -> dict
+
+The potential-landslide catalogues: by daylight point and amalgamated.
+
+lsdtt-slope-stability ``write_landslide_catalogue`` (scaLr's MATLAB): the
+unstable cells sharing a daylight point form one landslide (after
+re-attaching each daylight point to its source), the 1-D rule drops daylight
+points with fewer than ``min_daylight_neighbours`` daylight-point neighbours,
+and 8-connected landslides are merged into the amalgamated catalogue. Areas,
+depths, volumes, F_L (eq. 7) and the planform ellipse are the CLI's columns.
+
+Parameters
+----------
+min_daylight_neighbours : int, default=2, keyword-only
+    The 1-D rule (CLI ``rupture_min_daylight_neighbours``); 0 keeps every
+    daylight point (the paper's catalogue), 0 to 8.
+
+Returns
+-------
+dict
+    ``by_daylight`` and ``amalgamated`` (DataFrames, the CLI's
+    ``_landslide_catalogue*.csv`` columns), ``label`` and
+    ``label_amalgamated`` (Rasters of the ids), ``n_daylight_points``,
+    ``n_daylight_points_removed``, ``n_landslide_cells``.
+
+```python
+def landslide_catalogues(self, *, min_daylight_neighbours: int = 2) -> dict
+```
+
+#### `length`
+
+Horizontal distance dx from the source to its daylight point (m).
+
+#### `n_channel`
+
+Channel cells (not sources).
+
+#### `n_sources`
+
+Hillslope cells with an admissible daylight point.
+
+#### `n_unstable`
+
+Of the sources, those with F <= 1.
+
+#### `rupture_slope`
+
+Gradient of the rupture plane, (dz - h*) / dx (m/m).
+
+#### `safety_factor`
+
+Factor of safety F at the critical daylight point (the minimum over the path); nodata on channels and cells with no admissible plane.
+
+#### `slip_surfaces`
+
+slip_surfaces(self, *, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces
+
+Critical slip surfaces seeded from the rupture planes.
+
+lsdtt-slope-stability ``slip_surface_family``, the same routines; the keyword
+names are the CLI's less the ``slip_surface_`` prefix. Crowns whose rupture
+F is above ``screen_safety_factor`` are screened out. The 2-D families
+(method of slices on the crown's D8 section) have no side resistance;
+``ellipsoid`` (method of columns) does.
+
+Parameters
+----------
+family : {"plane_integrated", "circular", "bilinear", "structural", "ellipsoid"}, default="circular", keyword-only
+    plane_integrated: scaLr's plane with the forces summed over the body;
+    circular: arcs by sagitta; bilinear: a Rankine back segment onto a
+    flatter basal plane; structural: a plane at the apparent dip of a weak
+    layer, ending where it daylights; ellipsoid: 3-D ellipsoids through the
+    crown and the daylight point.
+method : {"auto", "ordinary", "bishop", "janbu", "spencer"}, default="auto", keyword-only
+    Limit-equilibrium method of the 2-D families; auto is ordinary for
+    plane_integrated, bishop for circular, janbu for bilinear and structural.
+search : {"seeded", "full"}, default="seeded", keyword-only
+    seeded: the toe at the rupture daylight point (+/- toe_window_pixels);
+    full: every toe down the path (up to max_length_metres).
+back_scarp : {"vertical", "rankine"}, default="vertical", keyword-only
+    The crown's back scarp: a tension crack, or a Rankine active plane
+    carrying cohesion and friction (not for bilinear).
+janbu_correction : bool, default=True, keyword-only
+    Apply Janbu's f0.
+structural_dip_gradient : float or Raster, default=0.3, keyword-only
+    structural: tan(dip) of the weak layer, constant or per cell (at the crown).
+structural_dip_direction_degrees : float or Raster, default=0.0, keyword-only
+    structural: dip direction, degrees clockwise from north.
+column_method : {"xie_revised", "hovland"}, default="xie_revised", keyword-only
+    ellipsoid: the method of columns.
+ellipsoid_search : {"seeded", "random"}, default="seeded", keyword-only
+    ellipsoid: a grid of shapes, or random draws.
+ellipsoid_random_draws : int, default=200, keyword-only
+    ellipsoid random search: shapes per crown.
+ellipsoid_random_seed : int, default=1, keyword-only
+    ellipsoid random search: seed.
+ellipsoid_min_half_axis_pixels : float, default=3.0, keyword-only
+    ellipsoid: smallest length half-axis (cells); shorter crowns are "too small".
+layer_depths : list of Raster or None, default=None, keyword-only
+    ellipsoid: depths (m) of weak layers that truncate the ellipsoids; each
+    is searched separately.
+screen_safety_factor : float, default=1.5, keyword-only
+    Crowns with rupture F above this are not evaluated.
+toe_window_pixels : int, default=0, keyword-only
+    Seeded search: toes this many cells either side of the daylight point.
+max_length_metres : float, default=0.0, keyword-only
+    Full search: longest crown-to-toe flow distance (0 = no cap).
+slices_per_cell : int, default=4, keyword-only
+    Slices per section cell.
+search_points : int, default=12, keyword-only
+    Points per shape parameter in the search.
+
+Returns
+-------
+SlipSurfaces
+    The critical surface of each evaluated crown, its bodies and counts.
+
+```python
+def slip_surfaces(self, *, family: str = 'circular', method: str = 'auto', search: str = 'seeded', back_scarp: str = 'vertical', janbu_correction: bool = True, structural_dip_gradient: float | Raster = 0.3, structural_dip_direction_degrees: float | Raster = 0.0, column_method: str = 'xie_revised', ellipsoid_search: str = 'seeded', ellipsoid_random_draws: int = 200, ellipsoid_random_seed: int = 1, ellipsoid_min_half_axis_pixels: float = 3.0, layer_depths: list[Raster] | None = None, screen_safety_factor: float = 1.5, toe_window_pixels: int = 0, max_length_metres: float = 0.0, slices_per_cell: int = 4, search_points: int = 12) -> SlipSurfaces
+```
+
+#### `topographic_slope`
+
+Gradient from the source to its daylight point, dz / dx (m/m).
+
+#### `unstable`
+
+1 where F <= 1, 0 where F > 1.
+
+---
+
 ## `SedimentRoutingResult`
 
 Reach-scale bedload routing outputs and channel-raster diagnostics.
@@ -604,6 +1133,238 @@ B. Gailleton
 #### `total_flux_out_m3`
 
 (self) -> float
+
+---
+
+## `SlipSurfaces`
+
+Critical slip surfaces of each crown, from ``RupturePlanes.slip_surfaces``.
+
+Members: ``family``, ``method``, ``safety_factor``, ``crown_depth``,
+``max_depth``, ``sagitta``, ``basal_gradient``, ``length``, ``sinuosity``,
+``unstable``, ``evaluated``, ``body_depth``, ``cover_safety_factor``,
+``n_evaluated``, ``n_screened``, ``n_unstable``, ``n_inadmissible``,
+``n_too_small``, ``failure_probability``, ``spencer_check``,
+``body_catalogues``.
+
+Returned by ``RupturePlanes.slip_surfaces()``; not constructible directly.
+
+Attributes
+----------
+basal_gradient : Raster
+    bilinear: tan of the basal plane; structural: the apparent dip gradient.
+body_depth : Raster
+    Envelope of the unstable bodies' thickness (m).
+cover_safety_factor : Raster
+    ellipsoid: lowest F of the critical surfaces covering each cell.
+crown_depth : Raster
+    Depth h below the crown (m); ellipsoid: the depth half-axis.
+evaluated : Raster
+    1 evaluated, 0 screened out (crowns with a rupture result).
+family : str
+    The slip-surface family.
+length : Raster
+    Flow distance crown to toe (m); ellipsoid: straight distance.
+max_depth : Raster
+    Largest body thickness (m).
+method : str
+    The limit-equilibrium method used (auto resolved), or the column method for ellipsoids.
+n_evaluated : int
+    Crowns evaluated.
+n_inadmissible : int
+    Crowns with no admissible surface.
+n_screened : int
+    Crowns screened out by screen_safety_factor.
+n_too_small : int
+    ellipsoid: crowns below ellipsoid_min_half_axis_pixels (0 for the 2-D families).
+n_unstable : int
+    Crowns with F <= 1.
+safety_factor : Raster
+    Factor of safety of each evaluated crown's critical surface.
+sagitta : Raster
+    circular: the sagitta s (m); ellipsoid: the lateral half-axis (m).
+sinuosity : Raster
+    2-D: flow distance over straight distance crown to toe.
+unstable : Raster
+    1 where F <= 1.
+
+Methods
+-------
+body_catalogues() -> dict
+    Catalogues of the unstable slip bodies: by toe and amalgamated.
+failure_probability(*, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+    Probability of failure on each crown's fixed critical surface.
+spencer_check() -> dict
+    Spencer's factor of safety on each critical 2-D surface.
+
+Authors
+-------
+B. Gailleton
+
+### Members
+
+#### `basal_gradient`
+
+bilinear: tan of the basal plane; structural: the apparent dip gradient.
+
+#### `body_catalogues`
+
+body_catalogues(self) -> dict
+
+Catalogues of the unstable slip bodies: by toe and amalgamated.
+
+lsdtt-slope-stability ``write_slip_body_catalogue``. By toe: the union of the
+bodies of the unstable crowns sharing a toe (groups may overlap, so their
+volumes need not add up). Amalgamated: 8-connected components of the body
+envelope, which do not overlap.
+
+Parameters
+----------
+self : SlipSurfaces
+    The slip surfaces.
+
+Returns
+-------
+dict
+    ``by_toe`` and ``amalgamated`` (DataFrames, the CLI's
+    ``_slip_body_catalogue*.csv`` columns) and ``label_amalgamated`` (Raster).
+
+```python
+def body_catalogues(self) -> dict
+```
+
+#### `body_depth`
+
+Envelope of the unstable bodies' thickness (m).
+
+#### `cover_safety_factor`
+
+ellipsoid: lowest F of the critical surfaces covering each cell.
+
+#### `crown_depth`
+
+Depth h below the crown (m); ellipsoid: the depth half-axis.
+
+#### `evaluated`
+
+1 evaluated, 0 screened out (crowns with a rupture result).
+
+#### `failure_probability`
+
+failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+
+Probability of failure on each crown's fixed critical surface.
+
+lsdtt-slope-stability ``parameter_uncertainty`` with a slip family. The surface found with the
+central values is held fixed and evaluated for each (c, mu) sample, so Pf is a lower bound on the
+probability that some surface fails. Screened-out crowns get 0. For ellipsoids the result also
+has ``cover_failure_probability``, the highest Pf of the ellipsoids covering each cell.
+
+Parameters
+----------
+cohesion_distribution : {"uniform", "normal"}, default="uniform", keyword-only
+    uniform on [cohesion_pa_min, cohesion_pa_max], or normal about the central cohesion with
+    cohesion_pa_sd, truncated to [max(0, c - 3 sd), c + 3 sd].
+cohesion_pa_min, cohesion_pa_max, cohesion_pa_sd : float, default=500.0, 1500.0, 250.0, keyword-only
+    Bounds (uniform) or standard deviation (normal) of cohesion (Pa).
+friction_coefficient_distribution : {"uniform", "normal"}, default="uniform", keyword-only
+    As cohesion_distribution, for the friction coefficient.
+friction_coefficient_min, friction_coefficient_max, friction_coefficient_sd : float, default=0.6, 0.8, 0.05, keyword-only
+    Bounds or standard deviation of the friction coefficient.
+uncertainty_samples_per_parameter : int, default=5, keyword-only
+    Equal-density samples of each parameter; their tensor product is used.
+
+A region's rupture_cohesion_pa_min (and the other bounds and SDs) in the
+region_parameters given to ``FlowInfo.rupture_planes`` override these.
+
+Returns
+-------
+dict
+    ``failure_probability`` (Raster, P(F <= 1)), ``mean_safety_factor``,
+    ``sd_safety_factor`` (Rasters, weighted over the samples), ``n_sources``,
+    ``n_possible_failure`` (Pf > 0), ``n_certain_failure`` (Pf = 1), ``n_samples``.
+
+```python
+def failure_probability(self, *, cohesion_distribution: str = 'uniform', cohesion_pa_min: float = 500.0, cohesion_pa_max: float = 1500.0, cohesion_pa_sd: float = 250.0, friction_coefficient_distribution: str = 'uniform', friction_coefficient_min: float = 0.6, friction_coefficient_max: float = 0.8, friction_coefficient_sd: float = 0.05, uncertainty_samples_per_parameter: int = 5) -> dict
+```
+
+#### `family`
+
+The slip-surface family.
+
+#### `length`
+
+Flow distance crown to toe (m); ellipsoid: straight distance.
+
+#### `max_depth`
+
+Largest body thickness (m).
+
+#### `method`
+
+The limit-equilibrium method used (auto resolved), or the column method for ellipsoids.
+
+#### `n_evaluated`
+
+Crowns evaluated.
+
+#### `n_inadmissible`
+
+Crowns with no admissible surface.
+
+#### `n_screened`
+
+Crowns screened out by screen_safety_factor.
+
+#### `n_too_small`
+
+ellipsoid: crowns below ellipsoid_min_half_axis_pixels (0 for the 2-D families).
+
+#### `n_unstable`
+
+Crowns with F <= 1.
+
+#### `safety_factor`
+
+Factor of safety of each evaluated crown's critical surface.
+
+#### `sagitta`
+
+circular: the sagitta s (m); ellipsoid: the lateral half-axis (m).
+
+#### `sinuosity`
+
+2-D: flow distance over straight distance crown to toe.
+
+#### `spencer_check`
+
+spencer_check(self) -> dict
+
+Spencer's factor of safety on each critical 2-D surface.
+
+lsdtt-slope-stability ``slip_surface_spencer_check``: force and moment
+equilibrium with a constant interslice inclination, on the surface the
+family's own method found, as a check of the simplified methods. Not for
+ellipsoids.
+
+Parameters
+----------
+self : SlipSurfaces
+    A 2-D family's result.
+
+Returns
+-------
+dict
+    ``safety_factor`` (Raster, nodata where Spencer has no solution) and
+    ``n_no_solution``.
+
+```python
+def spencer_check(self) -> dict
+```
+
+#### `unstable`
+
+1 where F <= 1.
 
 ---
 
@@ -952,6 +1713,48 @@ def landslide_crn_concentrations(excavation_depth: lsdtt3.Raster, failure_time: 
 
 ---
 
+## `landslide_frequency_area`
+
+Frequency - area of a landslide catalogue and its power-law tail.
+
+lsdtt-slope-stability's ``_frequency_area.csv`` and ``_frequency_area_fit.csv``
+for one catalogue (landslides or slip bodies). Areas are whole numbers of
+cells, so the fit and the bins are discrete in cells. The tail p(A) ~ A^eta
+is fitted by maximum likelihood with A_min chosen by the Kolmogorov -
+Smirnov distance (Clauset, Shalizi and Newman 2009); ``binned_eta`` is the
+least-squares slope of log p(A) against log A over the bins at or above
+A_min holding at least 3 landslides.
+
+Parameters
+----------
+areas_m2 : sequence of float
+    Landslide areas (m^2), e.g. a catalogue's ``area_m2`` column.
+cell_area_m2 : float
+    Area of one cell (m^2).
+bins_per_decade : int, default=10, keyword-only
+    Logarithmic bins per decade of area (CLI ``frequency_area_bins_per_decade``).
+min_tail : int, default=50, keyword-only
+    Fewest landslides in the fitted tail (at least 2; CLI ``frequency_area_min_tail``).
+
+Returns
+-------
+tuple of (pandas.DataFrame, dict)
+    The density (``area_lower_m2, area_upper_m2, area_centre_m2,
+    n_landslides, probability_density_per_m2``) and the fit (``n_landslides,
+    method, area_min_m2, eta, eta_standard_error, n_tail, ks_distance,
+    binned_eta, binned_eta_standard_error, n_bins_fitted``), the CLI's columns
+    less ``catalogue``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def landslide_frequency_area(areas_m2: Sequence[float], cell_area_m2: float, *, bins_per_decade: int = 10, min_tail: int = 50) -> tuple[pandas.DataFrame, dict]
+```
+
+---
+
 ## `mountain_front_outlets`
 
 Return high-contributing-area pixels on a mountain-mask boundary.
@@ -1146,6 +1949,109 @@ B. Gailleton
 
 ```python
 def sediment_connectivity_index(flow: lsdtt3.FlowInfo, roughness: lsdtt3.Raster, slope: lsdtt3.Raster, drainage_area: lsdtt3.Raster, area_threshold_m2: float) -> lsdtt3.ConnectivityResult
+```
+
+---
+
+## `sinmap`
+
+SINMAP stability index, class, probability and factor-of-safety bounds.
+
+lsdtt-slope-stability ``run_sinmap`` (Pack et al. 1998), the same routine;
+the keyword names are the CLI's less the ``sinmap_`` prefix. The infinite
+slope with steady wetness w = min(1, R a / (T sin theta)) is evaluated over
+uniform ranges of dimensionless cohesion C, friction coefficient tan phi and
+T/R. FS_min uses (C_min, t_min, (T/R)_min), FS_max the other bounds; the
+stability index is FS_min where it is above 1, P(FS > 1) where FS_min < 1 <
+FS_max (closed form), and 0 where FS_max < 1. Flat cells are class 1 and
+nodata in the continuous outputs. The CLI uses the D-infinity slope and area
+of the carved-then-filled DEM: ``FlowGraph(dem, method="dinf")``,
+``.slope()`` and ``.drainage_area()``.
+
+Parameters
+----------
+slope : Raster
+    Gradient S (m/m), e.g. ``FlowGraph.slope()``.
+drainage_area : Raster
+    Contributing area (m^2) on the same grid, e.g. ``FlowGraph.drainage_area()``.
+dimensionless_cohesion_min, dimensionless_cohesion_max : float, default=0.0, 0.25, keyword-only
+    C = (C_r + C_s) / (h rho_s g), bounds.
+friction_coefficient_min, friction_coefficient_max : float, default=tan 30, 1.0, keyword-only
+    tan phi, bounds.
+transmissivity_over_recharge_min_metres, transmissivity_over_recharge_max_metres : float, default=2000.0, 3000.0, keyword-only
+    T / R (m), bounds.
+water_to_soil_density_ratio : float, default=0.5, keyword-only
+    rho_w / rho_s.
+region : Raster or None, default=None, keyword-only
+    Integer region ids selecting parameter sets; nodata cells are left out.
+region_parameters : dict or None, default=None, keyword-only
+    ``{region_id: {name: value}}`` with the CLI's region-table column names
+    (``sinmap_dimensionless_cohesion_min``, ...); a missing name takes the
+    keyword value. ``rupture_*`` names are accepted and ignored, so one table
+    can drive both ``sinmap`` and ``FlowInfo.rupture_planes``. Needed with
+    ``region``.
+exclude : Raster or None, default=None, keyword-only
+    Nonzero cells are left out, e.g. ``FlowGraph.dinf_edge_contaminated_mask()``.
+contour_width : Raster or None, default=None, keyword-only
+    Contour width (m) for a = A / w, e.g. ``FlowGraph.dinf_contour_width()``
+    (the CLI's default); None uses the cell size, as SINMAP.
+n_threads : int, default=0, keyword-only
+    OpenMP threads (0 = default); the result does not depend on it.
+
+Returns
+-------
+dict
+    Rasters ``stability_index``, ``stability_class`` (1 stable to 6 defended),
+    ``probability_stable``, ``fs_min``, ``fs_max``, ``saturation`` (SINMAP's
+    coding: 3 always saturated, 2 partly, else the wettest w),
+    ``specific_catchment_area`` (m); counts ``n_evaluated``, ``n_flat``,
+    ``n_excluded``; ``class_areas``, a DataFrame of the CLI's class-area
+    table (``region_id, stability_class, n_cells, area_m2,
+    fraction_of_region``).
+
+Authors
+-------
+B. Gailleton
+
+```python
+def sinmap(slope: Raster, drainage_area: Raster, *, dimensionless_cohesion_min: float = 0.0, dimensionless_cohesion_max: float = 0.25, friction_coefficient_min: float = 0.5773502691896257, friction_coefficient_max: float = 1.0, transmissivity_over_recharge_min_metres: float = 2000.0, transmissivity_over_recharge_max_metres: float = 3000.0, water_to_soil_density_ratio: float = 0.5, region: Raster | None = None, region_parameters: dict | None = None, exclude: Raster | None = None, contour_width: Raster | None = None, n_threads: int = 0) -> dict
+```
+
+---
+
+## `sinmap_slope_area_curves`
+
+The class boundaries of SINMAP's slope - specific catchment area plot.
+
+lsdtt-slope-stability ``write_sinmap_slope_area_curves_table`` for one
+parameter set: the saturation lines (``always_saturated_above``,
+``never_saturated_below``) and the FS curves ``fs_min_1.5``, ``fs_min_1.0``
+and ``fs_max_1.0`` as points. The CLI uses the largest evaluated slope,
+the cell size and the largest specific catchment area as the extent.
+
+Parameters
+----------
+slope_max : float
+    Largest gradient (m/m) of the plot.
+area_min, area_max : float
+    Range of specific catchment area (m); points outside it are dropped.
+dimensionless_cohesion_min, dimensionless_cohesion_max, friction_coefficient_min, friction_coefficient_max, transmissivity_over_recharge_min_metres, transmissivity_over_recharge_max_metres, water_to_soil_density_ratio
+    As ``sinmap``, keyword-only.
+n_slopes : int, default=400, keyword-only
+    Slopes sampled along each curve.
+
+Returns
+-------
+pandas.DataFrame
+    ``curve, slope, specific_catchment_area_m``, the CLI table's columns
+    less ``region_id``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def sinmap_slope_area_curves(slope_max: float, area_min: float, area_max: float, *, dimensionless_cohesion_min: float = 0.0, dimensionless_cohesion_max: float = 0.25, friction_coefficient_min: float = 0.5773502691896257, friction_coefficient_max: float = 1.0, transmissivity_over_recharge_min_metres: float = 2000.0, transmissivity_over_recharge_max_metres: float = 3000.0, water_to_soil_density_ratio: float = 0.5, n_slopes: int = 400) -> pandas.DataFrame
 ```
 
 ---

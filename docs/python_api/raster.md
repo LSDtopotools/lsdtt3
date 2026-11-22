@@ -283,7 +283,7 @@ edge (see ``RasterMeta``). Typical round trip::
     out = lsdtt3.Raster.from_numpy(z * 2, dem.mask_numpy(), dem.metadata)
     out.write("doubled.tif")
 
-Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 262 more.
+Not constructible directly; create one with ``Raster.from_numpy()`` or ``Raster.read()``. It is also returned by ``add()``, ``add_uniform_noise()``, ``aspect()``, ``breach_depressions()`` and 285 more.
 
 Attributes
 ----------

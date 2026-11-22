@@ -59,7 +59,7 @@ def domain(name: str) -> str:
         return "landscape"
     if any(word in lower for word in ("internaldrainage", "internal_drainage", "depression", "soil_topographic", "sti", "drainresult", "find_drains")):
         return "drainage"
-    if any(word in lower for word in ("sediment", "landslide", "road", "mountainfront", "mountain_front", "ridgeline", "thinlines", "thin_lines")):
+    if any(word in lower for word in ("sediment", "landslide", "road", "sinmap", "rupture", "slipsurface", "groundwater", "mountainfront", "mountain_front", "ridgeline", "thinlines", "thin_lines")):
         return "sediment"
     if any(word in lower for word in ("valley", "tidal", "marsh", "water", "streamburn", "burn_stream", "repair_water",
                                       "floodplain", "surface_class", "surface_levels", "riser", "relief_above",

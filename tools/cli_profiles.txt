@@ -80,6 +80,7 @@ core lsdtt-raster-preprocessing
 core lsdtt-ridgeline-analysis
 core lsdtt-sediment-routing
 core lsdtt-slope-area
+core lsdtt-slope-stability
 core lsdtt-spectral-analysis
 core lsdtt-stream-burning
 core lsdtt-surface-metrics

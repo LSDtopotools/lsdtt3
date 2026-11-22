@@ -15,6 +15,7 @@
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace lsdtt {
@@ -396,6 +397,324 @@ double eval_cdf(const lsdtt_distribution_fit& fit, double x)
             return pareto_cdf(x, fit.param1, fit.param2);
     }
     return std::numeric_limits<double>::quiet_NaN();
+}
+
+// =============================================================================
+// SUMS AND PRODUCTS OF INDEPENDENT UNIFORM RANDOM VARIABLES
+// (derivations in the header block comment)
+// =============================================================================
+namespace {
+
+void check_uniform_interval(double lower, double upper, const char* who)
+{
+    if (!std::isfinite(lower) || !std::isfinite(upper))
+        throw std::invalid_argument(std::string(who) + ": bounds must be finite");
+    if (lower > upper)
+        throw std::invalid_argument(std::string(who) + ": lower bound exceeds upper bound");
+}
+
+void check_non_negative_uniform(double lower, double upper, const char* who)
+{
+    check_uniform_interval(lower, upper, who);
+    if (lower < 0.0)
+        throw std::invalid_argument(
+            std::string(who) + ": product terms need non-negative lower bounds");
+}
+
+double clamp01(double v)
+{
+    return std::min(1.0, std::max(0.0, v));
+}
+
+// E[(c - k U)_+] for U ~ U(lo, hi), k >= 0. Exact.
+double expected_positive_part_linear(double c, double k, double lo, double hi)
+{
+    if (hi == lo || k == 0.0)
+        return std::max(c - k * lo, 0.0);
+    const double u = std::min(hi, std::max(lo, c / k));   // where c - k U reaches 0
+    if (u <= lo) return 0.0;
+    const double integral = c * (u - lo) - 0.5 * k * (u * u - lo * lo);
+    return integral / (hi - lo);
+}
+
+// P(k U <= a) for U ~ U(lo, hi), k >= 0, lo >= 0, a >= 0. Exact.
+double cdf_scaled_uniform(double k, double lo, double hi, double a)
+{
+    if (k == 0.0) return 1.0;                     // k U == 0 <= a
+    if (hi == lo) return (a >= k * lo) ? 1.0 : 0.0;
+    return clamp01((a / k - lo) / (hi - lo));
+}
+
+} // namespace
+
+double cdf_sum_of_uniforms(double x1, double x2, double y1, double y2, double z)
+{
+    check_uniform_interval(x1, x2, "cdf_sum_of_uniforms (X)");
+    check_uniform_interval(y1, y2, "cdf_sum_of_uniforms (Y)");
+    if (std::isnan(z)) return k_nan;
+
+    const double wx = x2 - x1;
+    const double wy = y2 - y1;
+    const double d1 = std::min(wx, wy);
+    const double d2 = std::max(wx, wy);
+    const double t  = z - (x1 + y1);              // distance above the lowest value
+
+    if (d2 == 0.0) return (t >= 0.0) ? 1.0 : 0.0; // both constant
+    if (t <= 0.0)  return 0.0;
+    if (d1 == 0.0) return std::min(1.0, t / d2);  // one constant: a shifted uniform
+    if (t >= d1 + d2) return 1.0;
+
+    if (t < d1)  return t * t / (2.0 * wx * wy);  // rising corner
+    if (t <= d2) return (t - 0.5 * d1) / d2;      // linear middle
+    const double s = d1 + d2 - t;                 // falling corner
+    return 1.0 - s * s / (2.0 * wx * wy);
+}
+
+double cdf_product_of_uniforms(double y1, double y2, double b1, double b2, double a)
+{
+    check_non_negative_uniform(y1, y2, "cdf_product_of_uniforms (Y)");
+    check_non_negative_uniform(b1, b2, "cdf_product_of_uniforms (B)");
+    if (std::isnan(a)) return k_nan;
+    if (a < 0.0) return 0.0;
+    if (a == k_inf) return 1.0;
+
+    const double wy = y2 - y1;
+    const double wb = b2 - b1;
+
+    if (wy == 0.0 && wb == 0.0) return (a >= y1 * b1) ? 1.0 : 0.0;
+    if (wy == 0.0) return cdf_scaled_uniform(y1, b1, b2, a);
+    if (wb == 0.0) return cdf_scaled_uniform(b1, y1, y2, a);
+    if (a == 0.0)  return 0.0;                    // Y B > 0 almost surely
+
+    // 1/(wy wb) Integral_{b1}^{b2} clamp(a/b - y1, 0, wy) db.
+    // The clamp is wy for b < a/y2 and a/b - y1 for a/y2 <= b <= a/y1.
+    const double b_full_end = a / y2;             // y2 > 0 because wy > 0
+    double integral = 0.0;
+
+    const double u1 = std::min(b2, b_full_end);
+    if (u1 > b1) integral += wy * (u1 - b1);
+
+    const double l2 = std::max(b1, b_full_end);   // > 0
+    const double u2 = (y1 > 0.0) ? std::min(b2, a / y1) : b2;
+    if (u2 > l2) integral += a * std::log(u2 / l2) - y1 * (u2 - l2);
+
+    return clamp01(integral / (wy * wb));
+}
+
+double integrated_cdf_product_of_uniforms(
+    double y1, double y2, double b1, double b2, double a)
+{
+    check_non_negative_uniform(y1, y2, "integrated_cdf_product_of_uniforms (Y)");
+    check_non_negative_uniform(b1, b2, "integrated_cdf_product_of_uniforms (B)");
+    if (std::isnan(a)) return k_nan;
+    if (a <= 0.0) return 0.0;                     // Y B >= 0
+    if (a == k_inf) return k_inf;
+
+    const double wy = y2 - y1;
+    const double wb = b2 - b1;
+
+    if (wy == 0.0 && wb == 0.0) return std::max(a - y1 * b1, 0.0);
+    if (wy == 0.0) return expected_positive_part_linear(a, y1, b1, b2);
+    if (wb == 0.0) return expected_positive_part_linear(a, b1, y1, y2);
+
+    // E[(a - Y B)_+] = 1/(wy wb) Integral_b Integral_y (a - y b)_+ dy db.
+    // Inner integral, in b:
+    //   b <  a/y2         : a wy - b (y2^2 - y1^2)/2
+    //   a/y2 <= b <= a/y1 : a^2/(2b) - a y1 + b y1^2/2
+    //   b >  a/y1         : 0
+    const double b_full_end = a / y2;
+    double integral = 0.0;
+
+    const double u1 = std::min(b2, b_full_end);
+    if (u1 > b1)
+        integral += a * wy * (u1 - b1)
+                  - 0.25 * (y2 * y2 - y1 * y1) * (u1 * u1 - b1 * b1);
+
+    const double l2 = std::max(b1, b_full_end);
+    const double u2 = (y1 > 0.0) ? std::min(b2, a / y1) : b2;
+    if (u2 > l2)
+        integral += 0.5 * a * a * std::log(u2 / l2)
+                  - a * y1 * (u2 - l2)
+                  + 0.25 * y1 * y1 * (u2 * u2 - l2 * l2);
+
+    return std::max(0.0, integral / (wy * wb));
+}
+
+double cdf_sum_with_product_of_uniforms(
+    double x1, double x2,
+    double y1, double y2,
+    double b1, double b2,
+    double z)
+{
+    check_uniform_interval(x1, x2, "cdf_sum_with_product_of_uniforms (X)");
+    check_non_negative_uniform(y1, y2, "cdf_sum_with_product_of_uniforms (Y)");
+    check_non_negative_uniform(b1, b2, "cdf_sum_with_product_of_uniforms (B)");
+    if (std::isnan(z)) return k_nan;
+    if (z == k_inf)  return 1.0;
+    if (z == -k_inf) return 0.0;
+
+    const double wx = x2 - x1;
+    if (wx == 0.0) return cdf_product_of_uniforms(y1, y2, b1, b2, z - x1);
+
+    // P(X + A <= z) = 1/wx Integral_{x1}^{x2} P(A <= z - x) dx, A = Y B
+    //              = (I(z - x1) - I(z - x2)) / wx,  I = integrated product CDF.
+    const double upper = integrated_cdf_product_of_uniforms(y1, y2, b1, b2, z - x1);
+    const double lower = integrated_cdf_product_of_uniforms(y1, y2, b1, b2, z - x2);
+    return clamp01((upper - lower) / wx);
+}
+
+// =============================================================================
+// EQUAL-DENSITY SAMPLING
+// =============================================================================
+
+equal_density_distribution uniform_parameter(double lower, double upper)
+{
+    equal_density_distribution d;
+    d.family = equal_density_family::uniform;
+    d.lower  = lower;
+    d.upper  = upper;
+    d.mean   = 0.5 * (lower + upper);
+    d.sd     = 0.0;
+    return d;
+}
+
+equal_density_distribution truncated_normal_parameter(
+    double mean, double sd, double lower, double upper)
+{
+    equal_density_distribution d;
+    d.family = equal_density_family::truncated_normal;
+    d.lower  = lower;
+    d.upper  = upper;
+    d.mean   = mean;
+    d.sd     = sd;
+    return d;
+}
+
+equal_density_sample equal_density_samples(
+    const equal_density_distribution& d, int n)
+{
+    if (n < 1)
+        throw std::invalid_argument("equal_density_samples: n must be at least 1");
+    check_uniform_interval(d.lower, d.upper, "equal_density_samples");
+    const bool normal = (d.family == equal_density_family::truncated_normal);
+    if (normal)
+    {
+        if (!std::isfinite(d.mean) || !std::isfinite(d.sd))
+            throw std::invalid_argument("equal_density_samples: mean and SD must be finite");
+        if (d.sd < 0.0)
+            throw std::invalid_argument("equal_density_samples: SD must not be negative");
+    }
+
+    equal_density_sample out;
+
+    // Deterministic limits: one sample, weight 1.
+    if (d.lower == d.upper)
+    {
+        out.values.push_back(d.lower);
+        out.weights.push_back(1.0);
+        return out;
+    }
+    if (normal && d.sd == 0.0)
+    {
+        out.values.push_back(std::min(d.upper, std::max(d.lower, d.mean)));
+        out.weights.push_back(1.0);
+        return out;
+    }
+
+    double cdf_lower = 0.0;
+    double cdf_upper = 1.0;
+    if (normal)
+    {
+        cdf_lower = normal_cdf(d.lower, d.mean, d.sd);
+        cdf_upper = normal_cdf(d.upper, d.mean, d.sd);
+        if (!(cdf_upper > cdf_lower))
+            throw std::invalid_argument(
+                "equal_density_samples: the truncation interval holds no probability "
+                "mass at double precision (bounds too far into one tail)");
+    }
+
+    // Quantile of the distribution truncated to [lower, upper]. The end
+    // levels return the bounds exactly, so p = 0 and p = 1 never reach the
+    // infinite tails of normal_quantile.
+    auto quantile = [&](double p) -> double
+    {
+        if (p <= 0.0) return d.lower;
+        if (p >= 1.0) return d.upper;
+        if (!normal) return d.lower + p * (d.upper - d.lower);
+        const double level = cdf_lower + p * (cdf_upper - cdf_lower);
+        const double x = d.mean + d.sd * normal_quantile(level);
+        return std::min(d.upper, std::max(d.lower, x));
+    };
+
+    if (n == 1)
+    {
+        out.values.push_back(quantile(0.5));
+        out.weights.push_back(1.0);
+        return out;
+    }
+
+    out.values.resize(static_cast<std::size_t>(n));
+    out.weights.assign(static_cast<std::size_t>(n), 1.0 / static_cast<double>(n - 1));
+    for (int k = 0; k < n; ++k)
+        out.values[static_cast<std::size_t>(k)] =
+            quantile(static_cast<double>(k) / static_cast<double>(n - 1));
+    out.weights.front() *= 0.5;
+    out.weights.back()  *= 0.5;
+    return out;
+}
+
+power_law_tail_fit fit_power_law_tail(const std::vector<double>& values, bool discrete, std::size_t min_tail)
+{
+    power_law_tail_fit out;
+    out.discrete = discrete;
+    std::vector<double> x;
+    x.reserve(values.size());
+    for (double v : values)
+        if (std::isfinite(v) && v > 0.0) x.push_back(discrete ? std::round(v) : v);
+    std::sort(x.begin(), x.end());
+    out.n_total = x.size();
+    if (min_tail < 2) min_tail = 2;
+    if (x.size() < min_tail) return out;
+    const double shift = discrete ? 0.5 : 0.0;
+    const std::size_t n = x.size();
+    // Suffix sums of ln x for the MLE at each candidate.
+    std::vector<double> suffix_log(n + 1, 0.0);
+    for (std::size_t i = n; i-- > 0;) suffix_log[i] = suffix_log[i + 1] + std::log(x[i]);
+
+    double best_d = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (i > 0 && x[i] == x[i - 1]) continue;      // distinct candidates only
+        const std::size_t m = n - i;
+        if (m < min_tail) break;
+        const double xm = x[i];
+        if (!(xm - shift > 0.0)) continue;
+        const double denom = suffix_log[i] - static_cast<double>(m) * std::log(xm - shift);
+        if (!(denom > 0.0)) continue;
+        const double alpha = 1.0 + static_cast<double>(m) / denom;
+        // KS distance over the distinct tail values: empirical CCDF P(X >= v).
+        double d = 0.0;
+        for (std::size_t j = i; j < n;)
+        {
+            std::size_t k = j;
+            while (k < n && x[k] == x[j]) ++k;
+            const double emp = static_cast<double>(n - j) / static_cast<double>(m);
+            const double model = std::pow((x[j] - shift) / (xm - shift), 1.0 - alpha);
+            d = std::max(d, std::fabs(emp - model));
+            j = k;
+        }
+        if (d < best_d)
+        {
+            best_d = d;
+            out.valid = true;
+            out.alpha = alpha;
+            out.alpha_standard_error = (alpha - 1.0) / std::sqrt(static_cast<double>(m));
+            out.x_min = xm;
+            out.ks_distance = d;
+            out.n_tail = m;
+        }
+    }
+    return out;
 }
 
 } // namespace lsdtt

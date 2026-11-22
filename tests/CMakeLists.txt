@@ -2815,6 +2815,384 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
+# lsdtt-slope-stability: SINMAP
+#
+# The numerics are tested in the lsdtt-test-slope-stability-sinmap driver
+# (equations, Monte Carlo, analytic surfaces, regions, threads). These CLI tests
+# carry the plumbing: the carve-then-fill front end, output names, the region
+# raster and table reader, edge exclusion and the refusals.
+#
+# The region tests need the DEM, the region raster and the tables in ONE
+# read_path, so a setup step copies them together (as fixture_basin_stats_outlets
+# does). tests/data/slope_stability_regions.tif is on the basin_stats fixture
+# grid (Watopia UTM 58S, 200 x 200, 30 m): west half id 1, east half id 7, the
+# ten northern rows nodata. tests/data/slope_stability_layer_depth.tif is on the
+# same grid: a layer 4 m deep in the west half and 8 m deep in the east.
+# =============================================================================
+set(LSDTT_SLOPE_STABILITY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_fixture")
+# cmake -E copy needs the target directory to exist when it copies several files.
+file(MAKE_DIRECTORY "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}")
+add_test(NAME fixture_slope_stability_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_diamond_square.tif"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_regions.tif"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_bad_column.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_region_table_missing_id.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_recharge_series.csv"
+        "${LSDTT_TEST_DATA_DIR}/slope_stability_layer_depth.tif"
+        "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}/")
+lsdtt_set_tests_properties(fixture_slope_stability_inputs PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_fixture
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability
+    lsdtt-slope-stability
+    slope_stability_smoke.param.in
+    ss_sinmap_stability_index.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ss_sinmap_stability_class.tif
+    --expect ss_sinmap_probability_stable.tif
+    --expect ss_sinmap_fs_min.tif
+    --expect ss_sinmap_fs_max.tif
+    --expect ss_sinmap_saturation.tif
+    --expect ss_specific_catchment_area.tif
+    --expect ss_dinf_slope.tif
+    --expect ss_conditioned_pixels.tif
+    --expect ss_sinmap_class_areas.csv
+    --expect ss_sinmap_slope_area_curves.csv
+    --expect-absent ss_edge_contaminated.tif
+    --expect ss_rupture_safety_factor.tif
+    --expect ss_rupture_depth.tif
+    --expect ss_rupture_unstable.tif
+    --expect ss_rupture_length.tif
+    --expect ss_rupture_slope.tif
+    --expect ss_rupture_topographic_slope.tif
+    --expect-raster-values ss_rupture_unstable.tif:0,1
+    --expect ss_landslide_catalogue.csv
+    --expect ss_landslide_catalogue_amalgamated.csv
+    --expect ss_landslide_label.tif
+    --expect ss_landslide_label_amalgamated.tif
+    --expect-file-contains "ss_landslide_catalogue.csv:landslide_id,daylight_x,daylight_y,n_cells,area_m2,mean_depth_m"
+    --expect-file-contains "ss_landslide_catalogue_amalgamated.csv:landslide_id,n_daylight_points,n_cells"
+    --stdout-contains "Landslide catalogues: "
+    --stdout-contains "Rupture planes: "
+    --stdout-contains "Conditioned pixels: 1646 filled, 2492 carved"
+    # All six classes occur on this DEM with SINMAP's default bounds (measured
+    # 2026-11-21: 56.6 % stable ... 0.17 % defended).
+    --expect-raster-values ss_sinmap_stability_class.tif:1,2,3,4,5,6
+    --expect-raster-stat ss_sinmap_probability_stable.tif:min:0:0
+    --expect-raster-stat ss_sinmap_probability_stable.tif:max:1:1
+    --expect-file-contains "ss_sinmap_class_areas.csv:region_id,stability_class,n_cells,area_m2,fraction_of_region"
+    --expect-file-contains "ss_sinmap_slope_area_curves.csv:0,fs_min_1.0,"
+    --expect-file-contains "ss_sinmap_slope_area_curves.csv:0,never_saturated_below,"
+)
+lsdtt_set_tests_properties(smoke_slope_stability PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_regions
+    lsdtt-slope-stability
+    slope_stability_regions.param.in
+    ssr_sinmap_stability_index.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect ssr_sinmap_class_areas.csv
+    --expect-file-contains "ssr_sinmap_class_areas.csv:\n1,"
+    --expect-file-contains "ssr_sinmap_class_areas.csv:\n7,"
+    --expect-file-not-contains "ssr_sinmap_class_areas.csv:\n0,"
+    --expect-file-contains "ssr_sinmap_slope_area_curves.csv:\n7,fs_max_1.0,"
+    --expect ssr_rupture_depth.tif
+)
+lsdtt_set_tests_properties(smoke_slope_stability_regions PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_rupture_only
+    lsdtt-slope-stability
+    slope_stability_rupture_only.param.in
+    ssp_rupture_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssp_rupture_safety_factor.tif
+    --expect-absent ssp_sinmap_stability_index.tif
+    --expect-absent ssp_sinmap_class_areas.csv
+    --expect-absent ssp_landslide_label.tif
+    --expect ssp_landslide_catalogue.csv
+    --expect ssp_landslide_frequency_area.csv
+    --expect-file-contains "ssp_landslide_frequency_area_fit.csv:catalogue,n_landslides,method,area_min_m2,eta"
+    --stdout-contains "Rupture planes: "
+    --stdout-contains "0 of "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# Probability of failure of the rupture planes (parameter_uncertainty). The
+# numerics are in lsdtt-test-slope-stability-rupture-probability; these carry
+# the plumbing, output names and the per-region normal path.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_uncertainty
+    lsdtt-slope-stability
+    slope_stability_uncertainty.param.in
+    ssu_rupture_failure_probability.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssu_rupture_safety_factor_mean.tif
+    --expect ssu_rupture_safety_factor_sd.tif
+    --expect ssu_rupture_safety_factor.tif
+    --expect ssu_landslide_catalogue.csv
+    --stdout-contains "Rupture probability of failure: 25 (c, mu) combinations per cell"
+    --stdout-contains "(catalogues use the central values)"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_uncertainty PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_uncertainty_regions
+    lsdtt-slope-stability
+    slope_stability_uncertainty_regions.param.in
+    ssur_rupture_failure_probability.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect ssur_rupture_safety_factor_sd.tif
+    --expect-absent ssur_landslide_catalogue.csv
+    --stdout-contains "Rupture probability of failure: 9 (c, mu) combinations per cell"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_uncertainty_regions PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+# Slip surfaces by the method of slices. The numerics are in
+# lsdtt-test-slope-stability-slip-surface; these carry the plumbing and names.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_circular
+    lsdtt-slope-stability
+    slope_stability_slip_circular.param.in
+    ssc_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssc_slip_sagitta.tif
+    --expect ssc_slip_body_depth.tif
+    --expect ssc_slip_evaluated.tif
+    --expect ssc_slip_failure_probability.tif
+    --expect ssc_slip_body_catalogue.csv
+    --expect ssc_slip_body_frequency_area.csv
+    --expect ssc_slip_body_frequency_area_fit.csv
+    --expect ssc_slip_body_catalogue_amalgamated.csv
+    --expect ssc_slip_body_label_amalgamated.tif
+    --expect-raster-values ssc_slip_evaluated.tif:0,1
+    --stdout-contains "Slip surfaces (circular, bishop, seeded search): "
+    --stdout-contains "Slip-surface probability of failure"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_circular PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_plane
+    lsdtt-slope-stability
+    slope_stability_slip_plane.param.in
+    ssi_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect-absent ssi_slip_sagitta.tif
+    --expect-absent ssi_slip_body_catalogue.csv
+    --stdout-contains "Slip surfaces (plane_integrated, ordinary, seeded search): "
+    --stdout-contains " 0 screened out"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_plane PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+# Compound, structural and 3-D slip surfaces (C3, C4, C6). The numerics are in
+# lsdtt-test-slope-stability-slip-compound and lsdtt-test-slope-stability-columns.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_bilinear
+    lsdtt-slope-stability
+    slope_stability_slip_bilinear.param.in
+    ssk_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssk_slip_basal_gradient.tif
+    --expect ssk_slip_spencer_safety_factor.tif
+    --expect ssk_slip_failure_probability.tif
+    --expect-absent ssk_slip_sagitta.tif
+    --stdout-contains "Slip surfaces (bilinear, janbu, seeded search): "
+    --stdout-contains "Spencer check on the critical surfaces: "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_bilinear PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_structural
+    lsdtt-slope-stability
+    slope_stability_slip_structural.param.in
+    ssj_slip_safety_factor.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssj_slip_basal_gradient.tif
+    --expect ssj_slip_sinuosity.tif
+    --stdout-contains "Slip surfaces (structural, ordinary, seeded search): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_structural PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_rankine
+    lsdtt-slope-stability
+    slope_stability_slip_rankine.param.in
+    ssq_slip_body_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssq_slip_sagitta.tif
+    --stdout-contains "Slip surfaces (circular, bishop, seeded search): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_rankine PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_slip_ellipsoid
+    lsdtt-slope-stability
+    slope_stability_slip_ellipsoid.param.in
+    sse3_slip_safety_factor.tif
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sse3_slip_half_width.tif
+    --expect sse3_slip_cover_safety_factor.tif
+    --expect sse3_slip_cover_failure_probability.tif
+    --expect sse3_slip_failure_probability.tif
+    --expect sse3_slip_body_catalogue_amalgamated.csv
+    --expect-absent sse3_slip_sinuosity.tif
+    --stdout-contains "Slip surfaces (ellipsoid, xie_revised columns, seeded search): "
+    --stdout-contains " too small)"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_slip_ellipsoid PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+# The water table from the Dupuit - Boussinesq aquifer, steady and
+# transient. The numerics are in lsdtt-test-groundwater-dupuit; these carry the
+# plumbing, output names and the time series.
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_steady
+    lsdtt-slope-stability
+    slope_stability_groundwater_steady.param.in
+    ssg_water_table_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect ssg_saturated_thickness.tif
+    --expect ssg_seepage.tif
+    --expect ssg_rupture_safety_factor.tif
+    --expect ssg_landslide_catalogue.csv
+    --stdout-contains "Groundwater steady state: converged (implicit) after "
+    --stdout-contains "Groundwater steady rates (m3/s): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_steady PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_steady_explicit
+    lsdtt-slope-stability
+    slope_stability_groundwater_steady_explicit.param.in
+    sgx_water_table_depth.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sgx_rupture_safety_factor.tif
+    --stdout-contains "Groundwater steady state: converged (explicit) after "
+    --stdout-contains "Groundwater budget (m3): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_steady_explicit PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_transient
+    lsdtt-slope-stability
+    slope_stability_groundwater_transient.param.in
+    sst_groundwater_time_series.csv
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sst_t3600s_water_table_depth.tif
+    --expect sst_t3600s_rupture_safety_factor.tif
+    --expect sst_t43200s_water_table_depth.tif
+    --expect sst_water_table_depth.tif
+    --expect sst_rupture_safety_factor.tif
+    --expect-absent sst_t172800s_water_table_depth.tif
+    --expect-file-contains "sst_groundwater_time_series.csv:time_s,storage_m3,saturated_cells,rupture_unstable_cells"
+    --expect-file-contains "sst_groundwater_time_series.csv:\n172800,"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_transient PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_groundwater_transient_implicit
+    lsdtt-slope-stability
+    slope_stability_groundwater_transient_implicit.param.in
+    sti_groundwater_time_series.csv
+    --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+    --expect sti_t3600s_water_table_depth.tif
+    --expect sti_t3600s_rupture_safety_factor.tif
+    --expect sti_t43200s_water_table_depth.tif
+    --expect sti_water_table_depth.tif
+    --expect sti_rupture_safety_factor.tif
+    --expect-file-contains "sti_groundwater_time_series.csv:time_s,storage_m3,saturated_cells,rupture_unstable_cells"
+    --expect-file-contains "sti_groundwater_time_series.csv:\n172800,"
+    --stdout-contains "Groundwater transient (implicit): "
+    --stdout-contains "Groundwater budget (m3): "
+)
+lsdtt_set_tests_properties(smoke_slope_stability_groundwater_transient_implicit PROPERTIES
+    FIXTURES_REQUIRED slope_stability_fixture)
+
+add_lsdtt_cli_smoke_test(
+    smoke_slope_stability_edge_exclusion
+    lsdtt-slope-stability
+    slope_stability_edge.param.in
+    sse_edge_contaminated.tif
+    --read-path "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out"
+    --expect sse_sinmap_stability_index.tif
+    --expect-absent sse_sinmap_slope_area_curves.csv
+    --expect-raster-values sse_edge_contaminated.tif:0,1
+    --stdout-contains "excluded as edge-contaminated"
+)
+lsdtt_set_tests_properties(smoke_slope_stability_edge_exclusion PROPERTIES
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+foreach(_ss_case_message
+        "bad_bounds|SINMAP: dimensionless cohesion minimum exceeds its maximum"
+        "region_bad_column|unknown column 'sinmap_cohesion_min'"
+        "region_missing_id|region ids with no parameter row: 7"
+        "region_without_table|must be given together"
+        "region_not_integer|region ids must be integers"
+        "rupture_bad_cohesion|rupture: cohesion must be finite and >= 0"
+        "rupture_bad_threshold|threshold_contributing_pixels must be at least 1"
+        "rupture_bad_neighbours|rupture_min_daylight_neighbours must be 0 to 8"
+        "groundwater_bad_method|water_table_method must be none, dupuit_steady or dupuit_transient"
+        "groundwater_no_series|dupuit_transient needs groundwater_recharge_series_fname"
+        "groundwater_bad_times|groundwater_output_times_s must be positive and increasing"
+        "groundwater_bad_steady_method|groundwater_steady_method must be implicit or explicit"
+        "groundwater_bad_transient_method|groundwater_transient_method must be implicit or explicit"
+        "uncertainty_bad_method|parameter_uncertainty must be none or equal_density"
+        "uncertainty_bad_distribution|rupture_cohesion_distribution must be uniform or normal"
+        "uncertainty_bad_bounds|rupture_cohesion_pa_min must not exceed rupture_cohesion_pa_max"
+        "uncertainty_bad_samples|uncertainty_samples_per_parameter must be at least 1"
+        "slip_bad_family|slip_surface_family must be none, plane_integrated, circular, bilinear, structural or ellipsoid"
+        "slip_no_rupture|slip_surface_family needs run_rupture_planes"
+        "slip_bad_method|slip_surface_method must be auto, ordinary, bishop, janbu or spencer"
+        "slip_bad_slices|slip surfaces: slices per cell must be at least 1"
+        "slip_bilinear_rankine|bilinear already has a Rankine back segment"
+        "slip_bad_scarp|slip_surface_back_scarp must be vertical or rankine"
+        "slip_bad_column_method|slip_surface_column_method must be xie_revised or hovland"
+        "slip_bad_ellipsoid_search|slip_surface_ellipsoid_search must be seeded or random")
+    string(REPLACE "|" ";" _ss_pair "${_ss_case_message}")
+    list(GET _ss_pair 0 _ss_case)
+    list(GET _ss_pair 1 _ss_message)
+    add_lsdtt_cli_smoke_test(
+        failure_slope_stability_${_ss_case}
+        lsdtt-slope-stability
+        slope_stability_${_ss_case}.param.in
+        ssb_sinmap_stability_index.tif
+        --read-path "${LSDTT_SLOPE_STABILITY_FIXTURE_DIR}"
+        --expect-failure
+        --stderr-contains "${_ss_message}"
+    )
+    lsdtt_set_tests_properties(failure_slope_stability_${_ss_case} PROPERTIES
+        FIXTURES_REQUIRED slope_stability_fixture)
+endforeach()
+
+add_lsdtt_cli_smoke_test(
+    failure_slope_stability_geographic_dem
+    lsdtt-slope-stability
+    slope_stability_geographic_dem.param.in
+    ssg_sinmap_stability_index.tif
+    --expect-failure
+    --stderr-contains "only works on projected data"
+)
+
+# =============================================================================
 # lsdtt-outlet-matching
 #
 # No test until 2026-10-14. Reference = the basin_stats fixture DEM (30 m) and
@@ -6266,6 +6644,118 @@ target_link_libraries(lsdtt-test-log-binned-quantiles PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_area_log_binned_quantiles COMMAND lsdtt-test-log-binned-quantiles)
 lsdtt_set_tests_properties(unit_slope_area_log_binned_quantiles PROPERTIES
     LABELS "statistics;slope_area")
+
+# Slope stability (src/utils): CDFs of sums and products of uniform
+# random variables (against their defining integrals, Monte Carlo, the SINMAP
+# manual's piecewise product CDF, and exact identities); equal-density sampling
+# (CDF levels, trapezoid weights, convergence to closed-form expectations and
+# probabilities); and the bounded Brent minimiser (known minima, NaN regions,
+# the scaLr rupture safety factor against a grid search and its closed-form
+# optimal depth).
+add_executable(lsdtt-test-uniform-combination-cdfs cpp/test_uniform_combination_cdfs.cpp)
+target_link_libraries(lsdtt-test-uniform-combination-cdfs PRIVATE lsdtt3_cpu)
+add_test(NAME unit_uniform_combination_cdfs COMMAND lsdtt-test-uniform-combination-cdfs)
+lsdtt_set_tests_properties(unit_uniform_combination_cdfs PROPERTIES
+    LABELS "statistics;slope_stability")
+
+add_executable(lsdtt-test-equal-density-sampling cpp/test_equal_density_sampling.cpp)
+target_link_libraries(lsdtt-test-equal-density-sampling PRIVATE lsdtt3_cpu)
+add_test(NAME unit_equal_density_sampling COMMAND lsdtt-test-equal-density-sampling)
+lsdtt_set_tests_properties(unit_equal_density_sampling PROPERTIES
+    LABELS "statistics;slope_stability")
+
+# Slope stability: the SINMAP component (src/cpu/lsdtt_slope_stability_sinmap_cpu)
+# against its own equations, Monte Carlo, and analytic surfaces (plane, cone,
+# convergent bowl); regions, exclusion, thread independence, SA-plot curves.
+add_executable(lsdtt-test-slope-stability-sinmap cpp/test_slope_stability_sinmap.cpp)
+target_link_libraries(lsdtt-test-slope-stability-sinmap PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_sinmap COMMAND lsdtt-test-slope-stability-sinmap)
+lsdtt_set_tests_properties(unit_slope_stability_sinmap PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: planar rupture surfaces after scaLr
+# (src/cpu/lsdtt_slope_stability_rupture_cpu): the stable optimal-depth form
+# against Brent and a dense search; planar and parabolic hillslopes against
+# their equations; channel stops, geometry checks, regions, threads.
+add_executable(lsdtt-test-slope-stability-rupture cpp/test_slope_stability_rupture.cpp)
+target_link_libraries(lsdtt-test-slope-stability-rupture PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_rupture COMMAND lsdtt-test-slope-stability-rupture)
+lsdtt_set_tests_properties(unit_slope_stability_rupture PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: probability of failure of planar rupture surfaces
+# (equal-density samples of cohesion and friction): the deterministic limit;
+# on a plane, Pf against the exact probability from the continuous uniform and
+# truncated-normal distributions, within the trapezoid-rule bound; water
+# table, regions, threads, bad inputs.
+add_executable(lsdtt-test-slope-stability-rupture-probability cpp/test_slope_stability_rupture_probability.cpp)
+target_link_libraries(lsdtt-test-slope-stability-rupture-probability PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_rupture_probability COMMAND lsdtt-test-slope-stability-rupture-probability)
+lsdtt_set_tests_properties(unit_slope_stability_rupture_probability PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: slip surfaces by the method of slices (plane_integrated and
+# circular; src/cpu/lsdtt_slope_stability_slip_surface_cpu): the infinite-slope
+# closed form, scaLr's plane with the cohesion term doubled, circles against
+# the continuous arc integrals, Bishop >= ordinary, search properties, guards,
+# sinuosity, trends, seeded vs full, bodies, catalogues and fixed-surface Pf.
+add_executable(lsdtt-test-slope-stability-slip-surface cpp/test_slope_stability_slip_surface.cpp)
+target_link_libraries(lsdtt-test-slope-stability-slip-surface PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_slip_surface COMMAND lsdtt-test-slope-stability-slip-surface)
+lsdtt_set_tests_properties(unit_slope_stability_slip_surface PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: compound (bilinear) and structural slip surfaces, the Rankine
+# back scarp, and the Janbu and Spencer methods: closed-form wedges and
+# triangles, limits, the Janbu correction, Spencer against Bishop and Janbu.
+add_executable(lsdtt-test-slope-stability-slip-compound cpp/test_slope_stability_slip_compound.cpp)
+target_link_libraries(lsdtt-test-slope-stability-slip-compound PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_slip_compound COMMAND lsdtt-test-slope-stability-slip-compound)
+lsdtt_set_tests_properties(unit_slope_stability_slip_compound PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: 3-D ellipsoids by the method of columns
+# (src/cpu/lsdtt_slope_stability_columns_cpu): the column infinite-slope
+# identity, area and apparent dip, the ellipsoid surface, volume convergence on
+# flat ground, rasters, cover F, truncation, seeded vs random, fixed-surface Pf.
+add_executable(lsdtt-test-slope-stability-columns cpp/test_slope_stability_columns.cpp)
+target_link_libraries(lsdtt-test-slope-stability-columns PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_columns COMMAND lsdtt-test-slope-stability-columns)
+lsdtt_set_tests_properties(unit_slope_stability_columns PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
+# each grouping rule on hand-built rupture results, statistics against closed
+# forms, and catalogue properties through compute_rupture_planes.
+add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
+target_link_libraries(lsdtt-test-slope-stability-catalogue PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-catalogue)
+lsdtt_set_tests_properties(unit_slope_stability_catalogue PROPERTIES
+    LABELS "slope_stability")
+
+# Slope stability: the Dupuit - Boussinesq groundwater component
+# (src/cpu/lsdtt_groundwater_dupuit_cpu) against Dupuit mound and divide,
+# kinematic and TOPMODEL steady states, linear transient decay, the water
+# budget and the thickness update's ODE.
+add_executable(lsdtt-test-groundwater-dupuit cpp/test_groundwater_dupuit.cpp)
+target_link_libraries(lsdtt-test-groundwater-dupuit PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_groundwater_dupuit COMMAND lsdtt-test-groundwater-dupuit)
+lsdtt_set_tests_properties(unit_slope_stability_groundwater_dupuit PROPERTIES
+    LABELS "slope_stability;distributed_hydrology")
+
+# Power-law tail fits (Clauset et al. 2009 MLE with KS choice of x_min) and the
+# log-binned probability density, for frequency-area plots (src/utils).
+add_executable(lsdtt-test-power-law-tail-fit cpp/test_power_law_tail_fit.cpp)
+target_link_libraries(lsdtt-test-power-law-tail-fit PRIVATE lsdtt3_cpu)
+add_test(NAME unit_power_law_tail_fit COMMAND lsdtt-test-power-law-tail-fit)
+lsdtt_set_tests_properties(unit_power_law_tail_fit PROPERTIES
+    LABELS "statistics;slope_stability")
+
+add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
+target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
+add_test(NAME unit_brent_minimiser COMMAND lsdtt-test-brent-minimiser)
+lsdtt_set_tests_properties(unit_brent_minimiser PROPERTIES
+    LABELS "statistics;slope_stability")
 
 # lsdtt_slope_area_cpu: d8_flow_path_gradient and the options form of
 # channel_slope_at (exact gradients on planes, row and diagonal paths;
@@ -12442,6 +12932,8 @@ set(LSDTT_DOMAIN_RULES
     "quartz|fertility"       "quartz"
     "cosmo"                  "cosmo"
     "landslide"              "landslide"
+    # lsdtt-slope-stability (SINMAP, scaLr, curved surfaces): its own domain.
+    "slope_stability"        "slope_stability"
     "step_change"            "step_change"
     "landscape_equilibration|lem_equilibration" "landscape_equilibration"
     "streamlines"            "streamlines"
@@ -12520,6 +13012,11 @@ set(LSDTT_DOMAIN_RULES
     "gdal_"                  "gdal"
     # Library-level statistics (src/utils/lsdtt_statistics and relatives).
     "order_statistics"       "core"
+    # Slope-stability numerics in src/utils (uniform-combination CDFs,
+    # equal-density sampling, the Brent minimiser). Library-level, so "core"
+    # like the statistics above; the tests also carry their own
+    # "slope_stability" label, so `ctest -L slope_stability` reaches them.
+    "uniform_combination|equal_density|brent_minimiser|power_law_tail" "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The

@@ -1,0 +1,12 @@
+# lsdtt-slope-stability with a steady Dupuit - Boussinesq water table under
+# storm recharge (26 mm/day) in 2 m of regolith, rupture planes only.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssg
+n_threads: 2
+run_sinmap: false
+water_table_method: dupuit_steady
+groundwater_hydraulic_conductivity_m_per_s: 1e-5
+groundwater_recharge_m_per_s: 3e-7
+regolith_thickness_metres: 2

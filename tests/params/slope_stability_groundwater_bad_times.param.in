@@ -1,0 +1,8 @@
+# Failure: output times that do not increase.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: ssb
+water_table_method: dupuit_transient
+groundwater_recharge_series_fname: slope_stability_recharge_series.csv
+groundwater_output_times_s: 7200,3600
