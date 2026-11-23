@@ -56,6 +56,7 @@ lsdtt3/
 │   ├── lsdtt-fluvial-surfaces.cpp
 │   ├── lsdtt-graphflood.cpp
 │   ├── lsdtt-hillslope-channel-coupling.cpp
+│   ├── lsdtt-hillslope-channel-tagging.cpp
 │   ├── lsdtt-internal-drainage.cpp
 │   ├── lsdtt-lem.cpp
 │   ├── lsdtt-linear-stats.cpp
@@ -68,6 +69,7 @@ lsdtt3/
 │   ├── lsdtt-ridgeline-analysis.cpp
 │   ├── lsdtt-sediment-routing.cpp
 │   ├── lsdtt-slope-area.cpp
+│   ├── lsdtt-slope-stability.cpp
 │   ├── lsdtt-spectral-analysis.cpp        *(requires FFTW3)*
 │   ├── lsdtt-stream-burning.cpp
 │   ├── lsdtt-surface-metrics.cpp
@@ -146,6 +148,8 @@ lsdtt3/
 │   │   ├── lsdtt_rotation_frame_file.hpp/.cpp — <stem>_rotation_frame.txt: reading and writing the frame record
 │   │   ├── lsdtt_true_north.hpp/.cpp        — grid convergence; grid bearings to bearings from true north
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
+│   │   ├── lsdtt_channel_attribute_input.hpp/.cpp — channel attributes from CSV or vector points and lines
+│   │   ├── lsdtt_channel_network_ingest.hpp/.cpp — channel network points file to a mask on the flow grid
 │   │   ├── lsdtt_point_attribute_output.hpp/.cpp — write a point layer back out with its original attributes plus added fields
 │   │   ├── lsdtt_river_line_fetch.hpp/.cpp  — river centrelines for an area (local line file or OS Open Rivers, cached)
 │   │   ├── lsdtt_outlet_bounds_discovery.hpp/.cpp— WGS84 outlet points to fetch bounds
@@ -160,7 +164,7 @@ lsdtt3/
 │   │   ├── lsdtt_stat_csv.hpp/.cpp          — CSV writers for QQ, CDF, and distribution-fit tables
 │   │   ├── lsdtt_distributed_hydrology_forcing.hpp/.cpp— per-timestep CSV forcing readers for lsdtt-distributed-hydrology
 │   │   └── lsdtt_vector_utils.hpp/.cpp      — GDAL/OGR-backed vector helpers
-│   ├── cpu/                                   — 169 CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
+│   ├── cpu/                                   — CPU-specific analysis modules (flow routing, surface metrics, channel analysis, LEM, cosmogenic nuclides, etc.)
 │   │   ├── lsdtt_raster_cpu.hpp/.cpp                         — concrete CPU raster class
 │   │   ├── lsdtt_flow_base.cpp                               — factory impl for make_flow_base()
 │   │   ├── lsdtt_flowinfo_cpu.hpp/.cpp                       — D8 CPU flow routing
@@ -275,6 +279,7 @@ lsdtt3/
 │   │   ├── lsdtt_chi_disorder_cpu.hpp/.cpp                   — chi disorder metric, jackknife, bootstrap, m/n sweep
 │   │   ├── lsdtt_chi_data_maps_cpu.hpp/.cpp                  — chi data-map output (per-node points, basin outlines, polylines)
 │   │   ├── lsdtt_chi_ksn_inversion_cpu.hpp/.cpp              — spatial k_sn/u* inversion with m/n model selection *(requires Eigen3)*
+│   │   ├── lsdtt_chi_step_changes_cpu.hpp/.cpp               — step changes (waterfalls, dams, gorge reaches) on the branches of a fitted chi network
 │   │   ├── lsdtt_chi_knickpoints_cpu.hpp/.cpp                — tributaries and knickpoints of a fitted chi network
 │   │   ├── lsdtt_channel_gradient_cpu.hpp/.cpp               — along-channel gradient: windowed least-squares slope along the D8 path
 │   │   ├── lsdtt_channel_point_attributes_cpu.hpp/.cpp       — field points snapped to the nearest channel cell, with area, distance, elevation, slope
@@ -328,6 +333,14 @@ lsdtt3/
 │   │   ├── lsdtt_critical_slope_cpu.hpp/.cpp                 — critical slope calculations
 │   │   ├── lsdtt_paired_flowpaths_cpu.hpp/.cpp               — paired flowpath analysis
 │   │   ├── lsdtt_hilltop_flow_routing_cpu.hpp/.cpp           — hilltop flow routing and spacing
+│   │   ├── lsdtt_hillslope_channel_tagging_cpu.hpp/.cpp      — D8 channel link, ridges, relative height, tags, channel attribute join
+│   │   ├── lsdtt_slope_area_cpu.hpp/.cpp                     — D8 flow-path gradient and slope-area routines
+│   │   ├── lsdtt_slope_stability_sinmap_cpu.hpp/.cpp         — SINMAP-style stability index
+│   │   ├── lsdtt_slope_stability_rupture_cpu.hpp/.cpp        — planar rupture surfaces after scaLr
+│   │   ├── lsdtt_slope_stability_catalogue_cpu.hpp/.cpp      — landslide catalogues from rupture surfaces
+│   │   ├── lsdtt_slope_stability_slip_surface_cpu.hpp/.cpp   — 2-D slip surfaces by the method of slices
+│   │   ├── lsdtt_slope_stability_columns_cpu.hpp/.cpp        — 3-D ellipsoids by the method of columns
+│   │   ├── lsdtt_groundwater_dupuit_cpu.hpp/.cpp             — Dupuit - Boussinesq groundwater with seepage
 │   │   ├── lsdtt_quartz_fertility_cpu.hpp/.cpp               — quartz fertility calculations for nuclides
 │   │   ├── lsdtt_raster_synthetic_surfaces_cpu.hpp/.cpp      — test surface generators including mountain range geometries
 │   │   ├── lsdtt_synthetic_network_cpu.hpp/.cpp              — OCN simulated-annealing network generator (masks + multi-outlet; tunable Tokunaga exponents)
@@ -394,14 +407,14 @@ the utility-layer numerical functions.
 modules by subsystem so you can find your way around; they are not maintained
 line-by-line against the build. To see exactly what is compiled, read
 `LSDTT3_CORE_SOURCES`, `LSDTT3_UTILS_SOURCES` and `LSDTT3_CPU_SOURCES` in
-`CMakeLists.txt`. At the time of writing (2026-11-02) that is 29 core, 11 utils and 157 CPU
+`CMakeLists.txt`. At the time of writing (2026-11-23) that is 33 core, 11 utils and 172 CPU
 translation units, plus `lsdtt_chi_ksn_inversion_cpu` when Eigen3 is found.
 
 
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`
+`lsdtt_backend_factory`, `lsdtt_channel_attribute_input`, `lsdtt_channel_network_ingest`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_attribute_output`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_river_line_fetch`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -419,16 +432,16 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Surface metrics and texture*: `lsdtt_raster_surface_metrics_cpu`, `lsdtt_raster_surface_fitting_cpu`, `lsdtt_surface_texture_cpu`, `lsdtt_raster_spectral_cpu`, `lsdtt_critical_slope_cpu`, `lsdtt_slope_break_finder_cpu`
 
 
-*Flow routing and preprocessing*: `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_fill_flat_resolution_reporting_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
+*Flow routing and preprocessing*: `lsdtt_burn_corridor_cpu`, `lsdtt_river_line_prepare_cpu`, `lsdtt_sea_mask_cpu`, `lsdtt_flow_base`, `lsdtt_flowinfo_cpu`, `lsdtt_flowgraph_cpu`, `lsdtt_raster_flow_preprocessing_cpu`, `lsdtt_raster_breach_least_cost_cpu`, `lsdtt_raster_flat_resolution_cpu`, `lsdtt_fill_flat_resolution_reporting_cpu`, `lsdtt_flow_snapping_cpu`, `lsdtt_depression_hierarchy_cpu`, `lsdtt_fill_spill_merge_cpu`, `lsdtt_internal_drainage_cpu`, `lsdtt_burn_streams_cpu`, `lsdtt_burn_vectormap_cpu`, `lsdtt_paired_flowpaths_cpu`, `lsdtt_least_cost_path`, `lsdtt_connectivity_cpu`, `lsdtt_wetness_index_cpu`
 
 
-*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_network_grouping_cpu`, `lsdtt_channel_bearing_statistics_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`, `lsdtt_perimeter_sources_cpu`
+*Channel networks and chi*: `lsdtt_junction_network_base`, `lsdtt_junction_network_cpu`, `lsdtt_channel_gradient_cpu`, `lsdtt_channel_point_attributes_cpu`, `lsdtt_chi_knickpoints_cpu`, `lsdtt_chi_step_changes_cpu`, `lsdtt_slope_area_cpu`, `lsdtt_channel_network_analysis_cpu`, `lsdtt_channel_network_grouping_cpu`, `lsdtt_channel_bearing_statistics_cpu`, `lsdtt_channel_extent_cpu`, `lsdtt_channel_scope_cpu`, `lsdtt_channel_sources_wiener_cpu`, `lsdtt_chi_extraction_cpu`, `lsdtt_chi_network_analysis_cpu`, `lsdtt_chi_disorder_cpu`, `lsdtt_chi_data_maps_cpu`, `lsdtt_strahler_tokunaga_analysis_cpu`, `lsdtt_vector_to_junction_network`, `lsdtt_streamlines_cpu`, `lsdtt_perimeter_sources_cpu`
 
 
 *Basins*: `lsdtt_basin_cpu`, `lsdtt_basin_outline_cpu`, `lsdtt_basin_outline_metrics_cpu`, `lsdtt_basin_stats_cpu`, `lsdtt_junction_basin_cpu`, `lsdtt_junction_basin_manager_cpu`, `lsdtt_zero_order_basin_manager_cpu`, `lsdtt_side_tributary_basins_cpu`, `lsdtt_outlet_basin_verification_cpu`, `lsdtt_outlet_resolution_cpu`
 
 
-*Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
+*Hillslopes and divides*: `lsdtt_hillslope_transport_cpu`, `lsdtt_hillslope_steady_state_cpu`, `lsdtt_hillslope_implicit_cpu`, `lsdtt_hillslope_newton_cpu`, `lsdtt_hillslope_cellular_cpu`, `lsdtt_hillslope_peclet_cpu`, `lsdtt_hillslope_length_search_cpu`, `lsdtt_hillslope_particle_io`, `lsdtt_hilltop_flow_routing_cpu`, `lsdtt_hillslope_channel_tagging_cpu`, `lsdtt_ridgeline_cpu`, `lsdtt_divide_diagnostics_cpu`, `lsdtt_divide_migration_cpu`, `lsdtt_perron_qimp_cpu`, `lsdtt_ren_modular_implicit_cpu`
 
 
 *Landscape evolution*: `lsdtt_lem_cpu`, `lsdtt_lem_parameter_rasters_cpu`, `lsdtt_lem_input_grid_cpu`, `lsdtt_lithology_map_cpu`, `lsdtt_lem_timestep_cpu`, `lsdtt_stream_power_cpu`, `lsdtt_steady_state_cpu`, `lsdtt_sediment_transport_cpu`, `lsdtt_landscape_equilibration_cpu`, `lsdtt_landscape_drape_cpu`, `lsdtt_step_change_cpu`, `lsdtt_landcover_scenario_cpu`
@@ -444,6 +457,9 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 
 
 *Landslides*: `lsdtt_landslide_crn_cpu`, `lsdtt_landslide_event_cpu`, `lsdtt_landslide_placement_cpu`, `lsdtt_landslide_size_cpu`
+
+
+*Slope stability*: `lsdtt_slope_stability_sinmap_cpu`, `lsdtt_slope_stability_rupture_cpu`, `lsdtt_slope_stability_catalogue_cpu`, `lsdtt_slope_stability_slip_surface_cpu`, `lsdtt_slope_stability_columns_cpu`, `lsdtt_groundwater_dupuit_cpu`
 
 
 *Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`, `lsdtt_floodplain_thresholds_cpu`, `lsdtt_surface_training_cpu`, `lsdtt_surface_level_clustering_cpu`, `lsdtt_surface_method_comparison_cpu`, `lsdtt_valley_width_network_cpu`, `lsdtt_valley_relative_elevation_cpu`, `lsdtt_valley_terrace_profile_cpu`
@@ -1350,6 +1366,20 @@ Current CLI programs are:
   opposing hillslopes, so E\*/R\* can be compared across a divide rather than
   only pooled.
 
+- **`lsdtt-hillslope-channel-tagging.cpp`**  
+  Transposes channel information onto hillslope pixels. Every hillslope pixel is
+  linked to the first channel pixel on its D8 path, whichever ridge method is
+  used. Reports HAND, ridge relief and relative height (`farthest`, `highest` or
+  `aspect_ray`), and tags hillslopes with chi, k_sn or attributes imported from a
+  CSV or vector file. See "Hillslope-channel tagging" below.
+
+- **`lsdtt-slope-stability.cpp`**  
+  Maps where slopes are prone to failure, as maps and statistics rather than
+  individual landslides: a SINMAP-style stability index, planar rupture surfaces
+  after scaLr with a probability of failure, landslide catalogues, 2-D slip
+  surfaces, 3-D ellipsoids and a Dupuit - Boussinesq water table. See "Slope
+  stability" below.
+
 - **`lsdtt-outlet-matching.cpp`**  
   Matches reference-DEM outlets to target-DEM cells by comparing reference and
   target D8 contributing-basin areas. Loads both DEMs and a reference outlet
@@ -1647,12 +1677,12 @@ After adoption, renaming that parameter is a one-line change in one file, not a
 twenty-CLI edit. This is why parameter renames are low-risk:
 the shared layer makes them self-enforcing.
 
-**Declaration families** (`declare_*` in `lsdtt_common_parameters.hpp`, 2026-11-02):
+**Declaration families** (`declare_*` in `lsdtt_common_parameters.hpp`, 2026-11-23):
 
 | Concept | Functions |
 |---|---|
 | Routing, fill and channels | `declare_routing_core_parameters`, `declare_raster_is_filled_parameter`, `declare_fill_before_routing_parameter`, `declare_fill_min_slope_parameter`, `declare_fill_flat_resolution_parameter`, `declare_channel_initiation_parameters` |
-| DEM preparation | `declare_interior_nodata_parameters` (`interior_nodata_method`: `sink` or `fill`, in preprocessing and the analysis CLIs) |
+| DEM preparation | `declare_breach_before_fill_parameters` (`breach_before_fill`, `breach_algorithm_choice`, `breach_lc_*`; used by slope stability and hillslope-channel tagging; `lsdtt-slope-area` and `lsdtt-raster-preprocessing` still declare their own), `declare_interior_nodata_parameters` (`interior_nodata_method`: `sink` or `fill`, in preprocessing and the analysis CLIs) |
 | Outputs | `declare_raster_output_format_parameter`, `declare_vector_output_format_parameter`, `declare_spatial_index_parameter`, `declare_true_north_bearing_parameters` (`bearings_relative_to_true_north`; `lsdtt_true_north`) |
 | Basins and regions | `declare_basin_outlet_parameters`, `declare_channel_region_parameters` |
 | Fetching | `declare_fetch_bbox_parameters`, `declare_fetch_bounds_file_parameters`, `declare_fetch_request_limit_parameters`, `declare_http_request_parameters`, `declare_linear_feature_fetch_parameters`, `declare_linear_feature_rotation_parameters`, `declare_rotate_back_parameters` |
@@ -3480,6 +3510,62 @@ struct lsdtt_cloth_drape_result {
 - Carretier S. & Valenti C. — EnvelopSurface.bash (IRD/GET, France)
 
 ---
+
+## Slope stability (`src/cpu/lsdtt_slope_stability_*`)
+
+`lsdtt-slope-stability` assembles independent components. Each is one routine
+shared by the CLI and the Python binding
+(`python_bindings/bindings/slope_stability.cpp`). The science, the choice between
+models and the validation are in
+[Slope stability](../design_and_algorithms/slope_stability.md).
+
+| Module | Role |
+|---|---|
+| `lsdtt_slope_stability_sinmap_cpu` | SINMAP-style stability index: infinite slope with steady wetness, parameters uncertain between bounds |
+| `lsdtt_slope_stability_rupture_cpu` | Planar rupture surfaces after scaLr along each D8 path, and their probability of failure |
+| `lsdtt_slope_stability_catalogue_cpu` | Landslide catalogues (statistics of potential landslides) and frequency - area fits |
+| `lsdtt_slope_stability_slip_surface_cpu` | 2-D slip surfaces by the method of slices: plane, circular, bilinear, structural |
+| `lsdtt_slope_stability_columns_cpu` | 3-D ellipsoids by the method of columns |
+| `lsdtt_groundwater_dupuit_cpu` | Dupuit - Boussinesq water table with seepage, for pore pressure |
+
+The CLI routes on a carved-then-filled surface. The rupture planes follow its D8
+paths but measure heights on the input DEM.
+
+## Hillslope-channel tagging (`lsdtt_hillslope_channel_tagging_cpu`)
+
+One module holds the routines of `lsdtt-hillslope-channel-tagging`. The Python
+adapter is `python_bindings/bindings/hillslope_channel_tagging.cpp`. The method is
+in [Hillslope-channel tagging](../design_and_algorithms/hillslope_channel_tagging.md).
+
+| Function | Role |
+|---|---|
+| `compute_hillslope_relief` | D8 channel link, ridge, HAND, ridge relief, relative height, per-pixel status |
+| `build_hillslope_divide_edges` | Unfiltered divide edges between channel-link catchments |
+| `compute_hillslope_ray_aspect` | Downslope aspect relative to grid north for `aspect_ray` (polyfit or D-infinity) |
+| `tag_hillslopes_from_channel` | The one tag: a channel pixel's value copied through the D8 link, with counts |
+| `select_hillslope_tag_basins` | Basins valid for chi, from an outlet list or a maximum outlet elevation |
+| `compute_hillslope_chi_tags` | Chi fit on the selected basins, then chi and k_sn tags |
+| `join_channel_attributes` | Attribute records to channel pixels: exact or snapped, median, gap fill along a link |
+| `summarise_hillslopes_by_channel_pixel` | One row per channel pixel |
+| `build_channel_property_map` | Fitted chi node to chi and k_sn; also used by the hilltop join in `lsdtt-hillslope-channel-coupling` |
+
+**Layering.** GDAL-facing input is in `src/core`:
+`lsdtt_channel_attribute_input` reads CSV and OGR points and lines into a
+`channel_attribute_table`, and `lsdtt_channel_network_ingest` turns a
+`write_channel_network_points` file into a mask (also used by
+`lsdtt-hillslope-channel-coupling`). The join in `src/cpu` is GDAL-free. Python
+writes a DataFrame to a temporary file and calls the same reader, so the two
+cannot join differently.
+
+**Rules that hold across the module:**
+
+- The channel link is always D8, so HAND and every tag are independent of the
+  ridge method.
+- Divides are built from link catchment labels rather than traced outlines, so
+  this module does not depend on `lsdtt_basin_outline_cpu`, and a basin joined to
+  itself only through diagonal contacts on a jagged coast is handled.
+- `farthest` relative heights can exceed 1. They are not clipped.
+- Undefined values are nodata and counted, never 0.
 
 ## Landscape evolution model (LEM) stack
 

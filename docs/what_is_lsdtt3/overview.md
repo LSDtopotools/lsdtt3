@@ -6,13 +6,14 @@
 
 ## What it does
 
-`lsdtt3` provides a collection of **45 command-line programs** for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. Much of the same functionality is also available through **Python bindings**, and a subset through a **QGIS plugin**. The tools cover:
+`lsdtt3` provides a collection of **48 command-line programs** for analysing digital elevation models (DEMs). Each program reads a plain-text parameter file and writes raster or vector outputs. Much of the same functionality is also available through **Python bindings**, and a subset through a **QGIS plugin**. The tools cover:
 
 - **DEM preparation** — reprojection, depression filling, breaching, nodata handling.
 - **Surface morphology** — curvature, roughness, hillshade, local relief, cloth-drape upper envelope, Frangi vessel filter.
 - **Drainage and flow** — D8, D-infinity, and multiple-flow-direction routing; topographic wetness index.
 - **Channel networks** — extraction from a contributing-area threshold, junction and link construction, Strahler ordering, export to geospatial formats.
 - **Basin analysis** — delineation, statistics, chi analysis, k_sn and m/n estimation.
+- **Hillslopes and slope stability** — hilltop curvature, relative hillslope position, channel properties tagged onto hillslopes, stability index, rupture and slip surfaces.
 - **Cosmogenic nuclides** — basin-averaged erosion rates, concentration prediction, transient 1-D column modelling.
 - **Landscape evolution modelling** — stream-power incision, hillslope diffusion, tectonic uplift.
 
@@ -112,7 +113,7 @@ lsdtt3 is aimed at geomorphologists, physical geographers, hydrologists and eart
 - run reproducible analyses from parameter files,
 - integrate topographic analysis into scripted pipelines.
 
-[The lsdtt3 command-line tools](lsdtt3_clis.md) lists all 45 and what each is
+[The lsdtt3 command-line tools](lsdtt3_clis.md) lists all 48 and what each is
 for. For reproducible multi-stage pipelines with Snakemake + Pixi, see
 [Workflows](workflows.md).
 

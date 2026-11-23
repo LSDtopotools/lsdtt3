@@ -1,7 +1,7 @@
 # The lsdtt3 command-line tools
 
-lsdtt3 ships **45 command-line programs**. This page lists all of them, grouped
-by what they are for, so you can find the one you need without reading 45
+lsdtt3 ships **48 command-line programs**. This page lists all of them, grouped
+by what they are for, so you can find the one you need without reading 48
 reference pages.
 
 Every tool is driven by a parameter file rather than command-line flags — if
@@ -41,6 +41,7 @@ list, and the same content is on this site under
 | `lsdtt-mountain-front` | Identifies mountain masses via adaptive relief thresholding. |
 | `lsdtt-linear-stats` | Statistics of a raster sampled along linear vector features. |
 | `lsdtt-slope-area` | Slope–area statistics binned by logarithmic drainage area, with polynomial-fit or D8 flow-path gradient and D-infinity or D8 area; optionally finds low-concavity channel reaches (debris-flow channels, threshold slopes, fans). |
+| `lsdtt-slope-stability` | Where slopes are prone to failure: a SINMAP-style stability index, planar rupture surfaces, slip surfaces, landslide catalogues and a groundwater model. |
 | `lsdtt-swath-profile` | Swath profile along an ordered polyline baseline. |
 | `lsdtt-cross-sections` | Channel network from supplied source points, with extracted cross sections. |
 | `lsdtt-bankfull-width` | Bankfull channel width and depth per cross section from Manning's equation, on a high-resolution DEM. Needs source points and a reach table of Manning's *n* and target discharge. |
@@ -77,6 +78,7 @@ list, and the same content is on this site under
 | `lsdtt-ridgeline-analysis` | Drainage divides and their elevation profiles. |
 | `lsdtt-divide-migration` | Divide-migration metrics from supplied outlets. |
 | `lsdtt-hillslope-channel-coupling` | Hilltop curvature, hillslope length and relief, and the non-dimensional E\*/R\* pair, traced from ridgeline to channel. |
+| `lsdtt-hillslope-channel-tagging` | Copies channel information onto hillslope pixels: HAND, ridge relief, relative height, and tags of chi, k_sn or imported channel attributes. |
 
 ## Floodplains, terraces and valleys
 
