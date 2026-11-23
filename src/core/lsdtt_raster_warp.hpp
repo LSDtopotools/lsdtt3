@@ -102,6 +102,15 @@ struct lsdtt_warp_options
 
     // GDAL warp working memory in MB.
     int warp_mem_mb = 512;
+
+    // Write Float32 whatever the source type. Without it an interpolated
+    // Int16 DEM (SRTM, NASADEM, AW3D30) is rounded to whole metres.
+    bool force_float32 = false;
+
+    // warp_raster_to_grid_in_memory only: nodata wherever the resampling kernel
+    // touched a source nodata cell or ran off the source. GDAL otherwise
+    // renormalises over the valid cells, which biases cells at data edges.
+    bool invalidate_incomplete_kernels = false;
 };
 
 // -----------------------------------------------------------------------------

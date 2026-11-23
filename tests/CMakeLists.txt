@@ -3988,6 +3988,61 @@ add_lsdtt_cli_smoke_test(
     --stderr-contains "FATAL: threshold_contributing_pixels must be > 0."
 )
 
+# DEM of difference grid handling. The numerics are in
+# lsdtt-test-dem-difference-alignment; these run the CLI on planes in degrees, on
+# the grids of the real products, where a mislocated cell is a height error.
+add_executable(lsdtt-test-dem-difference-alignment cpp/test_dem_difference_alignment.cpp)
+target_link_libraries(lsdtt-test-dem-difference-alignment PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_calculator_alignment COMMAND lsdtt-test-dem-difference-alignment)
+lsdtt_set_tests_properties(unit_raster_calculator_alignment PROPERTIES
+    LABELS "raster"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+set(LSDTT_DEM_DIFFERENCE_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/dem_difference_fixture")
+add_test(NAME fixture_raster_calculator_planes
+    COMMAND lsdtt-test-dem-difference-alignment --write-cli-fixture "${LSDTT_DEM_DIFFERENCE_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_raster_calculator_planes PROPERTIES
+    LABELS "fixture;raster"
+    FIXTURES_SETUP dem_difference_fixture)
+
+function(add_dem_difference_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-raster-calculator
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_DEM_DIFFERENCE_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED dem_difference_fixture)
+    endif()
+endfunction()
+
+add_dem_difference_cli_test(smoke_raster_calculator_half_pixel
+    raster_calculator_half_pixel.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.01:0.01
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.01:0.01)
+add_dem_difference_cli_test(smoke_raster_calculator_non_square
+    raster_calculator_non_square.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.05:0.05
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.05:0.05)
+add_dem_difference_cli_test(smoke_raster_calculator_vertical_units
+    raster_calculator_feet.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.01:0.01
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.01:0.01)
+add_dem_difference_cli_test(smoke_raster_calculator_metric_grid
+    raster_calculator_metric_grid.param.in dod_and_s_difference.tif
+    --stdout-contains "m grid"
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.05:0.05
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.05:0.05)
+add_dem_difference_cli_test(failure_raster_calculator_geographic_coreg
+    raster_calculator_geographic_coreg.param.in unused_expected_output
+    --expect-failure --stderr-contains "reproject_to_metric_grid")
+add_dem_difference_cli_test(failure_raster_calculator_one_datum
+    raster_calculator_one_datum.param.in unused_expected_output
+    --expect-failure --stderr-contains "or neither")
+add_dem_difference_cli_test(failure_raster_calculator_no_overlap
+    raster_calculator_no_overlap.param.in unused_expected_output
+    --expect-failure --stderr-contains "do not overlap")
+
 # Refused: no second raster.
 add_lsdtt_cli_smoke_test(
     failure_raster_calculator_missing_second

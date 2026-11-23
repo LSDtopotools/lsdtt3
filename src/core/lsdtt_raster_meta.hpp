@@ -57,20 +57,20 @@ struct lsdtt_raster_meta
     // Cell size is assumed square (equal x and y resolution): the loader
     // refuses non-square pixels, and all compute code uses cell_size.
     //
-    // cell_size_y is an OUTPUT-ONLY exception for rasters that are not maps,
-    // such as the 2D spectrum rasters of lsdtt-spectral-analysis, whose axes
-    // are frequencies with different spacings when the padded grid is not
-    // square. 0 (the default) means "same as cell_size". When it is set, the
-    // writers use it as the pixel height; nothing else reads it, and the
-    // loader never sets it.
+    // cell_size_y is the pixel height where it differs from cell_size. 0 (the
+    // default) means "same as cell_size". Two cases set it: the 2D spectrum
+    // rasters of lsdtt-spectral-analysis, whose axes are frequencies, and
+    // rasters in a GEOGRAPHIC CRS with non-square pixels (for example
+    // Copernicus 30 m above 50 degrees latitude), which the loader opens so
+    // they can be warped. Analysis CLIs refuse geographic rasters.
     // -------------------------------------------------------------------------
 
     double x_min       = 0.0;   // easting  of left   edge (metres or degrees)
     double y_min       = 0.0;   // northing of bottom edge (metres or degrees)
     double cell_size   = 1.0;   // pixel size in projection units
-    double cell_size_y = 0.0;   // output-only pixel height; 0 = cell_size
+    double cell_size_y = 0.0;   // pixel height if not square; 0 = cell_size
 
-    // Pixel height used when writing: cell_size_y if set, else cell_size.
+    // Pixel height: cell_size_y if set, else cell_size.
     double pixel_height() const { return cell_size_y > 0.0 ? cell_size_y : cell_size; }
 
     // Derived extents - computed from the above, provided for convenience

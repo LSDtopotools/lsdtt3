@@ -28,7 +28,7 @@ list, and the same content is on this site under
 | `lsdtt-fetch-erosion-rates` | Fetch basin-averaged cosmogenic erosion rates from OCTOPUS (keyless) for a bounding box: an erosion-rate sample CSV, the basin polygons, a suggested DEM box and the CC BY 4.0 attribution. |
 | `lsdtt-fetch-river-lines` | Fetch (OS Open Rivers for Great Britain, keyless) or read river centrelines for an area, and prepare them for stream burning: clipped, noded, oriented downstream, with a topology table and attribution. |
 | `lsdtt-raster-preprocessing` | The preparation pipeline: projection enforcement and reprojection, masking, nodata filling, breaching, pit filling, hillshade. |
-| `lsdtt-raster-calculator` | Two-raster algebra. |
+| `lsdtt-raster-calculator` | Two-raster algebra and DEMs of difference, including rasters on different grids, with DEM coregistration. |
 | `lsdtt-stream-burning` | Conditions a DEM using a supplied vector channel network ([Burning mapped rivers into a DEM](../design_and_algorithms/burning_river_lines.md)). |
 
 ## Surfaces, slopes and curvature

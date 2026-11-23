@@ -146,6 +146,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_warp.hpp/.cpp       — GDAL warp helpers
 │   │   ├── lsdtt_oblique_frame.hpp/.cpp     — feature-aligned oblique Mercator analysis frames (omerc)
 │   │   ├── lsdtt_rotation_frame_file.hpp/.cpp — <stem>_rotation_frame.txt: reading and writing the frame record
+│   │   ├── lsdtt_vertical_datum.hpp/.cpp    — EGM96 / EGM2008 height shift on a grid, from PROJ
 │   │   ├── lsdtt_true_north.hpp/.cpp        — grid convergence; grid bearings to bearings from true north
 │   │   ├── lsdtt_point_input.hpp/.cpp       — point/coordinate input handling
 │   │   ├── lsdtt_channel_attribute_input.hpp/.cpp — channel attributes from CSV or vector points and lines
@@ -407,14 +408,14 @@ the utility-layer numerical functions.
 modules by subsystem so you can find your way around; they are not maintained
 line-by-line against the build. To see exactly what is compiled, read
 `LSDTT3_CORE_SOURCES`, `LSDTT3_UTILS_SOURCES` and `LSDTT3_CPU_SOURCES` in
-`CMakeLists.txt`. At the time of writing (2026-11-23) that is 33 core, 11 utils and 172 CPU
+`CMakeLists.txt`. At the time of writing (2026-11-23) that is 34 core, 11 utils and 172 CPU
 translation units, plus `lsdtt_chi_ksn_inversion_cpu` when Eigen3 is found.
 
 
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_channel_attribute_input`, `lsdtt_channel_network_ingest`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_attribute_output`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_river_line_fetch`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`
+`lsdtt_backend_factory`, `lsdtt_channel_attribute_input`, `lsdtt_channel_network_ingest`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_attribute_output`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_river_line_fetch`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`, `lsdtt_vertical_datum`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -1266,8 +1267,14 @@ Current CLI programs are:
   ridges) in raster or vector form, including bearing analysis and sinuosity.
 
 - **`lsdtt-raster-calculator.cpp`**  
-  Map algebra calculator. Element-wise operations on rasters: addition, subtraction, 
-  multiplication, division, powers, and other mathematical functions.
+  Two-raster algebra (sum, product, ratio, difference, absolute difference,
+  overlap masks), mainly for DEMs of difference. The second raster is warped once
+  from its native grid onto the first (`warp_raster_to_grid_in_memory` with
+  `force_float32` and `invalidate_incomplete_kernels`). `reproject_to_metric_grid`
+  puts geographic DEMs on a shared UTM grid. Vertical units and the EGM96/EGM2008
+  geoids are reconciled (`lsdtt_vertical_datum`). Nuth and Kaab coregistration
+  (`lsdtt_raster_coregistration_cpu`) can use a stable-terrain mask, and its shift
+  is applied by warping the source again, so the second DEM is interpolated once.
 
 - **`lsdtt-fetch-raster.cpp`**  
   **A WGS84 box (or a bounds file, or outlet points) to an analysis-ready DEM.**

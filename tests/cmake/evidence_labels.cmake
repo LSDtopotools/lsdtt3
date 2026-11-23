@@ -266,6 +266,14 @@ lsdtt_evidence(rigorous_channel_network_analysis_bearing_statistics_reference sy
 lsdtt_evidence(rigorous_channel_network_analysis_bearing_statistics_region system smoke exact_solution)     # W1 = 0
 # The fixture's shift is (4, -3, 0.5) m; the test pins the recovered dx=4.01.
 lsdtt_evidence(smoke_raster_calculator_coregistration system smoke characterisation)
+lsdtt_evidence(unit_raster_calculator_alignment unit exact_solution property negative)
+lsdtt_evidence(smoke_raster_calculator_half_pixel system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_non_square system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_vertical_units system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_metric_grid system exact_solution)
+lsdtt_evidence(failure_raster_calculator_geographic_coreg system smoke negative)
+lsdtt_evidence(failure_raster_calculator_one_datum system smoke negative)
+lsdtt_evidence(failure_raster_calculator_no_overlap system smoke negative)
 
 # lsdtt-divide-migration: divide counts follow from the three-valley topology.
 lsdtt_evidence(smoke_divide_migration_no_clusters system smoke exact_solution characterisation)

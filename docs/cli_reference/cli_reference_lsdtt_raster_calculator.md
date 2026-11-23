@@ -31,15 +31,87 @@ Keys use `snake_case`. All keys and their defaults are listed under
 ## Pipeline
 
 1. Load the first raster (`read_fname`) and the second (`second_raster_read_fname`).
-2. If the grids differ, warp the second raster onto the first raster's grid
-   with `resampling_method` (default `bilinear`; use `near` for categorical
-   values). With `resample_second_to_first_grid: false` the tool stops instead.
-3. Give the second raster the first raster's nodata value.
+   With `reproject_to_metric_grid: true`, a first raster in degrees defines a UTM
+   grid, and each DEM is warped onto it once, from its native grid.
+2. If the grids or CRSs differ, warp the second raster onto the first raster's
+   grid with `resampling_method`. The result is Float32, so an interpolated Int16
+   DEM keeps its fractional heights. Cells whose resampling kernel touched
+   nodata or left the source are nodata. With
+   `resample_second_to_first_grid: false` the tool stops instead.
+3. Convert both rasters to metres (`vertical_units`,
+   `second_raster_vertical_units`) and, if declared, put the second on the first
+   raster's geoid.
 4. Optionally coregister the second raster to the first
-   (`run_dem_coregistration: true`).
-5. Build the overlap mask: pixels valid in both rasters.
-6. Compute and write the selected outputs. Pixels outside the overlap are
+   (`run_dem_coregistration: true`). The shift is fitted, then the original second
+   raster is warped again with that shift, so it is interpolated only once.
+5. Build the overlap mask: pixels valid in both rasters. No valid overlap stops
+   the run.
+6. Report the median and NMAD of first minus second, over stable terrain if a mask
+   was given, and write the selected outputs. Pixels outside the overlap are
    nodata, and so is a division by zero in the ratio.
+
+## Grids that do not line up
+
+**Resampling.** Interpolating one DEM of a pair changes it, and the difference
+then contains false change. `resampling_method: auto` (the default) uses `cubic`,
+or `average` when the target cells are at least 1.5 times wider than the source
+cells. Bilinear smooths the interpolated DEM, so ridges appear to lose height and
+valleys to gain it. GDAL's `lanczos` can shift the result by a source cell when
+downsampling, so use it only between grids of equal resolution.
+
+**Which raster comes first.** The second raster is the one interpolated. If the
+two differ in resolution, make the coarser DEM the first raster, so the finer one
+is averaged rather than the coarser one being interpolated to detail it never had.
+
+### Global 30 m DEMs
+
+| DEM | Geoid | Cell centres at low latitude | Surface |
+|---|---|---|---|
+| SRTM, NASADEM | `egm96` | On whole arc-seconds | C-band radar, February 2000 |
+| ALOS AW3D30 | `egm96` | Half a cell from whole arc-seconds | Optical stereo |
+| Copernicus GLO-30 | `egm2008` | On whole arc-seconds | X-band radar |
+
+- AW3D30 is therefore half a cell from the other two. This is handled by the warp.
+- Above 50 degrees latitude GLO-30 cells are wider east-west than north-south
+  (1.5 x 1 arc-seconds at first, and wider towards the poles).
+- EGM96 and EGM2008 differ smoothly across a DEM, so a constant shift cannot remove
+  the difference. Declare both geoids. This needs PROJ's geoid grids. If they are
+  missing the run stops and names the command that installs them
+  (`projsync --file us_nga_egm96_15 --file us_nga_egm08_25`), or set the environment
+  variable `PROJ_NETWORK=ON`.
+- These are surface models from different sensors. Radar penetration into snow and
+  canopy, and vegetation growth, remain in the difference after coregistration, and
+  a nonzero median over stable ground is common. Acquisition dates vary within a
+  product, so check them from each product's metadata before reading a difference
+  as change between two dates.
+
+```
+read_fname: nasadem.tif
+second_raster_read_fname: cop30.tif
+first_raster_vertical_datum: egm96
+second_raster_vertical_datum: egm2008
+reproject_to_metric_grid: true
+run_dem_coregistration: true
+nuth_kaab_coreg_slope_min_degrees: 5
+dem_coregistration_stable_mask_fname: stable_terrain.tif
+write_difference_raster: true
+```
+
+### Gridded lidar
+
+- Two lidar DEMs on offset grids need only the default resampling.
+- Lidar is often in feet on a metre grid, and no raster format records this. Set
+  `vertical_units` and `second_raster_vertical_units`.
+- Check that the surveys share a vertical datum and geoid model. `first_raster_vertical_datum`
+  covers only EGM96 and EGM2008. A difference between other geoid models is not
+  corrected.
+
+### Stable terrain
+
+Coregistration fits a shift by assuming most of the ground did not change. Where
+landslides, lakes or ice cover much of a DEM that fails, so give
+`dem_coregistration_stable_mask_fname`, with non-zero values on stable ground. The
+reported NMAD over stable terrain is a measure of the noise in the difference.
 
 ## Example: a DEM of difference
 
@@ -99,8 +171,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `second_raster_read_path` | `string` | - | `param` | - | Optional directory for second_raster_read_fname. | If empty, read_path is used. If second_raster_read_fname is an absolute path, this parameter is ignored. |
 | `second_raster_write_fname` | `string` | - | `param` | - | Output stem used when naming second-raster-derived outputs. | If empty, defaults to second_raster_read_fname stem (extension removed). Used in output naming such as &lt;second_raster_write_fname&gt;_resampled_to_&lt;write_fname&gt;. |
 | `resample_second_to_first_grid` | `bool` | `true` | `param` | - | Warp second raster to first raster grid when needed. | If true, second raster is resampled and aligned to read_fname grid before algebra. If false, the CLI errors when grids differ. |
-| `resampling_method` | `string` | `bilinear` | `param` | - | GDAL resampling method used when warping second raster. | Bilinear is the conservative default for aligning an arbitrary second raster because it does not introduce cubic overshoot before raster algebra. Use near for categorical values. Allowed values follow GDAL warp methods: near, bilinear, cubic, cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum. |
+| `resampling_method` | `string` | `auto` | `param` | - | GDAL resampling method used when warping a raster onto the analysis grid. | auto uses cubic, or average when the target cells are at least 1.5 times wider than the source cells. For a DEM of difference the method sets how much false change an offset grid creates. Bilinear smooths, so the difference follows curvature: ridges appear to lose height and valleys to gain it. GDAL's lanczos can shift the result by a source cell when downsampling, so use it only between grids of equal resolution. Use near for categorical values. Other allowed values follow GDAL warp methods: near, bilinear, cubic, cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum. |
+| `reproject_to_metric_grid` | `bool` | `false` | `param` | - | Put a geographic first raster on a UTM grid, and warp the second to it. | Global DEMs are distributed in degrees, and coregistration needs metres. Each DEM is warped once, directly from its native grid. The spacing comes from the north-south pixel size (30 m for 1 arc-second DEMs). Writes &lt;write_fname&gt;_&lt;projection suffix&gt;. Ignored if the first raster is already projected. |
 | `verbose_alignment_report` | `bool` | `true` | `param` | - | Print grid-compatibility and overlap diagnostics. | If true, reports whether rasters already share a grid and whether resampling was required. |
+
+### Vertical reference
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `vertical_units` | `string` | `metres` | `param` | - | Vertical unit of the first raster: metres, feet or us_survey_feet. | No raster format records this, so it cannot be detected. Lidar is often in feet on a metre grid. Elevations are converted to metres before any output. |
+| `second_raster_vertical_units` | `string` | `metres` | `param` | - | Vertical unit of the second raster: metres, feet or us_survey_feet. | See vertical_units. |
+| `first_raster_vertical_datum` | `string` | `unspecified` | `param` | - | Geoid of the first raster: unspecified, egm96 or egm2008. | SRTM, NASADEM and AW3D30 use EGM96; Copernicus GLO-30 uses EGM2008. Set both datums to convert the second raster to the first raster's geoid. The difference varies across a DEM, so a constant vertical shift does not remove it. Needs PROJ's geoid grids: a missing grid stops the run. |
+| `second_raster_vertical_datum` | `string` | `unspecified` | `param` | - | Geoid of the second raster: unspecified, egm96 or egm2008. | See first_raster_vertical_datum. Give both or neither. |
 
 ### DEM coregistration
 
@@ -108,6 +190,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 |---|---|---|---|---|---|---|
 | `run_dem_coregistration` | `bool` | `false` | `switch` | - | Enable DEM coregistration before algebra outputs. | If true, the second raster is coregistered to the first raster after optional resampling and before all algebra operations. |
 | `dem_coregistration_method` | `string` | `nuth_kaab` | `param` | `run_dem_coregistration` | DEM coregistration method. | Allowed values: nuth_kaab. Method reference: Nuth and Kaab (2011), https://doi.org/10.5194/tc-5-271-2011. This implementation was ported from xdem. |
+| `dem_coregistration_stable_mask_fname` | `string` | - | `param` | `run_dem_coregistration` | Raster of stable terrain used to fit the shift (non-zero = stable). | Exclude landslides, lakes, ice, forest change and other real change, so that they do not bias the shift. Read from read_path if the path is relative, and warped to the first raster's grid with nearest neighbour. Also used for the reported difference statistics. |
 | `write_second_coregistered_raster` | `bool` | `false` | `switch` | `run_dem_coregistration` | Write the coregistered second raster. | Output file: &lt;second_raster_write_fname&gt;_coregistered_to_&lt;write_fname&gt;. |
 | `write_dem_coreg_diagnostics_csv` | `bool` | `false` | `switch` | `run_dem_coregistration` | Write per-iteration DEM coregistration diagnostics CSV. | Output file: &lt;write_fname&gt;_and_&lt;second_raster_write_fname&gt;_coreg_diagnostics.csv. |
 | `nuth_kaab_coreg_max_iterations` | `int` | `8` | `param` | `run_dem_coregistration` | Maximum iterations for nuth_kaab DEM coregistration. | Used only when dem_coregistration_method is nuth_kaab. |

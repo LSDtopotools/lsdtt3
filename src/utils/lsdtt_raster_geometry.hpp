@@ -24,7 +24,7 @@
 //   Array row 0 is the TOP row, matching GDAL row-major storage.
 //   Therefore:
 //     x centre of col c = x_min + (c + 0.5) * cell_size
-//     y centre of row r = y_min + (n_rows - r - 0.5) * cell_size
+//     y centre of row r = y_min + (n_rows - r - 0.5) * pixel_height()
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -137,7 +137,7 @@ inline double cell_centre_y(
     int row)
 {
     return meta.y_min +
-           (static_cast<double>(meta.n_rows - row) - 0.5) * meta.cell_size;
+           (static_cast<double>(meta.n_rows - row) - 0.5) * meta.pixel_height();
 }
 
 inline lsdtt_xy cell_center_from_row_col(
@@ -191,7 +191,7 @@ inline int row_from_y(
     const lsdtt_raster_meta& meta,
     double y)
 {
-    const double frow = (meta.y_max() - y) / meta.cell_size;
+    const double frow = (meta.y_max() - y) / meta.pixel_height();
     const int row = static_cast<int>(std::floor(frow));
 
     if (row < 0 || row >= meta.n_rows)
@@ -222,7 +222,8 @@ inline bool same_cell_size(
     const lsdtt_raster_meta& b,
     double tol = 1e-9)
 {
-    return nearly_equal(a.cell_size, b.cell_size, tol);
+    return nearly_equal(a.cell_size, b.cell_size, tol) &&
+           nearly_equal(a.pixel_height(), b.pixel_height(), tol);
 }
 
 // True if origins differ by an integer number of shared cell sizes.
@@ -238,7 +239,7 @@ inline bool grids_are_aligned(
     }
 
     const double dx = (b.x_min - a.x_min) / a.cell_size;
-    const double dy = (b.y_min - a.y_min) / a.cell_size;
+    const double dy = (b.y_min - a.y_min) / a.pixel_height();
 
     return is_integer_with_tolerance(dx, tol) &&
            is_integer_with_tolerance(dy, tol);
@@ -270,8 +271,8 @@ inline bool extent_lies_on_grid(
 
     const double ix0 = (extent.x_min - source_meta.x_min) / source_meta.cell_size;
     const double ix1 = (extent.x_max - source_meta.x_min) / source_meta.cell_size;
-    const double iy0 = (extent.y_min - source_meta.y_min) / source_meta.cell_size;
-    const double iy1 = (extent.y_max - source_meta.y_min) / source_meta.cell_size;
+    const double iy0 = (extent.y_min - source_meta.y_min) / source_meta.pixel_height();
+    const double iy1 = (extent.y_max - source_meta.y_min) / source_meta.pixel_height();
 
     return is_integer_with_tolerance(ix0, tol) &&
            is_integer_with_tolerance(ix1, tol) &&
@@ -318,10 +319,10 @@ inline lsdtt_rowcol_window window_for_extent_in_raster(
     ));
 
     const int row_begin = static_cast<int>(std::llround(
-        (source_meta.y_max() - target_extent.y_max) / source_meta.cell_size
+        (source_meta.y_max() - target_extent.y_max) / source_meta.pixel_height()
     ));
     const int row_end = static_cast<int>(std::llround(
-        (source_meta.y_max() - target_extent.y_min) / source_meta.cell_size
+        (source_meta.y_max() - target_extent.y_min) / source_meta.pixel_height()
     ));
 
     lsdtt_rowcol_window win;

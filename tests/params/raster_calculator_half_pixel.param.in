@@ -1,0 +1,9 @@
+# lsdtt-raster-calculator: grid handling on analytic planes (test_dem_difference_alignment).
+read_path: __READ_PATH__
+read_fname: plane_first.tif
+write_path: __WRITE_PATH__
+write_fname: dod
+second_raster_read_fname: plane_half_pixel.tif
+second_raster_write_fname: s
+write_difference_raster: true
+write_output_format: gtiff
