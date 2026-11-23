@@ -393,6 +393,27 @@ newer DEM as the first raster. If the difference is older minus newer, set
 
 Draw them with `lsdviz3-slope-stability` from lsdviztools3.
 
+## Coseismic hazard area
+
+`run_coseismic_hazard_area: true` computes the SHALRUN-EQ hazard area of Milledge et
+al. (2019). It is the area of cells steep enough to initiate a landslide whose debris
+can reach each cell by slope-weighted multiple flow directions, without crossing a
+cell gentler than the stopping slope. It is a relative index of exposure.
+
+```yaml
+read_fname: my_dem
+write_fname: my_site
+run_sinmap: false
+run_rupture_planes: false
+run_coseismic_hazard_area: true
+coseismic_hazard_initiation_slope: 0.839
+coseismic_hazard_stopping_slope: 0.176
+```
+
+Both thresholds are gradients (m/m). The defaults come from 30 m DEMs and depend on
+resolution. The method, its limits and its differences from the paper are in
+[Slope stability](../design_and_algorithms/slope_stability.md#coseismic-hazard-area).
+
 ## Pipeline
 
 1. Read the DEM, handle interior nodata, then carve (least-cost breach, by
@@ -416,6 +437,9 @@ Draw them with `lsdviz3-slope-stability` from lsdviztools3.
    the unstable ones, and write their rasters and catalogues.
 9. Group unstable cells into landslides by shared daylight point, and write
    the two catalogues.
+
+With `run_coseismic_hazard_area`, the hazard area is computed on the routing
+surface after step 1.
 
 ## Usage
 
@@ -459,6 +483,11 @@ lsdtt-slope-stability -h
 | `<write_fname>_landslide_frequency_area.csv`, `_landslide_frequency_area_fit.csv` | log-binned probability density p(A) of each catalogue, and its power-law tail p(A) ~ A^η: η by maximum likelihood with A_min chosen by the Kolmogorov–Smirnov distance (discrete in cells), its standard error, and the least-squares slope of the binned density above A_min |
 | `<write_fname>_slip_body_frequency_area.csv`, `_slip_body_frequency_area_fit.csv` | the same for the slip-body catalogues |
 | `<write_fname>_landslide_label.tif`, `_landslide_label_amalgamated.tif` | catalogue id of each landslide cell |
+| `<write_fname>_hazard_area.tif` | coseismic hazard area A_h (m²/m); 0 where no source can reach |
+| `<write_fname>_hazard_area_steepest_slope.tif` | steepest downslope gradient used by the thresholds (m/m) |
+| `<write_fname>_hazard_area_zone.tif` | 0 transit, 1 source, 2 stopping |
+| `<write_fname>_hazard_area_edge_influenced.tif` | 1 where debris from a DEM-edge cell arrives, so A_h may be a lower bound |
+| `<write_fname>_hazard_area_summary.csv` | the thresholds, cell counts and source area |
 | `<write_fname>_water_table_depth.tif`, `_saturated_thickness.tif`, `_seepage.tif` | the groundwater state used for pore pressure |
 | `<write_fname>_t<time>s_water_table_depth.tif`, `_t<time>s_rupture_safety_factor.tif` | the same at each transient output time |
 | `<write_fname>_groundwater_time_series.csv` | storage, saturated cells and unstable cells at each output time |
@@ -565,6 +594,14 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `dem_change_n_slope_bins` | `int` | `10` | `param` | `run_dem_change_landslides` | Quantile bins of slope for the error model. | - |
 | `dem_change_n_null_simulations` | `int` | `20` | `param` | `run_dem_change_landslides` | Noise simulations used to estimate false detections. | Each runs the detection on Gaussian noise with the fitted error and spatial correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 turns it off. |
 | `dem_change_random_seed` | `int` | `33` | `param` | `run_dem_change_landslides` | Seed for the variogram sample and the noise simulations. | - |
+
+### Coseismic hazard area
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_coseismic_hazard_area` | `bool` | `false` | `switch` | - | Compute the coseismic landslide hazard area (SHALRUN-EQ, Milledge et al. 2019). | The area of cells steep enough to initiate whose debris can reach each cell by slope-weighted multiple flow directions without crossing a cell gentler than the stopping slope. A relative index of exposure. Runs on the routing surface. Outputs: &lt;write_fname&gt;_hazard_area.tif (m2/m), _hazard_area_steepest_slope.tif, _hazard_area_zone.tif (0 transit, 1 source, 2 stopping), _hazard_area_edge_influenced.tif and _hazard_area_summary.csv. |
+| `coseismic_hazard_initiation_slope` | `float` | `0.839` | `param` | `run_coseismic_hazard_area` | Gradient (m/m) at or above which a cell can initiate a landslide. | Default from the six-earthquake average of Milledge et al. (2019) on 30 m DEMs. An effective value that depends on DEM resolution, not a material property. |
+| `coseismic_hazard_stopping_slope` | `float` | `0.176` | `param` | `run_coseismic_hazard_area` | Gradient (m/m) below which run-out stops. | A gentler cell is still reached and counted, but passes nothing on. Must be above 0 and below coseismic_hazard_initiation_slope. Default from Milledge et al. (2019) on 30 m DEMs; depends on DEM resolution. |
 
 ### Rupture planes
 

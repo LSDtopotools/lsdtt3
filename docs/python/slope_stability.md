@@ -31,6 +31,7 @@ default differs from it by about 2 parts in 10⁷.
 | `lsdtt3.landslide_frequency_area(areas_m2, cell_area_m2, ...)` | (DataFrame, dict) | `_frequency_area.csv`, `_frequency_area_fit.csv` |
 | `lsdtt3.GroundwaterDupuit(surface, fixed_head, ...)` | the aquifer | `water_table_method` |
 | `lsdtt3.dem_change_landslides(difference, dem, ...)` | dict of tables and Rasters | `run_dem_change_landslides` |
+| `lsdtt3.coseismic_hazard_area(routing, ...)` | dict of Rasters and counts | `run_coseismic_hazard_area` |
 
 ## Routing surface, slope and area
 
@@ -150,6 +151,18 @@ density, fit = lsdtt3.landslide_frequency_area(loss.area_m2, newer_dem.metadata.
 
 `coregister_dem(reference, moving, stable_mask=stable)` fits the shift on stable
 terrain only.
+
+## Coseismic hazard area
+
+`coseismic_hazard_area` is `run_coseismic_hazard_area` (SHALRUN-EQ; Milledge et al.
+2019). Give it the routing surface. Slopes are gradients, and the defaults are the
+paper's values for 30 m DEMs.
+
+```python
+out = lsdtt3.coseismic_hazard_area(routing, initiation_slope=0.839, stopping_slope=0.176)
+hazard = out["hazard_area"]            # m2 per m of cell width
+lower_bound = out["edge_influenced"]   # 1 where sources may lie beyond the DEM
+```
 
 ## Regions
 

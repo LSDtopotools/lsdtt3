@@ -3049,6 +3049,40 @@ add_dem_change_cli_test(failure_slope_stability_dem_change_bad_sign
     slope_stability_dem_change_bad_sign.param.in unused_expected_output
     --expect-failure --stderr-contains "dem_change_sign")
 
+# Coseismic hazard area: an exact profile through the CLI.
+set(LSDTT_HAZARD_AREA_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_hazard_area_fixture")
+add_test(NAME fixture_slope_stability_hazard_area
+    COMMAND lsdtt-test-slope-stability-hazard-area --write-cli-fixture "${LSDTT_HAZARD_AREA_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_slope_stability_hazard_area PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_hazard_area_fixture)
+
+function(add_hazard_area_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-slope-stability
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_HAZARD_AREA_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED slope_stability_hazard_area_fixture)
+    endif()
+endfunction()
+
+add_hazard_area_cli_test(smoke_slope_stability_hazard_area
+    slope_stability_hazard_area.param.in sha_hazard_area.tif
+    --expect sha_hazard_area_steepest_slope.tif
+    --expect sha_hazard_area_zone.tif
+    --expect sha_hazard_area_edge_influenced.tif
+    --expect sha_hazard_area_summary.csv
+    --expect-absent sha_sinmap_stability_index.tif
+    --expect-file-contains "sha_hazard_area_summary.csv:n_source_cells,400"
+    --expect-file-contains "sha_hazard_area_summary.csv:n_zero_hazard_cells,280"
+    --expect-raster-stat sha_hazard_area.tif:min:0:0
+    --expect-raster-stat sha_hazard_area.tif:max:199.99:200.01)
+add_hazard_area_cli_test(failure_slope_stability_hazard_area_bad_slopes
+    slope_stability_hazard_area_bad_slopes.param.in unused_expected_output
+    --expect-failure --stderr-contains "stopping slope")
+
 # Probability of failure of the rupture planes (parameter_uncertainty). The
 # numerics are in lsdtt-test-slope-stability-rupture-probability; these carry
 # the plumbing, output names and the per-region normal path.
@@ -6909,6 +6943,14 @@ add_executable(lsdtt-test-slope-stability-dem-change cpp/test_slope_stability_de
 target_link_libraries(lsdtt-test-slope-stability-dem-change PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_dem_change COMMAND lsdtt-test-slope-stability-dem-change)
 lsdtt_set_tests_properties(unit_slope_stability_dem_change PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+# Coseismic hazard area, SHALRUN-EQ (src/cpu/lsdtt_slope_stability_hazard_area_cpu).
+add_executable(lsdtt-test-slope-stability-hazard-area cpp/test_slope_stability_hazard_area.cpp)
+target_link_libraries(lsdtt-test-slope-stability-hazard-area PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_hazard_area COMMAND lsdtt-test-slope-stability-hazard-area)
+lsdtt_set_tests_properties(unit_slope_stability_hazard_area PROPERTIES
     LABELS "slope_stability"
     PASS_REGULAR_EXPRESSION "RESULT: PASS")
 

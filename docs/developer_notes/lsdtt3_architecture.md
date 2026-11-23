@@ -340,6 +340,7 @@ lsdtt3/
 │   │   ├── lsdtt_slope_stability_rupture_cpu.hpp/.cpp        — planar rupture surfaces after scaLr
 │   │   ├── lsdtt_slope_stability_catalogue_cpu.hpp/.cpp      — landslide catalogues from rupture surfaces
 │   │   ├── lsdtt_slope_stability_dem_change_cpu.hpp/.cpp     — potential landslides from a DEM of difference, with uncertainty
+│   │   ├── lsdtt_slope_stability_hazard_area_cpu.hpp/.cpp    — coseismic hazard area (SHALRUN-EQ) on the MFD graph
 │   │   ├── lsdtt_slope_stability_slip_surface_cpu.hpp/.cpp   — 2-D slip surfaces by the method of slices
 │   │   ├── lsdtt_slope_stability_columns_cpu.hpp/.cpp        — 3-D ellipsoids by the method of columns
 │   │   ├── lsdtt_groundwater_dupuit_cpu.hpp/.cpp             — Dupuit - Boussinesq groundwater with seepage
@@ -461,7 +462,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Landslides*: `lsdtt_landslide_crn_cpu`, `lsdtt_landslide_event_cpu`, `lsdtt_landslide_placement_cpu`, `lsdtt_landslide_size_cpu`
 
 
-*Slope stability*: `lsdtt_slope_stability_dem_change_cpu`, `lsdtt_slope_stability_sinmap_cpu`, `lsdtt_slope_stability_rupture_cpu`, `lsdtt_slope_stability_catalogue_cpu`, `lsdtt_slope_stability_slip_surface_cpu`, `lsdtt_slope_stability_columns_cpu`, `lsdtt_groundwater_dupuit_cpu`
+*Slope stability*: `lsdtt_slope_stability_dem_change_cpu`, `lsdtt_slope_stability_hazard_area_cpu`, `lsdtt_slope_stability_sinmap_cpu`, `lsdtt_slope_stability_rupture_cpu`, `lsdtt_slope_stability_catalogue_cpu`, `lsdtt_slope_stability_slip_surface_cpu`, `lsdtt_slope_stability_columns_cpu`, `lsdtt_groundwater_dupuit_cpu`
 
 
 *Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`, `lsdtt_floodplain_thresholds_cpu`, `lsdtt_surface_training_cpu`, `lsdtt_surface_level_clustering_cpu`, `lsdtt_surface_method_comparison_cpu`, `lsdtt_valley_width_network_cpu`, `lsdtt_valley_relative_elevation_cpu`, `lsdtt_valley_terrace_profile_cpu`
@@ -3534,6 +3535,7 @@ models and the validation are in
 | `lsdtt_slope_stability_rupture_cpu` | Planar rupture surfaces after scaLr along each D8 path, and their probability of failure |
 | `lsdtt_slope_stability_catalogue_cpu` | Landslide catalogues (statistics of potential landslides) and frequency - area fits |
 | `lsdtt_slope_stability_dem_change_cpu` | Candidate landslides in a DEM of difference: error model, detection, aggregation, patch uncertainty, simulated false detections |
+| `lsdtt_slope_stability_hazard_area_cpu` | Coseismic hazard area (SHALRUN-EQ): slope-threshold sources routed by MFD fractions, stopped on gentle cells |
 | `lsdtt_slope_stability_slip_surface_cpu` | 2-D slip surfaces by the method of slices: plane, circular, bilinear, structural |
 | `lsdtt_slope_stability_columns_cpu` | 3-D ellipsoids by the method of columns |
 | `lsdtt_groundwater_dupuit_cpu` | Dupuit - Boussinesq water table with seepage, for pore pressure |

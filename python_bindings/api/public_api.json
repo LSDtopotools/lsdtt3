@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 251,
+  "export_count": 252,
   "exports": [
     {
       "name": "BasinCollection",
@@ -6378,6 +6378,18 @@
       "signatures": [
         {
           "definition": "def coregister_dem(reference: Raster, moving: Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0, stable_mask: Raster | None = None) -> dict",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "coseismic_hazard_area",
+      "kind": "function",
+      "doc": "Coseismic landslide hazard area (SHALRUN-EQ; Milledge et al. 2019).\n\nlsdtt-slope-stability ``run_coseismic_hazard_area``, the same routine. The hazard\narea of a cell is the area of cells steep enough to initiate whose debris can\nreach it by slope-weighted multiple flow directions without crossing a cell\ngentler than the stopping slope, per metre of cell width. A gentler cell is\nreached and counted, but passes nothing on. It is a relative index of exposure.\n\nParameters\n----------\nrouting_surface : Raster\n    A pit-free DEM, for example carved and filled.\ninitiation_slope : float, default=0.839, keyword-only\n    Gradient (m/m) at or above which a cell can initiate a landslide\n    (CLI ``coseismic_hazard_initiation_slope``).\nstopping_slope : float, default=0.176, keyword-only\n    Gradient (m/m) below which run-out stops; above 0 and below\n    ``initiation_slope`` (CLI ``coseismic_hazard_stopping_slope``).\nboundary_conditions : str, default=\"oooo\", keyword-only\n    Flow boundary conditions (north, east, south, west).\nn_threads : int, default=0, keyword-only\n    OpenMP threads for building the flow graph.\n\nReturns\n-------\ndict\n    ``hazard_area`` (Raster, m^2/m), ``steepest_slope`` (Raster, m/m), ``zone``\n    (Raster: 0 transit, 1 source, 2 stopping), ``edge_influenced`` (Raster: 1\n    where debris from a DEM-edge cell arrives, so the value may be a lower\n    bound), ``n_valid_cells``, ``n_source_cells``, ``n_stopping_cells``,\n    ``n_zero_hazard_cells``, ``n_edge_influenced_cells``, ``source_area_m2``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def coseismic_hazard_area(routing_surface: Raster, *, initiation_slope: float = 0.839, stopping_slope: float = 0.176, boundary_conditions: str = 'oooo', n_threads: int = 0) -> dict",
           "defaults": []
         }
       ]

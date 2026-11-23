@@ -346,6 +346,30 @@ def _change_pair(n=160, cell=30.0, seed=3):
     return dem, _raster(dh, cell), dh
 
 
+def _hazard_profile(cell_size=10.0):
+    """Twenty steep columns, five that carry debris, then a gentle reach."""
+    gradient = np.r_[np.full(20, 1.0), np.full(5, 0.5), np.full(14, 0.05)]
+    z = np.r_[np.cumsum((gradient * cell_size)[::-1])[::-1], 0.0]
+    return _raster(np.tile(z, (20, 1)), cell_size)
+
+
+@pytest.mark.exact_solution
+def test_coseismic_hazard_area_exact_profile():
+    out = lsdtt3.coseismic_hazard_area(_hazard_profile(), boundary_conditions="popo")
+    a = out["hazard_area"].to_numpy()
+    expected = np.r_[10.0 * np.arange(1, 21), np.full(6, 200.0), np.zeros(14)]
+    np.testing.assert_allclose(a, np.tile(expected, (20, 1)), atol=1e-3)
+    assert out["n_source_cells"] == 400
+    assert out["n_zero_hazard_cells"] == 280
+    assert out["source_area_m2"] == 40000.0
+
+
+@pytest.mark.negative
+def test_coseismic_hazard_area_refuses_inverted_thresholds():
+    with pytest.raises(ValueError, match="stopping slope"):
+        lsdtt3.coseismic_hazard_area(_hazard_profile(), initiation_slope=0.2, stopping_slope=0.5)
+
+
 @pytest.mark.exact_solution
 def test_dem_change_finds_a_planted_scar():
     dem, difference, _ = _change_pair()

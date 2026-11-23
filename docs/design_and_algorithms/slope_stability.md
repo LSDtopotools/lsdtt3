@@ -22,6 +22,7 @@ run `lsdtt-slope-stability -h` for the same list. The
 | Slip surfaces, 2-D (method of slices) | Does integrating the forces over the sliding body, or bending the surface, change the answer? | Deep-seated slides: planar, rotational, compound, dip-slope | F of the critical surface per crown, body depth, body catalogues |
 | Ellipsoids, 3-D (method of columns; after Mergili et al. 2014) | How much does side resistance add? | Slides of low length-to-width ratio | F per crown and the lowest F covering each cell |
 | Dupuit groundwater (after Litwin et al. 2020) | Where is the water table, and how does a storm raise it? | (Supplies pore pressure to the others) | Water-table depth, saturated thickness, seepage |
+| Coseismic hazard area (SHALRUN-EQ; Milledge et al. 2019) | Which cells could debris from steep ground reach during an earthquake? | Initiation and run-out, from slope thresholds alone | Hazard area $A_h$ (m²/m) |
 | Probability of failure | How likely is failure given uncertain cohesion and friction? | (Applies to the rupture planes, slip surfaces and ellipsoids) | P(F ≤ 1), with the mean and SD of F |
 
 The models build on each other. The rupture planes seed the slip surfaces and
@@ -257,6 +258,50 @@ Run the same analysis on a nearby area with no known landslide event. Patches
 found there show how much of the signal comes from land-cover change and sensor
 differences.
 
+## Coseismic hazard area
+
+`run_coseismic_hazard_area` computes the hazard area of Milledge et al. (2019), the
+SHALRUN-EQ index. It needs only a DEM, and it answers a different question from a
+factor of safety: how much steep ground lies upslope of a cell with a viable
+run-out path to it.
+
+A cell $i$ is a source if its steepest downslope gradient $S_i$ is at least the
+initiation gradient $S_m$. Debris moves by multiple flow directions, with each
+receiver weighted by its gradient (Quinn et al. 1991). A cell with $S < S_s$, the
+stopping gradient, is reached but passes nothing on. The hazard area of cell $j$ is
+
+$$
+A_{h,j} = \sum_i \frac{a_i}{l_j}\, P_{m,i}\, f_{ij}
+$$
+
+with $a_i$ the cell area, $l_j$ the cell width, $P_{m,i}$ equal to 1 on sources,
+and $f_{ij}$ the fraction of cell $i$'s material that arrives at $j$ along paths
+that never pass through a stopping cell. One sweep in topological order computes
+it for every cell.
+
+**Parameters.** The defaults, 0.839 and 0.176, are the gradients of the paper's
+six-earthquake average (40° and 10°) on 30 m DEMs. The best values differed between
+earthquakes, and skill depends on the DEM and its resolution. They are effective
+values and do not measure a material property.
+
+**Departures from the paper's text.**
+
+- Eq. 7 writes the connection as binary, but the paper reports hazard areas near
+  0.1 m²/m on a 30 m grid. A binary count cannot be below one cell width, so lsdtt3
+  routes flow fractions. The two readings give the same cells with $A_h = 0$, but
+  rank the other cells differently.
+- Fig. 2e shows zero at two cells that its own slopes and eqs. 6–9 give as 30 m²/m.
+  lsdtt3 follows the equations.
+- The paper filled pits. The CLI carves and then fills by default. Set
+  `breach_before_fill: false` to use filling alone.
+
+**Limits.** $A_h$ is a relative index. It ignores shaking, rock strength, wetness,
+landslide size and run-out across reverse slopes. Where debris from a DEM-edge cell
+arrives, sources may lie outside the DEM and $A_h$ may be too low; the
+`_hazard_area_edge_influenced.tif` raster marks these cells. Published skill scores
+depend on the DEM, its resolution and the study area, so they do not transfer
+directly to another site.
+
 ## Design decisions
 
 These are the choices that shape the results:
@@ -335,6 +380,11 @@ against analytic solutions on analytic surfaces, in the CTest compartment
   wetness), TOPMODEL's relation with the exponential profile, the decay of a
   linearised mound (and backward Euler's exact amplification), the water
   budget to round-off, implicit against explicit, and thread independence.
+- **Coseismic hazard area** (`unit_slope_stability_hazard_area`): the worked example
+  of Milledge et al. (2019) Fig. 2, with its two inconsistent cells corrected; an exact
+  profile; ordinary MFD accumulation when both thresholds are off; conservation of
+  source area; hazard never rising with either threshold; the $A_h = 0$ cells against
+  a brute-force search from every source.
 - **The CLI**: smoke tests of every family and option, and refusals of invalid
   parameter files.
 
@@ -346,6 +396,14 @@ unless the parameters have been calibrated locally.
 
 Hugonnet, R., et al. (2022). Uncertainty analysis of digital elevation models by
 spatial inference from stable terrain. *IEEE JSTARS* 15, 6456-6472.
+
+Milledge, D. G., Densmore, A. L., Bellugi, D., Rosser, N. J., Watt, J., Li, G. and
+Oven, K. J. (2019). Simple rules to minimise exposure to coseismic landslide hazard.
+*Natural Hazards and Earth System Sciences* 19, 837-856.
+
+Quinn, P., Beven, K., Chevallier, P. and Planchon, O. (1991). The prediction of
+hillslope flow paths for distributed hydrological modelling using digital terrain
+models. *Hydrological Processes* 5, 59-79.
 
 Rolstad, C., Haug, T. and Denby, B. (2009). Spatially integrated geodetic glacier
 mass balance and its uncertainty based on geostatistical analysis. *Journal of

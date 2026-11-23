@@ -37,6 +37,7 @@
 #include <cpu/lsdtt_slope_stability_catalogue_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_columns_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_dem_change_cpu.hpp>
+#include <cpu/lsdtt_slope_stability_hazard_area_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_rupture_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_sinmap_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_slip_surface_cpu.hpp>
@@ -967,6 +968,29 @@ Raster float_raster(const std::vector<float>& values, const meta_t& meta)
     return raster_of(v, meta);
 }
 
+nb::dict coseismic_hazard_area(const Raster& routing_surface, double initiation_slope, double stopping_slope,
+                               const std::string& boundary_conditions, int n_threads)
+{
+    lsdtt::coseismic_hazard_area_options o;
+    o.initiation_slope = initiation_slope;
+    o.stopping_slope = stopping_slope;
+    o.boundary_conditions = boundary_conditions;
+    o.n_threads = n_threads;
+    const lsdtt::coseismic_hazard_area_result r = lsdtt::compute_coseismic_hazard_area(routing_surface.native(), o);
+    nb::dict out;
+    out["hazard_area"] = float_raster(r.hazard_area.get_data(), r.hazard_area.get_meta());
+    out["steepest_slope"] = float_raster(r.steepest_slope.get_data(), r.steepest_slope.get_meta());
+    out["zone"] = float_raster(r.zone.get_data(), r.zone.get_meta());
+    out["edge_influenced"] = float_raster(r.edge_influenced.get_data(), r.edge_influenced.get_meta());
+    out["n_valid_cells"] = r.n_valid;
+    out["n_source_cells"] = r.n_source;
+    out["n_stopping_cells"] = r.n_stopping;
+    out["n_zero_hazard_cells"] = r.n_zero_hazard;
+    out["n_edge_influenced_cells"] = r.n_edge_influenced;
+    out["source_area_m2"] = r.source_area_m2;
+    return out;
+}
+
 nb::dict dem_change_landslides(const Raster& difference, const Raster& dem, nb::object stable_mask,
                                bool is_newer_minus_older, const std::string& change_sign, double detection_sigma,
                                double seed_sigma, double patch_significance, int min_patch_pixels,
@@ -1563,6 +1587,44 @@ Returns
 RupturePlanes
     The rasters and counts, and methods for the probability of failure,
     catalogues and slip surfaces.
+)doc");
+
+    module.def("coseismic_hazard_area", &coseismic_hazard_area, nb::arg("routing_surface"), nb::kw_only(),
+        nb::arg("initiation_slope") = 0.839, nb::arg("stopping_slope") = 0.176,
+        nb::arg("boundary_conditions") = "oooo", nb::arg("n_threads") = 0,
+        nb::sig("def coseismic_hazard_area(routing_surface: Raster, *, initiation_slope: float = 0.839, "
+                "stopping_slope: float = 0.176, boundary_conditions: str = 'oooo', n_threads: int = 0) -> dict"), R"doc(
+Coseismic landslide hazard area (SHALRUN-EQ; Milledge et al. 2019).
+
+lsdtt-slope-stability ``run_coseismic_hazard_area``, the same routine. The hazard
+area of a cell is the area of cells steep enough to initiate whose debris can
+reach it by slope-weighted multiple flow directions without crossing a cell
+gentler than the stopping slope, per metre of cell width. A gentler cell is
+reached and counted, but passes nothing on. It is a relative index of exposure.
+
+Parameters
+----------
+routing_surface : Raster
+    A pit-free DEM, for example carved and filled.
+initiation_slope : float, default=0.839, keyword-only
+    Gradient (m/m) at or above which a cell can initiate a landslide
+    (CLI ``coseismic_hazard_initiation_slope``).
+stopping_slope : float, default=0.176, keyword-only
+    Gradient (m/m) below which run-out stops; above 0 and below
+    ``initiation_slope`` (CLI ``coseismic_hazard_stopping_slope``).
+boundary_conditions : str, default="oooo", keyword-only
+    Flow boundary conditions (north, east, south, west).
+n_threads : int, default=0, keyword-only
+    OpenMP threads for building the flow graph.
+
+Returns
+-------
+dict
+    ``hazard_area`` (Raster, m^2/m), ``steepest_slope`` (Raster, m/m), ``zone``
+    (Raster: 0 transit, 1 source, 2 stopping), ``edge_influenced`` (Raster: 1
+    where debris from a DEM-edge cell arrives, so the value may be a lower
+    bound), ``n_valid_cells``, ``n_source_cells``, ``n_stopping_cells``,
+    ``n_zero_hazard_cells``, ``n_edge_influenced_cells``, ``source_area_m2``.
 )doc");
 
     module.def("dem_change_landslides", &dem_change_landslides, nb::arg("difference"), nb::arg("dem"), nb::kw_only(),

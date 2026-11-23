@@ -24,6 +24,8 @@
 //      circular arcs, bilinear and structural surfaces),
 //      src/cpu/lsdtt_slope_stability_slip_surface_cpu, and 3-D ellipsoids by
 //      the method of columns, src/cpu/lsdtt_slope_stability_columns_cpu;
+//   D. the coseismic hazard area, SHALRUN-EQ of Milledge et al. (2019),
+//      src/cpu/lsdtt_slope_stability_hazard_area_cpu;
 //   pore pressure from a Dupuit-Boussinesq water table
 //      (src/cpu/lsdtt_groundwater_dupuit_cpu).
 //
@@ -74,6 +76,7 @@
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_hazard_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_columns_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
@@ -686,6 +689,30 @@ int main(int argc, char* argv[])
     help_map["dem_change_random_seed"] = {"int", "33",
         "Seed for the variogram sample and the noise simulations.", "",
         "DEM of difference", "param", "run_dem_change_landslides"};
+
+    bool_default_map["run_coseismic_hazard_area"] = false;
+    help_map["run_coseismic_hazard_area"] = {"bool", "false",
+        "Compute the coseismic landslide hazard area (SHALRUN-EQ, Milledge et al. 2019).",
+        "The area of cells steep enough to initiate whose debris can reach each cell by "
+        "slope-weighted multiple flow directions without crossing a cell gentler than the "
+        "stopping slope. A relative index of exposure. Runs on the routing surface. Outputs: "
+        "<write_fname>_hazard_area.tif (m2/m), _hazard_area_steepest_slope.tif, "
+        "_hazard_area_zone.tif (0 transit, 1 source, 2 stopping), "
+        "_hazard_area_edge_influenced.tif and _hazard_area_summary.csv.",
+        "Coseismic hazard area", "switch", ""};
+    float_default_map["coseismic_hazard_initiation_slope"] = 0.839f;
+    help_map["coseismic_hazard_initiation_slope"] = {"float", "0.839",
+        "Gradient (m/m) at or above which a cell can initiate a landslide.",
+        "Default from the six-earthquake average of Milledge et al. (2019) on 30 m DEMs. An "
+        "effective value that depends on DEM resolution, not a material property.",
+        "Coseismic hazard area", "param", "run_coseismic_hazard_area"};
+    float_default_map["coseismic_hazard_stopping_slope"] = 0.176f;
+    help_map["coseismic_hazard_stopping_slope"] = {"float", "0.176",
+        "Gradient (m/m) below which run-out stops.",
+        "A gentler cell is still reached and counted, but passes nothing on. Must be above 0 "
+        "and below coseismic_hazard_initiation_slope. Default from Milledge et al. (2019) on "
+        "30 m DEMs; depends on DEM resolution.",
+        "Coseismic hazard area", "param", "run_coseismic_hazard_area"};
 
     bool_default_map["run_rupture_planes"] = true;
     help_map["run_rupture_planes"] = {"bool", "true",
@@ -1425,9 +1452,20 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("need 0 < dem_change_detection_sigma <= dem_change_seed_sigma");
         }
 
-        if (!run_sinmap && !run_rupture && !run_dem_change)
+        const bool run_hazard_area = bf.at("run_coseismic_hazard_area");
+        lsdtt::coseismic_hazard_area_options hazard_area;
+        if (run_hazard_area)
         {
-            std::cout << "run_sinmap and run_rupture_planes are both false: nothing to compute.\n";
+            hazard_area.initiation_slope = ff.at("coseismic_hazard_initiation_slope");
+            hazard_area.stopping_slope = ff.at("coseismic_hazard_stopping_slope");
+            hazard_area.boundary_conditions = sf.at("boundary_conditions");
+            hazard_area.n_threads = ii.at("n_threads");
+            lsdtt::validate_coseismic_hazard_area_options(hazard_area);
+        }
+
+        if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area)
+        {
+            std::cout << "No analysis is switched on: nothing to compute.\n";
             parser.print_parameters();
             return run_record.succeed();
         }
@@ -1496,7 +1534,7 @@ int main(int argc, char* argv[])
                                      ii.at("frequency_area_min_tail"));
             std::cout << "Wrote " << change_base << "_dem_change_*\n";
 
-            if (!run_sinmap && !run_rupture)
+            if (!run_sinmap && !run_rupture && !run_hazard_area)
             {
                 parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
                 parser.print_parameters();
@@ -1540,6 +1578,45 @@ int main(int argc, char* argv[])
                 std::vector<float> fv(conditioned.begin(), conditioned.end());
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(fv, dem.get_meta(), base + "_conditioned_pixels.tif");
+            }
+        }
+
+        // Coseismic hazard area, on the routing surface.
+        if (run_hazard_area)
+        {
+            std::cout << "\n--- Coseismic hazard area (SHALRUN-EQ) ---\n";
+            const lsdtt::coseismic_hazard_area_result hazard =
+                lsdtt::compute_coseismic_hazard_area(dem, hazard_area);
+            const double n_valid = static_cast<double>(std::max<std::int64_t>(hazard.n_valid, 1));
+            std::cout << "Sources: " << hazard.n_source << " cells (" << number_string(100.0 * hazard.n_source / n_valid)
+                      << "%); stopping: " << hazard.n_stopping << "; Ah = 0: " << hazard.n_zero_hazard << " ("
+                      << number_string(100.0 * hazard.n_zero_hazard / n_valid) << "%); influenced by the DEM edge: "
+                      << hazard.n_edge_influenced << "\n";
+            write_raster(hazard.hazard_area, base + "_hazard_area.tif");
+            write_raster(hazard.steepest_slope, base + "_hazard_area_steepest_slope.tif");
+            write_raster(hazard.zone, base + "_hazard_area_zone.tif");
+            write_raster(hazard.edge_influenced, base + "_hazard_area_edge_influenced.tif");
+            const std::string summary = base + "_hazard_area_summary.csv";
+            std::ofstream out(summary);
+            if (!out) throw std::runtime_error("Cannot write " + summary);
+            out << "quantity,value\n"
+                << "initiation_slope," << number_string(hazard_area.initiation_slope) << '\n'
+                << "stopping_slope," << number_string(hazard_area.stopping_slope) << '\n'
+                << "n_valid_cells," << hazard.n_valid << '\n'
+                << "n_source_cells," << hazard.n_source << '\n'
+                << "n_stopping_cells," << hazard.n_stopping << '\n'
+                << "n_zero_hazard_cells," << hazard.n_zero_hazard << '\n'
+                << "n_edge_influenced_cells," << hazard.n_edge_influenced << '\n'
+                << "source_area_m2," << number_string(hazard.source_area_m2) << '\n';
+            std::cout << "  wrote " << summary << "\n";
+            lsdtt::lsdtt_run_record::add_provenance("hazard_area_n_source_cells", std::to_string(hazard.n_source));
+            lsdtt::lsdtt_run_record::add_provenance("hazard_area_n_zero_hazard_cells", std::to_string(hazard.n_zero_hazard));
+
+            if (!run_sinmap && !run_rupture)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
             }
         }
 
