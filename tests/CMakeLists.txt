@@ -3082,6 +3082,14 @@ add_hazard_area_cli_test(smoke_slope_stability_hazard_area
 add_hazard_area_cli_test(failure_slope_stability_hazard_area_bad_slopes
     slope_stability_hazard_area_bad_slopes.param.in unused_expected_output
     --expect-failure --stderr-contains "stopping slope")
+add_hazard_area_cli_test(smoke_slope_stability_rupture_pga
+    slope_stability_rupture_pga.param.in ssg_rupture_safety_factor.tif
+    --expect ssg_rupture_unstable.tif
+    --expect ssg_landslide_catalogue.csv
+    --stdout-contains "Pseudo-static shaking: PGA 0.400000006 to 0.400000006 g, k = 0.5 x PGA")
+add_hazard_area_cli_test(failure_slope_stability_rupture_pga_with_water
+    slope_stability_rupture_pga_with_water.param.in unused_expected_output
+    --expect-failure --stderr-contains "cannot be combined with water_table_method")
 
 # Probability of failure of the rupture planes (parameter_uncertainty). The
 # numerics are in lsdtt-test-slope-stability-rupture-probability; these carry

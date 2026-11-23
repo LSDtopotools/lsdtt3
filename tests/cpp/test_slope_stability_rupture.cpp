@@ -27,6 +27,9 @@
 //     rises with cohesion and the unstable count falls with cohesion and with
 //     friction (paper Fig. 4 trends);
 //   * a candidate higher than its source on the geometry surface is skipped;
+//   * pseudo-static shaking: F_k against the stresses, the closed-form optimum
+//     against a dense search over wide random cases, k = 0 bit-identical, F
+//     falling with k, grids, the probability routine and bad input;
 //   * regions, a missing region id, invalid parameters; 1 and 4 threads give
 //     identical rasters.
 //
@@ -497,6 +500,91 @@ int main()
         const std::int64_t d = out.daylight[static_cast<std::size_t>(src_row) * nc + col];
         check("geometry: a candidate higher than its source is never the daylight point",
               d >= 0 && d != static_cast<std::int64_t>(src_row + 2) * nc + col);
+    }
+
+    // ---------------------------------------- pseudo-static shaking
+    {
+        splitmix64_stream rng(20261123);
+        const auto u = [&](double a, double b) { return a + (b - a) * rng.uniform01(); };
+        double worst_stress = 0.0, worst_opt = 0.0;
+        bool never_above = true, falls = true, exact_zero = true;
+        for (int t = 0; t < 600; ++t)
+        {
+            rupture_parameters p;
+            p.cohesion_pa = std::pow(10.0, u(1.0, 5.0));
+            p.friction_coefficient = u(0.05, 1.5);
+            p.density_kg_m3 = u(1500.0, 3000.0);
+            const double dx = u(5.0, 500.0), dz = dx * std::pow(10.0, u(-2.0, 1.2)), k = u(0.001, 1.5);
+            const double h = dz * u(0.001, 0.999), s = dz - h, th = std::atan2(s, dx);
+            const double rg = p.density_kg_m3 * p.gravity_m_s2;
+            const double sn = rg * h * std::cos(th) * (std::cos(th) - k * std::sin(th));
+            const double tau = rg * h * std::cos(th) * (std::sin(th) + k * std::cos(th));
+            const double from_stress = (p.cohesion_pa + p.friction_coefficient * std::max(sn, 0.0)) / tau;
+            const double f = rupture_safety_factor_seismic(h, dx, dz, k, p);
+            worst_stress = std::max(worst_stress, std::fabs(f - from_stress) / from_stress);
+            const rupture_pair opt = rupture_optimal_depth_seismic(dx, dz, k, p);
+            double best = std::numeric_limits<double>::infinity();
+            for (int i = 1; i < 20000; ++i)
+                best = std::min(best, rupture_safety_factor_seismic(dz * i / 20000.0, dx, dz, k, p));
+            worst_opt = std::max(worst_opt, (opt.safety_factor - best) / best);
+            never_above &= opt.safety_factor <= best * (1.0 + 1e-9);
+            falls &= opt.safety_factor <= rupture_optimal_depth(dx, dz, p).safety_factor * (1.0 + 1e-12);
+            const rupture_pair a = rupture_optimal_depth(dx, dz, p), b = rupture_optimal_depth_seismic(dx, dz, 0.0, p);
+            exact_zero &= a.depth == b.depth && a.safety_factor == b.safety_factor;
+        }
+        check("shaking: F_k equals (c + mu max(sigma_n, 0)) / tau built from the stresses (600 cases)",
+              worst_stress < 1e-10, "max relative " + num(worst_stress));
+        check("shaking: the closed-form optimum is at or below a 2e4-point search", worst_opt < 1e-6 && never_above,
+              "max relative excess " + num(worst_opt));
+        check("shaking: k > 0 never raises the minimum F", falls);
+        check("shaking: k = 0 is the static optimum bit for bit", exact_zero);
+        rupture_parameters dry_sand;
+        dry_sand.cohesion_pa = 0.0;
+        const rupture_pair cl = rupture_optimal_depth_seismic(100.0, 50.0, 0.2, dry_sand);
+        check("shaking: cohesionless gives h = 0 and F = mu (dx - k dz) / (dz + k dx)",
+              cl.depth == 0.0 && std::fabs(cl.safety_factor - dry_sand.friction_coefficient * 90.0 / 70.0) < 1e-12);
+
+        const int nr = 30, nc = 8;
+        const double cs = 10.0, S0 = 0.7;
+        test_grid g = make_grid(nr, nc, cs, [&](int r, int) { return S0 * cs * (nr - r); });
+        const std::size_t n = static_cast<std::size_t>(nr) * nc;
+        const std::vector<std::uint8_t> channel(n, 0);
+        const rupture_parameters p0;
+        const rupture_rasters stat = compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}});
+        const rupture_rasters zero = compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, {},
+                                                            std::vector<double>(n, 0.0));
+        const rupture_rasters shake = compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, {},
+                                                             std::vector<double>(n, 0.3));
+        const rupture_rasters shake4 = compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 4, {},
+                                                              std::vector<double>(n, 0.3));
+        check("shaking raster: k = 0 everywhere reproduces the static rasters exactly",
+              zero.safety_factor.get_data() == stat.safety_factor.get_data() && zero.depth.get_data() == stat.depth.get_data());
+        bool lower = true;
+        for (std::size_t i = 0; i < n; ++i)
+            if (stat.safety_factor.get_mask()[i]) lower &= shake.safety_factor.get_data()[i] < stat.safety_factor.get_data()[i];
+        check("shaking raster: k = 0.3 lowers F on every source and adds unstable cells",
+              lower && shake.n_unstable > stat.n_unstable,
+              "unstable " + std::to_string(stat.n_unstable) + " -> " + std::to_string(shake.n_unstable));
+        check("shaking raster: 1 and 4 threads are identical", shake.safety_factor.get_data() == shake4.safety_factor.get_data());
+        std::vector<double> part(n, 0.3);
+        part[static_cast<std::size_t>(5) * nc + 3] = std::numeric_limits<double>::quiet_NaN();
+        const rupture_rasters holed = compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, {}, part);
+        check("shaking raster: a non-finite coefficient leaves that cell out",
+              !holed.safety_factor.get_mask()[static_cast<std::size_t>(5) * nc + 3] && holed.n_sources == shake.n_sources - 1);
+        rupture_parameter_sample one;
+        one.parameters = p0;
+        const auto pf = compute_rupture_failure_probability(*g.flow, g.dem, channel, {}, {{0, {one}}}, 1, {},
+                                                            std::vector<double>(n, 0.3));
+        bool same = true;
+        for (std::size_t i = 0; i < n; ++i)
+            if (shake.safety_factor.get_mask()[i])
+                same &= pf.mean_safety_factor.get_data()[i] == shake.safety_factor.get_data()[i];
+        check("shaking probability: one sample reproduces the deterministic F", same && pf.n_sources == shake.n_sources);
+        check("shaking: negative k, a wrong grid, or k with a water table throw",
+              throws([&] { (void)compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, {}, std::vector<double>(n, -0.1)); })
+              && throws([&] { (void)compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, {}, std::vector<double>(3, 0.1)); })
+              && throws([&] { (void)compute_rupture_planes(*g.flow, g.dem, channel, {}, {{0, p0}}, 1, std::vector<double>(n, 1.0),
+                                                           std::vector<double>(n, 0.1)); }));
     }
 
     std::cout << g_checks << " checks, " << g_failures << " failed\n";

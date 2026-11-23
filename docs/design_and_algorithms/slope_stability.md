@@ -48,7 +48,8 @@ width of the D-infinity flow tube instead.
 the channel is a candidate daylight point. A plane from depth h below R to D
 has a factor of safety F(h) with a closed-form minimum h\*. The candidate with
 the lowest F is kept. The result describes potential failure statistically,
-as in scaLr.
+as in scaLr. An optional [pseudo-static earthquake load](#pseudo-static-shaking-on-the-rupture-planes)
+adds shaking from a peak ground acceleration raster.
 
 **Slip surfaces.** scaLr judges a plane by the infinite-slope formula at the
 crown alone, so bending the surface would change nothing. The slip surfaces
@@ -258,6 +259,43 @@ Run the same analysis on a nearby area with no known landslide event. Patches
 found there show how much of the signal comes from land-cover change and sensor
 differences.
 
+## Pseudo-static shaking on the rupture planes
+
+`rupture_peak_ground_acceleration_fname` adds an earthquake load to the rupture
+planes. This is an addition to scaLr. A horizontal force $kW$ acts on each column,
+directed down the dip of the plane, which is its least stable direction, with
+
+$$
+k = r \, \mathrm{PGA}
+$$
+
+where PGA is in g and $r$ is `rupture_seismic_coefficient_ratio` (default 0.5,
+after Hynes-Griffin and Franklin 1984). With $s = \Delta z - h$ and
+$C = c / \rho g$,
+
+$$
+F_k(h) = \frac{C (\Delta x^2 + s^2) / (h \Delta x) + \mu \max(\Delta x - k s, 0)}{s + k \Delta x}.
+$$
+
+Friction is zero where the inertial force removes the normal stress ($k s > \Delta x$).
+Away from that limit, $dF_k/dh = 0$ is a quadratic, because the cubic terms cancel. Its
+smaller positive root, with $E = \Delta z + k \Delta x$ and $L^2 = \Delta x^2 + \Delta z^2$, is
+
+$$
+h^* = \frac{C L^2 E}{C L^2 + \Delta x \sqrt{(1 + k^2) \, C L^2 (C + \mu E)}}.
+$$
+
+This is the static optimum at $k = 0$. Unlike the static case, $F_k$ stays finite as
+$h \to \Delta z$, so lsdtt3 takes the lowest of $h^*$, that limit and, where $h^*$
+falls in the unloaded part, the frictionless optimum and the point $k s = \Delta x$.
+
+- **The coefficient is empirical.** $F$ depends directly on $r$, so run a range of values.
+- **Treat $F$ as a ranking under strong shaking.** A pseudo-static load applied everywhere
+  can bring most hillslope cells to $F \le 1$, so the unstable mask alone says little.
+- **The load is steady and one-directional.** It has no duration, topographic
+  amplification, or dependence on the direction of shaking.
+- **Not combined with a water table or slip surfaces.** Those runs are refused.
+
 ## Coseismic hazard area
 
 `run_coseismic_hazard_area` computes the hazard area of Milledge et al. (2019), the
@@ -351,6 +389,9 @@ against analytic solutions on analytic surfaces, in the CTest compartment
   SINMAP's eqs. 3 and 8; the probability of stability against a 10⁶-draw Monte
   Carlo; the D-infinity specific catchment area on planes and cones, exact with
   the contour width at every flow angle; the identity with TWI.
+- **Pseudo-static shaking** (`unit_slope_stability_rupture`, `smoke_slope_stability_rupture_pga`): $F_k$ against the
+  stresses, the closed-form optimum against a dense search over 600 random cases, and
+  $k = 0$ bit-identical to the static model.
 - **Rupture planes** (`unit_slope_stability_rupture`): the closed-form depth
   against the minimum of F (300 random cases); the cohesionless limit; the
   wet minimum against a 2×10⁵-point search; a water table below the plane
@@ -393,6 +434,9 @@ known well. Treat them as relative measures of where failure is more likely,
 unless the parameters have been calibrated locally.
 
 ## References
+
+Hynes-Griffin, M. E. and Franklin, A. G. (1984). Rationalizing the seismic coefficient
+method. Miscellaneous Paper GL-84-13, US Army Engineer Waterways Experiment Station.
 
 Hugonnet, R., et al. (2022). Uncertainty analysis of digital elevation models by
 spatial inference from stable terrain. *IEEE JSTARS* 15, 6456-6472.

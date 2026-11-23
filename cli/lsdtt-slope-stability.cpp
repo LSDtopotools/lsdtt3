@@ -743,6 +743,20 @@ int main(int argc, char* argv[])
         "Bulk density rho of the slope material (kg/m3).",
         "As in scaLr. Gravity is 9.81 m/s2.",
         "Rupture planes", "param", "run_rupture_planes"};
+    string_default_map["rupture_peak_ground_acceleration_fname"] = "";
+    help_map["rupture_peak_ground_acceleration_fname"] = {"string", "",
+        "Peak ground acceleration raster, in g, for a pseudo-static earthquake load.",
+        "Must be on the DEM's grid; nodata cells are left out. Adds a horizontal force "
+        "k W down the dip of each plane, k = rupture_seismic_coefficient_ratio x PGA. "
+        "Empty means static. Cannot be combined with water_table_method or "
+        "slip_surface_family.",
+        "Rupture planes", "param", "run_rupture_planes"};
+    float_default_map["rupture_seismic_coefficient_ratio"] = 0.5f;
+    help_map["rupture_seismic_coefficient_ratio"] = {"float", "0.5",
+        "Pseudo-static coefficient k as a fraction of PGA (in g).",
+        "0.5 follows Hynes-Griffin and Franklin (1984). It is an empirical choice, and "
+        "F depends on it directly, so test a range.",
+        "Rupture planes", "param", "rupture_peak_ground_acceleration_fname"};
     bool_default_map["write_rupture_rasters"] = true;
     help_map["write_rupture_rasters"] = {"bool", "true",
         "Write the rupture-plane rasters.",
@@ -1310,6 +1324,17 @@ int main(int argc, char* argv[])
         if (ii.at("rupture_min_daylight_neighbours") < 0 || ii.at("rupture_min_daylight_neighbours") > 8)
             throw std::runtime_error("rupture_min_daylight_neighbours must be 0 to 8");
         const std::string water_table_method = sf.at("water_table_method");
+        const std::string pga_fname = sf.at("rupture_peak_ground_acceleration_fname");
+        if (!pga_fname.empty())
+        {
+            if (!run_rupture) throw std::runtime_error("rupture_peak_ground_acceleration_fname needs run_rupture_planes");
+            if (water_table_method != "none")
+                throw std::runtime_error("rupture_peak_ground_acceleration_fname cannot be combined with water_table_method");
+            if (run_slip)
+                throw std::runtime_error("rupture_peak_ground_acceleration_fname cannot be combined with slip_surface_family");
+            if (!(ff.at("rupture_seismic_coefficient_ratio") >= 0.0f) || !std::isfinite(ff.at("rupture_seismic_coefficient_ratio")))
+                throw std::runtime_error("rupture_seismic_coefficient_ratio must be finite and >= 0");
+        }
         if (water_table_method != "none" && water_table_method != "dupuit_steady" && water_table_method != "dupuit_transient")
             throw std::runtime_error("water_table_method must be none, dupuit_steady or dupuit_transient");
         const bool use_groundwater = water_table_method != "none";
@@ -1928,8 +1953,32 @@ int main(int argc, char* argv[])
 
             if (run_rupture)
             {
+            // Pseudo-static coefficient per cell from the PGA raster (g); nodata leaves the cell out.
+            std::vector<double> seismic_coefficient;
+            if (!pga_fname.empty())
+            {
+                const lsdtt::lsdtt_raster_cpu pga = read_raster(resolve_input(parser.get_read_path(), pga_fname));
+                require_same_grid(dem.get_meta(), pga.get_meta(), "rupture_peak_ground_acceleration_fname");
+                const double ratio = static_cast<double>(ff.at("rupture_seismic_coefficient_ratio"));
+                seismic_coefficient.assign(pga.get_data().size(), std::numeric_limits<double>::quiet_NaN());
+                double pga_min = std::numeric_limits<double>::infinity(), pga_max = -pga_min;
+                for (std::size_t q = 0; q < seismic_coefficient.size(); ++q)
+                {
+                    if (!pga.get_mask()[q] || !std::isfinite(pga.get_data()[q])) continue;
+                    const double v = static_cast<double>(pga.get_data()[q]);
+                    if (v < 0.0) throw std::runtime_error("rupture_peak_ground_acceleration_fname: PGA must be >= 0 (g)");
+                    pga_min = std::min(pga_min, v);
+                    pga_max = std::max(pga_max, v);
+                    seismic_coefficient[q] = ratio * v;
+                }
+                std::cout << "Pseudo-static shaking: PGA " << number_string(pga_min) << " to " << number_string(pga_max)
+                          << " g, k = " << number_string(ratio) << " x PGA\n";
+                lsdtt::lsdtt_run_record::add_provenance("rupture_pga_min_g", number_string(pga_min));
+                lsdtt::lsdtt_run_record::add_provenance("rupture_pga_max_g", number_string(pga_max));
+            }
             const lsdtt::rupture_rasters rup = lsdtt::compute_rupture_planes(
-                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), water_table_depth);
+                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), water_table_depth,
+                seismic_coefficient);
             if (water_table_method == "dupuit_transient")
             {
                 std::ofstream ts(base + "_groundwater_time_series.csv", std::ios::app);
@@ -1953,7 +2002,8 @@ int main(int argc, char* argv[])
             if (use_uncertainty)
             {
                 const lsdtt::rupture_probability_rasters pf = lsdtt::compute_rupture_failure_probability(
-                    *d8, input_dem, channel, region, samples_by_region, ii.at("n_threads"), water_table_depth);
+                    *d8, input_dem, channel, region, samples_by_region, ii.at("n_threads"), water_table_depth,
+                    seismic_coefficient);
                 std::cout << "Rupture probability of failure: " << pf.max_samples
                           << " (c, mu) combinations per cell (equal density); " << pf.n_possible_failure
                           << " cells with Pf > 0, " << pf.n_certain_failure << " with Pf = 1, of "
@@ -2131,7 +2181,8 @@ int main(int argc, char* argv[])
             if (want_catalogue || want_labels)
             {
                 const lsdtt::landslide_catalogues cat = lsdtt::build_landslide_catalogues(
-                    rup, dem.get_meta(), region, rupture_by_region, ii.at("rupture_min_daylight_neighbours"));
+                    rup, dem.get_meta(), region, rupture_by_region, ii.at("rupture_min_daylight_neighbours"),
+                    seismic_coefficient);
                 std::cout << "Landslide catalogues: " << cat.by_daylight.size() << " by daylight point ("
                           << cat.n_daylight_points_removed << " of " << cat.n_daylight_points
                           << " daylight points dropped by the 1-D rule), " << cat.amalgamated.size()

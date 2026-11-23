@@ -140,6 +140,24 @@ def test_rupture_planes_on_a_plane_and_threads():
 
 
 @pytest.mark.metamorphic
+def test_rupture_planes_with_shaking():
+    dem = _east_plane()
+    flow = lsdtt3.FlowInfo(dem)
+    static = flow.rupture_planes(dem, channel=_east_channel())
+    ok = _valid(static.safety_factor)
+    sf = static.safety_factor.to_numpy()
+    pga = lsdtt3.Raster.from_numpy(np.full(dem.to_numpy().shape, 0.4, dtype=np.float32), dem.mask_numpy(), dem.metadata)
+    shaken = flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga)
+    assert (shaken.safety_factor.to_numpy()[ok] < sf[ok]).all()
+    none = flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga,
+                               seismic_coefficient_ratio=0.0)
+    assert np.array_equal(none.safety_factor.to_numpy()[ok], sf[ok])
+    with pytest.raises(ValueError):
+        flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga,
+                            water_table_depth=pga)
+
+
+@pytest.mark.metamorphic
 def test_rupture_channel_from_threshold_matches_contributing_pixels():
     dem = _hummocky()
     flow = lsdtt3.FlowInfo(dem)

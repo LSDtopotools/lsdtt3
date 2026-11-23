@@ -129,6 +129,14 @@ wet = flow.rupture_planes(dem, water_table_depth=aquifer.water_table_depth())
 aquifer.budget()                               # cumulative m3
 ```
 
+For an earthquake, pass a peak ground acceleration raster in g on the same grid. The
+pseudo-static coefficient is `seismic_coefficient_ratio` times PGA. It cannot be combined
+with a water table or slip surfaces.
+
+```python
+shaken = flow.rupture_planes(dem, peak_ground_acceleration=pga, seismic_coefficient_ratio=0.5)
+```
+
 `run` advances one constant-recharge segment; call it once per segment of a
 recharge series, as the CLI does. `transient_method="implicit"` uses backward
 Euler with steps of at most `implicit_max_dt_s` (3600 s).

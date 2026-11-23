@@ -347,7 +347,10 @@ void write_cli_fixture(const std::string& dir)
     std::filesystem::create_directories(dir);
     const lsdtt_raster_meta m = grid(20, 40);
     lsdtt_data_loader loader;
-    loader.write_full(profile(20, fixture_gradient(), 10.0), m, dir + "/hazard_dem.tif");
+    const std::vector<float> dem = profile(20, fixture_gradient(), 10.0);
+    loader.write_full(dem, m, dir + "/hazard_dem.tif");
+    // A uniform PGA (g) on the same grid, for the rupture-plane shaking option.
+    loader.write_full(std::vector<float>(dem.size(), 0.4f), m, dir + "/hazard_pga.tif");
 }
 
 }  // namespace

@@ -1,0 +1,10 @@
+# Refused: shaking is not combined with a water table.
+read_path: __READ_PATH__
+read_fname: hazard_dem.tif
+write_path: __WRITE_PATH__
+write_fname: ssg
+n_threads: 1
+run_sinmap: false
+threshold_contributing_pixels: 200
+rupture_peak_ground_acceleration_fname: hazard_pga.tif
+water_table_method: dupuit_steady

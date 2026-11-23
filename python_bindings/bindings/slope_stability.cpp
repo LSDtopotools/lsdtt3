@@ -356,6 +356,7 @@ struct rupture_state
     overrides_t overrides;
     std::map<std::int32_t, lsdtt::rupture_parameters> by_region;
     std::vector<double> water_table_depth;
+    std::vector<double> seismic_coefficient;
     lsdtt::rupture_rasters result;
     int n_threads = 0;
 };
@@ -374,7 +375,8 @@ private:
 RupturePlanes rupture_planes(const FlowInfo& flow, const Raster& geometry, nb::object channel,
                              std::int64_t threshold_contributing_pixels, double cohesion_pa,
                              double friction_coefficient, double density_kg_m3, nb::object region,
-                             nb::object region_parameters, nb::object water_table_depth, int n_threads)
+                             nb::object region_parameters, nb::object water_table_depth,
+                             nb::object peak_ground_acceleration, double seismic_coefficient_ratio, int n_threads)
 {
     const meta_t& meta = flow.native().meta();
     require_grid(geometry.native().get_meta(), meta, "geometry");
@@ -415,8 +417,20 @@ RupturePlanes rupture_planes(const FlowInfo& flow, const Raster& geometry, nb::o
     }
     s->region = region_ids(region, meta);
     s->water_table_depth = values_of(water_table_depth, meta, "water_table_depth");
+    if (!peak_ground_acceleration.is_none())
+    {
+        if (!std::isfinite(seismic_coefficient_ratio) || seismic_coefficient_ratio < 0.0)
+            throw std::invalid_argument("seismic_coefficient_ratio must be finite and >= 0");
+        s->seismic_coefficient = values_of(peak_ground_acceleration, meta, "peak_ground_acceleration");
+        const float ratio = static_cast<float>(seismic_coefficient_ratio);  // Float32, as the CLI parses it
+        for (double& v : s->seismic_coefficient)
+        {
+            if (std::isfinite(v) && v < 0.0) throw std::invalid_argument("peak_ground_acceleration must be >= 0 (g)");
+            v *= static_cast<double>(ratio);
+        }
+    }
     s->result = lsdtt::compute_rupture_planes(*s->flow, s->geometry, s->channel, s->region, s->by_region, n_threads,
-                                              s->water_table_depth);
+                                              s->water_table_depth, s->seismic_coefficient);
     return RupturePlanes(std::move(s));
 }
 
@@ -483,7 +497,8 @@ nb::dict rupture_failure_probability(const RupturePlanes& rp, const std::string&
     const rupture_state& s = rp.state();
     const auto sm = samples_by_region(s, {cd, fd, c_min, c_max, c_sd, mu_min, mu_max, mu_sd, samples});
     return probability_dict(lsdtt::compute_rupture_failure_probability(*s.flow, s.geometry, s.channel, s.region, sm,
-                                                                       s.n_threads, s.water_table_depth));
+                                                                       s.n_threads, s.water_table_depth,
+                                                                       s.seismic_coefficient));
 }
 
 nb::dict landslide_catalogues(const RupturePlanes& rp, int min_daylight_neighbours)
@@ -491,7 +506,8 @@ nb::dict landslide_catalogues(const RupturePlanes& rp, int min_daylight_neighbou
     const rupture_state& s = rp.state();
     const meta_t& meta = s.flow->meta();
     const lsdtt::landslide_catalogues cat =
-        lsdtt::build_landslide_catalogues(s.result, meta, s.region, s.by_region, min_daylight_neighbours);
+        lsdtt::build_landslide_catalogues(s.result, meta, s.region, s.by_region, min_daylight_neighbours,
+                                          s.seismic_coefficient);
     auto table = [](const std::vector<lsdtt::landslide_record>& rows, bool by_daylight) {
         nb::dict d;
         std::vector<std::int64_t> id, ndp, ncell, npiece;
@@ -588,6 +604,8 @@ SlipSurfaces slip_surfaces(const RupturePlanes& rp, const std::string& family, c
     SlipSurfaces out;
     out.rupture = rp.shared();
     const rupture_state& s = *out.rupture;
+    if (!s.seismic_coefficient.empty())
+        throw std::invalid_argument("slip surfaces cannot be built on rupture planes with peak_ground_acceleration");
     const meta_t& meta = s.flow->meta();
     lsdtt::slip_surface_options& o = out.options;
     o.family = family_of(family);
@@ -1538,12 +1556,14 @@ dict
         nb::arg("threshold_contributing_pixels") = 1000, nb::arg("cohesion_pa") = 1000.0,
         nb::arg("friction_coefficient") = 0.70020753820970977, nb::arg("density_kg_m3") = 2600.0,
         nb::arg("region") = nb::none(), nb::arg("region_parameters") = nb::none(),
-        nb::arg("water_table_depth") = nb::none(), nb::arg("n_threads") = 0,
+        nb::arg("water_table_depth") = nb::none(), nb::arg("peak_ground_acceleration") = nb::none(),
+        nb::arg("seismic_coefficient_ratio") = 0.5, nb::arg("n_threads") = 0,
         nb::sig("def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, "
                 "threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, "
                 "friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, "
                 "region: Raster | None = None, region_parameters: dict | None = None, "
-                "water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes"), R"doc(
+                "water_table_depth: Raster | None = None, peak_ground_acceleration: Raster | None = None, "
+                "seismic_coefficient_ratio: float = 0.5, n_threads: int = 0) -> RupturePlanes"), R"doc(
 Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
 
 lsdtt-slope-stability ``run_rupture_planes``, the same routine; the keyword
@@ -1579,6 +1599,12 @@ region_parameters : dict or None, default=None, keyword-only
 water_table_depth : Raster or None, default=None, keyword-only
     Depth (m) of the water table below the geometry surface, e.g.
     ``GroundwaterDupuit.water_table_depth()``; None or nodata is dry.
+peak_ground_acceleration : Raster or None, default=None, keyword-only
+    PGA in g for a pseudo-static earthquake load (CLI
+    ``rupture_peak_ground_acceleration_fname``). Nodata cells are left out.
+    Cannot be combined with ``water_table_depth`` or slip surfaces.
+seismic_coefficient_ratio : float, default=0.5, keyword-only
+    The pseudo-static coefficient as a fraction of PGA, k = ratio x PGA.
 n_threads : int, default=0, keyword-only
     OpenMP threads; the result does not depend on it.
 

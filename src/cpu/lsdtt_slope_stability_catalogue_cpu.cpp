@@ -122,12 +122,15 @@ landslide_catalogues build_landslide_catalogues(
     const lsdtt_raster_meta& meta,
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
-    int min_daylight_neighbours)
+    int min_daylight_neighbours,
+    const std::vector<double>& seismic_coefficient)
 {
     const int nr = meta.n_rows, nc = meta.n_cols;
     const std::size_t n = static_cast<std::size_t>(nr) * static_cast<std::size_t>(nc);
     if (rupture.daylight.size() != n || rupture.safety_factor.get_data().size() != n)
         throw std::invalid_argument("build_landslide_catalogues: the rupture result differs from the grid");
+    if (!seismic_coefficient.empty() && seismic_coefficient.size() != n)
+        throw std::invalid_argument("build_landslide_catalogues: the seismic coefficient differs from the grid");
     if (!region.empty() && region.size() != n)
         throw std::invalid_argument("build_landslide_catalogues: the region grid differs from the grid");
     if (min_daylight_neighbours < 0 || min_daylight_neighbours > 8)
@@ -217,8 +220,10 @@ landslide_catalogues build_landslide_catalogues(
         const double h = H[i];
         const double t = std::atan(static_cast<double>(Srup[i]));
         const double rho_g = pp->density_kg_m3 * pp->gravity_m_s2;
-        const double resist = pp->cohesion_pa + pp->friction_coefficient * rho_g * h * std::cos(t) * std::cos(t);
-        const double drive = rho_g * h * std::cos(t) * std::sin(t);
+        const double k = seismic_coefficient.empty() ? 0.0 : seismic_coefficient[i];
+        const double resist = pp->cohesion_pa
+            + pp->friction_coefficient * rho_g * h * std::cos(t) * std::max(std::cos(t) - k * std::sin(t), 0.0);
+        const double drive = rho_g * h * std::cos(t) * (std::sin(t) + k * std::cos(t));
         for (int which = 0; which < 2; ++which)
         {
             const std::int32_t lid = (which == 0) ? out.label[i] : out.label_amalgamated[i];
