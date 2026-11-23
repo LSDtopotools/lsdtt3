@@ -333,3 +333,51 @@ def test_groundwater_refusals():
         aq.run_to_steady(1e-8, steady_method="newton")
     with pytest.raises(ValueError, match="transient_method"):
         aq.run(3600.0, 1e-8, transient_method="crank_nicolson")
+
+
+# ------------------------------------------------------- DEM of difference
+def _change_pair(n=160, cell=30.0, seed=3):
+    rng = np.random.default_rng(seed)
+    r, c = np.mgrid[0:n, 0:n].astype(float)
+    dem = _raster(1000.0 + 15.0 * c + 3.0 * r, cell)
+    dh = rng.normal(0.0, 1.0, (n, n))
+    dh[40:60, 40:70] = -25.0
+    dh[100:110, 100:120] = 20.0
+    return dem, _raster(dh, cell), dh
+
+
+@pytest.mark.exact_solution
+def test_dem_change_finds_a_planted_scar():
+    dem, difference, _ = _change_pair()
+    out = lsdtt3.dem_change_landslides(difference, dem, detection_sigma=4.5, seed_sigma=5.0, n_null_simulations=2,
+                                       n_threads=1)
+    patches = out["patches"]
+    assert len(patches) == 1 and patches.change[0] == "loss" and patches.n_cells[0] == 600
+    assert patches.area_m2[0] == pytest.approx(600 * 900.0)
+    assert patches.mean_change_m[0] == pytest.approx(-25.0, abs=0.1)
+    assert out["uncertainty"]["nmad_metres"] == pytest.approx(1.0, abs=0.08)
+    assert out["change_class"].to_numpy()[50, 50] == -1
+    assert out["false_detection"]["n_simulations"] == 2
+
+
+@pytest.mark.property
+def test_dem_change_sign_convention_and_stable_mask():
+    dem, difference, dh = _change_pair()
+    flipped = _raster(-dh, 30.0)
+    a = lsdtt3.dem_change_landslides(difference, dem, detection_sigma=4.5, seed_sigma=5.0, n_null_simulations=0)
+    b = lsdtt3.dem_change_landslides(flipped, dem, is_newer_minus_older=False, detection_sigma=4.5, seed_sigma=5.0,
+                                     n_null_simulations=0)
+    assert a["patches"].n_cells.tolist() == b["patches"].n_cells.tolist()
+    stable = np.ones(dh.shape)
+    stable[35:65, 35:75] = 0.0
+    stable[95:115, 95:125] = 0.0
+    c = lsdtt3.dem_change_landslides(difference, dem, stable_mask=_raster(stable, 30.0), detection_sigma=4.5,
+                                     seed_sigma=5.0, n_null_simulations=0)
+    assert c["uncertainty"]["used_stable_mask"] is True
+
+
+@pytest.mark.negative
+def test_dem_change_refuses_a_bad_sign():
+    dem, difference, _ = _change_pair()
+    with pytest.raises(ValueError):
+        lsdtt3.dem_change_landslides(difference, dem, change_sign="up")

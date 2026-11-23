@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "lsdtt3",
   "signature_source": "nanobind __nb_signature__ v3",
-  "export_count": 250,
+  "export_count": 251,
   "exports": [
     {
       "name": "BasinCollection",
@@ -6373,23 +6373,12 @@
     {
       "name": "coregister_dem",
       "kind": "function",
-      "doc": "Coregister a DEM to a reference with the Nuth and Kaab (2011) method.\n\nIteratively fits the horizontal and vertical shift that best explains the\nelevation differences as a function of aspect, and applies it to moving.\nBoth rasters must be on the same grid (use reproject_to_grid first). The same\ncoregistration as run_dem_coregistration in lsdtt-raster-calculator, with\nits defaults.\n\nParameters\n----------\nreference : Raster\n    Reference DEM (m).\nmoving : Raster\n    DEM (m) to shift, on the same grid as ``reference``.\nmax_iterations : int, default=8\n    Largest number of Nuth-Kaab iterations.\noffset_threshold_pixels : float, default=0.001\n    Stop when an iteration's horizontal step is below this (pixels).\naspect_bin_count : int, default=72\n    Number of aspect bins in the fit.\nmin_samples : int, default=500\n    Smallest number of valid samples required.\nsubsample_count : int, default=500000\n    Largest number of pixels sampled per iteration.\napply_vertical_shift : bool, default=True\n    Also remove the vertical offset dz.\nmax_horizontal_step_metres : float, default=0.0\n    Cap (m) on each iteration's horizontal step; 0 means none.\ninitial_dx_metres, initial_dy_metres, initial_dz_metres : float, default=0.0\n    Starting shift (m) in x, y and z.\n\nReturns\n-------\ndict\n    ``\"raster\"`` (moving, shifted), ``\"dx_metres\"``, ``\"dy_metres\"``,\n    ``\"dz_metres\"`` (the total shift, m), ``\"iterations\"``, ``\"converged\"``\n    and ``\"diagnostics\"`` (a pandas DataFrame with one row per iteration).\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
+      "doc": "Coregister a DEM to a reference with the Nuth and Kaab (2011) method.\n\nIteratively fits the horizontal and vertical shift that best explains the\nelevation differences as a function of aspect, and applies it to moving.\nBoth rasters must be on the same grid (use reproject_to_grid first). The same\ncoregistration as run_dem_coregistration in lsdtt-raster-calculator, with\nits defaults.\n\nParameters\n----------\nreference : Raster\n    Reference DEM (m).\nmoving : Raster\n    DEM (m) to shift, on the same grid as ``reference``.\nmax_iterations : int, default=8\n    Largest number of Nuth-Kaab iterations.\noffset_threshold_pixels : float, default=0.001\n    Stop when an iteration's horizontal step is below this (pixels).\naspect_bin_count : int, default=72\n    Number of aspect bins in the fit.\nmin_samples : int, default=500\n    Smallest number of valid samples required.\nsubsample_count : int, default=500000\n    Largest number of pixels sampled per iteration.\napply_vertical_shift : bool, default=True\n    Also remove the vertical offset dz.\nmax_horizontal_step_metres : float, default=0.0\n    Cap (m) on each iteration's horizontal step; 0 means none.\ninitial_dx_metres, initial_dy_metres, initial_dz_metres : float, default=0.0\n    Starting shift (m) in x, y and z. The final vertical shift is measured, so\n    ``initial_dz_metres`` does not change it when ``apply_vertical_shift`` is true.\nstable_mask : Raster or None, default=None\n    Non-zero on stable terrain, on the grid of ``reference``. Only these cells are\n    used to fit the shift, so that landslides, lakes or ice do not bias it. The\n    same as ``dem_coregistration_stable_mask_fname`` in lsdtt-raster-calculator.\n\nReturns\n-------\ndict\n    ``\"raster\"`` (moving, shifted), ``\"dx_metres\"``, ``\"dy_metres\"``,\n    ``\"dz_metres\"`` (the total shift, m), ``\"iterations\"``, ``\"converged\"``\n    and ``\"diagnostics\"`` (a pandas DataFrame with one row per iteration).\n\nAuthors\n-------\nS. M. Mudd\nB. Gailleton",
       "members": [],
       "signatures": [
         {
-          "definition": "def coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = \\0, offset_threshold_pixels: float = \\1, aspect_bin_count: int = \\2, min_samples: int = \\3, subsample_count: int = \\4, apply_vertical_shift: bool = \\5, max_horizontal_step_metres: float = \\6, initial_dx_metres: float = \\7, initial_dy_metres: float = \\8, initial_dz_metres: float = \\9) -> dict",
-          "defaults": [
-            8,
-            0.001,
-            72,
-            500,
-            500000,
-            true,
-            0.0,
-            0.0,
-            0.0,
-            0.0
-          ]
+          "definition": "def coregister_dem(reference: Raster, moving: Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0, stable_mask: Raster | None = None) -> dict",
+          "defaults": []
         }
       ]
     },
@@ -6611,6 +6600,18 @@
       "signatures": [
         {
           "definition": "def crn_uniform_raster(reference: lsdtt3.Raster, value: float) -> lsdtt3.Raster",
+          "defaults": []
+        }
+      ]
+    },
+    {
+      "name": "dem_change_landslides",
+      "kind": "function",
+      "doc": "Potential landslides in a DEM of difference, with their uncertainty.\n\nlsdtt-slope-stability ``run_dem_change_landslides``, the same routine; the\nkeyword names are the CLI's less the ``dem_change_`` and ``dem_difference_``\nprefixes. An error model from stable terrain (bias, NMAD by slope, spatial\ncorrelation) sets a threshold for each cell. Connected cells are grouped and\naggregated into patches, each tested against the correlated error of its mean.\nNoise simulations estimate false detections. The results are CANDIDATE areas of\nchange: vegetation, snow, water, radar penetration and DEM artefacts also change\nelevation between two products.\n\nParameters\n----------\ndifference : Raster\n    DEM of difference (m), for example from lsdtt-raster-calculator.\ndem : Raster\n    The newer DEM on the same grid, used for slope.\nstable_mask : Raster or None, default=None, keyword-only\n    Non-zero on stable terrain. Without it every assessable cell within 4 NMAD\n    of the median is treated as stable.\nis_newer_minus_older : bool, default=True, keyword-only\n    False if ``difference`` is older minus newer.\nchange_sign : str, default=\"loss\", keyword-only\n    ``loss``, ``gain`` or ``both``.\ndetection_sigma : float, default=1.96, keyword-only\n    Multiple of the slope-dependent error at which a cell can join a patch.\nseed_sigma : float, default=3.0, keyword-only\n    A connected group of candidates needs one cell at this multiple.\npatch_significance : float, default=1.96, keyword-only\n    Minimum absolute mean change over its standard error.\nmin_patch_pixels : int, default=5, keyword-only\n    Smallest patch.\naggregation_radius_pixels : int, default=2, keyword-only\n    Join changed cells with up to this many unchanged cells between them.\nmin_slope : float, default=0.0, keyword-only\n    Ignore cells with a gradient (m/m) below this.\nn_slope_bins : int, default=10, keyword-only\n    Quantile bins of slope for the error model.\nn_null_simulations : int, default=20, keyword-only\n    Noise simulations for false detections; 0 turns them off.\nrandom_seed : int, default=33, keyword-only\n    Seed for the variogram sample and the simulations.\nn_threads : int, default=0, keyword-only\n    OpenMP threads for the simulations; the result does not depend on it.\n\nReturns\n-------\ndict\n    ``uncertainty`` and ``false_detection`` (dicts); DataFrames\n    ``uncertainty_by_slope``, ``variogram``, ``patches``, ``coverage``,\n    ``sensitivity`` and ``false_detection_by_area``; and Rasters ``corrected``,\n    ``sigma``, ``z``, ``change_class`` (-1 loss, 1 gain) and ``label``.\n\nAuthors\n-------\nB. Gailleton",
+      "members": [],
+      "signatures": [
+        {
+          "definition": "def dem_change_landslides(difference: Raster, dem: Raster, *, stable_mask: Raster | None = None, is_newer_minus_older: bool = True, change_sign: str = 'loss', detection_sigma: float = 1.96, seed_sigma: float = 3.0, patch_significance: float = 1.96, min_patch_pixels: int = 5, aggregation_radius_pixels: int = 2, min_slope: float = 0.0, n_slope_bins: int = 10, n_null_simulations: int = 20, random_seed: int = 33, n_threads: int = 0) -> dict",
           "defaults": []
         }
       ]

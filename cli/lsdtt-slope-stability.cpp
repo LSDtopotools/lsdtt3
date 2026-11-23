@@ -73,6 +73,7 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_columns_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
@@ -327,6 +328,131 @@ static void write_frequency_area(const std::string& base, const std::string& wha
     std::cout << "  wrote " << pd << "\n  wrote " << pf << "\n";
 }
 
+// Potential landslides from a DEM of difference: tables and rasters.
+static void write_dem_change_outputs(const std::string& base, const lsdtt::dem_change_result& r,
+                                     const lsdtt::lsdtt_raster_meta& meta, int bins_per_decade, int min_tail)
+{
+    const auto open = [](const std::string& path) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("Cannot write " + path);
+        f << std::setprecision(10);
+        return f;
+    };
+    const lsdtt::dem_change_uncertainty& u = r.uncertainty;
+    {
+        std::ofstream f = open(base + "_dem_change_uncertainty.csv");
+        f << "quantity,value\n"
+          << "used_stable_mask," << (u.used_stable_mask ? 1 : 0) << "\nn_stable_cells," << u.n_stable
+          << "\nn_clipped_cells," << u.n_clipped << "\nbias_metres," << u.bias_m << "\nnmad_metres," << u.nmad_m
+          << "\nstandard_deviation_metres," << u.standard_deviation_m << "\nrmse_metres," << u.rmse_m
+          << "\np2.5_metres," << u.p025_m << "\np97.5_metres," << u.p975_m << "\nvariogram_fitted,"
+          << (u.variogram_fitted ? 1 : 0) << "\nnugget_fraction," << u.nugget_fraction
+          << "\ncorrelation_range_metres," << u.correlation_range_m << "\nsill," << u.sill << "\n";
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_uncertainty_by_slope.csv");
+        f << "slope_lower,slope_upper,slope_median,n_cells,bias_metres,nmad_metres\n";
+        for (std::size_t k = 0; k < u.slope_median.size(); ++k)
+            f << u.slope_lower[k] << ',' << u.slope_upper[k] << ',' << u.slope_median[k] << ',' << u.slope_n[k] << ','
+              << u.slope_bias_m[k] << ',' << u.slope_nmad_m[k] << '\n';
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_variogram.csv");
+        f << "lag_metres,semivariance,n_pairs,fitted_semivariance\n";
+        for (std::size_t k = 0; k < u.lag_m.size(); ++k)
+        {
+            double fitted = std::numeric_limits<double>::quiet_NaN();
+            if (u.variogram_fitted)
+            {
+                const double q = u.lag_m[k] / u.correlation_range_m;
+                const double sph = q >= 1.0 ? 1.0 : 1.5 * q - 0.5 * q * q * q;
+                fitted = u.sill * (u.nugget_fraction + (1.0 - u.nugget_fraction) * sph);
+            }
+            f << u.lag_m[k] << ',' << u.semivariance[k] << ',' << u.lag_n_pairs[k] << ',';
+            if (std::isfinite(fitted)) f << fitted;
+            f << '\n';
+        }
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_patches.csv");
+        f << "patch_id,change,n_cells,area_m2,area_uncertainty_m2,perimeter_m,centroid_x,centroid_y,length_m,width_m,"
+             "mean_change_m,extreme_change_m,mean_change_sigma_m,significance,volume_m3,volume_sigma_m3,mean_slope\n";
+        for (const auto& p : r.patches)
+            f << p.id << ',' << (p.sign < 0 ? "loss" : "gain") << ',' << p.n_cells << ',' << p.area_m2 << ','
+              << p.area_uncertainty_m2 << ',' << p.perimeter_m << ',' << p.centroid_x << ',' << p.centroid_y << ','
+              << p.length_m << ',' << p.width_m << ',' << p.mean_change_m << ',' << p.extreme_change_m << ','
+              << p.mean_change_sigma_m << ',' << p.significance << ',' << p.volume_m3 << ',' << p.volume_sigma_m3 << ','
+              << p.mean_slope << '\n';
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_coverage.csv");
+        std::int64_t n_loss = 0, n_gain = 0;
+        for (const auto& p : r.patches) (p.sign < 0 ? n_loss : n_gain)++;
+        f << "change,n_patches,area_m2,area_uncertainty_m2,fraction_of_assessed_area,volume_m3,volume_sigma_m3,assessed_area_m2\n";
+        const auto row = [&](const char* name, std::int64_t c, double a, double au, double v, double vs) {
+            f << name << ',' << c << ',' << a << ',' << au << ',' << (r.valid_area_m2 > 0 ? a / r.valid_area_m2 : 0.0) << ','
+              << v << ',' << vs << ',' << r.valid_area_m2 << '\n';
+        };
+        row("loss", n_loss, r.loss_area_m2, r.loss_area_uncertainty_m2, r.loss_volume_m3, r.loss_volume_sigma_m3);
+        row("gain", n_gain, r.gain_area_m2, r.gain_area_uncertainty_m2, r.gain_volume_m3, r.gain_volume_sigma_m3);
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_sensitivity.csv");
+        f << "detection_sigma,seed_sigma,n_patches,area_m2,fraction_of_assessed_area,volume_m3\n";
+        for (const auto& row : r.sensitivity)
+            f << row.detection_sigma << ',' << row.seed_sigma << ',' << row.n_patches << ',' << row.area_m2 << ','
+              << row.coverage_fraction << ',' << row.volume_m3 << '\n';
+    }
+    if (r.null_simulation.n_simulations > 0)
+    {
+        const lsdtt::dem_change_null_summary& q = r.null_simulation;
+        {
+            std::ofstream f = open(base + "_dem_change_false_detection.csv");
+            f << "quantity,value\nn_simulations," << q.n_simulations << "\nmean_false_patches," << q.mean_n_patches
+              << "\np05_false_patches," << q.p05_n_patches << "\np95_false_patches," << q.p95_n_patches
+              << "\nmean_false_area_m2," << q.mean_area_m2 << "\np05_false_area_m2," << q.p05_area_m2
+              << "\np95_false_area_m2," << q.p95_area_m2 << "\narea_false_discovery_ratio,";
+            if (std::isfinite(q.area_false_discovery_ratio)) f << q.area_false_discovery_ratio;
+            f << '\n';
+        }
+        std::ofstream f = open(base + "_dem_change_false_detection_by_area.csv");
+        f << "area_lower_m2,area_upper_m2,n_observed,mean_n_simulated,false_discovery_ratio\n";
+        for (const auto& b : q.by_area)
+        {
+            f << b.area_lower_m2 << ',' << b.area_upper_m2 << ',' << b.n_observed << ',' << b.mean_n_simulated << ',';
+            if (std::isfinite(b.false_discovery_ratio)) f << b.false_discovery_ratio;
+            f << '\n';
+        }
+    }
+
+    lsdtt::lsdtt_data_loader writer;
+    const std::size_t n = r.label.size();
+    const float nodata = static_cast<float>(meta.no_data_value);
+    std::vector<float> label(n, nodata), change(n, nodata);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (r.corrected_m[i] == nodata) continue;
+        change[i] = static_cast<float>(r.change_class[i]);
+        if (r.label[i] > 0) label[i] = static_cast<float>(r.label[i]);
+    }
+    writer.write_full(r.corrected_m, meta, base + "_dem_change_corrected.tif");
+    writer.write_full(r.sigma_m, meta, base + "_dem_change_sigma.tif");
+    writer.write_full(r.z, meta, base + "_dem_change_z.tif");
+    writer.write_full(change, meta, base + "_dem_change_class.tif");
+    writer.write_full(label, meta, base + "_dem_change_label.tif");
+
+    std::vector<std::pair<std::string, std::vector<double>>> catalogues;
+    for (const int sign : {-1, 1})
+    {
+        std::vector<double> areas;
+        for (const auto& p : r.patches)
+            if (p.sign == sign) areas.push_back(p.area_m2);
+        if (!areas.empty()) catalogues.emplace_back(sign < 0 ? "loss" : "gain", std::move(areas));
+    }
+    if (!catalogues.empty())
+        write_frequency_area(base, "dem_change", catalogues, meta.cell_size * meta.cell_size, bins_per_decade, min_tail);
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -485,6 +611,82 @@ int main(int argc, char* argv[])
         "SINMAP", "switch", "run_sinmap"};
 
     // --- Planar rupture surfaces (scaLr) -----------------------------------------
+    // --- Potential landslides from a DEM of difference ---
+    bool_default_map["run_dem_change_landslides"] = false;
+    help_map["run_dem_change_landslides"] = {"bool", "false",
+        "Find potential landslides in a DEM of difference, with their uncertainty.",
+        "Needs dem_difference_fname. read_fname is the newer DEM on the same grid, used "
+        "for slope. The results are CANDIDATE areas of change: vegetation, snow, water, "
+        "radar penetration and DEM artefacts also change elevation between two products.",
+        "DEM of difference", "switch", ""};
+    string_default_map["dem_difference_fname"] = "";
+    help_map["dem_difference_fname"] = {"string", "",
+        "DEM of difference (metres), for example from lsdtt-raster-calculator.",
+        "On the grid of read_fname. Read from read_path if the path is relative.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    bool_default_map["dem_difference_is_newer_minus_older"] = true;
+    help_map["dem_difference_is_newer_minus_older"] = {"bool", "true",
+        "The difference is newer minus older, so a loss of elevation is negative.",
+        "false: older minus newer, which is converted. lsdtt-raster-calculator writes "
+        "first minus second.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    string_default_map["dem_difference_stable_mask_fname"] = "";
+    help_map["dem_difference_stable_mask_fname"] = {"string", "",
+        "Raster of stable terrain (non-zero = stable), for the error model.",
+        "On the grid of read_fname. Without it every assessable cell within 4 NMAD of the "
+        "median is treated as stable, which is reasonable only where change is rare.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    string_default_map["dem_change_sign"] = "loss";
+    help_map["dem_change_sign"] = {"string", "loss",
+        "Which change to detect: loss, gain or both.",
+        "loss finds source areas (scars). Gain finds deposits, and also vegetation growth.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_detection_sigma"] = 1.96f;
+    help_map["dem_change_detection_sigma"] = {"float", "1.96",
+        "Multiple of the slope-dependent error at which a cell can belong to a patch.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_seed_sigma"] = 3.0f;
+    help_map["dem_change_seed_sigma"] = {"float", "3.0",
+        "A connected group of candidate cells needs one cell at this multiple.",
+        "This hysteresis keeps weak cells attached to a strong signal and drops isolated "
+        "weak groups.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_patch_significance"] = 1.96f;
+    help_map["dem_change_patch_significance"] = {"float", "1.96",
+        "Minimum |mean change| / its standard error for a patch to be kept.",
+        "The standard error allows for spatially correlated DEM error.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_min_patch_pixels"] = 5;
+    help_map["dem_change_min_patch_pixels"] = {"int", "5",
+        "Smallest patch, in pixels.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_aggregation_radius_pixels"] = 2;
+    help_map["dem_change_aggregation_radius_pixels"] = {"int", "2",
+        "Join changed cells with up to this many unchanged cells between them.",
+        "0 joins only cells that touch. Unchanged cells between them are not added to the "
+        "patch's area or volume. Larger values merge neighbouring landslides.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_min_slope"] = 0.0f;
+    help_map["dem_change_min_slope"] = {"float", "0.0",
+        "Ignore cells with a gradient (m/m) below this.",
+        "Useful for excluding valley floors, reservoirs and farmland.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_n_slope_bins"] = 10;
+    help_map["dem_change_n_slope_bins"] = {"int", "10",
+        "Quantile bins of slope for the error model.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_n_null_simulations"] = 20;
+    help_map["dem_change_n_null_simulations"] = {"int", "20",
+        "Noise simulations used to estimate false detections.",
+        "Each runs the detection on Gaussian noise with the fitted error and spatial "
+        "correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 "
+        "turns it off.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_random_seed"] = 33;
+    help_map["dem_change_random_seed"] = {"int", "33",
+        "Seed for the variogram sample and the noise simulations.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+
     bool_default_map["run_rupture_planes"] = true;
     help_map["run_rupture_planes"] = {"bool", "true",
         "Compute planar rupture surfaces after scaLr (Steer et al. 2026).",
@@ -1200,7 +1402,30 @@ int main(int argc, char* argv[])
             }
         }
 
-        if (!run_sinmap && !run_rupture)
+        const bool run_dem_change = bf.at("run_dem_change_landslides");
+        lsdtt::dem_change_options dem_change;
+        if (run_dem_change)
+        {
+            if (sf.at("dem_difference_fname").empty())
+                throw std::runtime_error("run_dem_change_landslides needs dem_difference_fname");
+            dem_change.change_sign = sf.at("dem_change_sign");
+            dem_change.detection_sigma = ff.at("dem_change_detection_sigma");
+            dem_change.seed_sigma = ff.at("dem_change_seed_sigma");
+            dem_change.patch_significance = ff.at("dem_change_patch_significance");
+            dem_change.min_patch_cells = ii.at("dem_change_min_patch_pixels");
+            dem_change.aggregation_radius_pixels = ii.at("dem_change_aggregation_radius_pixels");
+            dem_change.min_slope = ff.at("dem_change_min_slope");
+            dem_change.n_slope_bins = ii.at("dem_change_n_slope_bins");
+            dem_change.n_null_simulations = ii.at("dem_change_n_null_simulations");
+            dem_change.random_seed = static_cast<std::uint64_t>(ii.at("dem_change_random_seed"));
+            dem_change.n_threads = ii.at("n_threads");
+            if (dem_change.change_sign != "loss" && dem_change.change_sign != "gain" && dem_change.change_sign != "both")
+                throw std::runtime_error("dem_change_sign must be loss, gain or both");
+            if (!(dem_change.detection_sigma > 0.0f) || dem_change.seed_sigma < dem_change.detection_sigma)
+                throw std::runtime_error("need 0 < dem_change_detection_sigma <= dem_change_seed_sigma");
+        }
+
+        if (!run_sinmap && !run_rupture && !run_dem_change)
         {
             std::cout << "run_sinmap and run_rupture_planes are both false: nothing to compute.\n";
             parser.print_parameters();
@@ -1219,6 +1444,66 @@ int main(int argc, char* argv[])
                          ii.at("nodata_fill_max_iter"), ii.at("n_threads"))
                   << "\n";
         const lsdtt::lsdtt_raster_cpu input_dem = dem;
+
+        // Potential landslides from a DEM of difference. It uses the input DEM
+        // (no carving or filling), so it runs before the routing surface.
+        if (run_dem_change)
+        {
+            std::cout << "\n--- Potential landslides from a DEM of difference ---\n";
+            lsdtt::lsdtt_raster_cpu difference =
+                read_raster(resolve_input(parser.get_read_path(), sf.at("dem_difference_fname")));
+            require_same_grid(dem.get_meta(), difference.get_meta(), "dem_difference_fname");
+            std::vector<float> dv = difference.get_data();
+            std::vector<std::uint8_t> dm = difference.get_mask();
+            if (!bf.at("dem_difference_is_newer_minus_older"))
+                for (std::size_t i = 0; i < dv.size(); ++i)
+                    if (dm[i]) dv[i] = -dv[i];
+            lsdtt::lsdtt_raster_meta difference_meta = dem.get_meta();
+            difference_meta.no_data_value = difference.get_meta().no_data_value;
+            difference = lsdtt::lsdtt_raster_cpu(std::move(dv), std::move(dm), difference_meta);
+
+            std::vector<std::uint8_t> stable;
+            if (!sf.at("dem_difference_stable_mask_fname").empty())
+            {
+                const lsdtt::lsdtt_raster_cpu mask_raster =
+                    read_raster(resolve_input(parser.get_read_path(), sf.at("dem_difference_stable_mask_fname")));
+                require_same_grid(dem.get_meta(), mask_raster.get_meta(), "dem_difference_stable_mask_fname");
+                stable.assign(mask_raster.get_data().size(), 0u);
+                for (std::size_t i = 0; i < stable.size(); ++i)
+                    stable[i] = (mask_raster.get_mask()[i] && mask_raster.get_data()[i] != 0.0f) ? 1u : 0u;
+            }
+
+            const lsdtt::dem_change_result change = lsdtt::detect_dem_change_landslides(
+                difference, lsdtt::dem_change_slope(input_dem), stable.empty() ? nullptr : &stable, dem_change);
+            const auto& u = change.uncertainty;
+            std::cout << "Error on " << (u.used_stable_mask ? "stable terrain" : "all terrain, clipped") << " ("
+                      << u.n_stable << " cells): bias " << number_string(u.bias_m) << " m, NMAD "
+                      << number_string(u.nmad_m) << " m\n"
+                      << "Spatial correlation: nugget fraction " << number_string(u.nugget_fraction) << ", range "
+                      << number_string(u.correlation_range_m) << " m\n"
+                      << "Patches: " << change.patches.size() << "; loss "
+                      << number_string(change.loss_area_m2) << " m2, gain " << number_string(change.gain_area_m2)
+                      << " m2, of " << number_string(change.valid_area_m2) << " m2 assessed\n";
+            if (change.null_simulation.n_simulations > 0)
+                std::cout << "Noise alone: " << number_string(change.null_simulation.mean_n_patches) << " patches, "
+                          << number_string(change.null_simulation.mean_area_m2) << " m2 (lower bound on false detections)\n";
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_bias_metres", number_string(u.bias_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_nmad_metres", number_string(u.nmad_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_correlation_range_metres", number_string(u.correlation_range_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_n_patches", std::to_string(change.patches.size()));
+            const std::string change_base = parser.get_write_path() + "/" + parser.get_write_fname();
+            write_dem_change_outputs(change_base, change, dem.get_meta(), ii.at("frequency_area_bins_per_decade"),
+                                     ii.at("frequency_area_min_tail"));
+            std::cout << "Wrote " << change_base << "_dem_change_*\n";
+
+            if (!run_sinmap && !run_rupture)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
+            }
+        }
+
         if (bf.at("breach_before_fill"))
         {
             if (breach_choice == "least_cost")

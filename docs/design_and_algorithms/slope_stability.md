@@ -207,6 +207,56 @@ the two rasters as each tool writes them.
   dropped from the unsaturated term). lsdtt3 re-derives them, and the unit
   test checks them against Monte Carlo.
 
+## Potential landslides from a DEM of difference
+
+`run_dem_change_landslides` looks for clusters of elevation change in a DEM of
+difference from
+[`lsdtt-raster-calculator`](../cli_reference/cli_reference_lsdtt_raster_calculator.md).
+Its results are **candidates**. Forestry, vegetation growth, snow, water, radar
+penetration, layover and DEM artefacts also change elevation between two
+products, so a patch is an area that changed by more than the DEM error, not a
+mapped landslide.
+
+**Error model.** On stable terrain the tool measures the bias (median), the
+NMAD in quantile bins of slope, and a variogram of the standardised error, fitted
+with a nugget and one spherical model (Rolstad et al. 2009; Hugonnet et al. 2022).
+Cells more than 4 NMAD from the median are left out, so real change does not
+inflate the error. Without a stable-terrain mask every assessable cell is treated
+as stable, which holds only where change is rare. In a dense landslide cluster,
+give a mask.
+
+**Detection.** A cell is a candidate if its bias-corrected change exceeds
+`dem_change_detection_sigma` times the error at its slope. A connected group is
+kept only if one cell exceeds `dem_change_seed_sigma`. Changed cells with up to
+`dem_change_aggregation_radius_pixels` unchanged cells between them form one
+patch. The unchanged cells are not added to its area or volume.
+
+**Patch uncertainty.** Errors are correlated, so averaging over a patch reduces
+them less than for independent cells. The variance of a patch mean is
+
+$$
+\sigma_{\bar h}^2 = \overline{\sigma^2}\left[ n \frac{a}{A} + (1 - n)\, C(r, L) \right]
+$$
+
+with $n$ the nugget fraction, $a$ the cell area, $A$ the patch area, and $C$ the
+mean spherical correlation (range $L$) between two points in a disc of area $A$.
+A patch is kept if its mean change is at least `dem_change_patch_significance`
+standard errors. Area uncertainty is half a cell along the perimeter. Regional
+volume uncertainty treats patches as independent, so it is a lower bound where
+patches are closer together than the correlation range.
+
+**False detections.** The detection is rerun on simulated noise with the fitted
+error, nugget and range. This gives the number and area of patches that noise
+alone produces, overall and by size. Small patches are usually dominated by noise,
+so read a frequency - area rollover and any power-law fit only above the size at
+which noise becomes negligible. The simulated noise is Gaussian and real DEM
+errors have heavier tails, so this is a **lower bound** on false detections. It
+does not include systematic change such as forestry.
+
+Run the same analysis on a nearby area with no known landslide event. Patches
+found there show how much of the signal comes from land-cover change and sensor
+differences.
+
 ## Design decisions
 
 These are the choices that shape the results:
@@ -293,6 +343,13 @@ known well. Treat them as relative measures of where failure is more likely,
 unless the parameters have been calibrated locally.
 
 ## References
+
+Hugonnet, R., et al. (2022). Uncertainty analysis of digital elevation models by
+spatial inference from stable terrain. *IEEE JSTARS* 15, 6456-6472.
+
+Rolstad, C., Haug, T. and Denby, B. (2009). Spatially integrated geodetic glacier
+mass balance and its uncertainty based on geostatistical analysis. *Journal of
+Glaciology* 55(192), 666-680.
 
 - Clauset, A., Shalizi, C. R., & Newman, M. E. J. (2009). Power-law
   distributions in empirical data. *SIAM Review*, 51(4), 661–703.

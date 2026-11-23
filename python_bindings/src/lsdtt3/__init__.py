@@ -42,7 +42,8 @@ Slope stability       sinmap, FlowInfo.rupture_planes -> RupturePlanes,
                       RupturePlanes.failure_probability,
                       RupturePlanes.landslide_catalogues,
                       RupturePlanes.slip_surfaces -> SlipSurfaces,
-                      landslide_frequency_area, GroundwaterDupuit (water
+                      dem_change_landslides, landslide_frequency_area,
+                      GroundwaterDupuit (water
                       table for pore pressure)
 Hillslope tagging     FlowInfo.hillslope_relief, FlowInfo.hillslope_chi_tags,
                       FlowInfo.channel_attributes_to_raster,
@@ -403,6 +404,7 @@ from ._core import (
     summarise_hillslopes_by_channel_pixel,
     sinmap,
     sinmap_slope_area_curves,
+    dem_change_landslides,
     landslide_frequency_area,
     RupturePlanes,
     SlipSurfaces,
@@ -674,6 +676,7 @@ __all__ = [
     "summarise_hillslopes_by_channel_pixel",
     "sinmap",
     "sinmap_slope_area_curves",
+    "dem_change_landslides",
     "landslide_frequency_area",
     "RupturePlanes",
     "SlipSurfaces",

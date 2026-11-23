@@ -1857,7 +1857,12 @@ apply_vertical_shift : bool, default=True
 max_horizontal_step_metres : float, default=0.0
     Cap (m) on each iteration's horizontal step; 0 means none.
 initial_dx_metres, initial_dy_metres, initial_dz_metres : float, default=0.0
-    Starting shift (m) in x, y and z.
+    Starting shift (m) in x, y and z. The final vertical shift is measured, so
+    ``initial_dz_metres`` does not change it when ``apply_vertical_shift`` is true.
+stable_mask : Raster or None, default=None
+    Non-zero on stable terrain, on the grid of ``reference``. Only these cells are
+    used to fit the shift, so that landslides, lakes or ice do not bias it. The
+    same as ``dem_coregistration_stable_mask_fname`` in lsdtt-raster-calculator.
 
 Returns
 -------
@@ -1872,7 +1877,7 @@ S. M. Mudd
 B. Gailleton
 
 ```python
-def coregister_dem(reference: lsdtt3.Raster, moving: lsdtt3.Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0) -> dict
+def coregister_dem(reference: Raster, moving: Raster, max_iterations: int = 8, offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, subsample_count: int = 500000, apply_vertical_shift: bool = True, max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0, stable_mask: Raster | None = None) -> dict
 ```
 
 ---

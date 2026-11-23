@@ -354,6 +354,45 @@ The two rasters also differ through their inputs. `lsdtt-drainage-analysis`
 computes TWI from a polynomial-fit slope (100 m window by default), whereas
 this CLI uses the D-infinity facet slope on the carved-then-filled surface.
 
+## Potential landslides from a DEM of difference
+
+With `run_dem_change_landslides: true` the tool finds candidate areas of change in
+a DEM of difference, with their uncertainty. `read_fname` is the **newer** DEM on
+the same grid. The method and its limits are in
+[Slope stability](../design_and_algorithms/slope_stability.md#potential-landslides-from-a-dem-of-difference).
+
+```
+read_fname: newer_dem.tif
+run_sinmap: false
+run_rupture_planes: false
+run_dem_change_landslides: true
+dem_difference_fname: newer_minus_older.tif
+dem_difference_stable_mask_fname: stable_terrain.tif
+dem_change_sign: both
+dem_change_min_slope: 0.1
+```
+
+Make the difference with
+[`lsdtt-raster-calculator`](cli_reference_lsdtt_raster_calculator.md), with the
+newer DEM as the first raster. If the difference is older minus newer, set
+`dem_difference_is_newer_minus_older: false`.
+
+| Output | Content |
+|---|---|
+| `_dem_change_uncertainty.csv` | Bias, NMAD, RMSE and the variogram fit |
+| `_dem_change_uncertainty_by_slope.csv` | Bias and NMAD by slope |
+| `_dem_change_variogram.csv` | Empirical and fitted semivariance |
+| `_dem_change_patches.csv` | Each patch: area, shape, change, volume, uncertainties, significance |
+| `_dem_change_coverage.csv` | Loss and gain: patches, area, share of the assessed area, volume |
+| `_dem_change_sensitivity.csv` | Patches and area at other thresholds |
+| `_dem_change_false_detection.csv` | Patches and area from noise alone |
+| `_dem_change_false_detection_by_area.csv` | Patches found and from noise alone, by size |
+| `_dem_change_frequency_area.csv`, `_fit.csv` | Binned p(A) and its power-law tail |
+| `_dem_change_corrected`, `_sigma`, `_z` | Bias-corrected change, error, and change / error |
+| `_dem_change_class`, `_label` | -1 loss, 1 gain, 0 none; patch id |
+
+Draw them with `lsdviz3-slope-stability` from lsdviztools3.
+
 ## Pipeline
 
 1. Read the DEM, handle interior nodata, then carve (least-cost breach, by
@@ -507,6 +546,25 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `write_sinmap_rasters` | `bool` | `true` | `switch` | `run_sinmap` | Write the SINMAP rasters. | &lt;write_fname&gt;_sinmap_stability_index.tif, _sinmap_stability_class.tif (1 stable, 2 moderately stable, 3 quasi-stable, 4 lower threshold, 5 upper threshold, 6 defended), _sinmap_probability_stable.tif, _sinmap_fs_min.tif, _sinmap_fs_max.tif, _sinmap_saturation.tif (3 always saturated, 2 saturated for part of the T/R range, else the wettest possible wetness in [0, 1)), _specific_catchment_area.tif (a, m) and _dinf_slope.tif (m/m). Flat cells are class 1 and nodata in the stability index and FS rasters. |
 | `write_sinmap_class_area_table` | `bool` | `true` | `switch` | `run_sinmap` | Write the area in each stability class (by region). | &lt;write_fname&gt;_sinmap_class_areas.csv: region_id (0 without a region raster), stability_class, n_cells, area_m2, fraction_of_region. |
 | `write_sinmap_slope_area_curves_table` | `bool` | `true` | `switch` | `run_sinmap` | Write the class boundaries of SINMAP's slope - specific catchment area plot. | &lt;write_fname&gt;_sinmap_slope_area_curves.csv: region_id, curve, slope (m/m), specific_catchment_area_m. Curves: always_saturated_above, never_saturated_below, fs_min_1.5, fs_min_1.0, fs_max_1.0 (manual Fig. 4, Appendix 1). Slope runs to the steepest cell, a from one cell size to the largest a. For plotting with the cell cloud. |
+
+### DEM of difference
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_dem_change_landslides` | `bool` | `false` | `switch` | - | Find potential landslides in a DEM of difference, with their uncertainty. | Needs dem_difference_fname. read_fname is the newer DEM on the same grid, used for slope. The results are CANDIDATE areas of change: vegetation, snow, water, radar penetration and DEM artefacts also change elevation between two products. |
+| `dem_difference_fname` | `string` | - | `param` | `run_dem_change_landslides` | DEM of difference (metres), for example from lsdtt-raster-calculator. | On the grid of read_fname. Read from read_path if the path is relative. |
+| `dem_difference_is_newer_minus_older` | `bool` | `true` | `param` | `run_dem_change_landslides` | The difference is newer minus older, so a loss of elevation is negative. | false: older minus newer, which is converted. lsdtt-raster-calculator writes first minus second. |
+| `dem_difference_stable_mask_fname` | `string` | - | `param` | `run_dem_change_landslides` | Raster of stable terrain (non-zero = stable), for the error model. | On the grid of read_fname. Without it every assessable cell within 4 NMAD of the median is treated as stable, which is reasonable only where change is rare. |
+| `dem_change_sign` | `string` | `loss` | `param` | `run_dem_change_landslides` | Which change to detect: loss, gain or both. | loss finds source areas (scars). Gain finds deposits, and also vegetation growth. |
+| `dem_change_detection_sigma` | `float` | `1.96` | `param` | `run_dem_change_landslides` | Multiple of the slope-dependent error at which a cell can belong to a patch. | - |
+| `dem_change_seed_sigma` | `float` | `3.0` | `param` | `run_dem_change_landslides` | A connected group of candidate cells needs one cell at this multiple. | This hysteresis keeps weak cells attached to a strong signal and drops isolated weak groups. |
+| `dem_change_patch_significance` | `float` | `1.96` | `param` | `run_dem_change_landslides` | Minimum \|mean change\| / its standard error for a patch to be kept. | The standard error allows for spatially correlated DEM error. |
+| `dem_change_min_patch_pixels` | `int` | `5` | `param` | `run_dem_change_landslides` | Smallest patch, in pixels. | - |
+| `dem_change_aggregation_radius_pixels` | `int` | `2` | `param` | `run_dem_change_landslides` | Join changed cells with up to this many unchanged cells between them. | 0 joins only cells that touch. Unchanged cells between them are not added to the patch's area or volume. Larger values merge neighbouring landslides. |
+| `dem_change_min_slope` | `float` | `0.0` | `param` | `run_dem_change_landslides` | Ignore cells with a gradient (m/m) below this. | Useful for excluding valley floors, reservoirs and farmland. |
+| `dem_change_n_slope_bins` | `int` | `10` | `param` | `run_dem_change_landslides` | Quantile bins of slope for the error model. | - |
+| `dem_change_n_null_simulations` | `int` | `20` | `param` | `run_dem_change_landslides` | Noise simulations used to estimate false detections. | Each runs the detection on Gaussian noise with the fitted error and spatial correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 turns it off. |
+| `dem_change_random_seed` | `int` | `33` | `param` | `run_dem_change_landslides` | Seed for the variogram sample and the noise simulations. | - |
 
 ### Rupture planes
 

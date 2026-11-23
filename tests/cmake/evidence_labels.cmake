@@ -584,6 +584,10 @@ lsdtt_evidence(unit_slope_stability_columns unit exact_solution property metamor
 lsdtt_evidence(unit_slope_stability_catalogue unit exact_solution property negative)  # grouping rules on hand-built rupture results; rectangle statistics in closed form; catalogue invariants through the pipeline; bad option throws
 lsdtt_evidence(unit_slope_stability_groundwater_dupuit unit exact_solution differential property negative)  # Dupuit mound/divide, kinematic plane = SINMAP wetness, exponential = TOPMODEL relation, linear decay; RK4 of the update ODE in the test; exact water budget; bad parameters throw
 lsdtt_evidence(unit_hillslope_channel_tagging unit exact_solution differential metamorphic property negative)  # V-valleys and hand-built D8 paths in closed form; ridge vs brute-force search of each group in the test; channel link and HAND = the existing routines; bounds and no rise downslope; bad options throw
+lsdtt_evidence(unit_slope_stability_dem_change unit exact_solution property negative)
+lsdtt_evidence(smoke_slope_stability_dem_change system exact_solution)
+lsdtt_evidence(failure_slope_stability_dem_change_no_difference system smoke negative)
+lsdtt_evidence(failure_slope_stability_dem_change_bad_sign system smoke negative)
 lsdtt_evidence(smoke_hillslope_channel_tagging system smoke)
 lsdtt_evidence(smoke_hillslope_channel_tagging_aspect_ray system smoke)
 lsdtt_evidence(smoke_hillslope_channel_tagging_tags system smoke)

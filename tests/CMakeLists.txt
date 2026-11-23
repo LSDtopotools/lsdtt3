@@ -3003,6 +3003,52 @@ add_lsdtt_cli_smoke_test(
 lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
 
+# lsdtt-slope-stability: potential landslides from a DEM of difference, on a
+# plane with noise, a 600-cell scar and a 300-cell deposit.
+set(LSDTT_DEM_CHANGE_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_dem_change_fixture")
+add_test(NAME fixture_slope_stability_dem_change
+    COMMAND lsdtt-test-slope-stability-dem-change --write-cli-fixture "${LSDTT_DEM_CHANGE_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_slope_stability_dem_change PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_dem_change_fixture)
+
+function(add_dem_change_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-slope-stability
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_DEM_CHANGE_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED slope_stability_dem_change_fixture)
+    endif()
+endfunction()
+
+add_dem_change_cli_test(smoke_slope_stability_dem_change
+    slope_stability_dem_change.param.in sdc_dem_change_patches.csv
+    --expect sdc_dem_change_uncertainty.csv
+    --expect sdc_dem_change_uncertainty_by_slope.csv
+    --expect sdc_dem_change_variogram.csv
+    --expect sdc_dem_change_coverage.csv
+    --expect sdc_dem_change_sensitivity.csv
+    --expect sdc_dem_change_false_detection.csv
+    --expect sdc_dem_change_false_detection_by_area.csv
+    --expect sdc_dem_change_class.tif
+    --expect sdc_dem_change_label.tif
+    --expect sdc_dem_change_sigma.tif
+    --expect sdc_dem_change_z.tif
+    --expect sdc_dem_change_corrected.tif
+    --expect-absent sdc_sinmap_stability_index.tif
+    --expect-file-contains "sdc_dem_change_coverage.csv:loss,1,540000,"
+    --expect-file-contains "sdc_dem_change_coverage.csv:gain,1,270000,"
+    --expect-raster-stat sdc_dem_change_class.tif:min:-1:-1
+    --expect-raster-stat sdc_dem_change_class.tif:max:1:1)
+add_dem_change_cli_test(failure_slope_stability_dem_change_no_difference
+    slope_stability_dem_change_no_difference.param.in unused_expected_output
+    --expect-failure --stderr-contains "needs dem_difference_fname")
+add_dem_change_cli_test(failure_slope_stability_dem_change_bad_sign
+    slope_stability_dem_change_bad_sign.param.in unused_expected_output
+    --expect-failure --stderr-contains "dem_change_sign")
+
 # Probability of failure of the rupture planes (parameter_uncertainty). The
 # numerics are in lsdtt-test-slope-stability-rupture-probability; these carry
 # the plumbing, output names and the per-region normal path.
@@ -6858,6 +6904,14 @@ lsdtt_set_tests_properties(unit_slope_stability_columns PROPERTIES
 # Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
 # each grouping rule on hand-built rupture results, statistics against closed
 # forms, and catalogue properties through compute_rupture_planes.
+# Potential landslides from a DEM of difference.
+add_executable(lsdtt-test-slope-stability-dem-change cpp/test_slope_stability_dem_change.cpp)
+target_link_libraries(lsdtt-test-slope-stability-dem-change PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_dem_change COMMAND lsdtt-test-slope-stability-dem-change)
+lsdtt_set_tests_properties(unit_slope_stability_dem_change PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
 add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
 target_link_libraries(lsdtt-test-slope-stability-catalogue PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-catalogue)

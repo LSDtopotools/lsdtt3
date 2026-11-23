@@ -30,6 +30,7 @@ default differs from it by about 2 parts in 10⁷.
 | `SlipSurfaces.failure_probability()`, `.spencer_check()`, `.body_catalogues()` | dicts | the slip-surface probability, Spencer check and body catalogues |
 | `lsdtt3.landslide_frequency_area(areas_m2, cell_area_m2, ...)` | (DataFrame, dict) | `_frequency_area.csv`, `_frequency_area_fit.csv` |
 | `lsdtt3.GroundwaterDupuit(surface, fixed_head, ...)` | the aquifer | `water_table_method` |
+| `lsdtt3.dem_change_landslides(difference, dem, ...)` | dict of tables and Rasters | `run_dem_change_landslides` |
 
 ## Routing surface, slope and area
 
@@ -130,6 +131,25 @@ aquifer.budget()                               # cumulative m3
 `run` advances one constant-recharge segment; call it once per segment of a
 recharge series, as the CLI does. `transient_method="implicit"` uses backward
 Euler with steps of at most `implicit_max_dt_s` (3600 s).
+
+## Potential landslides from a DEM of difference
+
+`dem_change_landslides` is `run_dem_change_landslides`. The keywords are the CLI's
+without the `dem_change_` and `dem_difference_` prefixes. The results are candidate
+areas of change, not mapped landslides.
+
+```python
+out = lsdtt3.dem_change_landslides(
+    difference, newer_dem, stable_mask=stable, change_sign="both", min_slope=0.1
+)
+print(out["uncertainty"]["nmad_metres"], out["false_detection"]["mean_false_area_m2"])
+patches = out["patches"]
+loss = patches[patches.change == "loss"]
+density, fit = lsdtt3.landslide_frequency_area(loss.area_m2, newer_dem.metadata.cell_size ** 2)
+```
+
+`coregister_dem(reference, moving, stable_mask=stable)` fits the shift on stable
+terrain only.
 
 ## Regions
 
