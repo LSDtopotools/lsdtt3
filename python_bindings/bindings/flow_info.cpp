@@ -583,5 +583,6 @@ Examples
     bind_channel_heads(module, flow);
     bind_slope_area(module, flow);
     bind_slope_stability(module, flow);
+    bind_hillslope_channel_tagging(module, flow);
 }
 } // namespace lsdtt3_python

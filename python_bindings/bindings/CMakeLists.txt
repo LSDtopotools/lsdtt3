@@ -26,6 +26,7 @@ nanobind_add_module(_core
     channel_heads.cpp
     slope_area.cpp
     slope_stability.cpp
+    hillslope_channel_tagging.cpp
     flow_network.cpp
     flow_graph.cpp
     hydraulic_routing.cpp

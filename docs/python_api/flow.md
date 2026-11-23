@@ -1239,6 +1239,8 @@ accumulate(weights: object | None = None) -> Raster
     Accumulate per-pixel weights downstream; default weights are cell areas.
 basins(outlets: object | None = None, min_upslope_pixels: int = 0) -> BasinCollection
     Create a ``BasinCollection`` from explicit outlet pixels or all qualifying D8 outlets.
+channel_attributes_to_raster(source: str | os.PathLike | pandas.DataFrame, channels: Raster, columns: list[str], *, max_snap_distance_metres: float = 60.0, max_gap_fill_distance_metres: float = 150.0, nodata_value: float = -9999.0) -> dict
+    Join channel attributes from points or lines onto channel pixels.
 channel_mask(threshold_contributing_pixels: int) -> Raster
     Return a 0/1 raster where contributing pixels meet the threshold.
 channel_network(scope: ChannelScope) -> ChannelNetwork
@@ -1277,6 +1279,10 @@ height_above_channel_with_donor(dem: Raster, channels: Raster) -> dict
     Compute HAND and the channel pixel ("donor") each pixel drains to.
 height_to_farthest_ridge(dem: Raster) -> Raster
     Return the elevation difference to the farthest upslope ridge pixel.
+hillslope_chi_tags(routing_surface: Raster, channel_flat: numpy.ndarray, *, outlet_flats: numpy.ndarray | None = None, chi_max_outlet_elevation_metres: float | None = None, threshold_contributing_pixels: int = 1000, m_over_n: float = 0.45, chi_A0: float = 1.0, fit_critical_divergence_metres: float = 5.0) -> dict
+    Tag hillslope pixels with the chi and k_sn of their channel pixel.
+hillslope_relief(elevation: Raster, channels: Raster, *, ridge_method: str = 'farthest', relief_grouping: str = 'channel_pixel', aspect_surface: Raster | None = None, aspect_method: str = 'polyfit', polyfit_lambda_metres: float = 70.0, n_threads: int = 0) -> dict
+    HAND, ridge relief and relative height of every hillslope pixel.
 is_outlet(row: int, col: int) -> bool
     Return True if the pixel is an outlet (has no downstream receiver).
 is_upslope(candidate_row: int, candidate_col: int, target_row: int, target_col: int) -> bool
@@ -1389,6 +1395,48 @@ def basins(self, outlets: object | None = None, min_upslope_pixels: int = 0) -> 
 #### `boundary_conditions`
 
 The four-character NESW boundary-condition string used.
+
+#### `channel_attributes_to_raster`
+
+channel_attributes_to_raster(self, source: str | os.PathLike | pandas.DataFrame, channels: Raster, columns: list[str], *, max_snap_distance_metres: float = 60.0, max_gap_fill_distance_metres: float = 150.0, nodata_value: float = -9999.0) -> dict
+
+Join channel attributes from points or lines onto channel pixels.
+
+lsdtt-hillslope-channel-tagging ``channel_attributes_fname``, the same reader
+and join; the keyword names are the CLI's less the ``channel_attribute_``
+prefix. Records with ``row``, ``col`` and ``flat`` join exactly; others snap to
+the nearest channel pixel. Several records on a pixel give their median. A
+channel pixel with no record takes the nearest record on its own
+junction-to-junction link, and filling never crosses a junction.
+
+Parameters
+----------
+source : str, os.PathLike, pandas.DataFrame or geopandas.GeoDataFrame
+    A CSV or vector file, or a table. A DataFrame needs ``row``, ``col`` and
+    ``flat``, or ``latitude`` and ``longitude``. A GeoDataFrame needs a CRS.
+channels : Raster
+    Nonzero = channel pixel.
+columns : list of str
+    Numeric columns to join.
+max_snap_distance_metres : float, default=60.0, keyword-only
+    Furthest a record can be from the channel pixel it joins.
+max_gap_fill_distance_metres : float, default=150.0, keyword-only
+    Furthest along the channel a value can fill a gap; 0 turns filling off.
+nodata_value : float, default=-9999.0, keyword-only
+    Attribute value meaning no data. Empty and NaN are always no data.
+
+Returns
+-------
+dict
+    ``values`` (column name to Raster, valid on channel pixels), ``counts``
+    (column name to ``n_direct``, ``n_multiple_records``, ``n_filled``,
+    ``n_missing``), ``n_channel_pixels``, ``n_records``, ``n_records_matched``,
+    ``n_records_dropped``, ``n_records_snapped_beyond_one_cell`` and
+    ``n_exact_samples_off_channel``.
+
+```python
+def channel_attributes_to_raster(self, source: str | os.PathLike | pandas.DataFrame, channels: Raster, columns: list[str], *, max_snap_distance_metres: float = 60.0, max_gap_fill_distance_metres: float = 150.0, nodata_value: float = -9999.0) -> dict
+```
 
 #### `channel_mask`
 
@@ -1882,6 +1930,94 @@ Raster
 
 ```python
 def height_to_farthest_ridge(self, dem: lsdtt3.Raster) -> lsdtt3.Raster
+```
+
+#### `hillslope_chi_tags`
+
+hillslope_chi_tags(self, routing_surface: Raster, channel_flat: numpy.ndarray, *, outlet_flats: numpy.ndarray | None = None, chi_max_outlet_elevation_metres: float | None = None, threshold_contributing_pixels: int = 1000, m_over_n: float = 0.45, chi_A0: float = 1.0, fit_critical_divergence_metres: float = 5.0) -> dict
+
+Tag hillslope pixels with the chi and k_sn of their channel pixel.
+
+lsdtt-hillslope-channel-tagging ``tag_chi`` and ``tag_k_sn``, the same routine.
+Give exactly one of ``outlet_flats`` and ``chi_max_outlet_elevation_metres``,
+because chi needs a true baselevel. Basins with a pixel on the grid edge are
+always excluded; their hillslopes are nodata and counted.
+
+Parameters
+----------
+routing_surface : Raster
+    The routing surface this FlowInfo was built from.
+channel_flat : numpy.ndarray
+    From ``hillslope_relief``.
+outlet_flats : numpy.ndarray or None, default=None, keyword-only
+    Flat indices of the valid basins' outlets.
+chi_max_outlet_elevation_metres : float or None, default=None, keyword-only
+    Every baselevel basin with its outlet at or below this elevation.
+threshold_contributing_pixels : int, default=1000, keyword-only
+    Channel source threshold of the fitted network.
+m_over_n : float, default=0.45, keyword-only
+    Concavity index.
+chi_A0 : float, default=1.0, keyword-only
+    Reference drainage area (m^2).
+fit_critical_divergence_metres : float, default=5.0, keyword-only
+    Critical elevation divergence used to split chi-elevation branches.
+
+Returns
+-------
+dict
+    ``chi`` and ``k_sn``, each a dict with ``tag`` (Raster) and the counts of
+    ``tag_hillslopes_from_channel``; ``basins``, a dict with ``outlets`` and the
+    numbers excluded; ``n_fitted_nodes`` and ``n_segments``.
+
+```python
+def hillslope_chi_tags(self, routing_surface: Raster, channel_flat: numpy.ndarray, *, outlet_flats: numpy.ndarray | None = None, chi_max_outlet_elevation_metres: float | None = None, threshold_contributing_pixels: int = 1000, m_over_n: float = 0.45, chi_A0: float = 1.0, fit_critical_divergence_metres: float = 5.0) -> dict
+```
+
+#### `hillslope_relief`
+
+hillslope_relief(self, elevation: Raster, channels: Raster, *, ridge_method: str = 'farthest', relief_grouping: str = 'channel_pixel', aspect_surface: Raster | None = None, aspect_method: str = 'polyfit', polyfit_lambda_metres: float = 70.0, n_threads: int = 0) -> dict
+
+HAND, ridge relief and relative height of every hillslope pixel.
+
+lsdtt-hillslope-channel-tagging, the same routine; the keyword names are the
+CLI's less the ``hillslope_`` prefix. Each hillslope pixel is linked to the
+first channel pixel on its D8 path, whichever ridge method is used, and
+relative height is HAND / ridge relief. With ``farthest`` and a shared group
+it can exceed 1: it is not clipped, and is counted in ``n_above_ridge``.
+
+Parameters
+----------
+elevation : Raster
+    The routing surface this FlowInfo was built from.
+channels : Raster
+    Nonzero = channel pixel.
+ridge_method : str, default="farthest", keyword-only
+    ``farthest``, ``highest`` or ``aspect_ray``.
+relief_grouping : str, default="channel_pixel", keyword-only
+    Pixels sharing a ridge, for farthest and highest: ``channel_pixel``,
+    ``entry_pixel`` or ``pixel``.
+aspect_surface : Raster or None, default=None, keyword-only
+    Surface for the polyfit aspect of ``aspect_ray``, required there. The CLI
+    uses the input DEM by default.
+aspect_method : str, default="polyfit", keyword-only
+    ``polyfit`` or ``dinf`` (from ``elevation``), for ``aspect_ray``.
+polyfit_lambda_metres : float, default=70.0, keyword-only
+    Polyfit half-wavelength for the aspect.
+n_threads : int, default=0, keyword-only
+    OpenMP threads; the result does not depend on it.
+
+Returns
+-------
+dict
+    ``channel_flat``, ``entry_flat``, ``ridge_flat`` (1-D int64 arrays, -1 where
+    undefined); Rasters ``ridge_status``, ``hand``, ``ridge_relief``,
+    ``relative_height``, ``channel_distance``, ``ridge_distance``; and the
+    counts ``n_channel``, ``n_hillslope``, ``n_no_channel``, ``n_zero_relief``,
+    ``n_above_ridge``, ``n_crest_divide``, ``n_ray_channel``,
+    ``n_ray_boundary``, ``n_no_aspect``.
+
+```python
+def hillslope_relief(self, elevation: Raster, channels: Raster, *, ridge_method: str = 'farthest', relief_grouping: str = 'channel_pixel', aspect_surface: Raster | None = None, aspect_method: str = 'polyfit', polyfit_lambda_metres: float = 70.0, n_threads: int = 0) -> dict
 ```
 
 #### `is_outlet`

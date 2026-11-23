@@ -3,6 +3,10 @@
 !!! warning "Experimental"
     This CLI is under development. Its routines are tested against analytic
     and hand-built cases, but its options and output names may still change.
+    The method is in
+    [Hillslope-channel tagging](../design_and_algorithms/hillslope_channel_tagging.md),
+    and the [Python guide](../python/hillslope_channel_tagging.md) shows the same
+    steps in Python.
 
 ## Intent
 

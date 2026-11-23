@@ -44,6 +44,10 @@ Slope stability       sinmap, FlowInfo.rupture_planes -> RupturePlanes,
                       RupturePlanes.slip_surfaces -> SlipSurfaces,
                       landslide_frequency_area, GroundwaterDupuit (water
                       table for pore pressure)
+Hillslope tagging     FlowInfo.hillslope_relief, FlowInfo.hillslope_chi_tags,
+                      FlowInfo.channel_attributes_to_raster,
+                      tag_hillslopes_from_channel,
+                      summarise_hillslopes_by_channel_pixel
 Synthetic landscapes  synthetic_noise, synthetic_mountain_range,
                       synthetic_network
 Statistics            BasinCollection.statistics, basin_surface_metrics,
@@ -395,6 +399,8 @@ from ._core import (
     run_landslide_series,
     landslide_crn_concentration,
     landslide_crn_concentrations,
+    tag_hillslopes_from_channel,
+    summarise_hillslopes_by_channel_pixel,
     sinmap,
     sinmap_slope_area_curves,
     landslide_frequency_area,
@@ -664,6 +670,8 @@ __all__ = [
     "run_landslide_series",
     "landslide_crn_concentration",
     "landslide_crn_concentrations",
+    "tag_hillslopes_from_channel",
+    "summarise_hillslopes_by_channel_pixel",
     "sinmap",
     "sinmap_slope_area_curves",
     "landslide_frequency_area",
