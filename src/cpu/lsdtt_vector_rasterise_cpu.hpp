@@ -155,6 +155,39 @@ vector_layer_grid_geometry read_vector_layer_on_grid(
     const std::string&      layer_name = "");
 
 // -----------------------------------------------------------------------------
+// rasterise_polygon_features_separately
+//
+// The cells of each polygon feature of one layer (empty `layer_name`: the
+// first), rasterised one feature at a time so that overlapping polygons keep
+// their own cells. Polygons are reprojected to the grid's CRS. A cell belongs
+// to a polygon when its centre is inside; a polygon too small to contain any
+// cell centre takes the cells it touches instead (used_all_touched).
+// `id_field_name` empty: ids are the feature index (0-based, in layer order);
+// otherwise the field's value as text (std::invalid_argument, listing the
+// fields, if the layer has no such field). Features that miss the grid, have no
+// geometry or are not polygons are counted and skipped.
+// -----------------------------------------------------------------------------
+struct polygon_feature_cells
+{
+    std::string               id;
+    int                       feature_index = -1;
+    std::vector<std::int64_t> cells;            // row-major flat indices
+    bool                      used_all_touched = false;
+};
+struct polygon_features_on_grid
+{
+    std::vector<polygon_feature_cells> features;
+    int n_outside_grid = 0;
+    int n_not_polygon  = 0;
+    std::string layer_name;
+};
+polygon_features_on_grid rasterise_polygon_features_separately(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    const std::string&      layer_name = "",
+    const std::string&      id_field_name = "");
+
+// -----------------------------------------------------------------------------
 // rasterise_polylines
 //
 // Burns linestring (or multilinestring) features from the first layer of

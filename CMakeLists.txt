@@ -467,6 +467,7 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_slope_stability_catalogue_cpu.cpp
     src/cpu/lsdtt_slope_stability_dem_change_cpu.cpp
     src/cpu/lsdtt_slope_stability_hazard_area_cpu.cpp
+    src/cpu/lsdtt_slope_stability_scar_drape_cpu.cpp
     src/cpu/lsdtt_slope_stability_slip_surface_cpu.cpp
     src/cpu/lsdtt_slope_stability_columns_cpu.cpp
     src/cpu/lsdtt_groundwater_dupuit_cpu.cpp

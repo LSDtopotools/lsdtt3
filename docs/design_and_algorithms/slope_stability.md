@@ -23,6 +23,7 @@ run `lsdtt-slope-stability -h` for the same list. The
 | Ellipsoids, 3-D (method of columns; after Mergili et al. 2014) | How much does side resistance add? | Slides of low length-to-width ratio | F per crown and the lowest F covering each cell |
 | Dupuit groundwater (after Litwin et al. 2020) | Where is the water table, and how does a storm raise it? | (Supplies pore pressure to the others) | Water-table depth, saturated thickness, seepage |
 | Coseismic hazard area (SHALRUN-EQ; Milledge et al. 2019) | Which cells could debris from steep ground reach during an earthquake? | Initiation and run-out, from slope thresholds alone | Hazard area $A_h$ (m²/m) |
+| Scar drape volumes | How much material left each mapped scar, given only a post-event DEM? | (Measures failures that happened) | Volume, mean and maximum depth per scar; V = αA^γ |
 | Probability of failure | How likely is failure given uncertain cohesion and friction? | (Applies to the rupture planes, slip surfaces and ellipsoids) | P(F ≤ 1), with the mean and SD of F |
 
 The models build on each other. The rupture planes seed the slip surfaces and
@@ -340,6 +341,66 @@ arrives, sources may lie outside the DEM and $A_h$ may be too low; the
 depend on the DEM, its resolution and the study area, so they do not transfer
 directly to another site.
 
+## Scar volumes from a draped cloth
+
+Landslide volumes are best measured by differencing DEMs from before and after
+an event, but usually only a post-event DEM and a mapped inventory exist.
+`run_scar_drape_volumes` reconstructs the pre-event surface over each scar with
+a cloth and integrates the gap.
+
+**The problem solved.** For one scar, let $\Omega$ be the polygon's cells grown
+by `scar_drape_rim_buffer_pixels` (8-connected), and $\partial\Omega$ the cells
+4-adjacent to $\Omega$ outside it. The cloth $z$ satisfies
+
+$$
+\nabla^2 z = s \ \text{where } z > z_{\text{DEM}}, \qquad z \ge z_{\text{DEM}} \ \text{in } \Omega, \qquad z = z_{\text{DEM}} \ \text{on } \partial\Omega,
+$$
+
+an obstacle problem: the shape of a membrane under tension, held on the rim and
+resting on any ground that rises into it. $s \ge 0$ is the sag curvature
+(`scar_drape_sag_curvature_per_metre`, 1/m). $s = 0$ is a taut cloth, harmonic
+where it is clear of the ground. It is discretised with the 5-point Laplacian
+and solved by projected successive over-relaxation, with
+$\omega = 2/(1 + \sin(\pi/N))$ for a window $N$ cells across. The problem is
+convex, so the solution is unique. Cells off the DEM or with nodata carry no
+flux and are counted. Scars are independent and run in parallel. The volume is
+$\sum (z - z_{\text{DEM}})\,\Delta x^2$ over the mapped cells, and also over
+$\Omega$.
+
+**Relation to the cloth in `lsdtt-surface-metrics`.** That cloth (after Zhang et
+al. 2016) falls under constant gravity and rests where its spring force
+balances gravity. Away from the ground each cell then sits gravity/rigidity
+metres below its neighbours' mean, so the sag depends on the grid. Here the
+resting shape is solved directly, and the sag is a curvature in physical units.
+With the cloth pinned outside the scar and gravity set to zero, the two give the
+same surface.
+
+**What it can and cannot recover.** Linear interpolation across the scar is
+exact on a planar slope. Across a convex nose it lies too low (volume too
+small), and across a hollow, or a scar cut into an older gully, too high (volume
+too large). Deposits left in the scar, or a polygon drawn inside the crown, put
+the ring or the floor too high and the volume too low.
+
+**Test against repeat lidar.** In Gleann Easan Biorach (Arran) the 2012
+Phase 2 and 2025 National LiDAR Programme DTMs (1 m) give 115 scars of at least
+10 m² with lowering of at least 0.3 m. Draping the 2025 DTM over their outlines,
+with the outlines taken from the difference itself:
+
+| Rim buffer (cells) | Total vs. differencing | Median per-scar ratio (IQR) | r, log volumes |
+|---|---|---|---|
+| 0 | 0.76 | 0.38 (0.16–0.77) | 0.88 |
+| 1 | 1.27 | 0.91 (0.40–1.43) | 0.86 |
+| 2 | 1.68 | 1.18 (0.65–1.80) | 0.85 |
+
+Draping the 2012 DTM over the same outlines, where the answer should be zero,
+gives 21 %, 50 % and 84 % of the differenced volume. These scars enlarge
+existing gullies, so the cloth also spans the older gully. With no buffer the
+ring lies on ground that was itself lowered by less than the 0.3 m threshold.
+The drape ranks scars by volume well, but the total depends on where the rim is
+placed to within a factor of about two. This site is a hard case. Discrete
+shallow slides on planar slopes, with polygons drawn to the crown, should do
+better, and should be checked against repeat surveys where they exist.
+
 ## Design decisions
 
 These are the choices that shape the results:
@@ -426,6 +487,13 @@ against analytic solutions on analytic surfaces, in the CTest compartment
   profile; ordinary MFD accumulation when both thresholds are off; conservation of
   source area; hazard never rising with either threshold; the $A_h = 0$ cells against
   a brute-force search from every source.
+- **Scar drape** (`unit_slope_stability_scar_drape`): a pit dug into a planar
+  slope restored exactly (volume to 2 × 10⁻⁶) for rim buffers of 0, 1 and 3; the
+  Poisson square, centre at −0.0736713 s L², within 0.03 % on a 2 m grid and
+  0.008 % on a 1 m grid; the cloth never below the ground and resting on a
+  pillar; DEM edges, nodata rings, overlapping scars; the volume - area fit;
+  polygons read from a GeoPackage, with ids, the cell-centre rule, small
+  polygons, overlap and a missing field.
 - **The CLI**: smoke tests of every family and option, and refusals of invalid
   parameter files.
 
@@ -452,6 +520,10 @@ models. *Hydrological Processes* 5, 59-79.
 Rolstad, C., Haug, T. and Denby, B. (2009). Spatially integrated geodetic glacier
 mass balance and its uncertainty based on geostatistical analysis. *Journal of
 Glaciology* 55(192), 666-680.
+
+Zhang, W., Qi, J., Wan, P., Wang, H., Xie, D., Wang, X. and Yan, G. (2016). An
+easy-to-use airborne LiDAR data filtering method based on cloth simulation.
+*Remote Sensing* 8(6), 501. https://doi.org/10.3390/rs8060501
 
 - Clauset, A., Shalizi, C. R., & Newman, M. E. J. (2009). Power-law
   distributions in empirical data. *SIAM Review*, 51(4), 661–703.

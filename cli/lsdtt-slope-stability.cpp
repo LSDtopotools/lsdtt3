@@ -77,6 +77,8 @@
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_hazard_area_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_scar_drape_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_columns_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
@@ -713,6 +715,73 @@ int main(int argc, char* argv[])
         "and below coseismic_hazard_initiation_slope. Default from Milledge et al. (2019) on "
         "30 m DEMs; depends on DEM resolution.",
         "Coseismic hazard area", "param", "run_coseismic_hazard_area"};
+
+    // --- Scar volumes from a cloth draped over a landslide inventory ---
+    bool_default_map["run_scar_drape_volumes"] = false;
+    help_map["run_scar_drape_volumes"] = {"bool", "false",
+        "Estimate the volume of each mapped landslide scar with a cloth draped over it.",
+        "read_fname is the POST-event DEM; landslide_inventory_fname holds the scar polygons. "
+        "For each scar a cloth is held at the ground on a ring just outside the scar "
+        "(scar_drape_rim_buffer_pixels) and is free inside it, but may not pass below the "
+        "ground. Its resting shape estimates the pre-event surface; the volume is the cloth "
+        "minus the DEM. A taut cloth interpolates linearly across the scar, so it is exact "
+        "on a planar slope, too shallow across a convex nose and too deep across a hollow. "
+        "Uses the input DEM (no carving or filling). Outputs: <write_fname>_scar_drape_volumes.csv, "
+        "_scar_drape_volume_area_fit.csv and (write_scar_drape_rasters) _scar_drape_surface.tif, "
+        "_scar_drape_depth.tif, _scar_drape_label.tif.",
+        "Scar drape volumes", "switch", ""};
+    string_default_map["landslide_inventory_fname"] = "";
+    help_map["landslide_inventory_fname"] = {"string", "",
+        "Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...).",
+        "Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it "
+        "around the source area only, not the runout, and to the crown, so that the ring "
+        "outside it is undisturbed ground. Read from read_path if the path is relative.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["landslide_inventory_layer_name"] = "";
+    help_map["landslide_inventory_layer_name"] = {"string", "",
+        "Layer of landslide_inventory_fname to read.", "Empty: the first layer.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["landslide_inventory_id_field_name"] = "";
+    help_map["landslide_inventory_id_field_name"] = {"string", "",
+        "Attribute that identifies each scar in the outputs.",
+        "Empty: the feature's position in the layer (0-based). The run stops, listing the "
+        "fields, if the layer has no such field.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_rim_buffer_pixels"] = 1;
+    help_map["scar_drape_rim_buffer_pixels"] = {"int", "1",
+        "Cells added around each scar polygon before the cloth is held at the ground.",
+        "The cloth is free over the polygon grown by this many cells (8-connected) and held "
+        "on the ring of cells just outside that. 1 tolerates a polygon drawn slightly inside "
+        "the crown; larger values move the ring further onto stable ground but take in more "
+        "of the surrounding slope. Volumes are reported over the polygon and over the free "
+        "area.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_sag_curvature_per_metre"] = 0.0f;
+    help_map["scar_drape_sag_curvature_per_metre"] = {"float", "0.0",
+        "Curvature (1/m) the cloth takes where it hangs clear of the ground.",
+        "0: a taut cloth (harmonic surface between the rim and the ground it rests on). A "
+        "positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so "
+        "0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the "
+        "result does not depend on the grid.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_tolerance_metres"] = 1.0e-5f;
+    help_map["scar_drape_tolerance_metres"] = {"float", "1e-05",
+        "Stop when the cloth moves less than this in one sweep (m).",
+        "Scars that reach scar_drape_max_iterations first are reported with status "
+        "not_converged.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_max_iterations"] = 100000;
+    help_map["scar_drape_max_iterations"] = {"int", "100000",
+        "Largest number of relaxation sweeps per scar.",
+        "Over-relaxation needs a few times the scar's width in cells.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    bool_default_map["write_scar_drape_rasters"] = true;
+    help_map["write_scar_drape_rasters"] = {"bool", "true",
+        "Write the draped surface, the depth and the scar labels as rasters.",
+        "<write_fname>_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth "
+        "minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where "
+        "scars overlap the deeper cloth is kept.",
+        "Scar drape volumes", "switch", "run_scar_drape_volumes"};
 
     bool_default_map["run_rupture_planes"] = true;
     help_map["run_rupture_planes"] = {"bool", "true",
@@ -1488,7 +1557,21 @@ int main(int argc, char* argv[])
             lsdtt::validate_coseismic_hazard_area_options(hazard_area);
         }
 
-        if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area)
+        const bool run_scar_drape = bf.at("run_scar_drape_volumes");
+        lsdtt::scar_drape_options scar_drape;
+        if (run_scar_drape)
+        {
+            if (sf.at("landslide_inventory_fname").empty())
+                throw std::runtime_error("run_scar_drape_volumes needs landslide_inventory_fname");
+            scar_drape.rim_buffer_pixels = ii.at("scar_drape_rim_buffer_pixels");
+            scar_drape.sag_curvature_per_metre = ff.at("scar_drape_sag_curvature_per_metre");
+            scar_drape.tolerance_metres = ff.at("scar_drape_tolerance_metres");
+            scar_drape.max_iterations = ii.at("scar_drape_max_iterations");
+            scar_drape.n_threads = ii.at("n_threads");
+            lsdtt::validate_scar_drape_options(scar_drape);
+        }
+
+        if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area && !run_scar_drape)
         {
             std::cout << "No analysis is switched on: nothing to compute.\n";
             parser.print_parameters();
@@ -1507,6 +1590,103 @@ int main(int argc, char* argv[])
                          ii.at("nodata_fill_max_iter"), ii.at("n_threads"))
                   << "\n";
         const lsdtt::lsdtt_raster_cpu input_dem = dem;
+
+        // Scar volumes from a cloth draped over a landslide inventory. Uses the
+        // input DEM (no carving or filling).
+        if (run_scar_drape)
+        {
+            std::cout << "\n--- Scar volumes from a draped cloth ---\n";
+            const std::string inv_path = resolve_input(parser.get_read_path(), sf.at("landslide_inventory_fname"));
+            const lsdtt::polygon_features_on_grid inv = lsdtt::rasterise_polygon_features_separately(
+                input_dem, inv_path, sf.at("landslide_inventory_layer_name"), sf.at("landslide_inventory_id_field_name"));
+            std::cout << "Inventory " << inv_path << " (layer " << inv.layer_name << "): " << inv.features.size()
+                      << " scars on the DEM; " << inv.n_outside_grid << " off it; " << inv.n_not_polygon
+                      << " not polygons\n";
+            std::vector<lsdtt::scar_drape_feature> features;
+            features.reserve(inv.features.size());
+            for (const auto& f : inv.features)
+                features.push_back({f.id, f.feature_index, f.cells, f.used_all_touched});
+            const lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+
+            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0;
+            double v_total = 0.0, a_total = 0.0;
+            for (const auto& r : drape.records)
+            {
+                if (r.status == "ok") ++n_ok;
+                if (r.status == "not_converged") ++n_not_conv;
+                if (r.touches_grid_edge) ++n_edge;
+                if (r.n_rim_invalid > 0) ++n_rim_gap;
+                v_total += r.mapped_volume_m3;
+                a_total += r.mapped_area_m2;
+            }
+            const lsdtt::scar_volume_area_fit fit = lsdtt::fit_scar_volume_area(drape.records);
+            std::cout << "Scars: " << drape.records.size() << " (" << n_ok << " ok, " << n_not_conv
+                      << " not converged, " << n_edge << " at the DEM edge, " << n_rim_gap
+                      << " with gaps in the rim); area " << number_string(a_total) << " m2, volume "
+                      << number_string(v_total) << " m3\n";
+            if (fit.n >= 3)
+                std::cout << "Volume - area: V = " << number_string(fit.alpha) << " A^" << number_string(fit.gamma)
+                          << " (+/- " << number_string(fit.gamma_standard_error) << ", r2 "
+                          << number_string(fit.r_squared) << ", n " << fit.n << ")\n";
+            if (drape.n_overlap_cells > 0)
+                std::cout << "Note: " << drape.n_overlap_cells << " cells lie in more than one scar; each scar's "
+                             "volume counts them.\n";
+
+            const std::string vol_path = base + "_scar_drape_volumes.csv";
+            {
+                std::ofstream f(vol_path);
+                if (!f) throw std::runtime_error("Cannot write " + vol_path);
+                f << std::setprecision(10);
+                f << "scar_id,feature_index,status,mapped_area_m2,mapped_volume_m3,mean_depth_m,max_depth_m,"
+                     "free_area_m2,free_volume_m3,centroid_x,centroid_y,n_mapped_cells,n_free_cells,n_rim_cells,"
+                     "n_rim_invalid,n_nodata_inside,n_contact_cells,touches_grid_edge,used_all_touched,iterations,"
+                     "final_change_m\n";
+                for (const auto& r : drape.records)
+                {
+                    std::string id = r.id;
+                    if (id.find_first_of(",\"\n") != std::string::npos)
+                    {
+                        std::string q = "\"";
+                        for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                        id = q + "\"";
+                    }
+                    f << id << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
+                      << r.mapped_volume_m3 << ',' << r.mean_depth_m << ',' << r.max_depth_m << ',' << r.free_area_m2
+                      << ',' << r.volume_m3 << ',' << r.centroid_x << ',' << r.centroid_y << ',' << r.n_mapped_cells
+                      << ',' << r.n_free_cells << ',' << r.n_rim_cells << ',' << r.n_rim_invalid << ','
+                      << r.n_nodata_inside << ',' << r.n_contact_cells << ',' << (r.touches_grid_edge ? 1 : 0) << ','
+                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << '\n';
+                }
+            }
+            std::cout << "  wrote " << vol_path << "\n";
+            const std::string fit_path = base + "_scar_drape_volume_area_fit.csv";
+            {
+                std::ofstream f(fit_path);
+                if (!f) throw std::runtime_error("Cannot write " + fit_path);
+                f << std::setprecision(10) << "quantity,value\n"
+                  << "n_scars_fitted," << fit.n << "\nalpha_m3_per_m2gamma," << fit.alpha << "\ngamma," << fit.gamma
+                  << "\ngamma_standard_error," << fit.gamma_standard_error << "\nr_squared," << fit.r_squared
+                  << "\ntotal_mapped_area_m2," << a_total << "\ntotal_mapped_volume_m3," << v_total
+                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels << "\nsag_curvature_per_metre,"
+                  << scar_drape.sag_curvature_per_metre << "\n";
+            }
+            std::cout << "  wrote " << fit_path << "\n";
+            if (bf.at("write_scar_drape_rasters"))
+            {
+                write_raster(drape.surface, base + "_scar_drape_surface.tif");
+                write_raster(drape.depth, base + "_scar_drape_depth.tif");
+                write_raster(drape.label, base + "_scar_drape_label.tif");
+            }
+            lsdtt::lsdtt_run_record::add_provenance("scar_drape_n_scars", std::to_string(drape.records.size()));
+            lsdtt::lsdtt_run_record::add_provenance("scar_drape_total_volume_m3", number_string(v_total));
+
+            if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
+            }
+        }
 
         // Potential landslides from a DEM of difference. It uses the input DEM
         // (no carving or filling), so it runs before the routing surface.

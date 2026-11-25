@@ -6962,6 +6962,14 @@ lsdtt_set_tests_properties(unit_slope_stability_hazard_area PROPERTIES
     LABELS "slope_stability"
     PASS_REGULAR_EXPRESSION "RESULT: PASS")
 
+# Scar volumes from a draped cloth (src/cpu/lsdtt_slope_stability_scar_drape_cpu).
+add_executable(lsdtt-test-slope-stability-scar-drape cpp/test_slope_stability_scar_drape.cpp)
+target_link_libraries(lsdtt-test-slope-stability-scar-drape PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_scar_drape COMMAND lsdtt-test-slope-stability-scar-drape)
+lsdtt_set_tests_properties(unit_slope_stability_scar_drape PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
 add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
 target_link_libraries(lsdtt-test-slope-stability-catalogue PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-catalogue)

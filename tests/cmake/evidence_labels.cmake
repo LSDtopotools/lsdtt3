@@ -589,6 +589,7 @@ lsdtt_evidence(smoke_slope_stability_dem_change system exact_solution)
 lsdtt_evidence(failure_slope_stability_dem_change_no_difference system smoke negative)
 lsdtt_evidence(failure_slope_stability_dem_change_bad_sign system smoke negative)
 lsdtt_evidence(unit_slope_stability_hazard_area unit exact_solution differential property negative)  # Milledge et al. (2019) Fig. 2 (two figure cells corrected to eqs. 6-9); exact profile; MFD accumulation limit; conservation; monotonic thresholds; Ah = 0 vs brute-force reachability; bad options throw
+lsdtt_evidence(unit_slope_stability_scar_drape unit exact_solution metamorphic property negative)  # pit in a planar slope restored exactly; Poisson square centre -0.0736713 s L^2 at two grid spacings; cloth never below ground; overlap, edge, nodata; GeoPackage polygons read back; bad options and missing field refused
 lsdtt_evidence(smoke_slope_stability_hazard_area system exact_solution)
 lsdtt_evidence(failure_slope_stability_hazard_area_bad_slopes system smoke negative)
 lsdtt_evidence(smoke_slope_stability_rupture_pga system smoke)

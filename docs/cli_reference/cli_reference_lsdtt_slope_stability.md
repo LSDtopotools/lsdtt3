@@ -414,6 +414,47 @@ Both thresholds are gradients (m/m). The defaults come from 30 m DEMs and depend
 resolution. The method, its limits and its differences from the paper are in
 [Slope stability](../design_and_algorithms/slope_stability.md#coseismic-hazard-area).
 
+## Scar volumes from a landslide inventory
+
+`run_scar_drape_volumes: true` estimates the volume of each mapped scar from a
+post-event DEM and an inventory of scar polygons, when there is no pre-event
+DEM. For each scar a cloth is held at the ground on a ring of cells just
+outside the scar and is free inside it, but cannot pass below the ground. Its
+resting shape estimates the pre-event surface, and the cloth minus the DEM is
+the depth removed.
+
+```yaml
+read_fname: post_event_dem.tif
+write_fname: my_event
+run_sinmap: false
+run_rupture_planes: false
+run_scar_drape_volumes: true
+landslide_inventory_fname: scars.gpkg
+landslide_inventory_id_field_name: slide_id
+scar_drape_rim_buffer_pixels: 1
+```
+
+The inventory can be any vector format GDAL reads (shapefile, GeoPackage,
+FlatGeobuf), in any CRS. Draw each polygon around the source area only, out
+to the crown, so that the ring outside it is undisturbed ground.
+
+| Output | Content |
+|---|---|
+| `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence |
+| `_scar_drape_volume_area_fit.csv` | Least-squares fit of V = α A^γ over the scars with status `ok` |
+| `_scar_drape_surface.tif`, `_depth.tif`, `_label.tif` | Draped surface, depth (m) and scar label (position in the layer + 1); where scars overlap, the deeper cloth |
+
+**What it gets right and wrong.** A taut cloth spans a scar linearly between
+its rims. On a planar slope it restores the slope exactly. Across a convex
+nose it lies too low, so the volume is too small. Across a hollow, or a scar cut
+into an older gully, it lies too high, so the volume is too large. The rim
+buffer trades two errors against each other. With no buffer, a polygon drawn
+inside the crown puts the ring on disturbed ground and the volume is too small.
+A wide buffer takes in more of the surrounding slope's curvature.
+`scar_drape_sag_curvature_per_metre` lets the cloth sag, which lowers volumes.
+The method and a test against repeat lidar are in
+[Slope stability](../design_and_algorithms/slope_stability.md#scar-volumes-from-a-draped-cloth).
+
 ## Pipeline
 
 1. Read the DEM, handle interior nodata, then carve (least-cost breach, by
@@ -439,7 +480,8 @@ resolution. The method, its limits and its differences from the paper are in
    the two catalogues.
 
 With `run_coseismic_hazard_area`, the hazard area is computed on the routing
-surface after step 1.
+surface after step 1. `run_scar_drape_volumes` and `run_dem_change_landslides`
+use the input DEM after step 1's nodata handling, before carving and filling.
 
 ## Usage
 
@@ -488,6 +530,8 @@ lsdtt-slope-stability -h
 | `<write_fname>_hazard_area_zone.tif` | 0 transit, 1 source, 2 stopping |
 | `<write_fname>_hazard_area_edge_influenced.tif` | 1 where debris from a DEM-edge cell arrives, so A_h may be a lower bound |
 | `<write_fname>_hazard_area_summary.csv` | the thresholds, cell counts and source area |
+| `<write_fname>_scar_drape_volumes.csv`, `_scar_drape_volume_area_fit.csv` | per-scar volumes from a draped cloth, and the volume - area fit |
+| `<write_fname>_scar_drape_surface.tif`, `_scar_drape_depth.tif`, `_scar_drape_label.tif` | draped surface, depth removed (m) and scar label |
 | `<write_fname>_water_table_depth.tif`, `_saturated_thickness.tif`, `_seepage.tif` | the groundwater state used for pore pressure |
 | `<write_fname>_t<time>s_water_table_depth.tif`, `_t<time>s_rupture_safety_factor.tif` | the same at each transient output time |
 | `<write_fname>_groundwater_time_series.csv` | storage, saturated cells and unstable cells at each output time |
@@ -603,6 +647,20 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `coseismic_hazard_initiation_slope` | `float` | `0.839` | `param` | `run_coseismic_hazard_area` | Gradient (m/m) at or above which a cell can initiate a landslide. | Default from the six-earthquake average of Milledge et al. (2019) on 30 m DEMs. An effective value that depends on DEM resolution, not a material property. |
 | `coseismic_hazard_stopping_slope` | `float` | `0.176` | `param` | `run_coseismic_hazard_area` | Gradient (m/m) below which run-out stops. | A gentler cell is still reached and counted, but passes nothing on. Must be above 0 and below coseismic_hazard_initiation_slope. Default from Milledge et al. (2019) on 30 m DEMs; depends on DEM resolution. |
 
+### Scar drape volumes
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `run_scar_drape_volumes` | `bool` | `false` | `switch` | - | Estimate the volume of each mapped landslide scar with a cloth draped over it. | read_fname is the POST-event DEM; landslide_inventory_fname holds the scar polygons. For each scar a cloth is held at the ground on a ring just outside the scar (scar_drape_rim_buffer_pixels) and is free inside it, but may not pass below the ground. Its resting shape estimates the pre-event surface; the volume is the cloth minus the DEM. A taut cloth interpolates linearly across the scar, so it is exact on a planar slope, too shallow across a convex nose and too deep across a hollow. Uses the input DEM (no carving or filling). Outputs: &lt;write_fname&gt;_scar_drape_volumes.csv, _scar_drape_volume_area_fit.csv and (write_scar_drape_rasters) _scar_drape_surface.tif, _scar_drape_depth.tif, _scar_drape_label.tif. |
+| `landslide_inventory_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...). | Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it around the source area only, not the runout, and to the crown, so that the ring outside it is undisturbed ground. Read from read_path if the path is relative. |
+| `landslide_inventory_layer_name` | `string` | - | `param` | `run_scar_drape_volumes` | Layer of landslide_inventory_fname to read. | Empty: the first layer. |
+| `landslide_inventory_id_field_name` | `string` | - | `param` | `run_scar_drape_volumes` | Attribute that identifies each scar in the outputs. | Empty: the feature's position in the layer (0-based). The run stops, listing the fields, if the layer has no such field. |
+| `scar_drape_rim_buffer_pixels` | `int` | `1` | `param` | `run_scar_drape_volumes` | Cells added around each scar polygon before the cloth is held at the ground. | The cloth is free over the polygon grown by this many cells (8-connected) and held on the ring of cells just outside that. 1 tolerates a polygon drawn slightly inside the crown; larger values move the ring further onto stable ground but take in more of the surrounding slope. Volumes are reported over the polygon and over the free area. |
+| `scar_drape_sag_curvature_per_metre` | `float` | `0.0` | `param` | `run_scar_drape_volumes` | Curvature (1/m) the cloth takes where it hangs clear of the ground. | 0: a taut cloth (harmonic surface between the rim and the ground it rests on). A positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so 0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the result does not depend on the grid. |
+| `scar_drape_tolerance_metres` | `float` | `1e-05` | `param` | `run_scar_drape_volumes` | Stop when the cloth moves less than this in one sweep (m). | Scars that reach scar_drape_max_iterations first are reported with status not_converged. |
+| `scar_drape_max_iterations` | `int` | `100000` | `param` | `run_scar_drape_volumes` | Largest number of relaxation sweeps per scar. | Over-relaxation needs a few times the scar's width in cells. |
+| `write_scar_drape_rasters` | `bool` | `true` | `switch` | `run_scar_drape_volumes` | Write the draped surface, the depth and the scar labels as rasters. | &lt;write_fname&gt;_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where scars overlap the deeper cloth is kept. |
+
 ### Rupture planes
 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
@@ -611,7 +669,7 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `rupture_cohesion_pa` | `float` | `1000` | `param` | `run_rupture_planes` | Cohesion c of the slope material (Pa). | scaLr's reference value is 1 kPa, deliberately low as an apparent strength during a triggering event (Steer et al. 2026, section 3). Rupture depth rises with cohesion. |
 | `rupture_friction_coefficient` | `float` | `0.7002075` | `param` | `run_rupture_planes` | Friction coefficient mu = tan(phi) of the slope material (dimensionless). | 0.700 = tan 35 degrees, scaLr's reference value. |
 | `rupture_density_kg_m3` | `float` | `2600` | `param` | `run_rupture_planes` | Bulk density rho of the slope material (kg/m3). | As in scaLr. Gravity is 9.81 m/s2. |
-| `rupture_peak_ground_acceleration_fname` | `string` | `` | `param` | `run_rupture_planes` | Peak ground acceleration raster, in g, for a pseudo-static earthquake load. | Must be on the DEM's grid; nodata cells are left out. Adds a horizontal force k W down the dip of each plane, k = rupture_seismic_coefficient_ratio x PGA. Empty means static. Cannot be combined with water_table_method or slip_surface_family. |
+| `rupture_peak_ground_acceleration_fname` | `string` | - | `param` | `run_rupture_planes` | Peak ground acceleration raster, in g, for a pseudo-static earthquake load. | Must be on the DEM's grid; nodata cells are left out. Adds a horizontal force k W down the dip of each plane, k = rupture_seismic_coefficient_ratio x PGA. Empty means static. Cannot be combined with water_table_method or slip_surface_family. |
 | `rupture_seismic_coefficient_ratio` | `float` | `0.5` | `param` | `rupture_peak_ground_acceleration_fname` | Pseudo-static coefficient k as a fraction of PGA (in g). | 0.5 follows Hynes-Griffin and Franklin (1984). It is an empirical choice, and F depends on it directly, so test a range. |
 | `write_rupture_rasters` | `bool` | `true` | `switch` | `run_rupture_planes` | Write the rupture-plane rasters. | &lt;write_fname&gt;_rupture_safety_factor.tif (F at the daylight point), _rupture_depth.tif (optimal depth h, m), _rupture_unstable.tif (1 where F &lt;= 1), _rupture_length.tif (horizontal distance R to D, m), _rupture_slope.tif ((dz - h)/dx) and _rupture_topographic_slope.tif (dz/dx). Channel cells and cells with no admissible D are nodata. |
 
