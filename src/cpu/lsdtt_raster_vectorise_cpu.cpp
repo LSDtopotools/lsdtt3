@@ -12,6 +12,7 @@
 #include "../core/lsdtt_types.hpp"
 #include "../utils/lsdtt_array2d.hpp"
 #include "../utils/lsdtt_binary_array2d_tracing.hpp"
+#include "../utils/lsdtt_connected_components.hpp"
 #include "../utils/lsdtt_raster_geometry.hpp"
 
 #include <algorithm>
@@ -268,6 +269,198 @@ void trace_labelled_polygons(
         loader.write_polygon(ring, attrs);
     }
 
+    loader.finish_vector_write();
+}
+
+namespace {
+
+// The ring along the outer cell edges of a 4-connected set of cells (global
+// row, col), closed; empty if degenerate. Same double-resolution stamp and
+// trace as above.
+std::vector<lsdtt_xy> outer_cell_ring(const std::vector<std::pair<int, int>>& cells,
+                                      const lsdtt_raster_meta& meta)
+{
+    std::vector<lsdtt_xy> ring;
+    if (cells.empty()) return ring;
+    int min_r = cells[0].first, max_r = min_r, min_c = cells[0].second, max_c = min_c;
+    for (const auto& p : cells)
+    {
+        min_r = std::min(min_r, p.first);
+        max_r = std::max(max_r, p.first);
+        min_c = std::min(min_c, p.second);
+        max_c = std::max(max_c, p.second);
+    }
+    const int height = max_r - min_r + 1, width = max_c - min_c + 1;
+    lsdtt_array2d_u8 binary(2 * height + 1, 2 * width + 1, uint8_t{0});
+    for (const auto& p : cells)
+    {
+        const int cr = 2 * (p.first - min_r) + 1, cc = 2 * (p.second - min_c) + 1;
+        for (int a = -1; a <= 1; ++a)
+            for (int b = -1; b <= 1; ++b) binary(cr + a, cc + b) = uint8_t{1};
+    }
+    const std::vector<lsdtt_pixel_rc> boundary = trace_boundary_pixels(binary, 4);
+    const double cs = meta.cell_size;
+    for (const lsdtt_pixel_rc& bp : boundary)
+    {
+        if ((bp.row & 1) != 0 || (bp.col & 1) != 0) continue;
+        ring.push_back({meta.x_min + static_cast<double>(min_c + bp.col / 2) * cs,
+                        meta.y_min + static_cast<double>(meta.n_rows - min_r - bp.row / 2) * cs});
+    }
+    if (ring.size() < 3) return {};
+    ring.push_back(ring.front());
+    return ring;
+}
+
+// Inner rings of a 4-connected set of cells: each 4-connected group of cells
+// outside it that cannot reach its bounding box (plus a one-cell border)
+// through 4-connected cells outside it. 4-connectivity, because the outer ring
+// follows cell edges and so is closed where two cells of the set meet at a
+// corner: a cell cut off there is inside the ring, so it must be a hole (an
+// inner ring may then touch the outer ring at that corner, which is valid).
+std::vector<std::vector<lsdtt_xy>> enclosed_cell_rings(const std::vector<std::pair<int, int>>& cells,
+                                                       const lsdtt_raster_meta& meta)
+{
+    std::vector<std::vector<lsdtt_xy>> rings;
+    if (cells.size() < 7) return rings;   // fewer cannot enclose a cell
+    int min_r = cells[0].first, max_r = min_r, min_c = cells[0].second, max_c = min_c;
+    for (const auto& p : cells)
+    {
+        min_r = std::min(min_r, p.first);
+        max_r = std::max(max_r, p.first);
+        min_c = std::min(min_c, p.second);
+        max_c = std::max(max_c, p.second);
+    }
+    const int h = max_r - min_r + 3, w = max_c - min_c + 3;
+    std::vector<std::uint8_t> inside(static_cast<std::size_t>(h) * w, 0u);
+    for (const auto& p : cells)
+        inside[static_cast<std::size_t>(p.first - min_r + 1) * w + static_cast<std::size_t>(p.second - min_c + 1)] = 1u;
+    std::vector<std::int32_t> outside;
+    std::vector<std::int64_t> outside_size;
+    std::vector<std::vector<std::size_t>> members;
+    const std::int32_t n_outside = label_connected_components(
+        h, w, 4, [&](std::size_t i) { return inside[i] == 0u; }, outside, outside_size, &members);
+    const std::int32_t exterior = outside[0];   // (0, 0) is on the border
+    for (std::int32_t q = 1; q <= n_outside; ++q)
+    {
+        if (q == exterior) continue;
+        std::vector<std::pair<int, int>> hc;
+        hc.reserve(members[static_cast<std::size_t>(q)].size());
+        for (const std::size_t i : members[static_cast<std::size_t>(q)])
+            hc.emplace_back(static_cast<int>(i / w) + min_r - 1, static_cast<int>(i % w) + min_c - 1);
+        std::vector<lsdtt_xy> ring = outer_cell_ring(hc, meta);
+        if (!ring.empty()) rings.push_back(std::move(ring));
+    }
+    return rings;
+}
+
+} // namespace
+
+void trace_labelled_polygons(
+    const lsdtt_raster_cpu&          labelled,
+    lsdtt_data_loader&               loader,
+    const std::string&               out_path,
+    const lsdtt_label_attributes&    attributes,
+    const lsdtt_vectorise_options&   options
+)
+{
+    const lsdtt_raster_meta& meta = labelled.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error("lsdtt::trace_labelled_polygons: invalid raster metadata");
+    meta.check_projected_metres();
+    if (attributes.schema.field_types.size() != attributes.schema.field_names.size())
+        throw std::invalid_argument("lsdtt::trace_labelled_polygons: schema names and types differ in length");
+    const std::vector<std::string> fixed = {"label_id", "part", "n_parts", "pixel_count", "area_m2"};
+    for (const std::string& name : attributes.schema.field_names)
+        if (std::find(fixed.begin(), fixed.end(), name) != fixed.end())
+            throw std::invalid_argument("lsdtt::trace_labelled_polygons: attribute field '" + name +
+                                        "' repeats a fixed field");
+    for (const auto& [label, row] : attributes.rows)
+        if (row.size() != attributes.schema.size())
+            throw std::invalid_argument("lsdtt::trace_labelled_polygons: the row of label " + std::to_string(label) +
+                                        " has " + std::to_string(row.size()) + " values for " +
+                                        std::to_string(attributes.schema.size()) + " fields");
+
+    const int nrows = meta.n_rows, ncols = meta.n_cols;
+    const double cs = meta.cell_size;
+    const std::vector<float>& src = labelled.get_data();
+    const std::vector<uint8_t>& msk = labelled.get_mask();
+    std::map<std::int64_t, std::vector<std::pair<int, int>>> label_pixels;
+    for (int r = 0; r < nrows; ++r)
+        for (int c = 0; c < ncols; ++c)
+        {
+            const std::size_t idx = static_cast<std::size_t>(r) * ncols + c;
+            if (msk[idx] == 0) continue;
+            const float v = src[idx];
+            if (meta.is_nodata(v) || v == options.background) continue;
+            label_pixels[static_cast<std::int64_t>(std::round(static_cast<double>(v)))].emplace_back(r, c);
+        }
+
+    lsdtt_vector_schema schema;
+    schema.field_names = fixed;
+    schema.field_types = {lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+                          lsdtt_vector_field_type::int64_type, lsdtt_vector_field_type::int64_type,
+                          lsdtt_vector_field_type::double_type};
+    for (std::size_t k = 0; k < attributes.schema.size(); ++k)
+    {
+        schema.field_names.push_back(attributes.schema.field_names[k]);
+        schema.field_types.push_back(attributes.schema.field_types[k]);
+    }
+    loader.begin_vector_write(out_path, options.layer_name, schema, meta.crs_wkt, options.format,
+                              options.spatial_index);
+    const std::vector<lsdtt_vector_field_value> nulls(attributes.schema.size(), std::monostate{});
+
+    for (const auto& [label, pixels] : label_pixels)
+    {
+        int min_r = pixels[0].first, max_r = min_r, min_c = pixels[0].second, max_c = min_c;
+        for (const auto& p : pixels)
+        {
+            min_r = std::min(min_r, p.first);
+            max_r = std::max(max_r, p.first);
+            min_c = std::min(min_c, p.second);
+            max_c = std::max(max_c, p.second);
+        }
+        // Local grid with a one-cell border, so the outside is connected.
+        const int h = max_r - min_r + 3, w = max_c - min_c + 3;
+        const std::size_t nl = static_cast<std::size_t>(h) * w;
+        const auto local = [&](int r, int c) {
+            return static_cast<std::size_t>(r - min_r + 1) * w + static_cast<std::size_t>(c - min_c + 1);
+        };
+        std::vector<std::uint8_t> in_label(nl, 0u);
+        for (const auto& p : pixels) in_label[local(p.first, p.second)] = 1u;
+
+        std::vector<std::int32_t> part;
+        std::vector<std::int64_t> part_size;
+        std::vector<std::vector<std::size_t>> members;
+        const std::int32_t n_parts = label_connected_components(
+            h, w, 4, [&](std::size_t i) { return in_label[i] != 0u; }, part, part_size, &members);
+
+        const auto it = attributes.rows.find(label);
+        const std::vector<lsdtt_vector_field_value>& row = it == attributes.rows.end() ? nulls : it->second;
+        const auto to_global = [&](std::size_t i) {
+            return std::pair<int, int>(static_cast<int>(i / w) + min_r - 1, static_cast<int>(i % w) + min_c - 1);
+        };
+
+        for (std::int32_t k = 1; k <= n_parts; ++k)
+        {
+            std::vector<std::pair<int, int>> cells;
+            cells.reserve(members[static_cast<std::size_t>(k)].size());
+            for (const std::size_t i : members[static_cast<std::size_t>(k)]) cells.push_back(to_global(i));
+            const std::vector<lsdtt_xy> ring = outer_cell_ring(cells, meta);
+            if (ring.empty()) continue;
+
+            const std::vector<std::vector<lsdtt_xy>> holes = enclosed_cell_rings(cells, meta);
+
+            const std::int64_t count = part_size[static_cast<std::size_t>(k)];
+            std::vector<lsdtt_vector_field_value> attrs = {label, static_cast<std::int64_t>(k),
+                                                           static_cast<std::int64_t>(n_parts), count,
+                                                           static_cast<double>(count) * cs * cs};
+            attrs.insert(attrs.end(), row.begin(), row.end());
+            if (holes.empty())
+                loader.write_polygon(ring, attrs);
+            else
+                loader.write_polygon(ring, holes, attrs);
+        }
+    }
     loader.finish_vector_write();
 }
 

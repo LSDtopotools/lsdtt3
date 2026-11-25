@@ -256,6 +256,29 @@ which noise becomes negligible. The simulated noise is Gaussian and real DEM
 errors have heavier tails, so this is a **lower bound** on false detections. It
 does not include systematic change such as forestry.
 
+**Exclusions.** Cells in any exclusion mask, and channel cells, are neither
+detected nor used for the error model, exactly like cells gentler than
+`dem_change_min_slope`. Channels are cells whose D-infinity specific catchment
+area $a = A/b$ ($b$ the cell size) on the carved and filled DEM reaches
+`dem_change_channel_specific_catchment_metres`, grown by a Euclidean buffer. The
+carved surface is used only to route flow; the change is measured on the input
+DEM. Without this, aggradation and incision along channels form long patches
+that are not landslides.
+
+**Polygons and scaling.** Patches are written as polygons along cell edges, one
+feature per 4-connected part, with holes. A patch joined across unchanged cells
+has several parts, and each carries the patch's fields, so summing `area_m2`
+over a patch's parts gives its area. For loss and gain separately the tool fits
+$|V| = \alpha A^\gamma$ and $|\bar h| = \alpha A^\gamma$ by ordinary least
+squares and reduced major axis on the logarithms (both are reported because
+detection truncates small, shallow patches and areas carry error, which biases
+OLS low; see `src/utils/lsdtt_scaling_fit.hpp`), and the frequency - volume tail
+$p(V) \propto V^{\eta}$ by the continuous maximum likelihood of Clauset et al.
+(2009), with $V_{min}$ chosen by the Kolmogorov - Smirnov distance. Areas are
+whole numbers of cells, so the frequency - area fit is discrete; volumes are not.
+A DEM-of-difference inventory gives the observed scaling against which the
+models' potential-landslide catalogues are compared.
+
 Run the same analysis on a nearby area with no known landslide event. Patches
 found there show how much of the signal comes from land-cover change and sensor
 differences.

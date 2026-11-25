@@ -3042,6 +3042,19 @@ add_dem_change_cli_test(smoke_slope_stability_dem_change
     --expect-file-contains "sdc_dem_change_coverage.csv:gain,1,270000,"
     --expect-raster-stat sdc_dem_change_class.tif:min:-1:-1
     --expect-raster-stat sdc_dem_change_class.tif:max:1:1)
+# R3: an exclusion mask over the deposit removes it; the scar is written as a
+# polygon, with the scaling tables.
+add_dem_change_cli_test(smoke_slope_stability_dem_change_exclusion_polygons
+    slope_stability_dem_change_exclusion.param.in sdx_dem_change_patches.fgb
+    --expect sdx_dem_change_exclusion.tif
+    --expect sdx_dem_change_volume_area_fit.csv
+    --expect sdx_dem_change_depth_area_fit.csv
+    --expect sdx_dem_change_frequency_volume.csv
+    --expect sdx_dem_change_frequency_volume_fit.csv
+    --stdout-contains "Exclusion mask change_exclusion.tif: 750 cells"
+    --expect-file-contains "sdx_dem_change_coverage.csv:loss,1,540000,"
+    --expect-file-contains "sdx_dem_change_coverage.csv:gain,0,0,"
+    --expect-file-contains "sdx_dem_change_volume_area_fit.csv:loss,ols,1,0,")
 add_dem_change_cli_test(failure_slope_stability_dem_change_no_difference
     slope_stability_dem_change_no_difference.param.in unused_expected_output
     --expect-failure --stderr-contains "needs dem_difference_fname")
@@ -6720,6 +6733,9 @@ target_link_libraries(lsdtt-test-raster-vectorise PRIVATE lsdtt3_cpu)
 # trace_labelled_polygons writes polygons of known shapes (a block, an L, a
 # single cell, a diagonal pair) whose areas and boxes match their pixels (before
 # 2026-10-27 every file it wrote was empty).
+# The attribute-table overload writes one feature per 4-connected part, with
+# holes and per-label fields, to FlatGeobuf and GPKG; the polygons rasterise
+# back to their cells.
 add_test(NAME unit_raster_vectorise_polygons COMMAND lsdtt-test-raster-vectorise)
 lsdtt_set_tests_properties(unit_raster_vectorise_polygons PROPERTIES
     LABELS "raster")

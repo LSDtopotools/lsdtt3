@@ -36,8 +36,17 @@
 //    with a the cell area, A the patch area, and C the mean spherical
 //    correlation between two points in a disc of the patch's area (radius r,
 //    range L), by numerical integration of the disc's distance distribution. A
-//    patch is kept if |mean change| / sigma_mean >= patch_significance, and if
-//    it has min_patch_cells.
+//    patch is kept if |mean change| / sigma_mean >= patch_significance, if
+//    |mean change| >= min_patch_mean_change_m, and if it has min_patch_cells.
+//
+// EXCLUSIONS. Cells of an exclusion mask (canopy, water, buildings, channels:
+//    dem_change_channel_mask) are never detected and are not in the error
+//    model, like cells gentler than min_slope.
+//
+// SCALING (fit_dem_change_scaling), for loss and gain separately: volume -
+//    area and depth - area (|mean change| against area) by OLS and RMA
+//    (fit_power_law_scaling), and the frequency - volume tail by the
+//    continuous maximum likelihood (fit_power_law_tail, discrete = false).
 //
 // 5. FALSE DETECTIONS. The same detection is run on simulated stable terrain:
 //    Gaussian noise with sigma(S) and the fitted nugget and range. This
@@ -54,6 +63,8 @@
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_distributions.hpp"
+#include "../utils/lsdtt_scaling_fit.hpp"
 
 namespace lsdtt
 {
@@ -67,6 +78,7 @@ struct dem_change_options
     int    min_patch_cells = 5;
     int    aggregation_radius_pixels = 2;   // 0 = 8-connected only
     double min_slope = 0.0;              // gradient (m/m); gentler cells cannot be detected
+    double min_patch_mean_change_m = 0.0; // |mean change| below this: patch dropped
     int    n_slope_bins = 10;
     int    n_null_simulations = 20;      // 0 = none
     int    n_variogram_pairs = 200000;
@@ -154,6 +166,7 @@ struct dem_change_result
     dem_change_null_summary null_simulation;
 
     std::int64_t n_valid_cells = 0;            // cells that could be assessed
+    std::int64_t n_excluded_cells = 0;         // valid differences removed by the exclusion mask
     double valid_area_m2 = 0.0;
     double loss_area_m2 = 0.0, gain_area_m2 = 0.0;
     double loss_area_uncertainty_m2 = 0.0, gain_area_uncertainty_m2 = 0.0;
@@ -175,13 +188,44 @@ struct dem_change_result
 // difference: newer minus older, in metres, on a projected grid.
 // slope: one value per cell (dem_change_slope of the newer DEM).
 // stable_mask: optional, one value per cell; non-zero = stable terrain.
+// exclusion_mask: optional, one value per cell; non-zero = never detected and
+// not in the error model.
 // Throws std::invalid_argument for a bad option, a wrong array size or too few
 // stable cells to estimate the error.
 [[nodiscard]] dem_change_result detect_dem_change_landslides(
     const lsdtt_raster_cpu&          difference,
     const std::vector<double>&       slope,
     const std::vector<std::uint8_t>* stable_mask,
-    const dem_change_options&        options = {});
+    const dem_change_options&        options = {},
+    const std::vector<std::uint8_t>* exclusion_mask = nullptr);
+
+// Channels to exclude (D37): cells whose D-infinity specific catchment area
+// a = A / b (A the contributing area, b the cell size) on routing_dem is at
+// least specific_catchment_threshold_m, grown by buffer_pixels (cells within
+// that Euclidean distance in cells). routing_dem should be carved and filled;
+// detection itself stays on the unconditioned DEM. 1 = channel, 0 = not.
+// Throws std::invalid_argument if the threshold is not > 0 or the buffer < 0.
+[[nodiscard]] std::vector<std::uint8_t> dem_change_channel_mask(
+    const lsdtt_raster_cpu& routing_dem,
+    double                  specific_catchment_threshold_m,
+    int                     buffer_pixels,
+    const std::string&      boundary_conditions = "oooo",
+    int                     n_threads = 0);
+
+// Scaling of the patches of one sign (-1 loss, +1 gain). Volumes and depths are
+// magnitudes. The tail fit needs min_tail patches.
+struct dem_change_scaling
+{
+    int sign = -1;
+    std::size_t n_patches = 0;
+    power_law_scaling_fit volume_area;   // |V| = alpha A^gamma
+    power_law_scaling_fit depth_area;    // |mean change| = alpha A^gamma
+    power_law_tail_fit volume_tail;      // p(V) ~ V^-alpha, continuous
+};
+
+[[nodiscard]] dem_change_scaling fit_dem_change_scaling(
+    const std::vector<dem_change_patch>& patches, int sign, int n_bootstrap = 0,
+    std::uint64_t seed = 1, std::size_t min_tail = 50);
 
 // The mean spherical correlation (range L) between two points of a disc of
 // radius r. 1 for a very small disc, about L^2 / (5 r^2) for a large one.

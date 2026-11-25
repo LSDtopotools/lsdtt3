@@ -388,8 +388,29 @@ newer DEM as the first raster. If the difference is older minus newer, set
 | `_dem_change_false_detection.csv` | Patches and area from noise alone |
 | `_dem_change_false_detection_by_area.csv` | Patches found and from noise alone, by size |
 | `_dem_change_frequency_area.csv`, `_fit.csv` | Binned p(A) and its power-law tail |
+| `_dem_change_volume_area_fit.csv` | \|V\| = αA^γ for loss and gain, OLS and RMA (bootstrap intervals with `scaling_fit_bootstrap_samples`) |
+| `_dem_change_depth_area_fit.csv` | \|mean change\| = αA^γ, as above |
+| `_dem_change_frequency_volume.csv`, `_fit.csv` | Binned p(V) and its power-law tail (continuous maximum likelihood) |
 | `_dem_change_corrected`, `_sigma`, `_z` | Bias-corrected change, error, and change / error |
 | `_dem_change_class`, `_label` | -1 loss, 1 gain, 0 none; patch id |
+| `_dem_change_exclusion.tif` | With `write_dem_change_exclusion_raster`: 1 excluded (masks and channels) |
+| `_dem_change_patches.fgb` or `.gpkg` | With `write_dem_change_patch_polygons`: one feature per 4-connected part of a patch, with holes and the patch table's fields |
+
+**Exclusions.** `dem_change_exclusion_mask_fname` takes one or more rasters,
+comma separated (canopy from both surveys, water, buildings); their union is
+removed from the detection and the error model. Channel beds aggrade and incise
+without landsliding: `dem_change_channel_specific_catchment_metres` removes cells
+whose D-infinity specific catchment area on the carved and filled DEM is at least
+that, grown by `dem_change_channel_buffer_pixels`. Detection itself stays on the
+input DEM. `dem_change_min_patch_mean_change_metres` drops shallow patches.
+
+```
+dem_change_exclusion_mask_fname: canopy_older.tif, canopy_newer.tif, water.tif
+dem_change_channel_specific_catchment_metres: 5000
+dem_change_channel_buffer_pixels: 2
+write_dem_change_patch_polygons: true
+scaling_fit_bootstrap_samples: 1000
+```
 
 Draw them with `lsdviz3-slope-stability` from lsdviztools3.
 
@@ -649,6 +670,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `dem_change_n_slope_bins` | `int` | `10` | `param` | `run_dem_change_landslides` | Quantile bins of slope for the error model. | - |
 | `dem_change_n_null_simulations` | `int` | `20` | `param` | `run_dem_change_landslides` | Noise simulations used to estimate false detections. | Each runs the detection on Gaussian noise with the fitted error and spatial correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 turns it off. |
 | `dem_change_random_seed` | `int` | `33` | `param` | `run_dem_change_landslides` | Seed for the variogram sample and the noise simulations. | - |
+| `dem_change_exclusion_mask_fname` | `string` | - | `param` | `run_dem_change_landslides` | Rasters of cells to exclude (non-zero = excluded), comma separated. | Their union is used: canopy masks from both surveys, water, buildings. Excluded cells are never detected and are not in the error model. On the grid of read_fname; read from read_path if relative. |
+| `dem_change_channel_specific_catchment_metres` | `float` | `0.0` | `param` | `run_dem_change_landslides` | Exclude channels: cells whose D-infinity specific catchment area (m) is at least this. | Computed on the carved and filled DEM (breach_before_fill, fill_before_routing); detection stays on the input DEM. Channel beds aggrade and incise, which is not landsliding. 0 turns it off. |
+| `dem_change_channel_buffer_pixels` | `int` | `1` | `param` | `dem_change_channel_specific_catchment_metres` | Grow the channel exclusion by this many pixels (Euclidean). | - |
+| `dem_change_min_patch_mean_change_metres` | `float` | `0.0` | `param` | `run_dem_change_landslides` | Drop patches whose \|mean change\| (m) is below this. | Applied to the magnitude; the sign is set by dem_change_sign. Also applied in the sensitivity runs and the noise simulations. |
+| `write_dem_change_exclusion_raster` | `bool` | `false` | `switch` | `run_dem_change_landslides` | Write the union of the exclusions (masks and channels) as a raster. | &lt;write_fname&gt;_dem_change_exclusion.tif: 1 excluded, 0 not. |
+| `write_dem_change_patch_polygons` | `bool` | `false` | `switch` | `run_dem_change_landslides` | Write the patches as polygons, with the fields of the patch table. | &lt;write_fname&gt;_dem_change_patches.fgb or .gpkg (write_vector_format). One feature per 4-connected part, with holes; a patch joined across unchanged cells has several parts, each carrying the patch's fields. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
 
 ### Coseismic hazard area
 
@@ -672,8 +705,13 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `scar_drape_max_iterations` | `int` | `100000` | `param` | `run_scar_drape_volumes` | Largest number of relaxation sweeps per scar. | Over-relaxation needs a few times the scar's width in cells. |
 | `scar_drape_reference_dem_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Pre-event DEM on the post-event DEM's grid, to validate the drape volumes. | When given, each scar also gets the volume removed between this DEM and read_fname over its mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a perfect method would give 0 there, so the control measures older concavity the cloth wrongly counts. Writes &lt;write_fname&gt;_scar_drape_validation.csv. Make the grids match with lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative. |
 | `scar_drape_min_reference_volume_m3` | `float` | `1.0` | `param` | `scar_drape_reference_dem_fname` | Smallest net reference volume (m3) for a scar to enter the per-scar ratios. | Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals. |
-| `scaling_fit_bootstrap_samples` | `int` | `0` | `param` | `run_scar_drape_volumes` | Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none). | Applies to the volume - area fits, OLS and RMA. 1000 is a reasonable choice. |
 | `write_scar_drape_rasters` | `bool` | `true` | `switch` | `run_scar_drape_volumes` | Write the draped surface, the depth and the scar labels as rasters. | &lt;write_fname&gt;_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where scars overlap the deeper cloth is kept. |
+
+### Scaling fits
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `scaling_fit_bootstrap_samples` | `int` | `0` | `param` | - | Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none). | Applies to the volume - area and depth - area fits, OLS and RMA, of the scar drape and of the DEM of difference. 1000 is a reasonable choice. |
 
 ### Rupture planes
 

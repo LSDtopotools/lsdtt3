@@ -586,6 +586,7 @@ lsdtt_evidence(unit_slope_stability_groundwater_dupuit unit exact_solution diffe
 lsdtt_evidence(unit_hillslope_channel_tagging unit exact_solution differential metamorphic property negative)  # V-valleys and hand-built D8 paths in closed form; ridge vs brute-force search of each group in the test; channel link and HAND = the existing routines; bounds and no rise downslope; bad options throw
 lsdtt_evidence(unit_slope_stability_dem_change unit exact_solution property negative)
 lsdtt_evidence(smoke_slope_stability_dem_change system exact_solution)
+lsdtt_evidence(smoke_slope_stability_dem_change_exclusion_polygons system exact_solution)
 lsdtt_evidence(failure_slope_stability_dem_change_no_difference system smoke negative)
 lsdtt_evidence(failure_slope_stability_dem_change_bad_sign system smoke negative)
 lsdtt_evidence(unit_slope_stability_hazard_area unit exact_solution differential property negative)  # Milledge et al. (2019) Fig. 2 (two figure cells corrected to eqs. 6-9); exact profile; MFD accumulation limit; conservation; monotonic thresholds; Ah = 0 vs brute-force reachability; bad options throw
@@ -604,7 +605,7 @@ lsdtt_evidence(unit_brent_minimiser unit exact_solution differential negative)  
 lsdtt_evidence(unit_power_law_tail_fit unit property negative)  # Clauset MLE + KS x_min on samples from known continuous and discrete power laws and a lognormal body with a tail; binned density integrates to 1; slope tracks -alpha; too few values invalid
 lsdtt_evidence(unit_scaling_fit unit exact_solution property negative)  # exact recovery of y = alpha x^gamma; OLS attenuated by lambda and RMA by sqrt(lambda) with error in x (Monte Carlo); OLS unbiased with error in y; SE matches replicate spread; bootstrap coverage ~95 %; dropped pairs and refusals
 lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4
-lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution)
+lsdtt_evidence(unit_raster_vectorise_polygons unit exact_solution negative)
 lsdtt_evidence(unit_raster_resampling unit exact_solution property)
 lsdtt_evidence(unit_raster_hierarchy unit exact_solution)  # dyadic layout and activation cases
 lsdtt_evidence(unit_raster_jenks_classification unit exact_solution property negative)

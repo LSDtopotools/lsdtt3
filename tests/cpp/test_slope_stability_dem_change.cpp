@@ -10,7 +10,9 @@
 // Potential landslides from a DEM of difference
 // (src/cpu/lsdtt_slope_stability_dem_change_cpu): the patch-mean correlation, the
 // error model, detection, hysteresis, aggregation, patch statistics, the
-// simulated false detections and the refusals.
+// simulated false detections, the refusals, exclusion masks and the channel
+// mask, the mean-change filter, and the volume - area, depth - area and
+// frequency - volume fits.
 //
 // Usage:
 //   lsdtt-test-slope-stability-dem-change
@@ -355,6 +357,171 @@ void test_refusals()
           refused(quiet(), std::vector<double>(slope.size(), std::numeric_limits<double>::quiet_NaN())));
 }
 
+void test_exclusions_and_filter()
+{
+    std::cout << "\n--- exclusions and the mean-change filter ---\n";
+    const int n = 200;
+    const lsdtt_raster_meta m = grid(n);
+    const std::size_t nn = static_cast<std::size_t>(n) * n;
+    const std::vector<double> slope(nn, 0.5);
+    std::vector<float> dh = noise(n, 1.0, 21);
+    block(dh, n, 20, 30, 20, 40, -30.0f);     // inside mask A: 200 cells
+    block(dh, n, 100, 110, 90, 110, -30.0f);  // half in mask B: 200 cells, 100 outside
+    block(dh, n, 160, 170, 160, 170, -30.0f); // outside both: 100 cells
+    // Mask A also covers a band of wild values that would inflate the error.
+    for (int r = 60; r < 80; ++r)
+        for (int c = 0; c < n; ++c) dh[static_cast<std::size_t>(r) * n + c] += (c % 2 ? 3.0f : -3.0f);
+    std::vector<std::uint8_t> a(nn, 0u), b(nn, 0u), both(nn, 0u);
+    for (int r = 15; r < 35; ++r)
+        for (int c = 15; c < 45; ++c) a[static_cast<std::size_t>(r) * n + c] = 1u;
+    for (int r = 60; r < 80; ++r)
+        for (int c = 0; c < n; ++c) a[static_cast<std::size_t>(r) * n + c] = 1u;
+    for (int r = 95; r < 115; ++r)
+        for (int c = 85; c < 100; ++c) b[static_cast<std::size_t>(r) * n + c] = 1u;
+    std::int64_t n_union = 0;
+    for (std::size_t i = 0; i < nn; ++i)
+    {
+        both[i] = (a[i] || b[i]) ? 1u : 0u;
+        n_union += both[i];
+    }
+
+    const dem_change_options o = quiet();
+    const dem_change_result open = detect_dem_change_landslides(raster(dh, m), slope, nullptr, o);
+    const dem_change_result r = detect_dem_change_landslides(raster(dh, m), slope, nullptr, o, &both);
+    check("without exclusions all three are found", open.patches.size() == 3, std::to_string(open.patches.size()));
+    check("the patch inside a mask is gone, the others stay", r.patches.size() == 2, std::to_string(r.patches.size()));
+    check("the patch across a mask keeps only its outside cells",
+          r.patches.size() == 2 && r.patches[0].n_cells == 100 && r.patches[1].n_cells == 100,
+          r.patches.empty() ? "" : std::to_string(r.patches[0].n_cells));
+    check("excluded cells carry no label",
+          r.label[25 * n + 25] == 0 && r.label[105 * n + 95] == 0 && r.label[105 * n + 105] > 0);
+    check("excluded cells are counted and not assessed",
+          r.n_excluded_cells == n_union && r.n_valid_cells == static_cast<std::int64_t>(nn) - n_union,
+          std::to_string(r.n_excluded_cells) + " of " + std::to_string(n_union));
+    check("excluded cells are not in the error model",
+          std::abs(r.uncertainty.nmad_m - 1.0) < 0.03 && open.uncertainty.nmad_m > 1.1,
+          std::to_string(r.uncertainty.nmad_m) + " vs " + std::to_string(open.uncertainty.nmad_m));
+    const std::vector<std::uint8_t> short_mask(3, 1u);
+    bool refused = false;
+    try { (void)detect_dem_change_landslides(raster(dh, m), slope, nullptr, o, &short_mask); }
+    catch (const std::invalid_argument&) { refused = true; }
+    check("a wrong exclusion mask size is refused", refused);
+
+    // Mean change: a shallow and a deep patch, both significant.
+    std::vector<float> two = noise(n, 1.0, 22);
+    block(two, n, 30, 50, 30, 50, -6.0f);
+    block(two, n, 120, 140, 120, 140, -20.0f);
+    two[40 * n + 40] = -40.0f;   // a seed for the shallow one
+    dem_change_options f = quiet();
+    f.detection_sigma = 4.5;
+    f.seed_sigma = 5.0;
+    check("both patches without the filter",
+          detect_dem_change_landslides(raster(two, m), slope, nullptr, f).patches.size() == 2);
+    f.min_patch_mean_change_m = 10.0;
+    const dem_change_result deep = detect_dem_change_landslides(raster(two, m), slope, nullptr, f);
+    check("the filter keeps only the deep one",
+          deep.patches.size() == 1 && deep.patches[0].mean_change_m < -19.0, std::to_string(deep.patches.size()));
+    f.min_patch_mean_change_m = -1.0;
+    refused = false;
+    try { (void)detect_dem_change_landslides(raster(two, m), slope, nullptr, f); }
+    catch (const std::invalid_argument&) { refused = true; }
+    check("a negative mean-change filter is refused", refused);
+}
+
+void test_channel_mask()
+{
+    std::cout << "\n--- channel mask ---\n";
+    // A plane falling to the bottom edge: D-infinity flows straight down, so a
+    // cell in row r drains r + 1 cells and a = (r + 1) b.
+    const int n = 50;
+    const double b = 10.0;
+    const lsdtt_raster_meta m = grid(n, b);
+    std::vector<float> plane(static_cast<std::size_t>(n) * n);
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c) plane[static_cast<std::size_t>(r) * n + c] = static_cast<float>(1000.0 - 2.0 * r);
+    const std::vector<std::uint8_t> pm = dem_change_channel_mask(raster(plane, m), 300.0, 0, "oooo", 1);
+    bool exact = true;
+    for (int r = 1; r < n - 1; ++r)
+        for (int c = 1; c < n - 1; ++c)
+            exact = exact && (pm[static_cast<std::size_t>(r) * n + c] != 0) == ((r + 1) * b >= 300.0);
+    check("on a plane a = (r + 1) b, so the mask starts at row 29", exact);
+
+    // A V-shaped valley falling down the page: the axis collects the hillslopes.
+    std::vector<float> valley(static_cast<std::size_t>(n) * n);
+    const int axis = 25;
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c)
+            valley[static_cast<std::size_t>(r) * n + c] =
+                static_cast<float>(1000.0 - 1.0 * r + 5.0 * std::abs(c - axis));
+    const double threshold = 2000.0;
+    const std::vector<std::uint8_t> v0 = dem_change_channel_mask(raster(valley, m), threshold, 0, "oooo", 1);
+    const std::vector<std::uint8_t> v2 = dem_change_channel_mask(raster(valley, m), threshold, 2, "oooo", 1);
+    const auto at = [&](const std::vector<std::uint8_t>& v, int r, int c) { return v[static_cast<std::size_t>(r) * n + c] != 0; };
+    std::int64_t n0 = 0, off_axis = 0;
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c)
+            if (at(v0, r, c)) { ++n0; off_axis += c != axis; }
+    check("the valley axis is a channel downstream", at(v0, 45, axis) && !at(v0, 2, axis));
+    check("only the axis is a channel", n0 > 0 && off_axis == 0, std::to_string(off_axis) + " off the axis");
+    check("the hillslopes are not", !at(v0, 45, axis - 3) && !at(v0, 45, axis + 3));
+    check("a buffer of 2 adds two cells either side",
+          at(v2, 45, axis - 2) && at(v2, 45, axis + 2) && !at(v2, 45, axis - 3) && !at(v2, 45, axis + 3));
+    bool refused = false;
+    try { (void)dem_change_channel_mask(raster(valley, m), 0.0, 1); }
+    catch (const std::invalid_argument&) { refused = true; }
+    check("a threshold of 0 is refused", refused);
+}
+
+void test_scaling()
+{
+    std::cout << "\n--- volume - area, depth - area and frequency - volume ---\n";
+    std::vector<dem_change_patch> patches;
+    for (double a = 50.0; a < 1e5; a *= 1.3)
+    {
+        dem_change_patch p;
+        p.sign = -1;
+        p.area_m2 = a;
+        p.volume_m3 = -0.05 * std::pow(a, 1.3);
+        p.mean_change_m = p.volume_m3 / a;
+        patches.push_back(p);
+        p.sign = 1;
+        p.volume_m3 = 0.2 * std::pow(a, 1.1);
+        p.mean_change_m = p.volume_m3 / a;
+        patches.push_back(p);
+    }
+    const dem_change_scaling loss = fit_dem_change_scaling(patches, -1);
+    const dem_change_scaling gain = fit_dem_change_scaling(patches, 1);
+    check("V = alpha A^gamma recovered for the losses",
+          std::abs(loss.volume_area.ols.gamma - 1.3) < 1e-9 && std::abs(loss.volume_area.ols.alpha - 0.05) < 1e-9 &&
+              std::abs(loss.volume_area.rma.gamma - 1.3) < 1e-9);
+    check("depth - area has gamma - 1", std::abs(loss.depth_area.ols.gamma - 0.3) < 1e-9);
+    check("the gains are fitted separately", std::abs(gain.volume_area.ols.gamma - 1.1) < 1e-9 &&
+                                              gain.n_patches == loss.n_patches);
+
+    // Volumes from a Pareto distribution: p(V) ~ V^-alpha above V_min.
+    std::mt19937_64 rng(5);
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    const double alpha = 1.8, v_min = 20.0;
+    std::vector<dem_change_patch> pareto;
+    for (int k = 0; k < 3000; ++k)
+    {
+        dem_change_patch p;
+        p.sign = -1;
+        p.volume_m3 = -v_min * std::pow(1.0 - u(rng), -1.0 / (alpha - 1.0));
+        p.area_m2 = 10.0 * std::abs(p.volume_m3);
+        p.mean_change_m = -0.1;
+        pareto.push_back(p);
+    }
+    const dem_change_scaling t = fit_dem_change_scaling(pareto, -1, 0, 1, 50);
+    check("the volume tail is the continuous MLE", t.volume_tail.valid && !t.volume_tail.discrete);
+    check("alpha recovered within 3 standard errors",
+          std::abs(t.volume_tail.alpha - alpha) < 3.0 * t.volume_tail.alpha_standard_error,
+          std::to_string(t.volume_tail.alpha) + " +/- " + std::to_string(t.volume_tail.alpha_standard_error));
+    check("x_min near the true V_min", t.volume_tail.x_min < 3.0 * v_min, std::to_string(t.volume_tail.x_min));
+    check("no gains: empty fits", fit_dem_change_scaling(pareto, 1).n_patches == 0 &&
+                                      !fit_dem_change_scaling(pareto, 1).volume_area.valid);
+}
+
 // A DEM, its difference with a scar and a deposit, and a stable mask.
 void write_cli_fixture(const std::string& dir)
 {
@@ -374,6 +541,9 @@ void write_cli_fixture(const std::string& dir)
     w.write_full(dem, m, dir + "/change_dem.tif", raster_output_format::gtiff);
     w.write_full(dh, m, dir + "/change_difference.tif", raster_output_format::gtiff);
     w.write_full(stable, m, dir + "/change_stable.tif", raster_output_format::gtiff);
+    std::vector<float> excluded(dem.size(), 0.0f);
+    block(excluded, n, 125, 150, 115, 145, 1.0f);   // over the deposit
+    w.write_full(excluded, m, dir + "/change_exclusion.tif", raster_output_format::gtiff);
 }
 
 } // namespace
@@ -393,6 +563,9 @@ int main(int argc, char** argv)
         test_patch_significance();
         test_null_and_sensitivity();
         test_refusals();
+        test_exclusions_and_filter();
+        test_channel_mask();
+        test_scaling();
     }
     catch (const std::exception& e)
     {
