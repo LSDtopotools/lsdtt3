@@ -381,6 +381,14 @@ small), and across a hollow, or a scar cut into an older gully, too high (volume
 too large). Deposits left in the scar, or a polygon drawn inside the crown, put
 the ring or the floor too high and the volume too low.
 
+**Validation outputs.** With `scar_drape_reference_dem_fname` the tool computes
+the reference volume of each scar (net, loss and gain), the control drape on the
+reference DEM, and a summary (`_scar_drape_validation.csv`). Volume - area fits
+use the shared scaling fit (`src/utils/lsdtt_scaling_fit`): OLS and reduced
+major axis, with optional bootstrap intervals. With error in area, OLS γ is
+attenuated by λ = var(log A) / (var(log A) + var(error)) and RMA by √λ, so both
+are reported.
+
 **Test against repeat lidar.** In Gleann Easan Biorach (Arran) the 2012
 Phase 2 and 2025 National LiDAR Programme DTMs (1 m) give 115 scars of at least
 10 m² with lowering of at least 0.3 m. Draping the 2025 DTM over their outlines,

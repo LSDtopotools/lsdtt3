@@ -141,6 +141,64 @@ local_solution solve_one(const lsdtt_raster_cpu& dem, const scar_drape_feature& 
     rec.mapped_area_m2 = rec.n_mapped_cells * area;
     rec.free_area_m2 = rec.n_free_cells * area;
     if (rec.n_mapped_cells > 0) { rec.centroid_x = sx / rec.n_mapped_cells; rec.centroid_y = sy / rec.n_mapped_cells; }
+
+    // Compactness of the mapped cells: 4 pi A / P^2, P along cell edges.
+    if (rec.n_mapped_cells > 0)
+    {
+        std::int64_t edges = 0;
+        for (int r = 0; r < h; ++r)
+            for (int c = 0; c < w; ++c)
+            {
+                if (!s.mapped[lid(r, c)]) continue;
+                for (int d = 0; d < 4; ++d)
+                    if (!s.mapped[lid(r + dr4[d], c + dc4[d])]) ++edges;
+            }
+        const double pi = 3.14159265358979323846;
+        rec.compactness = 4.0 * pi * static_cast<double>(rec.n_mapped_cells) /
+                          (static_cast<double>(edges) * static_cast<double>(edges));
+    }
+
+    // Rim descriptors: relief, and the least-squares plane z = a + b x + c y
+    // through the rim cells (coordinates centred for conditioning).
+    if (rec.n_rim_cells >= 3)
+    {
+        std::vector<double> rx, ry, rz;
+        double zmin = std::numeric_limits<double>::max(), zmax = -std::numeric_limits<double>::max();
+        for (int r = 0; r < h; ++r)
+            for (int c = 0; c < w; ++c)
+                if (s.state[lid(r, c)] == k_rim)
+                {
+                    const double z = zd[gid(r, c)];
+                    rx.push_back(c * cs); ry.push_back(-r * cs); rz.push_back(z);
+                    zmin = std::min(zmin, z); zmax = std::max(zmax, z);
+                }
+        rec.rim_relief_m = zmax - zmin;
+        const double n = static_cast<double>(rx.size());
+        double mx = 0, my = 0, mz = 0;
+        for (std::size_t k = 0; k < rx.size(); ++k) { mx += rx[k]; my += ry[k]; mz += rz[k]; }
+        mx /= n; my /= n; mz /= n;
+        double sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0;
+        for (std::size_t k = 0; k < rx.size(); ++k)
+        {
+            const double x = rx[k] - mx, y = ry[k] - my, z = rz[k] - mz;
+            sxx += x * x; syy += y * y; sxy += x * y; sxz += x * z; syz += y * z;
+        }
+        const double det = sxx * syy - sxy * sxy;
+        if (std::abs(det) > 1e-12 * std::max(1.0, sxx * syy))
+        {
+            const double b = (sxz * syy - syz * sxy) / det;
+            const double cc = (syz * sxx - sxz * sxy) / det;
+            double ss = 0;
+            for (std::size_t k = 0; k < rx.size(); ++k)
+            {
+                const double e = (rz[k] - mz) - b * (rx[k] - mx) - cc * (ry[k] - my);
+                ss += e * e;
+            }
+            rec.rim_plane_gradient = std::sqrt(b * b + cc * cc);
+            rec.rim_plane_residual_m = std::sqrt(ss / n);
+        }
+    }
+
     if (rec.n_free_cells == 0) { rec.status = "no_cells"; return s; }
     if (rec.n_rim_cells == 0) { rec.status = "no_valid_rim"; return s; }
 
@@ -277,40 +335,108 @@ scar_drape_result drape_landslide_scars(
     return out;
 }
 
-scar_volume_area_fit fit_scar_volume_area(const std::vector<scar_drape_record>& records)
+power_law_scaling_fit fit_scar_volume_area(
+    const std::vector<scar_drape_record>& records, int n_bootstrap, std::uint64_t seed)
 {
-    std::vector<double> x, y;
+    std::vector<double> a, v;
     for (const auto& r : records)
-        if (r.status == "ok" && r.mapped_volume_m3 > 0.0 && r.mapped_area_m2 > 0.0)
+        if (r.status == "ok") { a.push_back(r.mapped_area_m2); v.push_back(r.mapped_volume_m3); }
+    return fit_power_law_scaling(a, v, n_bootstrap, seed);
+}
+
+std::vector<scar_reference_volume> scar_reference_volumes(
+    const lsdtt_raster_cpu&                post_dem,
+    const lsdtt_raster_cpu&                reference_dem,
+    const std::vector<scar_drape_feature>& features)
+{
+    const lsdtt_raster_meta& a = post_dem.get_meta();
+    const lsdtt_raster_meta& b = reference_dem.get_meta();
+    if (a.n_rows != b.n_rows || a.n_cols != b.n_cols || std::abs(a.x_min - b.x_min) > 1e-6 * a.cell_size ||
+        std::abs(a.y_min - b.y_min) > 1e-6 * a.cell_size || std::abs(a.cell_size - b.cell_size) > 1e-9 * a.cell_size)
+        throw std::invalid_argument("scar_reference_volumes: the reference DEM is not on the post-event DEM's grid");
+    const auto& pz = post_dem.get_data();
+    const auto& pm = post_dem.get_mask();
+    const auto& rz = reference_dem.get_data();
+    const auto& rm = reference_dem.get_mask();
+    const double area = a.cell_size * a.cell_size;
+    const std::int64_t n = static_cast<std::int64_t>(a.n_rows) * a.n_cols;
+    std::vector<scar_reference_volume> out(features.size());
+    for (std::size_t k = 0; k < features.size(); ++k)
+        for (const std::int64_t i : features[k].cells)
         {
-            x.push_back(std::log10(r.mapped_area_m2));
-            y.push_back(std::log10(r.mapped_volume_m3));
+            if (i < 0 || i >= n || !pm[i] || !rm[i]) continue;
+            const double d = static_cast<double>(rz[i]) - static_cast<double>(pz[i]);
+            ++out[k].n_cells;
+            out[k].net_volume_m3 += d * area;
+            if (d > 0) out[k].loss_volume_m3 += d * area;
+            else out[k].gain_volume_m3 -= d * area;
         }
-    scar_volume_area_fit f;
-    f.n = static_cast<int>(x.size());
-    if (f.n < 3) return f;
-    double mx = 0, my = 0;
-    for (int i = 0; i < f.n; ++i) { mx += x[i]; my += y[i]; }
-    mx /= f.n; my /= f.n;
-    double sxx = 0, sxy = 0, syy = 0;
-    for (int i = 0; i < f.n; ++i)
+    return out;
+}
+
+scar_drape_validation validate_scar_drape(
+    const std::vector<scar_drape_record>&    drape,
+    const std::vector<scar_drape_record>&    control,
+    const std::vector<scar_reference_volume>& reference,
+    double min_reference_volume_m3, int n_bootstrap, std::uint64_t seed)
+{
+    if (drape.size() != control.size() || drape.size() != reference.size())
+        throw std::invalid_argument("validate_scar_drape: drape, control and reference differ in length");
+    scar_drape_validation v;
+    v.n_scars = drape.size();
+    std::vector<double> ratio, la, lv, a_d, v_d, a_r, v_r;
+    for (std::size_t k = 0; k < drape.size(); ++k)
     {
-        sxx += (x[i] - mx) * (x[i] - mx);
-        sxy += (x[i] - mx) * (y[i] - my);
-        syy += (y[i] - my) * (y[i] - my);
+        const auto& d = drape[k];
+        if (d.status != "ok") continue;
+        v.drape_total_m3 += d.mapped_volume_m3;
+        if (control[k].status == "ok") v.control_total_m3 += control[k].mapped_volume_m3;
+        v.reference_net_total_m3 += reference[k].net_volume_m3;
+        v.reference_loss_total_m3 += reference[k].loss_volume_m3;
+        a_d.push_back(d.mapped_area_m2); v_d.push_back(d.mapped_volume_m3);
+        a_r.push_back(d.mapped_area_m2); v_r.push_back(reference[k].net_volume_m3);
+        if (reference[k].net_volume_m3 > min_reference_volume_m3)
+        {
+            ratio.push_back(d.mapped_volume_m3 / reference[k].net_volume_m3);
+            if (d.mapped_volume_m3 > 0)
+            {
+                la.push_back(std::log10(reference[k].net_volume_m3));
+                lv.push_back(std::log10(d.mapped_volume_m3));
+            }
+        }
     }
-    if (!(sxx > 0.0)) return f;
-    f.gamma = sxy / sxx;
-    f.alpha = std::pow(10.0, my - f.gamma * mx);
-    double sse = 0;
-    for (int i = 0; i < f.n; ++i)
+    v.n_compared = ratio.size();
+    if (v.reference_net_total_m3 > 0)
     {
-        const double e = y[i] - (my + f.gamma * (x[i] - mx));
-        sse += e * e;
+        v.total_ratio = v.drape_total_m3 / v.reference_net_total_m3;
+        v.control_fraction = v.control_total_m3 / v.reference_net_total_m3;
     }
-    f.r_squared = syy > 0.0 ? 1.0 - sse / syy : 0.0;
-    f.gamma_standard_error = std::sqrt(sse / (f.n - 2) / sxx);
-    return f;
+    if (!ratio.empty())
+    {
+        std::sort(ratio.begin(), ratio.end());
+        const auto q = [&](double p) {
+            const double pos = p * static_cast<double>(ratio.size() - 1);
+            const std::size_t lo = static_cast<std::size_t>(std::floor(pos));
+            const std::size_t hi = std::min(lo + 1, ratio.size() - 1);
+            return ratio[lo] + (pos - static_cast<double>(lo)) * (ratio[hi] - ratio[lo]);
+        };
+        v.ratio_p25 = q(0.25); v.median_ratio = q(0.5); v.ratio_p75 = q(0.75);
+    }
+    if (la.size() >= 3)
+    {
+        double mx = 0, my = 0;
+        for (std::size_t k = 0; k < la.size(); ++k) { mx += la[k]; my += lv[k]; }
+        mx /= la.size(); my /= la.size();
+        double sxx = 0, syy = 0, sxy = 0;
+        for (std::size_t k = 0; k < la.size(); ++k)
+        {
+            sxx += (la[k] - mx) * (la[k] - mx); syy += (lv[k] - my) * (lv[k] - my); sxy += (la[k] - mx) * (lv[k] - my);
+        }
+        if (sxx > 0 && syy > 0) v.log_volume_correlation = sxy / std::sqrt(sxx * syy);
+    }
+    v.drape_fit = fit_power_law_scaling(a_d, v_d, n_bootstrap, seed);
+    v.reference_fit = fit_power_law_scaling(a_r, v_r, n_bootstrap, seed + 1);
+    return v;
 }
 
 } // namespace lsdtt

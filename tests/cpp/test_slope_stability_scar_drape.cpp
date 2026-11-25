@@ -140,6 +140,44 @@ void test_planar_pit()
             worst = std::max(worst, std::abs(res.surface.get_data()[i] - plane(r, c, nr, cell)));
         }
         check("surface is the plane" + b, worst < 1e-3, num(worst));
+        check("rim plane gradient" + b, std::abs(rec.rim_plane_gradient - std::sqrt(0.3 * 0.3 + 0.1 * 0.1)) < 1e-6,
+              num(rec.rim_plane_gradient));
+        check("rim plane residual 0 on a plane" + b, rec.rim_plane_residual_m < 1e-4, num(rec.rim_plane_residual_m));
+        const double pi = 3.14159265358979323846;
+        check("compactness of a 16 x 20 rectangle" + b,
+              std::abs(rec.compactness - 4.0 * pi * 320.0 / (72.0 * 72.0)) < 1e-12, num(rec.compactness));
+    }
+
+    std::cout << "Validation against a reference DEM\n";
+    {
+        std::vector<float> zr(static_cast<std::size_t>(nr) * nc);
+        for (int r = 0; r < nr; ++r)
+            for (int c = 0; c < nc; ++c) zr[idx(r, c, nc)] = static_cast<float>(plane(r, c, nr, cell));
+        const lsdtt_raster_cpu ref = raster(zr, m);
+        scar_drape_options o;
+        o.rim_buffer_pixels = 1;
+        o.tolerance_metres = 1e-8;
+        const auto rv = scar_reference_volumes(dem, ref, {f});
+        check("reference net volume = pit volume", std::abs(rv[0].net_volume_m3 - true_volume) < 1e-3 * true_volume,
+              num(rv[0].net_volume_m3) + " vs " + num(true_volume));
+        check("reference loss = net, no gain", std::abs(rv[0].loss_volume_m3 - rv[0].net_volume_m3) < 1e-9 &&
+              rv[0].gain_volume_m3 == 0.0 && rv[0].n_cells == 320);
+        const auto dr = drape_landslide_scars(dem, {f}, o);
+        const auto ct = drape_landslide_scars(ref, {f}, o);
+        // float32 heights near 100 m round at about 1e-5 m, so 0 to that order.
+        check("control drape is 0 on the undisturbed plane", ct.records[0].mapped_volume_m3 < 1e-5 * true_volume,
+              num(ct.records[0].mapped_volume_m3));
+        const auto v = validate_scar_drape(dr.records, ct.records, rv);
+        check("total ratio 1", std::abs(v.total_ratio - 1.0) < 1e-3, num(v.total_ratio));
+        check("median ratio 1, one scar compared", v.n_compared == 1 && std::abs(v.median_ratio - 1.0) < 1e-3);
+        check("control fraction 0", std::abs(v.control_fraction) < 1e-5, num(v.control_fraction));
+        bool threw = false;
+        try { (void)scar_reference_volumes(dem, raster(std::vector<float>(100, 1.0f), grid(10, 10, cell)), {f}); }
+        catch (const std::invalid_argument&) { threw = true; }
+        check("reference on another grid refused", threw);
+        threw = false;
+        try { (void)validate_scar_drape(dr.records, {}, rv); } catch (const std::invalid_argument&) { threw = true; }
+        check("mismatched validation inputs refused", threw);
     }
 }
 
@@ -282,9 +320,10 @@ void test_fit_and_refusals()
     bad.mapped_area_m2 = 10.0;
     bad.mapped_volume_m3 = 1e6;
     recs.push_back(bad);
-    const scar_volume_area_fit f = fit_scar_volume_area(recs);
-    check("fit recovers gamma", f.n == 6 && std::abs(f.gamma - 1.3) < 1e-9, num(f.gamma));
-    check("fit recovers alpha", std::abs(f.alpha - 0.1) < 1e-9, num(f.alpha));
+    const power_law_scaling_fit f = fit_scar_volume_area(recs);
+    check("fit uses ok scars only, OLS gamma", f.n == 6 && std::abs(f.ols.gamma - 1.3) < 1e-9, num(f.ols.gamma));
+    check("OLS alpha, and RMA equal on exact data", std::abs(f.ols.alpha - 0.1) < 1e-9 && std::abs(f.rma.gamma - 1.3) < 1e-9,
+          num(f.ols.alpha));
     check("perfect fit r2", std::abs(f.r_squared - 1.0) < 1e-12);
 
     const auto refuses = [](scar_drape_options o) {

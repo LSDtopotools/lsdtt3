@@ -775,6 +775,25 @@ int main(int argc, char* argv[])
         "Largest number of relaxation sweeps per scar.",
         "Over-relaxation needs a few times the scar's width in cells.",
         "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["scar_drape_reference_dem_fname"] = "";
+    help_map["scar_drape_reference_dem_fname"] = {"string", "",
+        "Pre-event DEM on the post-event DEM's grid, to validate the drape volumes.",
+        "When given, each scar also gets the volume removed between this DEM and read_fname over its "
+        "mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a "
+        "perfect method would give 0 there, so the control measures older concavity the cloth wrongly "
+        "counts. Writes <write_fname>_scar_drape_validation.csv. Make the grids match with "
+        "lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_min_reference_volume_m3"] = 1.0f;
+    help_map["scar_drape_min_reference_volume_m3"] = {"float", "1.0",
+        "Smallest net reference volume (m3) for a scar to enter the per-scar ratios.",
+        "Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals.",
+        "Scar drape volumes", "param", "scar_drape_reference_dem_fname"};
+    int_default_map["scaling_fit_bootstrap_samples"] = 0;
+    help_map["scaling_fit_bootstrap_samples"] = {"int", "0",
+        "Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none).",
+        "Applies to the volume - area fits, OLS and RMA. 1000 is a reasonable choice.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
     bool_default_map["write_scar_drape_rasters"] = true;
     help_map["write_scar_drape_rasters"] = {"bool", "true",
         "Write the draped surface, the depth and the scar labels as rasters.",
@@ -1619,19 +1638,52 @@ int main(int argc, char* argv[])
                 v_total += r.mapped_volume_m3;
                 a_total += r.mapped_area_m2;
             }
-            const lsdtt::scar_volume_area_fit fit = lsdtt::fit_scar_volume_area(drape.records);
+            const int n_boot = ii.at("scaling_fit_bootstrap_samples");
+            if (n_boot < 0) throw std::runtime_error("scaling_fit_bootstrap_samples must be >= 0");
+            const lsdtt::power_law_scaling_fit fit = lsdtt::fit_scar_volume_area(drape.records, n_boot, 7);
             std::cout << "Scars: " << drape.records.size() << " (" << n_ok << " ok, " << n_not_conv
                       << " not converged, " << n_edge << " at the DEM edge, " << n_rim_gap
                       << " with gaps in the rim); area " << number_string(a_total) << " m2, volume "
                       << number_string(v_total) << " m3\n";
-            if (fit.n >= 3)
-                std::cout << "Volume - area: V = " << number_string(fit.alpha) << " A^" << number_string(fit.gamma)
-                          << " (+/- " << number_string(fit.gamma_standard_error) << ", r2 "
-                          << number_string(fit.r_squared) << ", n " << fit.n << ")\n";
+            if (fit.valid)
+                std::cout << "Volume - area: OLS V = " << number_string(fit.ols.alpha) << " A^"
+                          << number_string(fit.ols.gamma) << ", RMA V = " << number_string(fit.rma.alpha) << " A^"
+                          << number_string(fit.rma.gamma) << " (r2 " << number_string(fit.r_squared) << ", n "
+                          << fit.n << ")\n";
             if (drape.n_overlap_cells > 0)
                 std::cout << "Note: " << drape.n_overlap_cells << " cells lie in more than one scar; each scar's "
                              "volume counts them.\n";
 
+            // Validation against a reference (pre-event) DEM: reference volumes and a control drape.
+            const std::string ref_name = sf.at("scar_drape_reference_dem_fname");
+            const bool have_ref = !ref_name.empty();
+            std::vector<lsdtt::scar_reference_volume> refv;
+            lsdtt::scar_drape_result control;
+            lsdtt::scar_drape_validation val;
+            if (have_ref)
+            {
+                const lsdtt::lsdtt_raster_cpu ref_dem = read_raster(resolve_input(parser.get_read_path(), ref_name));
+                require_same_grid(input_dem.get_meta(), ref_dem.get_meta(), "scar_drape_reference_dem_fname");
+                refv = lsdtt::scar_reference_volumes(input_dem, ref_dem, features);
+                control = lsdtt::drape_landslide_scars(ref_dem, features, scar_drape);
+                val = lsdtt::validate_scar_drape(drape.records, control.records, refv,
+                                                 ff.at("scar_drape_min_reference_volume_m3"), n_boot, 11);
+                std::cout << "Against the reference DEM: net " << number_string(val.reference_net_total_m3)
+                          << " m3 (loss " << number_string(val.reference_loss_total_m3) << "); drape / reference "
+                          << number_string(val.total_ratio) << "; per scar median " << number_string(val.median_ratio)
+                          << " (" << number_string(val.ratio_p25) << " - " << number_string(val.ratio_p75) << ", n "
+                          << val.n_compared << "); r of log volumes " << number_string(val.log_volume_correlation)
+                          << "; control " << number_string(val.control_total_m3) << " m3 ("
+                          << number_string(val.control_fraction) << " of the reference)\n";
+            }
+
+            const auto csv_id = [](std::string id) {
+                if (id.find_first_of(",\"\n") == std::string::npos) return id;
+                std::string q = "\"";
+                for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                return q + "\"";
+            };
+            const auto nan_or = [](double v) { return std::isfinite(v) ? number_string(v) : std::string(); };
             const std::string vol_path = base + "_scar_drape_volumes.csv";
             {
                 std::ofstream f(vol_path);
@@ -1640,37 +1692,74 @@ int main(int argc, char* argv[])
                 f << "scar_id,feature_index,status,mapped_area_m2,mapped_volume_m3,mean_depth_m,max_depth_m,"
                      "free_area_m2,free_volume_m3,centroid_x,centroid_y,n_mapped_cells,n_free_cells,n_rim_cells,"
                      "n_rim_invalid,n_nodata_inside,n_contact_cells,touches_grid_edge,used_all_touched,iterations,"
-                     "final_change_m\n";
-                for (const auto& r : drape.records)
+                     "final_change_m,rim_relief_m,rim_plane_gradient,rim_plane_residual_m,compactness";
+                if (have_ref)
+                    f << ",reference_n_cells,reference_net_volume_m3,reference_loss_volume_m3,reference_gain_volume_m3,"
+                         "control_volume_m3,ratio_to_reference";
+                f << '\n';
+                for (std::size_t k = 0; k < drape.records.size(); ++k)
                 {
-                    std::string id = r.id;
-                    if (id.find_first_of(",\"\n") != std::string::npos)
-                    {
-                        std::string q = "\"";
-                        for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
-                        id = q + "\"";
-                    }
-                    f << id << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
+                    const auto& r = drape.records[k];
+                    f << csv_id(r.id) << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
                       << r.mapped_volume_m3 << ',' << r.mean_depth_m << ',' << r.max_depth_m << ',' << r.free_area_m2
                       << ',' << r.volume_m3 << ',' << r.centroid_x << ',' << r.centroid_y << ',' << r.n_mapped_cells
                       << ',' << r.n_free_cells << ',' << r.n_rim_cells << ',' << r.n_rim_invalid << ','
                       << r.n_nodata_inside << ',' << r.n_contact_cells << ',' << (r.touches_grid_edge ? 1 : 0) << ','
-                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << '\n';
+                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << ','
+                      << nan_or(r.rim_relief_m) << ',' << nan_or(r.rim_plane_gradient) << ','
+                      << nan_or(r.rim_plane_residual_m) << ',' << nan_or(r.compactness);
+                    if (have_ref)
+                    {
+                        const auto& q = refv[k];
+                        const double ratio = q.net_volume_m3 > 0 ? r.mapped_volume_m3 / q.net_volume_m3
+                                                                 : std::numeric_limits<double>::quiet_NaN();
+                        f << ',' << q.n_cells << ',' << q.net_volume_m3 << ',' << q.loss_volume_m3 << ','
+                          << q.gain_volume_m3 << ',' << control.records[k].mapped_volume_m3 << ',' << nan_or(ratio);
+                    }
+                    f << '\n';
                 }
             }
             std::cout << "  wrote " << vol_path << "\n";
+            const auto fit_rows = [&](std::ofstream& f, const std::string& what, const lsdtt::power_law_scaling_fit& q) {
+                for (const auto& [method, line] : {std::pair<const char*, const lsdtt::scaling_fit_line*>{"ols", &q.ols},
+                                                   std::pair<const char*, const lsdtt::scaling_fit_line*>{"rma", &q.rma}})
+                    f << what << ',' << method << ',' << q.n << ',' << (q.valid ? 1 : 0) << ',' << nan_or(line->alpha)
+                      << ',' << nan_or(line->gamma) << ',' << nan_or(line->gamma_standard_error) << ','
+                      << nan_or(q.r_squared) << ',' << nan_or(line->gamma_ci_low) << ',' << nan_or(line->gamma_ci_high)
+                      << ',' << nan_or(line->alpha_ci_low) << ',' << nan_or(line->alpha_ci_high) << ','
+                      << q.n_bootstrap << '\n';
+            };
             const std::string fit_path = base + "_scar_drape_volume_area_fit.csv";
             {
                 std::ofstream f(fit_path);
                 if (!f) throw std::runtime_error("Cannot write " + fit_path);
-                f << std::setprecision(10) << "quantity,value\n"
-                  << "n_scars_fitted," << fit.n << "\nalpha_m3_per_m2gamma," << fit.alpha << "\ngamma," << fit.gamma
-                  << "\ngamma_standard_error," << fit.gamma_standard_error << "\nr_squared," << fit.r_squared
-                  << "\ntotal_mapped_area_m2," << a_total << "\ntotal_mapped_volume_m3," << v_total
-                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels << "\nsag_curvature_per_metre,"
-                  << scar_drape.sag_curvature_per_metre << "\n";
+                f << std::setprecision(10)
+                  << "volumes,method,n,valid,alpha,gamma,gamma_standard_error,r_squared,gamma_ci_low,gamma_ci_high,"
+                     "alpha_ci_low,alpha_ci_high,n_bootstrap\n";
+                fit_rows(f, "drape", fit);
+                if (have_ref) fit_rows(f, "reference_net", val.reference_fit);
             }
             std::cout << "  wrote " << fit_path << "\n";
+            if (have_ref)
+            {
+                const std::string vpath = base + "_scar_drape_validation.csv";
+                std::ofstream f(vpath);
+                if (!f) throw std::runtime_error("Cannot write " + vpath);
+                f << std::setprecision(10) << "quantity,value\n"
+                  << "n_scars," << val.n_scars << "\nn_compared," << val.n_compared
+                  << "\nmin_reference_volume_m3," << ff.at("scar_drape_min_reference_volume_m3")
+                  << "\ndrape_total_m3," << val.drape_total_m3 << "\ncontrol_total_m3," << val.control_total_m3
+                  << "\nreference_net_total_m3," << val.reference_net_total_m3
+                  << "\nreference_loss_total_m3," << val.reference_loss_total_m3
+                  << "\ntotal_ratio," << nan_or(val.total_ratio) << "\ncontrol_fraction," << nan_or(val.control_fraction)
+                  << "\nmedian_ratio," << nan_or(val.median_ratio) << "\nratio_p25," << nan_or(val.ratio_p25)
+                  << "\nratio_p75," << nan_or(val.ratio_p75)
+                  << "\nlog_volume_correlation," << nan_or(val.log_volume_correlation)
+                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels
+                  << "\nsag_curvature_per_metre," << scar_drape.sag_curvature_per_metre << "\n";
+                std::cout << "  wrote " << vpath << "\n";
+                lsdtt::lsdtt_run_record::add_provenance("scar_drape_total_ratio", nan_or(val.total_ratio));
+            }
             if (bf.at("write_scar_drape_rasters"))
             {
                 write_raster(drape.surface, base + "_scar_drape_surface.tif");

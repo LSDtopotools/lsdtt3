@@ -50,10 +50,12 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "lsdtt_raster_cpu.hpp"
+#include "../utils/lsdtt_scaling_fit.hpp"
 
 namespace lsdtt {
 
@@ -105,6 +107,15 @@ struct scar_drape_record
     double       final_change_m    = 0.0;
     bool         touches_grid_edge = false;
     bool         used_all_touched  = false;
+    // Rim descriptors (NaN when there are fewer than 3 rim cells). A taut cloth
+    // spans the scar as the rim does, so a rim far from a plane means the
+    // cloth cannot follow the pre-event curvature.
+    double       rim_relief_m          = std::numeric_limits<double>::quiet_NaN();  // max - min rim elevation
+    double       rim_plane_gradient    = std::numeric_limits<double>::quiet_NaN();  // of the least-squares plane through the rim (m/m)
+    double       rim_plane_residual_m  = std::numeric_limits<double>::quiet_NaN();  // RMS misfit of that plane
+    // 4 pi A / P^2 of the mapped cells, P counted along cell edges: 1 for a
+    // disc in the limit, pi / 4 for a square of cells.
+    double       compactness           = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct scar_drape_result
@@ -124,16 +135,60 @@ scar_drape_result drape_landslide_scars(
     const std::vector<scar_drape_feature>& features,
     const scar_drape_options&              opts = {});
 
-// Least-squares fit of log10 V = log10 alpha + gamma log10 A over records with
-// status ok and positive mapped volume.
-struct scar_volume_area_fit
+// Volume - area scaling of the drape volumes: fit_power_law_scaling (OLS and RMA)
+// of mapped volume against mapped area, over records with status ok.
+[[nodiscard]] power_law_scaling_fit fit_scar_volume_area(
+    const std::vector<scar_drape_record>& records, int n_bootstrap = 0, std::uint64_t seed = 1);
+
+// -----------------------------------------------------------------------------
+// Validation against a reference (pre-event) DEM on the same grid.
+//
+// scar_reference_volumes: for each feature, over its mapped cells valid in both
+// DEMs, the material removed between the reference and the post-event DEM:
+//   net  = sum (reference - post) x cell area  (positive = removal);
+//   loss = sum max(reference - post, 0) x cell area;
+//   gain = sum max(post - reference, 0) x cell area.
+// Same order as the features. Throws if the grids differ.
+// -----------------------------------------------------------------------------
+struct scar_reference_volume
 {
-    int    n          = 0;
-    double alpha      = 0.0;
-    double gamma      = 0.0;
-    double gamma_standard_error = 0.0;
-    double r_squared  = 0.0;
+    std::int64_t n_cells        = 0;
+    double       net_volume_m3  = 0.0;
+    double       loss_volume_m3 = 0.0;
+    double       gain_volume_m3 = 0.0;
 };
-scar_volume_area_fit fit_scar_volume_area(const std::vector<scar_drape_record>& records);
+[[nodiscard]] std::vector<scar_reference_volume> scar_reference_volumes(
+    const lsdtt_raster_cpu&                post_dem,
+    const lsdtt_raster_cpu&                reference_dem,
+    const std::vector<scar_drape_feature>& features);
+
+// Summary of the drape against the reference. Per-scar ratios use the NET
+// reference volume and scars with status ok and net reference volume above
+// min_reference_volume_m3. The control is the same drape on the reference DEM,
+// where a perfect method would give 0: it measures concavity that existed
+// before the event and that the cloth wrongly counts.
+struct scar_drape_validation
+{
+    std::size_t n_scars = 0;
+    std::size_t n_compared = 0;            // in the per-scar ratios
+    double drape_total_m3 = 0.0;           // mapped volume, all ok scars
+    double control_total_m3 = 0.0;
+    double reference_net_total_m3 = 0.0;
+    double reference_loss_total_m3 = 0.0;
+    double total_ratio = std::numeric_limits<double>::quiet_NaN();     // drape / reference net
+    double control_fraction = std::numeric_limits<double>::quiet_NaN(); // control / reference net
+    double median_ratio = std::numeric_limits<double>::quiet_NaN();
+    double ratio_p25 = std::numeric_limits<double>::quiet_NaN();
+    double ratio_p75 = std::numeric_limits<double>::quiet_NaN();
+    double log_volume_correlation = std::numeric_limits<double>::quiet_NaN(); // Pearson r of log10 volumes, both > 0
+    power_law_scaling_fit drape_fit;       // drape volume against mapped area
+    power_law_scaling_fit reference_fit;   // net reference volume against mapped area
+};
+[[nodiscard]] scar_drape_validation validate_scar_drape(
+    const std::vector<scar_drape_record>&    drape,
+    const std::vector<scar_drape_record>&    control,
+    const std::vector<scar_reference_volume>& reference,
+    double min_reference_volume_m3 = 1.0, int n_bootstrap = 0, std::uint64_t seed = 1);
+
 
 } // namespace lsdtt

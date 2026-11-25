@@ -438,10 +438,21 @@ The inventory can be any vector format GDAL reads (shapefile, GeoPackage,
 FlatGeobuf), in any CRS. Draw each polygon around the source area only, out
 to the crown, so that the ring outside it is undisturbed ground.
 
+**Testing against a pre-event DEM.** Where a pre-event DEM exists, give it as
+`scar_drape_reference_dem_fname` (on the same grid; `lsdtt-raster-calculator`
+with `write_second_coregistered_raster: true` gives one). Each scar then also
+gets the volume removed between the two DEMs, and the drape is repeated on the
+pre-event DEM as a control. A perfect method gives zero there, so the control
+measures concavity that existed before the event and that the cloth counts
+wrongly. Each scar also gets rim descriptors: the relief of the rim, the
+gradient of the plane through it, and how far the rim departs from that plane
+(`rim_plane_residual_m`), which is the curvature a taut cloth cannot follow.
+
 | Output | Content |
 |---|---|
 | `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence |
-| `_scar_drape_volume_area_fit.csv` | Least-squares fit of V = α A^γ over the scars with status `ok` |
+| `_scar_drape_volume_area_fit.csv` | V = α A^γ over the scars with status `ok`, by OLS and by reduced major axis (RMA), with bootstrap 95 % intervals when `scaling_fit_bootstrap_samples` > 0; with a reference DEM, the same for the reference volumes |
+| `_scar_drape_validation.csv` | With `scar_drape_reference_dem_fname`: totals, drape / reference ratio, median and quartiles of the per-scar ratio, correlation of log volumes, and the control as a fraction of the reference |
 | `_scar_drape_surface.tif`, `_depth.tif`, `_label.tif` | Draped surface, depth (m) and scar label (position in the layer + 1); where scars overlap, the deeper cloth |
 
 **What it gets right and wrong.** A taut cloth spans a scar linearly between
@@ -659,6 +670,9 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `scar_drape_sag_curvature_per_metre` | `float` | `0.0` | `param` | `run_scar_drape_volumes` | Curvature (1/m) the cloth takes where it hangs clear of the ground. | 0: a taut cloth (harmonic surface between the rim and the ground it rests on). A positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so 0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the result does not depend on the grid. |
 | `scar_drape_tolerance_metres` | `float` | `1e-05` | `param` | `run_scar_drape_volumes` | Stop when the cloth moves less than this in one sweep (m). | Scars that reach scar_drape_max_iterations first are reported with status not_converged. |
 | `scar_drape_max_iterations` | `int` | `100000` | `param` | `run_scar_drape_volumes` | Largest number of relaxation sweeps per scar. | Over-relaxation needs a few times the scar's width in cells. |
+| `scar_drape_reference_dem_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Pre-event DEM on the post-event DEM's grid, to validate the drape volumes. | When given, each scar also gets the volume removed between this DEM and read_fname over its mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a perfect method would give 0 there, so the control measures older concavity the cloth wrongly counts. Writes &lt;write_fname&gt;_scar_drape_validation.csv. Make the grids match with lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative. |
+| `scar_drape_min_reference_volume_m3` | `float` | `1.0` | `param` | `scar_drape_reference_dem_fname` | Smallest net reference volume (m3) for a scar to enter the per-scar ratios. | Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals. |
+| `scaling_fit_bootstrap_samples` | `int` | `0` | `param` | `run_scar_drape_volumes` | Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none). | Applies to the volume - area fits, OLS and RMA. 1000 is a reasonable choice. |
 | `write_scar_drape_rasters` | `bool` | `true` | `switch` | `run_scar_drape_volumes` | Write the draped surface, the depth and the scar labels as rasters. | &lt;write_fname&gt;_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where scars overlap the deeper cloth is kept. |
 
 ### Rupture planes

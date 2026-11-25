@@ -339,6 +339,7 @@ set(LSDTT3_UTILS_SOURCES
     src/utils/lsdtt_histogram.cpp
     src/utils/lsdtt_statistical_tests.cpp
     src/utils/lsdtt_distributions.cpp
+    src/utils/lsdtt_scaling_fit.cpp
     src/utils/lsdtt_splines.cpp
     src/utils/lsdtt_regression.cpp
     src/utils/lsdtt_binary_array2d_tracing.cpp

@@ -7002,6 +7002,14 @@ add_test(NAME unit_power_law_tail_fit COMMAND lsdtt-test-power-law-tail-fit)
 lsdtt_set_tests_properties(unit_power_law_tail_fit PROPERTIES
     LABELS "statistics;slope_stability")
 
+# Power-law scaling y = alpha x^gamma, OLS and RMA with bootstrap (src/utils).
+add_executable(lsdtt-test-scaling-fit cpp/test_scaling_fit.cpp)
+target_link_libraries(lsdtt-test-scaling-fit PRIVATE lsdtt3_cpu)
+add_test(NAME unit_scaling_fit COMMAND lsdtt-test-scaling-fit)
+lsdtt_set_tests_properties(unit_scaling_fit PROPERTIES
+    LABELS "statistics;slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
 add_executable(lsdtt-test-brent-minimiser cpp/test_brent_minimiser.cpp)
 target_link_libraries(lsdtt-test-brent-minimiser PRIVATE lsdtt3_cpu)
 add_test(NAME unit_brent_minimiser COMMAND lsdtt-test-brent-minimiser)
@@ -13267,7 +13275,7 @@ set(LSDTT_DOMAIN_RULES
     # equal-density sampling, the Brent minimiser). Library-level, so "core"
     # like the statistics above; the tests also carry their own
     # "slope_stability" label, so `ctest -L slope_stability` reaches them.
-    "uniform_combination|equal_density|brent_minimiser|power_law_tail" "core"
+    "uniform_combination|equal_density|brent_minimiser|power_law_tail|scaling_fit" "core"
 )
 
 # COST: tests that are expensive enough to keep out of the inner loop. The
