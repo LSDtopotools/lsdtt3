@@ -140,6 +140,24 @@ def test_rupture_planes_on_a_plane_and_threads():
 
 
 @pytest.mark.metamorphic
+def test_rupture_planes_with_shaking():
+    dem = _east_plane()
+    flow = lsdtt3.FlowInfo(dem)
+    static = flow.rupture_planes(dem, channel=_east_channel())
+    ok = _valid(static.safety_factor)
+    sf = static.safety_factor.to_numpy()
+    pga = lsdtt3.Raster.from_numpy(np.full(dem.to_numpy().shape, 0.4, dtype=np.float32), dem.mask_numpy(), dem.metadata)
+    shaken = flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga)
+    assert (shaken.safety_factor.to_numpy()[ok] < sf[ok]).all()
+    none = flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga,
+                               seismic_coefficient_ratio=0.0)
+    assert np.array_equal(none.safety_factor.to_numpy()[ok], sf[ok])
+    with pytest.raises(ValueError):
+        flow.rupture_planes(dem, channel=_east_channel(), peak_ground_acceleration=pga,
+                            water_table_depth=pga)
+
+
+@pytest.mark.metamorphic
 def test_rupture_channel_from_threshold_matches_contributing_pixels():
     dem = _hummocky()
     flow = lsdtt3.FlowInfo(dem)
@@ -333,3 +351,75 @@ def test_groundwater_refusals():
         aq.run_to_steady(1e-8, steady_method="newton")
     with pytest.raises(ValueError, match="transient_method"):
         aq.run(3600.0, 1e-8, transient_method="crank_nicolson")
+
+
+# ------------------------------------------------------- DEM of difference
+def _change_pair(n=160, cell=30.0, seed=3):
+    rng = np.random.default_rng(seed)
+    r, c = np.mgrid[0:n, 0:n].astype(float)
+    dem = _raster(1000.0 + 15.0 * c + 3.0 * r, cell)
+    dh = rng.normal(0.0, 1.0, (n, n))
+    dh[40:60, 40:70] = -25.0
+    dh[100:110, 100:120] = 20.0
+    return dem, _raster(dh, cell), dh
+
+
+def _hazard_profile(cell_size=10.0):
+    """Twenty steep columns, five that carry debris, then a gentle reach."""
+    gradient = np.r_[np.full(20, 1.0), np.full(5, 0.5), np.full(14, 0.05)]
+    z = np.r_[np.cumsum((gradient * cell_size)[::-1])[::-1], 0.0]
+    return _raster(np.tile(z, (20, 1)), cell_size)
+
+
+@pytest.mark.exact_solution
+def test_coseismic_hazard_area_exact_profile():
+    out = lsdtt3.coseismic_hazard_area(_hazard_profile(), boundary_conditions="popo")
+    a = out["hazard_area"].to_numpy()
+    expected = np.r_[10.0 * np.arange(1, 21), np.full(6, 200.0), np.zeros(14)]
+    np.testing.assert_allclose(a, np.tile(expected, (20, 1)), atol=1e-3)
+    assert out["n_source_cells"] == 400
+    assert out["n_zero_hazard_cells"] == 280
+    assert out["source_area_m2"] == 40000.0
+
+
+@pytest.mark.negative
+def test_coseismic_hazard_area_refuses_inverted_thresholds():
+    with pytest.raises(ValueError, match="stopping slope"):
+        lsdtt3.coseismic_hazard_area(_hazard_profile(), initiation_slope=0.2, stopping_slope=0.5)
+
+
+@pytest.mark.exact_solution
+def test_dem_change_finds_a_planted_scar():
+    dem, difference, _ = _change_pair()
+    out = lsdtt3.dem_change_landslides(difference, dem, detection_sigma=4.5, seed_sigma=5.0, n_null_simulations=2,
+                                       n_threads=1)
+    patches = out["patches"]
+    assert len(patches) == 1 and patches.change[0] == "loss" and patches.n_cells[0] == 600
+    assert patches.area_m2[0] == pytest.approx(600 * 900.0)
+    assert patches.mean_change_m[0] == pytest.approx(-25.0, abs=0.1)
+    assert out["uncertainty"]["nmad_metres"] == pytest.approx(1.0, abs=0.08)
+    assert out["change_class"].to_numpy()[50, 50] == -1
+    assert out["false_detection"]["n_simulations"] == 2
+
+
+@pytest.mark.property
+def test_dem_change_sign_convention_and_stable_mask():
+    dem, difference, dh = _change_pair()
+    flipped = _raster(-dh, 30.0)
+    a = lsdtt3.dem_change_landslides(difference, dem, detection_sigma=4.5, seed_sigma=5.0, n_null_simulations=0)
+    b = lsdtt3.dem_change_landslides(flipped, dem, is_newer_minus_older=False, detection_sigma=4.5, seed_sigma=5.0,
+                                     n_null_simulations=0)
+    assert a["patches"].n_cells.tolist() == b["patches"].n_cells.tolist()
+    stable = np.ones(dh.shape)
+    stable[35:65, 35:75] = 0.0
+    stable[95:115, 95:125] = 0.0
+    c = lsdtt3.dem_change_landslides(difference, dem, stable_mask=_raster(stable, 30.0), detection_sigma=4.5,
+                                     seed_sigma=5.0, n_null_simulations=0)
+    assert c["uncertainty"]["used_stable_mask"] is True
+
+
+@pytest.mark.negative
+def test_dem_change_refuses_a_bad_sign():
+    dem, difference, _ = _change_pair()
+    with pytest.raises(ValueError):
+        lsdtt3.dem_change_landslides(difference, dem, change_sign="up")

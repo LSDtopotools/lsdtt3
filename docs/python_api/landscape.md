@@ -770,3 +770,67 @@ B. Gailleton
 ```python
 def hillslope_transport_implicit(dem: lsdtt3.Raster, channels: lsdtt3.Raster, duration_years: float, diffusivity: float = 0.0010000000474974513, uplift_rate: float = 0.0, critical_slope: float = 0.800000011920929, nonlinear: bool = True, boundary_conditions: str = 'oooo', picard_tolerance: float = 9.999999747378752e-05, picard_max_iterations: int = 50, slope_ratio_cap: float = 0.9900000095367432, n_threads: int = 0) -> lsdtt3.HillslopeTransportResult
 ```
+
+---
+
+## `summarise_hillslopes_by_channel_pixel`
+
+One row per channel pixel: its hillslope pixels and their median value.
+
+lsdtt-hillslope-channel-tagging ``write_channel_pixel_summary``, the same
+routine, for any hillslope raster. With ``relative_height`` the CLI's
+``n_with_relative_height`` and ``median_relative_height`` are ``n_with_value``
+and ``median`` here.
+
+Parameters
+----------
+channel_flat : numpy.ndarray
+    From ``FlowInfo.hillslope_relief``.
+values : Raster
+    A hillslope raster, for example ``relative_height``.
+
+Returns
+-------
+pandas.DataFrame
+    ``flat``, ``row``, ``col``, ``latitude``, ``longitude``,
+    ``n_hillslope_pixels``, ``n_with_value`` and ``median`` (NaN with no value).
+
+Authors
+-------
+B. Gailleton
+
+```python
+def summarise_hillslopes_by_channel_pixel(channel_flat: numpy.ndarray, values: Raster) -> pandas.DataFrame
+```
+
+---
+
+## `tag_hillslopes_from_channel`
+
+Copy each channel pixel's value to the hillslope pixels draining to it.
+
+lsdtt-hillslope-channel-tagging's tag, the same routine. Channel pixels carry
+their own value. A pixel whose channel pixel has no value is nodata.
+
+Parameters
+----------
+channel_flat : numpy.ndarray
+    From ``FlowInfo.hillslope_relief``.
+channel_values : Raster
+    The value at channel pixels; nodata where there is none.
+dem : Raster
+    Its valid cells are the cells tagged and counted.
+
+Returns
+-------
+dict
+    ``tag`` (Raster), ``n_channel_tagged``, ``n_hillslope_tagged``,
+    ``n_no_value``, ``n_excluded`` and ``n_no_channel``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def tag_hillslopes_from_channel(channel_flat: numpy.ndarray, channel_values: Raster, dem: Raster) -> dict
+```

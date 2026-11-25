@@ -1,0 +1,11 @@
+# Refused: the stopping slope is above the initiation slope.
+read_path: __READ_PATH__
+read_fname: hazard_dem.tif
+write_path: __WRITE_PATH__
+write_fname: sha
+n_threads: 1
+run_sinmap: false
+run_rupture_planes: false
+run_coseismic_hazard_area: true
+coseismic_hazard_initiation_slope: 0.2
+coseismic_hazard_stopping_slope: 0.5

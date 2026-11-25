@@ -266,6 +266,14 @@ lsdtt_evidence(rigorous_channel_network_analysis_bearing_statistics_reference sy
 lsdtt_evidence(rigorous_channel_network_analysis_bearing_statistics_region system smoke exact_solution)     # W1 = 0
 # The fixture's shift is (4, -3, 0.5) m; the test pins the recovered dx=4.01.
 lsdtt_evidence(smoke_raster_calculator_coregistration system smoke characterisation)
+lsdtt_evidence(unit_raster_calculator_alignment unit exact_solution property negative)
+lsdtt_evidence(smoke_raster_calculator_half_pixel system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_non_square system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_vertical_units system exact_solution)
+lsdtt_evidence(smoke_raster_calculator_metric_grid system exact_solution)
+lsdtt_evidence(failure_raster_calculator_geographic_coreg system smoke negative)
+lsdtt_evidence(failure_raster_calculator_one_datum system smoke negative)
+lsdtt_evidence(failure_raster_calculator_no_overlap system smoke negative)
 
 # lsdtt-divide-migration: divide counts follow from the three-valley topology.
 lsdtt_evidence(smoke_divide_migration_no_clusters system smoke exact_solution characterisation)
@@ -568,13 +576,30 @@ lsdtt_evidence(unit_slope_area_log_binned_quantiles unit characterisation exact_
 lsdtt_evidence(unit_uniform_combination_cdfs unit exact_solution differential property negative)  # closed-form identities; defining integrals by quadrature, Monte Carlo and the SINMAP manual's piecewise product CDF inside the test; monotone in [0, 1]; bad bounds throw
 lsdtt_evidence(unit_equal_density_sampling unit exact_solution property negative)  # CDF levels k/(n-1), closed-form means and probabilities; weights sum to 1; bad arguments throw
 lsdtt_evidence(unit_slope_stability_sinmap unit exact_solution differential property metamorphic negative)  # SINMAP equations and analytic surfaces (plane, cone, bowl); Monte Carlo of P(FS>1) in the test; SI/P ends, monotone in a; 1 vs 4 threads; bad parameters and missing region ids throw
-lsdtt_evidence(unit_slope_stability_rupture unit exact_solution differential property metamorphic negative)  # scaLr eq. 3 minimum by closed form vs Brent + dense search in the test; plane and parabola profiles; Fig. 4 trends; 1 vs 4 threads; bad parameters and region ids throw
+lsdtt_evidence(unit_slope_stability_rupture unit exact_solution differential property metamorphic negative)  # scaLr eq. 3 minimum by closed form vs Brent + dense search in the test; plane and parabola profiles; Fig. 4 trends; 1 vs 4 threads; bad parameters and region ids throw; pseudo-static F against the stresses, its closed-form optimum against a dense search, k = 0 bit-identical
 lsdtt_evidence(unit_slope_stability_rupture_probability unit exact_solution property metamorphic negative)  # Pf from equal-density c, mu samples vs exact P(F* <= 1) on a plane (uniform by quadrature over c*(mu); truncated normal by erf at mu*) within the trapezoid bound; one-sample limit = deterministic bit for bit; water table monotone; regions; 1 vs 4 threads; bad weights throw
 lsdtt_evidence(unit_slope_stability_slip_surface unit exact_solution property metamorphic)  # slices: slope-parallel base = finite-length closed form (ordinary, Bishop, dry, wet); plane_integrated = scaLr with doubled cohesion term; circles converge to Gauss-Legendre arc integrals at 2nd order; Bishop >= ordinary; circular <= plane; guards; L-path sinuosity; depth trends; seeded >= full; 1 vs 4 threads; envelope and catalogue volumes; fixed-surface Pf
 lsdtt_evidence(unit_slope_stability_slip_compound unit exact_solution property metamorphic negative)  # Rankine-scarp two-plane wedge and bilinear ordinary F in closed form; psi->90 limits; bilinear planar limit (4 methods) and search <= plane; Janbu infinite slope + f0 on circles; Spencer vs infinite slope, Bishop, Janbu; structural daylight triangle closed form and search minimum; threads; one-sample Pf; bilinear+rankine refused
 lsdtt_evidence(unit_slope_stability_columns unit exact_solution property metamorphic)  # Hovland/Xie column = infinite slope; area = r.slope.stability form; apparent dip; ellipsoid surface residual + gradient; buried-ellipsoid volume convergence; threads; cover F; envelope/catalogue volumes; truncation; seeded vs random (measured); one-sample and linear Pf; cover Pf
 lsdtt_evidence(unit_slope_stability_catalogue unit exact_solution property negative)  # grouping rules on hand-built rupture results; rectangle statistics in closed form; catalogue invariants through the pipeline; bad option throws
 lsdtt_evidence(unit_slope_stability_groundwater_dupuit unit exact_solution differential property negative)  # Dupuit mound/divide, kinematic plane = SINMAP wetness, exponential = TOPMODEL relation, linear decay; RK4 of the update ODE in the test; exact water budget; bad parameters throw
+lsdtt_evidence(unit_hillslope_channel_tagging unit exact_solution differential metamorphic property negative)  # V-valleys and hand-built D8 paths in closed form; ridge vs brute-force search of each group in the test; channel link and HAND = the existing routines; bounds and no rise downslope; bad options throw
+lsdtt_evidence(unit_slope_stability_dem_change unit exact_solution property negative)
+lsdtt_evidence(smoke_slope_stability_dem_change system exact_solution)
+lsdtt_evidence(failure_slope_stability_dem_change_no_difference system smoke negative)
+lsdtt_evidence(failure_slope_stability_dem_change_bad_sign system smoke negative)
+lsdtt_evidence(unit_slope_stability_hazard_area unit exact_solution differential property negative)  # Milledge et al. (2019) Fig. 2 (two figure cells corrected to eqs. 6-9); exact profile; MFD accumulation limit; conservation; monotonic thresholds; Ah = 0 vs brute-force reachability; bad options throw
+lsdtt_evidence(unit_slope_stability_scar_drape unit exact_solution metamorphic property negative)  # pit in a planar slope restored exactly; Poisson square centre -0.0736713 s L^2 at two grid spacings; cloth never below ground; overlap, edge, nodata; GeoPackage polygons read back; bad options and missing field refused
+lsdtt_evidence(smoke_slope_stability_hazard_area system exact_solution)
+lsdtt_evidence(failure_slope_stability_hazard_area_bad_slopes system smoke negative)
+lsdtt_evidence(smoke_slope_stability_rupture_pga system smoke)
+lsdtt_evidence(failure_slope_stability_rupture_pga_with_water system smoke negative)
+lsdtt_evidence(smoke_hillslope_channel_tagging system smoke)
+lsdtt_evidence(smoke_hillslope_channel_tagging_aspect_ray system smoke)
+lsdtt_evidence(smoke_hillslope_channel_tagging_tags system smoke)
+lsdtt_evidence(failure_hillslope_channel_tagging_no_baselevel system smoke negative)
+lsdtt_evidence(failure_hillslope_channel_tagging_ray_grouping system smoke negative)
+lsdtt_evidence(failure_hillslope_channel_tagging_missing_column system smoke negative)
 lsdtt_evidence(unit_brent_minimiser unit exact_solution differential negative)  # known minima and the scaLr closed-form depth; 2e6-point grid search inside the test; bad arguments throw
 lsdtt_evidence(unit_power_law_tail_fit unit property negative)  # Clauset MLE + KS x_min on samples from known continuous and discrete power laws and a lognormal body with a tail; binned density integrates to 1; slope tracks -alpha; too few values invalid
 lsdtt_evidence(unit_slope_area_d8_flow_path_gradient unit exact_solution negative metamorphic)  # plane gradients exact; refusals; threads 1 = 4

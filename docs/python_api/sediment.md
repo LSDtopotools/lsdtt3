@@ -1438,6 +1438,71 @@ def basin_ridgeline_extrema(basins: lsdtt3.BasinCollection, network: lsdtt3.Chan
 
 ---
 
+## `dem_change_landslides`
+
+Potential landslides in a DEM of difference, with their uncertainty.
+
+lsdtt-slope-stability ``run_dem_change_landslides``, the same routine; the
+keyword names are the CLI's less the ``dem_change_`` and ``dem_difference_``
+prefixes. An error model from stable terrain (bias, NMAD by slope, spatial
+correlation) sets a threshold for each cell. Connected cells are grouped and
+aggregated into patches, each tested against the correlated error of its mean.
+Noise simulations estimate false detections. The results are CANDIDATE areas of
+change: vegetation, snow, water, radar penetration and DEM artefacts also change
+elevation between two products.
+
+Parameters
+----------
+difference : Raster
+    DEM of difference (m), for example from lsdtt-raster-calculator.
+dem : Raster
+    The newer DEM on the same grid, used for slope.
+stable_mask : Raster or None, default=None, keyword-only
+    Non-zero on stable terrain. Without it every assessable cell within 4 NMAD
+    of the median is treated as stable.
+is_newer_minus_older : bool, default=True, keyword-only
+    False if ``difference`` is older minus newer.
+change_sign : str, default="loss", keyword-only
+    ``loss``, ``gain`` or ``both``.
+detection_sigma : float, default=1.96, keyword-only
+    Multiple of the slope-dependent error at which a cell can join a patch.
+seed_sigma : float, default=3.0, keyword-only
+    A connected group of candidates needs one cell at this multiple.
+patch_significance : float, default=1.96, keyword-only
+    Minimum absolute mean change over its standard error.
+min_patch_pixels : int, default=5, keyword-only
+    Smallest patch.
+aggregation_radius_pixels : int, default=2, keyword-only
+    Join changed cells with up to this many unchanged cells between them.
+min_slope : float, default=0.0, keyword-only
+    Ignore cells with a gradient (m/m) below this.
+n_slope_bins : int, default=10, keyword-only
+    Quantile bins of slope for the error model.
+n_null_simulations : int, default=20, keyword-only
+    Noise simulations for false detections; 0 turns them off.
+random_seed : int, default=33, keyword-only
+    Seed for the variogram sample and the simulations.
+n_threads : int, default=0, keyword-only
+    OpenMP threads for the simulations; the result does not depend on it.
+
+Returns
+-------
+dict
+    ``uncertainty`` and ``false_detection`` (dicts); DataFrames
+    ``uncertainty_by_slope``, ``variogram``, ``patches``, ``coverage``,
+    ``sensitivity`` and ``false_detection_by_area``; and Rasters ``corrected``,
+    ``sigma``, ``z``, ``change_class`` (-1 loss, 1 gain) and ``label``.
+
+Authors
+-------
+B. Gailleton
+
+```python
+def dem_change_landslides(difference: Raster, dem: Raster, *, stable_mask: Raster | None = None, is_newer_minus_older: bool = True, change_sign: str = 'loss', detection_sigma: float = 1.96, seed_sigma: float = 3.0, patch_significance: float = 1.96, min_patch_pixels: int = 5, aggregation_radius_pixels: int = 2, min_slope: float = 0.0, n_slope_bins: int = 10, n_null_simulations: int = 20, random_seed: int = 33, n_threads: int = 0) -> dict
+```
+
+---
+
 ## `extract_roads_smooth`
 
 Extract long smooth road-like ribbons from a DEM.

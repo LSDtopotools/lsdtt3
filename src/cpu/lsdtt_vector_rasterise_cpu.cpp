@@ -970,6 +970,90 @@ vector_layer_grid_geometry read_vector_layer_on_grid(
 }
 
 // =============================================================================
+// rasterise_polygon_features_separately
+// =============================================================================
+polygon_features_on_grid rasterise_polygon_features_separately(
+    const lsdtt_raster_cpu& reference_raster,
+    const std::string&      vector_path,
+    const std::string&      layer_name,
+    const std::string&      id_field_name)
+{
+    const lsdtt_raster_meta& meta = reference_raster.get_meta();
+    if (!meta.is_valid())
+        throw std::runtime_error("rasterise_polygon_features_separately: reference raster metadata is invalid");
+
+    GDALDataset* vec_ds = nullptr;
+    OGRLayer* layer = layer_name.empty() ? open_first_layer(vector_path, vec_ds)
+                                         : open_named_layer(vector_path, layer_name, vec_ds);
+    struct ds_guard_t { GDALDataset* ds; ~ds_guard_t() { if (ds) GDALClose(ds); } } guard{vec_ds};
+
+    polygon_features_on_grid out;
+    out.layer_name = layer->GetName();
+    int id_index = -1;
+    if (!id_field_name.empty())
+    {
+        OGRFeatureDefn* defn = layer->GetLayerDefn();
+        id_index = defn->GetFieldIndex(id_field_name.c_str());
+        if (id_index < 0)
+        {
+            std::string fields;
+            for (int k = 0; k < defn->GetFieldCount(); ++k)
+                fields += (k ? ", " : "") + std::string(defn->GetFieldDefn(k)->GetNameRef());
+            throw std::invalid_argument("field '" + id_field_name + "' is not in layer '" + out.layer_name +
+                                        "' of " + vector_path + " (fields: " + fields + ")");
+        }
+    }
+    auto ct = make_layer_to_raster_transform(layer->GetSpatialRef(), meta.crs_wkt, k_crs_transform_failure);
+
+    const double cs = meta.cell_size;
+    const double y_top = meta.y_min + static_cast<double>(meta.n_rows) * cs;
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    int feature_index = -1;
+    while ((feat = layer->GetNextFeature()) != nullptr)
+    {
+        ++feature_index;
+        struct feat_guard_t { OGRFeature* f; ~feat_guard_t() { OGRFeature::DestroyFeature(f); } } fg{feat};
+        OGRGeometry* geom = feat->GetGeometryRef();
+        const OGRwkbGeometryType t = geom ? wkbFlatten(geom->getGeometryType()) : wkbUnknown;
+        if (!geom || geom->IsEmpty() || (t != wkbPolygon && t != wkbMultiPolygon)) { ++out.n_not_polygon; continue; }
+        std::unique_ptr<OGRGeometry> clone(geom->clone());
+        if (ct && clone->transform(ct.get()) != OGRERR_NONE)
+            throw std::runtime_error("rasterise_polygon_features_separately: could not reproject feature " +
+                                     std::to_string(feature_index) + " of " + vector_path);
+        OGREnvelope env;
+        clone->getEnvelope(&env);
+        const int c0 = std::max(0, static_cast<int>(std::floor((env.MinX - meta.x_min) / cs)));
+        const int c1 = std::min(meta.n_cols - 1, static_cast<int>(std::floor((env.MaxX - meta.x_min) / cs)));
+        const int r0 = std::max(0, static_cast<int>(std::floor((y_top - env.MaxY) / cs)));
+        const int r1 = std::min(meta.n_rows - 1, static_cast<int>(std::floor((y_top - env.MinY) / cs)));
+        if (c0 > c1 || r0 > r1) { ++out.n_outside_grid; continue; }
+
+        const int w = c1 - c0 + 1, h = r1 - r0 + 1;
+        const double gt[6] = {meta.x_min + c0 * cs, cs, 0.0, y_top - r0 * cs, 0.0, -cs};
+        std::vector<OGRGeometry*> one{clone.get()};
+        polygon_feature_cells pf;
+        pf.feature_index = feature_index;
+        pf.id = id_index >= 0 ? std::string(feat->GetFieldAsString(id_index)) : std::to_string(feature_index);
+        for (int pass = 0; pass < 2 && pf.cells.empty(); ++pass)
+        {
+            GDALDataset* mem_ds = make_mem_byte_raster(h, w, gt);
+            burn_geometries(mem_ds, one, /*all_touched=*/pass == 1);
+            const std::vector<uint8_t> buf = read_byte_band(mem_ds, h, w);
+            GDALClose(mem_ds);
+            for (int r = 0; r < h; ++r)
+                for (int c = 0; c < w; ++c)
+                    if (buf[static_cast<std::size_t>(r) * w + c])
+                        pf.cells.push_back(static_cast<std::int64_t>(r0 + r) * meta.n_cols + (c0 + c));
+            pf.used_all_touched = pass == 1;
+        }
+        if (pf.cells.empty()) { ++out.n_outside_grid; continue; }
+        out.features.push_back(std::move(pf));
+    }
+    return out;
+}
+
+// =============================================================================
 // rasterise_macrostrat_geology
 // =============================================================================
 macrostrat_geology_rasterise_result rasterise_macrostrat_geology(

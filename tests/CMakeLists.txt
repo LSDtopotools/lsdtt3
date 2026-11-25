@@ -2815,6 +2815,82 @@ add_lsdtt_cli_smoke_test(
 )
 
 # =============================================================================
+# lsdtt-hillslope-channel-tagging
+#
+# The numerics are in lsdtt-test-hillslope-channel-tagging. These tests carry the
+# plumbing: the routing front end, output names, the basin and attribute inputs
+# and the refusals.
+# =============================================================================
+set(LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/hillslope_tagging_fixture")
+file(MAKE_DIRECTORY "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}")
+add_test(NAME fixture_hillslope_tagging_inputs
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_diamond_square.tif"
+        "${LSDTT_BASIN_STATS_FIXTURE_DIR}/out/basin_stats_outlets.csv"
+        "${LSDTT_TEST_DATA_DIR}/hillslope_tagging_channel_attributes.csv"
+        "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}/")
+lsdtt_set_tests_properties(fixture_hillslope_tagging_inputs PROPERTIES
+    LABELS "fixture;hillslope_tagging"
+    FIXTURES_SETUP hillslope_tagging_fixture
+    FIXTURES_REQUIRED basin_stats_fixture)
+
+function(add_hillslope_tagging_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-hillslope-channel-tagging
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_HILLSLOPE_TAGGING_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            LABELS "cli;hillslope_tagging"
+            FIXTURES_REQUIRED hillslope_tagging_fixture)
+    endif()
+endfunction()
+
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging
+    hillslope_channel_tagging_smoke.param.in hct_relative_height.tif
+    --expect hct_ridge_relief.tif
+    --expect hct_HAND.tif
+    --expect-absent hct_ridge_status.tif
+    --expect-file-contains "hct_channel_pixel_summary.csv:flat,row,col,latitude,longitude,n_hillslope_pixels"
+    --stdout-contains "Hillslope pixels: "
+    --expect-raster-stat hct_ridge_relief.tif:min:0:100000)
+
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging_aspect_ray
+    hillslope_channel_tagging_aspect_ray.param.in hcr_relative_height.tif
+    --expect hcr_ridge_status.tif
+    --stdout-contains "Rays: crest on a divide "
+    --expect-raster-stat hcr_relative_height.tif:min:0:0.01
+    --expect-raster-stat hcr_relative_height.tif:max:0.99:1
+    --expect-raster-values hcr_ridge_status.tif:0,1,3,4,5,6)
+
+# Two records on one pixel give their median (2.0), and -9999 and an empty cell
+# are nodata, so sinuosity spans 1.5 to 2.0 with the gap fill off.
+add_hillslope_tagging_cli_test(smoke_hillslope_channel_tagging_tags
+    hillslope_channel_tagging_tags.param.in hcg_tag_chi.tif
+    --expect hcg_tag_k_sn.tif
+    --expect hcg_tag_sinuosity.tif
+    --stdout-contains "Basins: 27 candidates, 19 kept"
+    --stdout-contains "have a record"
+    --stdout-contains "2 have a record (1 with several), 0 gap-filled"
+    --expect-raster-stat hcg_tag_sinuosity.tif:min:1.5:1.5
+    --expect-raster-stat hcg_tag_sinuosity.tif:max:2:2)
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_no_baselevel
+    hillslope_channel_tagging_no_baselevel.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "chi_max_outlet_elevation_metres")
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_ray_grouping
+    hillslope_channel_tagging_ray_grouping.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "does not apply to aspect_ray")
+
+add_hillslope_tagging_cli_test(failure_hillslope_channel_tagging_missing_column
+    hillslope_channel_tagging_missing_column.param.in unused_expected_output
+    --expect-failure
+    --stderr-contains "column 'curvature'")
+
+# =============================================================================
 # lsdtt-slope-stability: SINMAP
 #
 # The numerics are tested in the lsdtt-test-slope-stability-sinmap driver
@@ -2926,6 +3002,94 @@ add_lsdtt_cli_smoke_test(
 )
 lsdtt_set_tests_properties(smoke_slope_stability_rupture_only PROPERTIES
     FIXTURES_REQUIRED basin_stats_fixture)
+
+# lsdtt-slope-stability: potential landslides from a DEM of difference, on a
+# plane with noise, a 600-cell scar and a 300-cell deposit.
+set(LSDTT_DEM_CHANGE_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_dem_change_fixture")
+add_test(NAME fixture_slope_stability_dem_change
+    COMMAND lsdtt-test-slope-stability-dem-change --write-cli-fixture "${LSDTT_DEM_CHANGE_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_slope_stability_dem_change PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_dem_change_fixture)
+
+function(add_dem_change_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-slope-stability
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_DEM_CHANGE_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED slope_stability_dem_change_fixture)
+    endif()
+endfunction()
+
+add_dem_change_cli_test(smoke_slope_stability_dem_change
+    slope_stability_dem_change.param.in sdc_dem_change_patches.csv
+    --expect sdc_dem_change_uncertainty.csv
+    --expect sdc_dem_change_uncertainty_by_slope.csv
+    --expect sdc_dem_change_variogram.csv
+    --expect sdc_dem_change_coverage.csv
+    --expect sdc_dem_change_sensitivity.csv
+    --expect sdc_dem_change_false_detection.csv
+    --expect sdc_dem_change_false_detection_by_area.csv
+    --expect sdc_dem_change_class.tif
+    --expect sdc_dem_change_label.tif
+    --expect sdc_dem_change_sigma.tif
+    --expect sdc_dem_change_z.tif
+    --expect sdc_dem_change_corrected.tif
+    --expect-absent sdc_sinmap_stability_index.tif
+    --expect-file-contains "sdc_dem_change_coverage.csv:loss,1,540000,"
+    --expect-file-contains "sdc_dem_change_coverage.csv:gain,1,270000,"
+    --expect-raster-stat sdc_dem_change_class.tif:min:-1:-1
+    --expect-raster-stat sdc_dem_change_class.tif:max:1:1)
+add_dem_change_cli_test(failure_slope_stability_dem_change_no_difference
+    slope_stability_dem_change_no_difference.param.in unused_expected_output
+    --expect-failure --stderr-contains "needs dem_difference_fname")
+add_dem_change_cli_test(failure_slope_stability_dem_change_bad_sign
+    slope_stability_dem_change_bad_sign.param.in unused_expected_output
+    --expect-failure --stderr-contains "dem_change_sign")
+
+# Coseismic hazard area: an exact profile through the CLI.
+set(LSDTT_HAZARD_AREA_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_hazard_area_fixture")
+add_test(NAME fixture_slope_stability_hazard_area
+    COMMAND lsdtt-test-slope-stability-hazard-area --write-cli-fixture "${LSDTT_HAZARD_AREA_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_slope_stability_hazard_area PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_hazard_area_fixture)
+
+function(add_hazard_area_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-slope-stability
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_HAZARD_AREA_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED slope_stability_hazard_area_fixture)
+    endif()
+endfunction()
+
+add_hazard_area_cli_test(smoke_slope_stability_hazard_area
+    slope_stability_hazard_area.param.in sha_hazard_area.tif
+    --expect sha_hazard_area_steepest_slope.tif
+    --expect sha_hazard_area_zone.tif
+    --expect sha_hazard_area_edge_influenced.tif
+    --expect sha_hazard_area_summary.csv
+    --expect-absent sha_sinmap_stability_index.tif
+    --expect-file-contains "sha_hazard_area_summary.csv:n_source_cells,400"
+    --expect-file-contains "sha_hazard_area_summary.csv:n_zero_hazard_cells,280"
+    --expect-raster-stat sha_hazard_area.tif:min:0:0
+    --expect-raster-stat sha_hazard_area.tif:max:199.99:200.01)
+add_hazard_area_cli_test(failure_slope_stability_hazard_area_bad_slopes
+    slope_stability_hazard_area_bad_slopes.param.in unused_expected_output
+    --expect-failure --stderr-contains "stopping slope")
+add_hazard_area_cli_test(smoke_slope_stability_rupture_pga
+    slope_stability_rupture_pga.param.in ssg_rupture_safety_factor.tif
+    --expect ssg_rupture_unstable.tif
+    --expect ssg_landslide_catalogue.csv
+    --stdout-contains "Pseudo-static shaking: PGA 0.400000006 to 0.400000006 g, k = 0.5 x PGA")
+add_hazard_area_cli_test(failure_slope_stability_rupture_pga_with_water
+    slope_stability_rupture_pga_with_water.param.in unused_expected_output
+    --expect-failure --stderr-contains "cannot be combined with water_table_method")
 
 # Probability of failure of the rupture planes (parameter_uncertainty). The
 # numerics are in lsdtt-test-slope-stability-rupture-probability; these carry
@@ -3911,6 +4075,61 @@ add_lsdtt_cli_smoke_test(
     --expect-failure
     --stderr-contains "FATAL: threshold_contributing_pixels must be > 0."
 )
+
+# DEM of difference grid handling. The numerics are in
+# lsdtt-test-dem-difference-alignment; these run the CLI on planes in degrees, on
+# the grids of the real products, where a mislocated cell is a height error.
+add_executable(lsdtt-test-dem-difference-alignment cpp/test_dem_difference_alignment.cpp)
+target_link_libraries(lsdtt-test-dem-difference-alignment PRIVATE lsdtt3_cpu)
+add_test(NAME unit_raster_calculator_alignment COMMAND lsdtt-test-dem-difference-alignment)
+lsdtt_set_tests_properties(unit_raster_calculator_alignment PROPERTIES
+    LABELS "raster"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+set(LSDTT_DEM_DIFFERENCE_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/dem_difference_fixture")
+add_test(NAME fixture_raster_calculator_planes
+    COMMAND lsdtt-test-dem-difference-alignment --write-cli-fixture "${LSDTT_DEM_DIFFERENCE_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_raster_calculator_planes PROPERTIES
+    LABELS "fixture;raster"
+    FIXTURES_SETUP dem_difference_fixture)
+
+function(add_dem_difference_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-raster-calculator
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_DEM_DIFFERENCE_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED dem_difference_fixture)
+    endif()
+endfunction()
+
+add_dem_difference_cli_test(smoke_raster_calculator_half_pixel
+    raster_calculator_half_pixel.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.01:0.01
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.01:0.01)
+add_dem_difference_cli_test(smoke_raster_calculator_non_square
+    raster_calculator_non_square.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.05:0.05
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.05:0.05)
+add_dem_difference_cli_test(smoke_raster_calculator_vertical_units
+    raster_calculator_feet.param.in dod_and_s_difference.tif
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.01:0.01
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.01:0.01)
+add_dem_difference_cli_test(smoke_raster_calculator_metric_grid
+    raster_calculator_metric_grid.param.in dod_and_s_difference.tif
+    --stdout-contains "m grid"
+    --expect-raster-stat dod_and_s_difference.tif:min:-0.05:0.05
+    --expect-raster-stat dod_and_s_difference.tif:max:-0.05:0.05)
+add_dem_difference_cli_test(failure_raster_calculator_geographic_coreg
+    raster_calculator_geographic_coreg.param.in unused_expected_output
+    --expect-failure --stderr-contains "reproject_to_metric_grid")
+add_dem_difference_cli_test(failure_raster_calculator_one_datum
+    raster_calculator_one_datum.param.in unused_expected_output
+    --expect-failure --stderr-contains "or neither")
+add_dem_difference_cli_test(failure_raster_calculator_no_overlap
+    raster_calculator_no_overlap.param.in unused_expected_output
+    --expect-failure --stderr-contains "do not overlap")
 
 # Refused: no second raster.
 add_lsdtt_cli_smoke_test(
@@ -6727,6 +6946,30 @@ lsdtt_set_tests_properties(unit_slope_stability_columns PROPERTIES
 # Slope stability: landslide catalogues (src/cpu/lsdtt_slope_stability_catalogue_cpu):
 # each grouping rule on hand-built rupture results, statistics against closed
 # forms, and catalogue properties through compute_rupture_planes.
+# Potential landslides from a DEM of difference.
+add_executable(lsdtt-test-slope-stability-dem-change cpp/test_slope_stability_dem_change.cpp)
+target_link_libraries(lsdtt-test-slope-stability-dem-change PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_dem_change COMMAND lsdtt-test-slope-stability-dem-change)
+lsdtt_set_tests_properties(unit_slope_stability_dem_change PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+# Coseismic hazard area, SHALRUN-EQ (src/cpu/lsdtt_slope_stability_hazard_area_cpu).
+add_executable(lsdtt-test-slope-stability-hazard-area cpp/test_slope_stability_hazard_area.cpp)
+target_link_libraries(lsdtt-test-slope-stability-hazard-area PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_hazard_area COMMAND lsdtt-test-slope-stability-hazard-area)
+lsdtt_set_tests_properties(unit_slope_stability_hazard_area PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+# Scar volumes from a draped cloth (src/cpu/lsdtt_slope_stability_scar_drape_cpu).
+add_executable(lsdtt-test-slope-stability-scar-drape cpp/test_slope_stability_scar_drape.cpp)
+target_link_libraries(lsdtt-test-slope-stability-scar-drape PRIVATE lsdtt3_cpu)
+add_test(NAME unit_slope_stability_scar_drape COMMAND lsdtt-test-slope-stability-scar-drape)
+lsdtt_set_tests_properties(unit_slope_stability_scar_drape PROPERTIES
+    LABELS "slope_stability"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
 add_executable(lsdtt-test-slope-stability-catalogue cpp/test_slope_stability_catalogue.cpp)
 target_link_libraries(lsdtt-test-slope-stability-catalogue PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_catalogue COMMAND lsdtt-test-slope-stability-catalogue)
@@ -6742,6 +6985,14 @@ target_link_libraries(lsdtt-test-groundwater-dupuit PRIVATE lsdtt3_cpu)
 add_test(NAME unit_slope_stability_groundwater_dupuit COMMAND lsdtt-test-groundwater-dupuit)
 lsdtt_set_tests_properties(unit_slope_stability_groundwater_dupuit PROPERTIES
     LABELS "slope_stability;distributed_hydrology")
+
+# Hillslope pixels linked to a channel pixel and a ridge pixel by D8
+# (src/cpu/lsdtt_hillslope_channel_tagging_cpu): ridge relief and relative height.
+add_executable(lsdtt-test-hillslope-channel-tagging cpp/test_hillslope_channel_tagging.cpp)
+target_link_libraries(lsdtt-test-hillslope-channel-tagging PRIVATE lsdtt3_cpu)
+add_test(NAME unit_hillslope_channel_tagging COMMAND lsdtt-test-hillslope-channel-tagging)
+lsdtt_set_tests_properties(unit_hillslope_channel_tagging PROPERTIES
+    LABELS "hillslope_tagging")
 
 # Power-law tail fits (Clauset et al. 2009 MLE with KS choice of x_min) and the
 # log-binned probability density, for frequency-area plots (src/utils).

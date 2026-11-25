@@ -132,8 +132,63 @@ rupture_pair rupture_optimal_depth_wet(double dx, double dz, double d, const rup
     return out;
 }
 
+double rupture_safety_factor_seismic(double h, double dx, double dz, double k, const rupture_parameters& p)
+{
+    if (k == 0.0) return rupture_safety_factor(h, dx, dz, p);
+    if (!(dx > 0.0) || !(h > 0.0) || !(h < dz)) return k_inf;
+    const double s = dz - h;
+    const double C = p.cohesion_pa / (p.density_kg_m3 * p.gravity_m_s2);
+    return (C * (dx * dx + s * s) / (h * dx) + p.friction_coefficient * std::max(dx - k * s, 0.0)) / (s + k * dx);
+}
+
+rupture_pair rupture_optimal_depth_seismic(double dx, double dz, double k, const rupture_parameters& p)
+{
+    if (k == 0.0) return rupture_optimal_depth(dx, dz, p);
+    rupture_pair out;
+    if (!(dx > 0.0) || !(dz > 0.0)) return out;
+    out.admissible = true;
+    const double mu = p.friction_coefficient;
+    const double C = p.cohesion_pa / (p.density_kg_m3 * p.gravity_m_s2);
+    if (C == 0.0)
+    {
+        // Cohesionless: F rises with h, so the limit h -> 0 is the minimum.
+        out.depth = 0.0;
+        out.safety_factor = mu * std::max(dx - k * dz, 0.0) / (dz + k * dx);
+        return out;
+    }
+    const double L2 = dx * dx + dz * dz, E = dz + k * dx, q = 1.0 + k * k;
+    const auto consider = [&](double h) {
+        const double f = rupture_safety_factor_seismic(h, dx, dz, k, p);
+        if (f < out.safety_factor) { out.safety_factor = f; out.depth = h; }
+    };
+    const double h_friction = C * L2 * E / (C * L2 + dx * std::sqrt(q * C * L2 * (C + mu * E)));
+    const double h_unloaded = dz - dx / k;  // below this depth k s > dx: no friction
+    if (h_friction >= h_unloaded)
+        consider(h_friction);
+    else
+    {
+        consider(h_unloaded);
+        consider(L2 * E / (L2 + dx * std::sqrt(q * L2)));  // the optimum with mu = 0
+    }
+    consider(dz * (1.0 - 1e-9));  // F_k is finite as the plane flattens
+    return out;
+}
+
 namespace
 {
+
+// The per-cell pseudo-static coefficient: right size, k >= 0, no water table.
+void check_seismic_coefficient(const std::vector<double>& k, const std::vector<double>& water_table_depth,
+                               std::size_t n, const char* fn)
+{
+    if (k.empty()) return;
+    const std::string f(fn);
+    if (k.size() != n) throw std::invalid_argument(f + ": the seismic coefficient grid differs from the grid");
+    if (!water_table_depth.empty())
+        throw std::invalid_argument(f + ": a seismic coefficient cannot be combined with a water table");
+    for (double v : k)
+        if (std::isfinite(v) && v < 0.0) throw std::invalid_argument(f + ": the seismic coefficient must be >= 0");
+}
 
 // Checks shared by compute_rupture_planes and compute_rupture_failure_probability.
 // has_id(id): a parameter row / sample list exists for region id.
@@ -211,10 +266,14 @@ rupture_rasters compute_rupture_planes(
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
     int n_threads,
-    const std::vector<double>& water_table_depth)
+    const std::vector<double>& water_table_depth,
+    const std::vector<double>& seismic_coefficient)
 {
     check_rupture_inputs(flow, geometry, channel, region, by_region.size(), water_table_depth,
                          [&](std::int32_t id) { return by_region.count(id) > 0; }, "compute_rupture_planes");
+    check_seismic_coefficient(seismic_coefficient, water_table_depth,
+                              static_cast<std::size_t>(geometry.get_meta().n_rows) * geometry.get_meta().n_cols,
+                              "compute_rupture_planes");
     for (const auto& kv : by_region)
     {
         try { validate_rupture_parameters(kv.second); }
@@ -255,6 +314,7 @@ rupture_rasters compute_rupture_planes(
         if (zm[i] && channel[i]) { ++n_channel; continue; }
         if (!is_source(i)) continue;
         if (!single && region[i] == k_rupture_region_nodata) continue;
+        if (!seismic_coefficient.empty() && !std::isfinite(seismic_coefficient[i])) continue;
         const rupture_parameters& p = single ? *single : by_region.at(region[i]);
         const double dw = water_table_depth.empty() ? std::numeric_limits<double>::quiet_NaN()
                                                     : water_table_depth[i];
@@ -264,7 +324,9 @@ rupture_rasters compute_rupture_planes(
             [&](double dx, double dz, std::int64_t pflat) {
                 // best_f as the cutoff: a pair whose wet bound cannot beat it skips
                 // its Brent search (the result is then not used either way).
-                const rupture_pair rp_res = rupture_optimal_depth_wet(dx, dz, dw, p, best_f);
+                const rupture_pair rp_res = seismic_coefficient.empty()
+                    ? rupture_optimal_depth_wet(dx, dz, dw, p, best_f)
+                    : rupture_optimal_depth_seismic(dx, dz, seismic_coefficient[i], p);
                 if (rp_res.admissible && rp_res.safety_factor < best_f)
                 {
                     best_f = rp_res.safety_factor;
@@ -352,11 +414,15 @@ rupture_probability_rasters compute_rupture_failure_probability(
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, std::vector<rupture_parameter_sample>>& samples_by_region,
     int n_threads,
-    const std::vector<double>& water_table_depth)
+    const std::vector<double>& water_table_depth,
+    const std::vector<double>& seismic_coefficient)
 {
     check_rupture_inputs(flow, geometry, channel, region, samples_by_region.size(), water_table_depth,
                          [&](std::int32_t id) { return samples_by_region.count(id) > 0; },
                          "compute_rupture_failure_probability");
+    check_seismic_coefficient(seismic_coefficient, water_table_depth,
+                              static_cast<std::size_t>(geometry.get_meta().n_rows) * geometry.get_meta().n_cols,
+                              "compute_rupture_failure_probability");
     std::size_t max_samples = 0;
     for (const auto& kv : samples_by_region)
     {
@@ -406,6 +472,7 @@ rupture_probability_rasters compute_rupture_failure_probability(
             const std::size_t i = static_cast<std::size_t>(ii);
             if (!zm[i] || channel[i] || !flow.is_valid_cell(ii)) continue;
             if (!single && region[i] == k_rupture_region_nodata) continue;
+            if (!seismic_coefficient.empty() && !std::isfinite(seismic_coefficient[i])) continue;
             const std::vector<rupture_parameter_sample>& smp = single ? *single : samples_by_region.at(region[i]);
             const std::size_t ns = smp.size();
             const double dw = water_table_depth.empty() ? std::numeric_limits<double>::quiet_NaN()
@@ -418,7 +485,9 @@ rupture_probability_rasters compute_rupture_failure_probability(
                     any = true;
                     for (std::size_t s = 0; s < ns; ++s)
                     {
-                        const rupture_pair r = rupture_optimal_depth_wet(dx, dz, dw, smp[s].parameters, best[s]);
+                        const rupture_pair r = seismic_coefficient.empty()
+                            ? rupture_optimal_depth_wet(dx, dz, dw, smp[s].parameters, best[s])
+                            : rupture_optimal_depth_seismic(dx, dz, seismic_coefficient[i], smp[s].parameters);
                         if (r.safety_factor < best[s]) best[s] = r.safety_factor;
                     }
                 });

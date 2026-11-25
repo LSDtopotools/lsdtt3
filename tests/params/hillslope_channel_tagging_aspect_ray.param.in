@@ -1,0 +1,10 @@
+# lsdtt-hillslope-channel-tagging: aspect rays.
+read_path: __READ_PATH__
+read_fname: basin_stats_diamond_square.tif
+write_path: __WRITE_PATH__
+write_fname: hcr
+threshold_contributing_pixels: 100
+n_threads: 1
+write_output_format: gtiff
+hillslope_ridge_method: aspect_ray
+write_ridge_status_raster: true

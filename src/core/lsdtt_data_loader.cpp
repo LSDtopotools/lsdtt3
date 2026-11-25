@@ -1773,6 +1773,8 @@ void lsdtt_data_loader::read_meta_from_dataset()
         }
         meta_.x_min     = gt[0];
         meta_.cell_size = gt[1];
+        // Only a geographic raster can reach this with non-square pixels.
+        meta_.cell_size_y = std::fabs(gt[1] + gt[5]) > 1e-6 * ax ? -gt[5] : 0.0;
         // gt[3] is the top-left y (northing of first row)
         // y_min is the bottom of the raster
         meta_.y_min     = gt[3] + meta_.n_rows * gt[5];

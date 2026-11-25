@@ -30,6 +30,8 @@ default differs from it by about 2 parts in 10⁷.
 | `SlipSurfaces.failure_probability()`, `.spencer_check()`, `.body_catalogues()` | dicts | the slip-surface probability, Spencer check and body catalogues |
 | `lsdtt3.landslide_frequency_area(areas_m2, cell_area_m2, ...)` | (DataFrame, dict) | `_frequency_area.csv`, `_frequency_area_fit.csv` |
 | `lsdtt3.GroundwaterDupuit(surface, fixed_head, ...)` | the aquifer | `water_table_method` |
+| `lsdtt3.dem_change_landslides(difference, dem, ...)` | dict of tables and Rasters | `run_dem_change_landslides` |
+| `lsdtt3.coseismic_hazard_area(routing, ...)` | dict of Rasters and counts | `run_coseismic_hazard_area` |
 
 ## Routing surface, slope and area
 
@@ -127,9 +129,48 @@ wet = flow.rupture_planes(dem, water_table_depth=aquifer.water_table_depth())
 aquifer.budget()                               # cumulative m3
 ```
 
+For an earthquake, pass a peak ground acceleration raster in g on the same grid. The
+pseudo-static coefficient is `seismic_coefficient_ratio` times PGA. It cannot be combined
+with a water table or slip surfaces.
+
+```python
+shaken = flow.rupture_planes(dem, peak_ground_acceleration=pga, seismic_coefficient_ratio=0.5)
+```
+
 `run` advances one constant-recharge segment; call it once per segment of a
 recharge series, as the CLI does. `transient_method="implicit"` uses backward
 Euler with steps of at most `implicit_max_dt_s` (3600 s).
+
+## Potential landslides from a DEM of difference
+
+`dem_change_landslides` is `run_dem_change_landslides`. The keywords are the CLI's
+without the `dem_change_` and `dem_difference_` prefixes. The results are candidate
+areas of change, not mapped landslides.
+
+```python
+out = lsdtt3.dem_change_landslides(
+    difference, newer_dem, stable_mask=stable, change_sign="both", min_slope=0.1
+)
+print(out["uncertainty"]["nmad_metres"], out["false_detection"]["mean_false_area_m2"])
+patches = out["patches"]
+loss = patches[patches.change == "loss"]
+density, fit = lsdtt3.landslide_frequency_area(loss.area_m2, newer_dem.metadata.cell_size ** 2)
+```
+
+`coregister_dem(reference, moving, stable_mask=stable)` fits the shift on stable
+terrain only.
+
+## Coseismic hazard area
+
+`coseismic_hazard_area` is `run_coseismic_hazard_area` (SHALRUN-EQ; Milledge et al.
+2019). Give it the routing surface. Slopes are gradients, and the defaults are the
+paper's values for 30 m DEMs.
+
+```python
+out = lsdtt3.coseismic_hazard_area(routing, initiation_slope=0.839, stopping_slope=0.176)
+hazard = out["hazard_area"]            # m2 per m of cell width
+lower_bound = out["edge_influenced"]   # 1 where sources may lie beyond the DEM
+```
 
 ## Regions
 

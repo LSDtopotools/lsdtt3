@@ -403,6 +403,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-synthetic-networks` | Optimal channel networks with tunable branching, for testing network metrics against known structure. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_synthetic_networks.html) |
 | `lsdtt-fetch-lithology` | Downloads geological map units for a bounding box from Macrostrat. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_lithology.html) |
 | `lsdtt-fetch-erosion-rates` | Downloads basin-averaged cosmogenic erosion rates for a bounding box from OCTOPUS. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_erosion_rates.html) |
+| `lsdtt-fetch-river-lines` | Fetches or reads river centrelines for an area and prepares them for stream burning. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fetch_river_lines.html) |
 | `lsdtt-lithology-erodibility` | Turns a lithology map and a property table into an erodibility (K) raster. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_lithology_erodibility.html) |
 
 ### Surface analysis
@@ -416,6 +417,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_spectral_analysis.html) |
 | `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_surface_metrics.html) |
 | `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_area.html) |
+| `lsdtt-slope-stability` | Where slopes are prone to failure: stability index, rupture and slip surfaces, landslide catalogues. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_stability.html) |
 | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_swath_profile.html) |
 | `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_ridgeline_analysis.html) |
 | `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fluvial_surfaces.html) |
@@ -447,6 +449,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-bankfull-width` | Manning's-equation bankfull channel width, solved per cross section from a high-resolution DEM. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_bankfull_width.html) |
 | `lsdtt-divide-migration` | Drainage-divide migration metrics, such as chi-coordinate offsets across divides. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_divide_migration.html) |
 | `lsdtt-hillslope-channel-coupling` | Links hilltop curvature to the channels below it. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_hillslope_channel_coupling.html) |
+| `lsdtt-hillslope-channel-tagging` | Copies channel information onto hillslopes: relative height, chi, k_sn and imported attributes. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_hillslope_channel_tagging.html) |
 
 ### Tidal / marsh
 

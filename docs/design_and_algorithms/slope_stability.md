@@ -22,6 +22,8 @@ run `lsdtt-slope-stability -h` for the same list. The
 | Slip surfaces, 2-D (method of slices) | Does integrating the forces over the sliding body, or bending the surface, change the answer? | Deep-seated slides: planar, rotational, compound, dip-slope | F of the critical surface per crown, body depth, body catalogues |
 | Ellipsoids, 3-D (method of columns; after Mergili et al. 2014) | How much does side resistance add? | Slides of low length-to-width ratio | F per crown and the lowest F covering each cell |
 | Dupuit groundwater (after Litwin et al. 2020) | Where is the water table, and how does a storm raise it? | (Supplies pore pressure to the others) | Water-table depth, saturated thickness, seepage |
+| Coseismic hazard area (SHALRUN-EQ; Milledge et al. 2019) | Which cells could debris from steep ground reach during an earthquake? | Initiation and run-out, from slope thresholds alone | Hazard area $A_h$ (m²/m) |
+| Scar drape volumes | How much material left each mapped scar, given only a post-event DEM? | (Measures failures that happened) | Volume, mean and maximum depth per scar; V = αA^γ |
 | Probability of failure | How likely is failure given uncertain cohesion and friction? | (Applies to the rupture planes, slip surfaces and ellipsoids) | P(F ≤ 1), with the mean and SD of F |
 
 The models build on each other. The rupture planes seed the slip surfaces and
@@ -47,7 +49,8 @@ width of the D-infinity flow tube instead.
 the channel is a candidate daylight point. A plane from depth h below R to D
 has a factor of safety F(h) with a closed-form minimum h\*. The candidate with
 the lowest F is kept. The result describes potential failure statistically,
-as in scaLr.
+as in scaLr. An optional [pseudo-static earthquake load](#pseudo-static-shaking-on-the-rupture-planes)
+adds shaking from a peak ground acceleration raster.
 
 **Slip surfaces.** scaLr judges a plane by the infinite-slope formula at the
 crown alone, so bending the surface would change nothing. The slip surfaces
@@ -207,6 +210,197 @@ the two rasters as each tool writes them.
   dropped from the unsaturated term). lsdtt3 re-derives them, and the unit
   test checks them against Monte Carlo.
 
+## Potential landslides from a DEM of difference
+
+`run_dem_change_landslides` looks for clusters of elevation change in a DEM of
+difference from
+[`lsdtt-raster-calculator`](../cli_reference/cli_reference_lsdtt_raster_calculator.md).
+Its results are **candidates**. Forestry, vegetation growth, snow, water, radar
+penetration, layover and DEM artefacts also change elevation between two
+products, so a patch is an area that changed by more than the DEM error, not a
+mapped landslide.
+
+**Error model.** On stable terrain the tool measures the bias (median), the
+NMAD in quantile bins of slope, and a variogram of the standardised error, fitted
+with a nugget and one spherical model (Rolstad et al. 2009; Hugonnet et al. 2022).
+Cells more than 4 NMAD from the median are left out, so real change does not
+inflate the error. Without a stable-terrain mask every assessable cell is treated
+as stable, which holds only where change is rare. In a dense landslide cluster,
+give a mask.
+
+**Detection.** A cell is a candidate if its bias-corrected change exceeds
+`dem_change_detection_sigma` times the error at its slope. A connected group is
+kept only if one cell exceeds `dem_change_seed_sigma`. Changed cells with up to
+`dem_change_aggregation_radius_pixels` unchanged cells between them form one
+patch. The unchanged cells are not added to its area or volume.
+
+**Patch uncertainty.** Errors are correlated, so averaging over a patch reduces
+them less than for independent cells. The variance of a patch mean is
+
+$$
+\sigma_{\bar h}^2 = \overline{\sigma^2}\left[ n \frac{a}{A} + (1 - n)\, C(r, L) \right]
+$$
+
+with $n$ the nugget fraction, $a$ the cell area, $A$ the patch area, and $C$ the
+mean spherical correlation (range $L$) between two points in a disc of area $A$.
+A patch is kept if its mean change is at least `dem_change_patch_significance`
+standard errors. Area uncertainty is half a cell along the perimeter. Regional
+volume uncertainty treats patches as independent, so it is a lower bound where
+patches are closer together than the correlation range.
+
+**False detections.** The detection is rerun on simulated noise with the fitted
+error, nugget and range. This gives the number and area of patches that noise
+alone produces, overall and by size. Small patches are usually dominated by noise,
+so read a frequency - area rollover and any power-law fit only above the size at
+which noise becomes negligible. The simulated noise is Gaussian and real DEM
+errors have heavier tails, so this is a **lower bound** on false detections. It
+does not include systematic change such as forestry.
+
+Run the same analysis on a nearby area with no known landslide event. Patches
+found there show how much of the signal comes from land-cover change and sensor
+differences.
+
+## Pseudo-static shaking on the rupture planes
+
+`rupture_peak_ground_acceleration_fname` adds an earthquake load to the rupture
+planes. This is an addition to scaLr. A horizontal force $kW$ acts on each column,
+directed down the dip of the plane, which is its least stable direction, with
+
+$$
+k = r \, \mathrm{PGA}
+$$
+
+where PGA is in g and $r$ is `rupture_seismic_coefficient_ratio` (default 0.5,
+after Hynes-Griffin and Franklin 1984). With $s = \Delta z - h$ and
+$C = c / \rho g$,
+
+$$
+F_k(h) = \frac{C (\Delta x^2 + s^2) / (h \Delta x) + \mu \max(\Delta x - k s, 0)}{s + k \Delta x}.
+$$
+
+Friction is zero where the inertial force removes the normal stress ($k s > \Delta x$).
+Away from that limit, $dF_k/dh = 0$ is a quadratic, because the cubic terms cancel. Its
+smaller positive root, with $E = \Delta z + k \Delta x$ and $L^2 = \Delta x^2 + \Delta z^2$, is
+
+$$
+h^* = \frac{C L^2 E}{C L^2 + \Delta x \sqrt{(1 + k^2) \, C L^2 (C + \mu E)}}.
+$$
+
+This is the static optimum at $k = 0$. Unlike the static case, $F_k$ stays finite as
+$h \to \Delta z$, so lsdtt3 takes the lowest of $h^*$, that limit and, where $h^*$
+falls in the unloaded part, the frictionless optimum and the point $k s = \Delta x$.
+
+- **The coefficient is empirical.** $F$ depends directly on $r$, so run a range of values.
+- **Treat $F$ as a ranking under strong shaking.** A pseudo-static load applied everywhere
+  can bring most hillslope cells to $F \le 1$, so the unstable mask alone says little.
+- **The load is steady and one-directional.** It has no duration, topographic
+  amplification, or dependence on the direction of shaking.
+- **Not combined with a water table or slip surfaces.** Those runs are refused.
+
+## Coseismic hazard area
+
+`run_coseismic_hazard_area` computes the hazard area of Milledge et al. (2019), the
+SHALRUN-EQ index. It needs only a DEM, and it answers a different question from a
+factor of safety: how much steep ground lies upslope of a cell with a viable
+run-out path to it.
+
+A cell $i$ is a source if its steepest downslope gradient $S_i$ is at least the
+initiation gradient $S_m$. Debris moves by multiple flow directions, with each
+receiver weighted by its gradient (Quinn et al. 1991). A cell with $S < S_s$, the
+stopping gradient, is reached but passes nothing on. The hazard area of cell $j$ is
+
+$$
+A_{h,j} = \sum_i \frac{a_i}{l_j}\, P_{m,i}\, f_{ij}
+$$
+
+with $a_i$ the cell area, $l_j$ the cell width, $P_{m,i}$ equal to 1 on sources,
+and $f_{ij}$ the fraction of cell $i$'s material that arrives at $j$ along paths
+that never pass through a stopping cell. One sweep in topological order computes
+it for every cell.
+
+**Parameters.** The defaults, 0.839 and 0.176, are the gradients of the paper's
+six-earthquake average (40° and 10°) on 30 m DEMs. The best values differed between
+earthquakes, and skill depends on the DEM and its resolution. They are effective
+values and do not measure a material property.
+
+**Departures from the paper's text.**
+
+- Eq. 7 writes the connection as binary, but the paper reports hazard areas near
+  0.1 m²/m on a 30 m grid. A binary count cannot be below one cell width, so lsdtt3
+  routes flow fractions. The two readings give the same cells with $A_h = 0$, but
+  rank the other cells differently.
+- Fig. 2e shows zero at two cells that its own slopes and eqs. 6–9 give as 30 m²/m.
+  lsdtt3 follows the equations.
+- The paper filled pits. The CLI carves and then fills by default. Set
+  `breach_before_fill: false` to use filling alone.
+
+**Limits.** $A_h$ is a relative index. It ignores shaking, rock strength, wetness,
+landslide size and run-out across reverse slopes. Where debris from a DEM-edge cell
+arrives, sources may lie outside the DEM and $A_h$ may be too low; the
+`_hazard_area_edge_influenced.tif` raster marks these cells. Published skill scores
+depend on the DEM, its resolution and the study area, so they do not transfer
+directly to another site.
+
+## Scar volumes from a draped cloth
+
+Landslide volumes are best measured by differencing DEMs from before and after
+an event, but usually only a post-event DEM and a mapped inventory exist.
+`run_scar_drape_volumes` reconstructs the pre-event surface over each scar with
+a cloth and integrates the gap.
+
+**The problem solved.** For one scar, let $\Omega$ be the polygon's cells grown
+by `scar_drape_rim_buffer_pixels` (8-connected), and $\partial\Omega$ the cells
+4-adjacent to $\Omega$ outside it. The cloth $z$ satisfies
+
+$$
+\nabla^2 z = s \ \text{where } z > z_{\text{DEM}}, \qquad z \ge z_{\text{DEM}} \ \text{in } \Omega, \qquad z = z_{\text{DEM}} \ \text{on } \partial\Omega,
+$$
+
+an obstacle problem: the shape of a membrane under tension, held on the rim and
+resting on any ground that rises into it. $s \ge 0$ is the sag curvature
+(`scar_drape_sag_curvature_per_metre`, 1/m). $s = 0$ is a taut cloth, harmonic
+where it is clear of the ground. It is discretised with the 5-point Laplacian
+and solved by projected successive over-relaxation, with
+$\omega = 2/(1 + \sin(\pi/N))$ for a window $N$ cells across. The problem is
+convex, so the solution is unique. Cells off the DEM or with nodata carry no
+flux and are counted. Scars are independent and run in parallel. The volume is
+$\sum (z - z_{\text{DEM}})\,\Delta x^2$ over the mapped cells, and also over
+$\Omega$.
+
+**Relation to the cloth in `lsdtt-surface-metrics`.** That cloth (after Zhang et
+al. 2016) falls under constant gravity and rests where its spring force
+balances gravity. Away from the ground each cell then sits gravity/rigidity
+metres below its neighbours' mean, so the sag depends on the grid. Here the
+resting shape is solved directly, and the sag is a curvature in physical units.
+With the cloth pinned outside the scar and gravity set to zero, the two give the
+same surface.
+
+**What it can and cannot recover.** Linear interpolation across the scar is
+exact on a planar slope. Across a convex nose it lies too low (volume too
+small), and across a hollow, or a scar cut into an older gully, too high (volume
+too large). Deposits left in the scar, or a polygon drawn inside the crown, put
+the ring or the floor too high and the volume too low.
+
+**Test against repeat lidar.** In Gleann Easan Biorach (Arran) the 2012
+Phase 2 and 2025 National LiDAR Programme DTMs (1 m) give 115 scars of at least
+10 m² with lowering of at least 0.3 m. Draping the 2025 DTM over their outlines,
+with the outlines taken from the difference itself:
+
+| Rim buffer (cells) | Total vs. differencing | Median per-scar ratio (IQR) | r, log volumes |
+|---|---|---|---|
+| 0 | 0.76 | 0.38 (0.16–0.77) | 0.88 |
+| 1 | 1.27 | 0.91 (0.40–1.43) | 0.86 |
+| 2 | 1.68 | 1.18 (0.65–1.80) | 0.85 |
+
+Draping the 2012 DTM over the same outlines, where the answer should be zero,
+gives 21 %, 50 % and 84 % of the differenced volume. These scars enlarge
+existing gullies, so the cloth also spans the older gully. With no buffer the
+ring lies on ground that was itself lowered by less than the 0.3 m threshold.
+The drape ranks scars by volume well, but the total depends on where the rim is
+placed to within a factor of about two. This site is a hard case. Discrete
+shallow slides on planar slopes, with polygons drawn to the crown, should do
+better, and should be checked against repeat surveys where they exist.
+
 ## Design decisions
 
 These are the choices that shape the results:
@@ -256,6 +450,9 @@ against analytic solutions on analytic surfaces, in the CTest compartment
   SINMAP's eqs. 3 and 8; the probability of stability against a 10⁶-draw Monte
   Carlo; the D-infinity specific catchment area on planes and cones, exact with
   the contour width at every flow angle; the identity with TWI.
+- **Pseudo-static shaking** (`unit_slope_stability_rupture`, `smoke_slope_stability_rupture_pga`): $F_k$ against the
+  stresses, the closed-form optimum against a dense search over 600 random cases, and
+  $k = 0$ bit-identical to the static model.
 - **Rupture planes** (`unit_slope_stability_rupture`): the closed-form depth
   against the minimum of F (300 random cases); the cohesionless limit; the
   wet minimum against a 2×10⁵-point search; a water table below the plane
@@ -285,6 +482,18 @@ against analytic solutions on analytic surfaces, in the CTest compartment
   wetness), TOPMODEL's relation with the exponential profile, the decay of a
   linearised mound (and backward Euler's exact amplification), the water
   budget to round-off, implicit against explicit, and thread independence.
+- **Coseismic hazard area** (`unit_slope_stability_hazard_area`): the worked example
+  of Milledge et al. (2019) Fig. 2, with its two inconsistent cells corrected; an exact
+  profile; ordinary MFD accumulation when both thresholds are off; conservation of
+  source area; hazard never rising with either threshold; the $A_h = 0$ cells against
+  a brute-force search from every source.
+- **Scar drape** (`unit_slope_stability_scar_drape`): a pit dug into a planar
+  slope restored exactly (volume to 2 × 10⁻⁶) for rim buffers of 0, 1 and 3; the
+  Poisson square, centre at −0.0736713 s L², within 0.03 % on a 2 m grid and
+  0.008 % on a 1 m grid; the cloth never below the ground and resting on a
+  pillar; DEM edges, nodata rings, overlapping scars; the volume - area fit;
+  polygons read from a GeoPackage, with ids, the cell-centre rule, small
+  polygons, overlap and a missing field.
 - **The CLI**: smoke tests of every family and option, and refusals of invalid
   parameter files.
 
@@ -293,6 +502,28 @@ known well. Treat them as relative measures of where failure is more likely,
 unless the parameters have been calibrated locally.
 
 ## References
+
+Hynes-Griffin, M. E. and Franklin, A. G. (1984). Rationalizing the seismic coefficient
+method. Miscellaneous Paper GL-84-13, US Army Engineer Waterways Experiment Station.
+
+Hugonnet, R., et al. (2022). Uncertainty analysis of digital elevation models by
+spatial inference from stable terrain. *IEEE JSTARS* 15, 6456-6472.
+
+Milledge, D. G., Densmore, A. L., Bellugi, D., Rosser, N. J., Watt, J., Li, G. and
+Oven, K. J. (2019). Simple rules to minimise exposure to coseismic landslide hazard.
+*Natural Hazards and Earth System Sciences* 19, 837-856.
+
+Quinn, P., Beven, K., Chevallier, P. and Planchon, O. (1991). The prediction of
+hillslope flow paths for distributed hydrological modelling using digital terrain
+models. *Hydrological Processes* 5, 59-79.
+
+Rolstad, C., Haug, T. and Denby, B. (2009). Spatially integrated geodetic glacier
+mass balance and its uncertainty based on geostatistical analysis. *Journal of
+Glaciology* 55(192), 666-680.
+
+Zhang, W., Qi, J., Wan, P., Wang, H., Xie, D., Wang, X. and Yan, G. (2016). An
+easy-to-use airborne LiDAR data filtering method based on cloth simulation.
+*Remote Sensing* 8(6), 501. https://doi.org/10.3390/rs8060501
 
 - Clauset, A., Shalizi, C. R., & Newman, M. E. J. (2009). Power-law
   distributions in empirical data. *SIAM Review*, 51(4), 661–703.

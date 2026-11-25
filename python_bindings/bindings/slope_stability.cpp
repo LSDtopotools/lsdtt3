@@ -36,6 +36,8 @@
 #include <cpu/lsdtt_groundwater_dupuit_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_catalogue_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_columns_cpu.hpp>
+#include <cpu/lsdtt_slope_stability_dem_change_cpu.hpp>
+#include <cpu/lsdtt_slope_stability_hazard_area_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_rupture_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_sinmap_cpu.hpp>
 #include <cpu/lsdtt_slope_stability_slip_surface_cpu.hpp>
@@ -354,6 +356,7 @@ struct rupture_state
     overrides_t overrides;
     std::map<std::int32_t, lsdtt::rupture_parameters> by_region;
     std::vector<double> water_table_depth;
+    std::vector<double> seismic_coefficient;
     lsdtt::rupture_rasters result;
     int n_threads = 0;
 };
@@ -372,7 +375,8 @@ private:
 RupturePlanes rupture_planes(const FlowInfo& flow, const Raster& geometry, nb::object channel,
                              std::int64_t threshold_contributing_pixels, double cohesion_pa,
                              double friction_coefficient, double density_kg_m3, nb::object region,
-                             nb::object region_parameters, nb::object water_table_depth, int n_threads)
+                             nb::object region_parameters, nb::object water_table_depth,
+                             nb::object peak_ground_acceleration, double seismic_coefficient_ratio, int n_threads)
 {
     const meta_t& meta = flow.native().meta();
     require_grid(geometry.native().get_meta(), meta, "geometry");
@@ -413,8 +417,20 @@ RupturePlanes rupture_planes(const FlowInfo& flow, const Raster& geometry, nb::o
     }
     s->region = region_ids(region, meta);
     s->water_table_depth = values_of(water_table_depth, meta, "water_table_depth");
+    if (!peak_ground_acceleration.is_none())
+    {
+        if (!std::isfinite(seismic_coefficient_ratio) || seismic_coefficient_ratio < 0.0)
+            throw std::invalid_argument("seismic_coefficient_ratio must be finite and >= 0");
+        s->seismic_coefficient = values_of(peak_ground_acceleration, meta, "peak_ground_acceleration");
+        const float ratio = static_cast<float>(seismic_coefficient_ratio);  // Float32, as the CLI parses it
+        for (double& v : s->seismic_coefficient)
+        {
+            if (std::isfinite(v) && v < 0.0) throw std::invalid_argument("peak_ground_acceleration must be >= 0 (g)");
+            v *= static_cast<double>(ratio);
+        }
+    }
     s->result = lsdtt::compute_rupture_planes(*s->flow, s->geometry, s->channel, s->region, s->by_region, n_threads,
-                                              s->water_table_depth);
+                                              s->water_table_depth, s->seismic_coefficient);
     return RupturePlanes(std::move(s));
 }
 
@@ -481,7 +497,8 @@ nb::dict rupture_failure_probability(const RupturePlanes& rp, const std::string&
     const rupture_state& s = rp.state();
     const auto sm = samples_by_region(s, {cd, fd, c_min, c_max, c_sd, mu_min, mu_max, mu_sd, samples});
     return probability_dict(lsdtt::compute_rupture_failure_probability(*s.flow, s.geometry, s.channel, s.region, sm,
-                                                                       s.n_threads, s.water_table_depth));
+                                                                       s.n_threads, s.water_table_depth,
+                                                                       s.seismic_coefficient));
 }
 
 nb::dict landslide_catalogues(const RupturePlanes& rp, int min_daylight_neighbours)
@@ -489,7 +506,8 @@ nb::dict landslide_catalogues(const RupturePlanes& rp, int min_daylight_neighbou
     const rupture_state& s = rp.state();
     const meta_t& meta = s.flow->meta();
     const lsdtt::landslide_catalogues cat =
-        lsdtt::build_landslide_catalogues(s.result, meta, s.region, s.by_region, min_daylight_neighbours);
+        lsdtt::build_landslide_catalogues(s.result, meta, s.region, s.by_region, min_daylight_neighbours,
+                                          s.seismic_coefficient);
     auto table = [](const std::vector<lsdtt::landslide_record>& rows, bool by_daylight) {
         nb::dict d;
         std::vector<std::int64_t> id, ndp, ncell, npiece;
@@ -586,6 +604,8 @@ SlipSurfaces slip_surfaces(const RupturePlanes& rp, const std::string& family, c
     SlipSurfaces out;
     out.rupture = rp.shared();
     const rupture_state& s = *out.rupture;
+    if (!s.seismic_coefficient.empty())
+        throw std::invalid_argument("slip surfaces cannot be built on rupture planes with peak_ground_acceleration");
     const meta_t& meta = s.flow->meta();
     lsdtt::slip_surface_options& o = out.options;
     o.family = family_of(family);
@@ -955,6 +975,192 @@ private:
     "    ``failure_probability`` (Raster, P(F <= 1)), ``mean_safety_factor``,\n"                                  \
     "    ``sd_safety_factor`` (Rasters, weighted over the samples), ``n_sources``,\n"                              \
     "    ``n_possible_failure`` (Pf > 0), ``n_certain_failure`` (Pf = 1), ``n_samples``.\n"
+
+// ------------------------------------------------- DEM of difference
+Raster float_raster(const std::vector<float>& values, const meta_t& meta)
+{
+    std::vector<double> v(values.size(), std::numeric_limits<double>::quiet_NaN());
+    const float nodata = static_cast<float>(meta.no_data_value);
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (values[i] != nodata) v[i] = values[i];
+    return raster_of(v, meta);
+}
+
+nb::dict coseismic_hazard_area(const Raster& routing_surface, double initiation_slope, double stopping_slope,
+                               const std::string& boundary_conditions, int n_threads)
+{
+    lsdtt::coseismic_hazard_area_options o;
+    o.initiation_slope = initiation_slope;
+    o.stopping_slope = stopping_slope;
+    o.boundary_conditions = boundary_conditions;
+    o.n_threads = n_threads;
+    const lsdtt::coseismic_hazard_area_result r = lsdtt::compute_coseismic_hazard_area(routing_surface.native(), o);
+    nb::dict out;
+    out["hazard_area"] = float_raster(r.hazard_area.get_data(), r.hazard_area.get_meta());
+    out["steepest_slope"] = float_raster(r.steepest_slope.get_data(), r.steepest_slope.get_meta());
+    out["zone"] = float_raster(r.zone.get_data(), r.zone.get_meta());
+    out["edge_influenced"] = float_raster(r.edge_influenced.get_data(), r.edge_influenced.get_meta());
+    out["n_valid_cells"] = r.n_valid;
+    out["n_source_cells"] = r.n_source;
+    out["n_stopping_cells"] = r.n_stopping;
+    out["n_zero_hazard_cells"] = r.n_zero_hazard;
+    out["n_edge_influenced_cells"] = r.n_edge_influenced;
+    out["source_area_m2"] = r.source_area_m2;
+    return out;
+}
+
+nb::dict dem_change_landslides(const Raster& difference, const Raster& dem, nb::object stable_mask,
+                               bool is_newer_minus_older, const std::string& change_sign, double detection_sigma,
+                               double seed_sigma, double patch_significance, int min_patch_pixels,
+                               int aggregation_radius_pixels, double min_slope, int n_slope_bins,
+                               int n_null_simulations, std::int64_t random_seed, int n_threads)
+{
+    const meta_t& meta = dem.native().get_meta();
+    require_grid(difference.native().get_meta(), meta, "difference");
+    std::vector<float> dv = difference.native().get_data();
+    std::vector<std::uint8_t> dm = difference.native().get_mask();
+    if (!is_newer_minus_older)
+        for (std::size_t i = 0; i < dv.size(); ++i)
+            if (dm[i]) dv[i] = -dv[i];
+    meta_t difference_meta = meta;
+    difference_meta.no_data_value = difference.native().get_meta().no_data_value;
+    const lsdtt::lsdtt_raster_cpu signed_difference(std::move(dv), std::move(dm), difference_meta);
+    const std::vector<std::uint8_t> stable = mask_of(stable_mask, meta, "stable_mask");
+
+    lsdtt::dem_change_options o;
+    o.change_sign = change_sign;
+    o.detection_sigma = detection_sigma;
+    o.seed_sigma = seed_sigma;
+    o.patch_significance = patch_significance;
+    o.min_patch_cells = min_patch_pixels;
+    o.aggregation_radius_pixels = aggregation_radius_pixels;
+    o.min_slope = min_slope;
+    o.n_slope_bins = n_slope_bins;
+    o.n_null_simulations = n_null_simulations;
+    o.random_seed = static_cast<std::uint64_t>(random_seed);
+    o.n_threads = n_threads;
+    const lsdtt::dem_change_result r = lsdtt::detect_dem_change_landslides(
+        signed_difference, lsdtt::dem_change_slope(dem.native()), stable_mask.is_none() ? nullptr : &stable, o);
+
+    const lsdtt::dem_change_uncertainty& u = r.uncertainty;
+    nb::dict uncertainty;
+    uncertainty["used_stable_mask"] = u.used_stable_mask;
+    uncertainty["n_stable_cells"] = u.n_stable;
+    uncertainty["n_clipped_cells"] = u.n_clipped;
+    uncertainty["bias_metres"] = u.bias_m;
+    uncertainty["nmad_metres"] = u.nmad_m;
+    uncertainty["standard_deviation_metres"] = u.standard_deviation_m;
+    uncertainty["rmse_metres"] = u.rmse_m;
+    uncertainty["p2.5_metres"] = u.p025_m;
+    uncertainty["p97.5_metres"] = u.p975_m;
+    uncertainty["variogram_fitted"] = u.variogram_fitted;
+    uncertainty["nugget_fraction"] = u.nugget_fraction;
+    uncertainty["correlation_range_metres"] = u.correlation_range_m;
+    uncertainty["sill"] = u.sill;
+
+    nb::dict by_slope;
+    by_slope["slope_lower"] = u.slope_lower;
+    by_slope["slope_upper"] = u.slope_upper;
+    by_slope["slope_median"] = u.slope_median;
+    by_slope["n_cells"] = u.slope_n;
+    by_slope["bias_metres"] = u.slope_bias_m;
+    by_slope["nmad_metres"] = u.slope_nmad_m;
+
+    nb::dict variogram;
+    variogram["lag_metres"] = u.lag_m;
+    variogram["semivariance"] = u.semivariance;
+    variogram["n_pairs"] = u.lag_n_pairs;
+
+    std::vector<std::int64_t> id, n_cells;
+    std::vector<std::string> change;
+    std::vector<double> area, area_u, perimeter, cx, cy, length, width, mean, extreme, mean_s, sig, vol, vol_s, slope;
+    for (const auto& p : r.patches)
+    {
+        id.push_back(p.id); change.push_back(p.sign < 0 ? "loss" : "gain"); n_cells.push_back(p.n_cells);
+        area.push_back(p.area_m2); area_u.push_back(p.area_uncertainty_m2); perimeter.push_back(p.perimeter_m);
+        cx.push_back(p.centroid_x); cy.push_back(p.centroid_y); length.push_back(p.length_m); width.push_back(p.width_m);
+        mean.push_back(p.mean_change_m); extreme.push_back(p.extreme_change_m); mean_s.push_back(p.mean_change_sigma_m);
+        sig.push_back(p.significance); vol.push_back(p.volume_m3); vol_s.push_back(p.volume_sigma_m3); slope.push_back(p.mean_slope);
+    }
+    nb::dict patches;
+    patches["patch_id"] = id; patches["change"] = change; patches["n_cells"] = n_cells; patches["area_m2"] = area;
+    patches["area_uncertainty_m2"] = area_u; patches["perimeter_m"] = perimeter; patches["centroid_x"] = cx;
+    patches["centroid_y"] = cy; patches["length_m"] = length; patches["width_m"] = width;
+    patches["mean_change_m"] = mean; patches["extreme_change_m"] = extreme; patches["mean_change_sigma_m"] = mean_s;
+    patches["significance"] = sig; patches["volume_m3"] = vol; patches["volume_sigma_m3"] = vol_s;
+    patches["mean_slope"] = slope;
+
+    nb::dict coverage;
+    std::int64_t n_loss = 0, n_gain = 0;
+    for (const auto& p : r.patches) (p.sign < 0 ? n_loss : n_gain)++;
+    const double assessed = r.valid_area_m2 > 0.0 ? r.valid_area_m2 : 1.0;
+    coverage["change"] = std::vector<std::string>{"loss", "gain"};
+    coverage["n_patches"] = std::vector<std::int64_t>{n_loss, n_gain};
+    coverage["area_m2"] = std::vector<double>{r.loss_area_m2, r.gain_area_m2};
+    coverage["area_uncertainty_m2"] = std::vector<double>{r.loss_area_uncertainty_m2, r.gain_area_uncertainty_m2};
+    coverage["fraction_of_assessed_area"] = std::vector<double>{r.loss_area_m2 / assessed, r.gain_area_m2 / assessed};
+    coverage["volume_m3"] = std::vector<double>{r.loss_volume_m3, r.gain_volume_m3};
+    coverage["volume_sigma_m3"] = std::vector<double>{r.loss_volume_sigma_m3, r.gain_volume_sigma_m3};
+    coverage["assessed_area_m2"] = std::vector<double>{r.valid_area_m2, r.valid_area_m2};
+
+    std::vector<double> sk, ss, sa, sf, sv;
+    std::vector<std::int64_t> sn;
+    for (const auto& row : r.sensitivity)
+    {
+        sk.push_back(row.detection_sigma); ss.push_back(row.seed_sigma); sn.push_back(row.n_patches);
+        sa.push_back(row.area_m2); sf.push_back(row.coverage_fraction); sv.push_back(row.volume_m3);
+    }
+    nb::dict sensitivity;
+    sensitivity["detection_sigma"] = sk; sensitivity["seed_sigma"] = ss; sensitivity["n_patches"] = sn;
+    sensitivity["area_m2"] = sa; sensitivity["fraction_of_assessed_area"] = sf; sensitivity["volume_m3"] = sv;
+
+    const lsdtt::dem_change_null_summary& q = r.null_simulation;
+    nb::dict false_detection;
+    false_detection["n_simulations"] = q.n_simulations;
+    false_detection["mean_false_patches"] = q.mean_n_patches;
+    false_detection["p05_false_patches"] = q.p05_n_patches;
+    false_detection["p95_false_patches"] = q.p95_n_patches;
+    false_detection["mean_false_area_m2"] = q.mean_area_m2;
+    false_detection["p05_false_area_m2"] = q.p05_area_m2;
+    false_detection["p95_false_area_m2"] = q.p95_area_m2;
+    false_detection["area_false_discovery_ratio"] = q.area_false_discovery_ratio;
+    std::vector<double> bl, bu, bs, bf;
+    std::vector<std::int64_t> bo;
+    for (const auto& b : q.by_area)
+    {
+        bl.push_back(b.area_lower_m2); bu.push_back(b.area_upper_m2); bo.push_back(b.n_observed);
+        bs.push_back(b.mean_n_simulated); bf.push_back(b.false_discovery_ratio);
+    }
+    nb::dict by_area;
+    by_area["area_lower_m2"] = bl; by_area["area_upper_m2"] = bu; by_area["n_observed"] = bo;
+    by_area["mean_n_simulated"] = bs; by_area["false_discovery_ratio"] = bf;
+
+    std::vector<double> label(r.label.size(), std::numeric_limits<double>::quiet_NaN());
+    std::vector<double> change_class(r.label.size(), std::numeric_limits<double>::quiet_NaN());
+    const float nodata = static_cast<float>(difference_meta.no_data_value);
+    for (std::size_t i = 0; i < label.size(); ++i)
+    {
+        if (r.corrected_m[i] == nodata) continue;
+        change_class[i] = r.change_class[i];
+        if (r.label[i] > 0) label[i] = r.label[i];
+    }
+
+    nb::dict out;
+    out["uncertainty"] = uncertainty;
+    out["uncertainty_by_slope"] = data_frame(by_slope);
+    out["variogram"] = data_frame(variogram);
+    out["patches"] = data_frame(patches);
+    out["coverage"] = data_frame(coverage);
+    out["sensitivity"] = data_frame(sensitivity);
+    out["false_detection"] = false_detection;
+    out["false_detection_by_area"] = data_frame(by_area);
+    out["corrected"] = float_raster(r.corrected_m, difference_meta);
+    out["sigma"] = float_raster(r.sigma_m, difference_meta);
+    out["z"] = float_raster(r.z, difference_meta);
+    out["change_class"] = raster_of(change_class, meta);
+    out["label"] = raster_of(label, meta);
+    return out;
+}
 
 } // namespace
 
@@ -1350,12 +1556,14 @@ dict
         nb::arg("threshold_contributing_pixels") = 1000, nb::arg("cohesion_pa") = 1000.0,
         nb::arg("friction_coefficient") = 0.70020753820970977, nb::arg("density_kg_m3") = 2600.0,
         nb::arg("region") = nb::none(), nb::arg("region_parameters") = nb::none(),
-        nb::arg("water_table_depth") = nb::none(), nb::arg("n_threads") = 0,
+        nb::arg("water_table_depth") = nb::none(), nb::arg("peak_ground_acceleration") = nb::none(),
+        nb::arg("seismic_coefficient_ratio") = 0.5, nb::arg("n_threads") = 0,
         nb::sig("def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, "
                 "threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, "
                 "friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, "
                 "region: Raster | None = None, region_parameters: dict | None = None, "
-                "water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes"), R"doc(
+                "water_table_depth: Raster | None = None, peak_ground_acceleration: Raster | None = None, "
+                "seismic_coefficient_ratio: float = 0.5, n_threads: int = 0) -> RupturePlanes"), R"doc(
 Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
 
 lsdtt-slope-stability ``run_rupture_planes``, the same routine; the keyword
@@ -1391,6 +1599,12 @@ region_parameters : dict or None, default=None, keyword-only
 water_table_depth : Raster or None, default=None, keyword-only
     Depth (m) of the water table below the geometry surface, e.g.
     ``GroundwaterDupuit.water_table_depth()``; None or nodata is dry.
+peak_ground_acceleration : Raster or None, default=None, keyword-only
+    PGA in g for a pseudo-static earthquake load (CLI
+    ``rupture_peak_ground_acceleration_fname``). Nodata cells are left out.
+    Cannot be combined with ``water_table_depth`` or slip surfaces.
+seismic_coefficient_ratio : float, default=0.5, keyword-only
+    The pseudo-static coefficient as a fraction of PGA, k = ratio x PGA.
 n_threads : int, default=0, keyword-only
     OpenMP threads; the result does not depend on it.
 
@@ -1399,6 +1613,109 @@ Returns
 RupturePlanes
     The rasters and counts, and methods for the probability of failure,
     catalogues and slip surfaces.
+)doc");
+
+    module.def("coseismic_hazard_area", &coseismic_hazard_area, nb::arg("routing_surface"), nb::kw_only(),
+        nb::arg("initiation_slope") = 0.839, nb::arg("stopping_slope") = 0.176,
+        nb::arg("boundary_conditions") = "oooo", nb::arg("n_threads") = 0,
+        nb::sig("def coseismic_hazard_area(routing_surface: Raster, *, initiation_slope: float = 0.839, "
+                "stopping_slope: float = 0.176, boundary_conditions: str = 'oooo', n_threads: int = 0) -> dict"), R"doc(
+Coseismic landslide hazard area (SHALRUN-EQ; Milledge et al. 2019).
+
+lsdtt-slope-stability ``run_coseismic_hazard_area``, the same routine. The hazard
+area of a cell is the area of cells steep enough to initiate whose debris can
+reach it by slope-weighted multiple flow directions without crossing a cell
+gentler than the stopping slope, per metre of cell width. A gentler cell is
+reached and counted, but passes nothing on. It is a relative index of exposure.
+
+Parameters
+----------
+routing_surface : Raster
+    A pit-free DEM, for example carved and filled.
+initiation_slope : float, default=0.839, keyword-only
+    Gradient (m/m) at or above which a cell can initiate a landslide
+    (CLI ``coseismic_hazard_initiation_slope``).
+stopping_slope : float, default=0.176, keyword-only
+    Gradient (m/m) below which run-out stops; above 0 and below
+    ``initiation_slope`` (CLI ``coseismic_hazard_stopping_slope``).
+boundary_conditions : str, default="oooo", keyword-only
+    Flow boundary conditions (north, east, south, west).
+n_threads : int, default=0, keyword-only
+    OpenMP threads for building the flow graph.
+
+Returns
+-------
+dict
+    ``hazard_area`` (Raster, m^2/m), ``steepest_slope`` (Raster, m/m), ``zone``
+    (Raster: 0 transit, 1 source, 2 stopping), ``edge_influenced`` (Raster: 1
+    where debris from a DEM-edge cell arrives, so the value may be a lower
+    bound), ``n_valid_cells``, ``n_source_cells``, ``n_stopping_cells``,
+    ``n_zero_hazard_cells``, ``n_edge_influenced_cells``, ``source_area_m2``.
+)doc");
+
+    module.def("dem_change_landslides", &dem_change_landslides, nb::arg("difference"), nb::arg("dem"), nb::kw_only(),
+        nb::arg("stable_mask") = nb::none(), nb::arg("is_newer_minus_older") = true, nb::arg("change_sign") = "loss",
+        nb::arg("detection_sigma") = 1.96, nb::arg("seed_sigma") = 3.0, nb::arg("patch_significance") = 1.96,
+        nb::arg("min_patch_pixels") = 5, nb::arg("aggregation_radius_pixels") = 2, nb::arg("min_slope") = 0.0,
+        nb::arg("n_slope_bins") = 10, nb::arg("n_null_simulations") = 20, nb::arg("random_seed") = 33,
+        nb::arg("n_threads") = 0,
+        nb::sig("def dem_change_landslides(difference: Raster, dem: Raster, *, stable_mask: Raster | None = None, "
+                "is_newer_minus_older: bool = True, change_sign: str = 'loss', detection_sigma: float = 1.96, "
+                "seed_sigma: float = 3.0, patch_significance: float = 1.96, min_patch_pixels: int = 5, "
+                "aggregation_radius_pixels: int = 2, min_slope: float = 0.0, n_slope_bins: int = 10, "
+                "n_null_simulations: int = 20, random_seed: int = 33, n_threads: int = 0) -> dict"), R"doc(
+Potential landslides in a DEM of difference, with their uncertainty.
+
+lsdtt-slope-stability ``run_dem_change_landslides``, the same routine; the
+keyword names are the CLI's less the ``dem_change_`` and ``dem_difference_``
+prefixes. An error model from stable terrain (bias, NMAD by slope, spatial
+correlation) sets a threshold for each cell. Connected cells are grouped and
+aggregated into patches, each tested against the correlated error of its mean.
+Noise simulations estimate false detections. The results are CANDIDATE areas of
+change: vegetation, snow, water, radar penetration and DEM artefacts also change
+elevation between two products.
+
+Parameters
+----------
+difference : Raster
+    DEM of difference (m), for example from lsdtt-raster-calculator.
+dem : Raster
+    The newer DEM on the same grid, used for slope.
+stable_mask : Raster or None, default=None, keyword-only
+    Non-zero on stable terrain. Without it every assessable cell within 4 NMAD
+    of the median is treated as stable.
+is_newer_minus_older : bool, default=True, keyword-only
+    False if ``difference`` is older minus newer.
+change_sign : str, default="loss", keyword-only
+    ``loss``, ``gain`` or ``both``.
+detection_sigma : float, default=1.96, keyword-only
+    Multiple of the slope-dependent error at which a cell can join a patch.
+seed_sigma : float, default=3.0, keyword-only
+    A connected group of candidates needs one cell at this multiple.
+patch_significance : float, default=1.96, keyword-only
+    Minimum absolute mean change over its standard error.
+min_patch_pixels : int, default=5, keyword-only
+    Smallest patch.
+aggregation_radius_pixels : int, default=2, keyword-only
+    Join changed cells with up to this many unchanged cells between them.
+min_slope : float, default=0.0, keyword-only
+    Ignore cells with a gradient (m/m) below this.
+n_slope_bins : int, default=10, keyword-only
+    Quantile bins of slope for the error model.
+n_null_simulations : int, default=20, keyword-only
+    Noise simulations for false detections; 0 turns them off.
+random_seed : int, default=33, keyword-only
+    Seed for the variogram sample and the simulations.
+n_threads : int, default=0, keyword-only
+    OpenMP threads for the simulations; the result does not depend on it.
+
+Returns
+-------
+dict
+    ``uncertainty`` and ``false_detection`` (dicts); DataFrames
+    ``uncertainty_by_slope``, ``variogram``, ``patches``, ``coverage``,
+    ``sensitivity`` and ``false_detection_by_area``; and Rasters ``corrected``,
+    ``sigma``, ``z``, ``change_class`` (-1 loss, 1 gain) and ``label``.
 )doc");
 
     module.def("landslide_frequency_area", &landslide_frequency_area, nb::arg("areas_m2"), nb::arg("cell_area_m2"),

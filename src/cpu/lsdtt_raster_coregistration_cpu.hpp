@@ -24,6 +24,7 @@
 
 #include "lsdtt_raster_cpu.hpp"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,11 @@ struct nuth_kaab_coreg_options
     double nuth_kaab_coreg_initial_dx_m = 0.0;
     double nuth_kaab_coreg_initial_dy_m = 0.0;
     double nuth_kaab_coreg_initial_dz_m = 0.0;
+
+    // Optional, one value per cell: only non-zero cells are used to fit the
+    // shift, so that real change (landslides, lakes, ice) does not bias it.
+    // Not owned; null uses every cell.
+    const std::vector<std::uint8_t>* stable_terrain_mask = nullptr;
 };
 
 struct dem_coreg_options

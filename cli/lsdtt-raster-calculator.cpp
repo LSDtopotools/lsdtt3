@@ -16,9 +16,12 @@
 //   1. Parse parameters and cross-parameter checks
 //   2. Load first raster (read_fname)
 //   3. Load second raster (second_raster_read_fname)
-//   4. If needed, warp second raster to first raster grid
-//   5. Harmonise second-raster nodata metadata to first raster nodata
-//   6. Optional DEM coregistration (second raster to first raster)
+//   4. If needed, warp second raster to first raster grid, as Float32, with
+//      nodata wherever the resampling kernel touched missing data
+//   5. Put both rasters in metres and, if declared, on one geoid
+//   6. Optional DEM coregistration. The shift is fitted, then the ORIGINAL
+//      second raster is warped once more with that shift, so it is interpolated
+//      only once
 //   7. Build overlap / nodata mask from valid pixels in both rasters
 //   8. Compute selected outputs and write rasters
 //
@@ -39,6 +42,7 @@
 //   lsdtt-raster-calculator -c                 (print citation and exit)
 // -----------------------------------------------------------------------------
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -53,11 +57,14 @@
 #include "../src/core/lsdtt_data_loader.hpp"
 #include "../src/core/lsdtt_param_parser.hpp"
 #include "../src/core/lsdtt_run_record.hpp"
+#include "../src/core/lsdtt_raster_reproject.hpp"
 #include "../src/core/lsdtt_raster_warp.hpp"
+#include "../src/core/lsdtt_vertical_datum.hpp"
 #include "../src/cpu/lsdtt_raster_algebra.hpp"
 #include "../src/cpu/lsdtt_raster_coregistration_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../src/utils/lsdtt_raster_geometry.hpp"
+#include "../src/utils/lsdtt_statistics.hpp"
 
 static const std::string k_status   = "stable";
 static const std::string k_citation = lsdtt::lsdtt3_citation_url();
@@ -66,6 +73,25 @@ static const std::string k_tool_name = "lsdtt-raster-calculator";
 // -----------------------------------------------------------------------------
 // print_banner
 // -----------------------------------------------------------------------------
+// Mean cell width in metres. A degree of longitude is scaled by the latitude.
+static double cell_width_metres(const lsdtt::lsdtt_raster_meta& meta)
+{
+    if (!meta.is_geographic()) return std::sqrt(meta.cell_size * meta.pixel_height());
+    const double metres_per_degree = 111320.0;
+    const double latitude = 0.5 * (meta.y_min + meta.y_max()) * M_PI / 180.0;
+    return metres_per_degree * std::sqrt(meta.cell_size * std::cos(latitude) * meta.pixel_height());
+}
+
+// The method for one warp. auto: cubic keeps curvature, and average is the
+// right estimate of a coarser cell from many finer ones.
+static std::string warp_method_for(const std::string&             requested,
+                                   const lsdtt::lsdtt_raster_meta& source,
+                                   const lsdtt::lsdtt_raster_meta& target)
+{
+    if (requested != "auto") return requested;
+    return cell_width_metres(target) >= 1.5 * cell_width_metres(source) ? "average" : "cubic";
+}
+
 static void print_banner()
 {
     std::cout
@@ -143,15 +169,57 @@ int main(int argc, char* argv[])
         "before algebra. If false, the CLI errors when grids differ.",
         "Second raster and alignment", "param", ""};
 
-    string_default_map["resampling_method"] = "bilinear";
-    help_map["resampling_method"] = {"string","bilinear",
-        "GDAL resampling method used when warping second raster.",
-        "Bilinear is the conservative default for aligning an arbitrary second "
-        "raster because it does not introduce cubic overshoot before raster "
-        "algebra. Use near for categorical values. Allowed values follow GDAL "
-        "warp methods: near, bilinear, cubic, "
-        "cubicspline, lanczos, average, mode, max, min, med, q1, q3, sum.",
+    string_default_map["resampling_method"] = "auto";
+    help_map["resampling_method"] = {"string","auto",
+        "GDAL resampling method used when warping a raster onto the analysis grid.",
+        "auto uses cubic, or average when the target cells are at least 1.5 times "
+        "wider than the source cells. For a DEM of difference the method sets how "
+        "much false change an offset grid creates. Bilinear smooths, so the "
+        "difference follows curvature: ridges appear to lose height and valleys to "
+        "gain it. GDAL's lanczos can shift the result by a source cell when "
+        "downsampling, so use it only between grids of equal resolution. Use near for "
+        "categorical values. Other allowed values follow GDAL warp methods: near, "
+        "bilinear, cubic, cubicspline, lanczos, average, mode, max, min, med, q1, q3, "
+        "sum.",
         "Second raster and alignment", "param", ""};
+
+    bool_default_map["reproject_to_metric_grid"] = false;
+    help_map["reproject_to_metric_grid"] = {"bool","false",
+        "Put a geographic first raster on a UTM grid, and warp the second to it.",
+        "Global DEMs are distributed in degrees, and coregistration needs metres. "
+        "Each DEM is warped once, directly from its native grid. The spacing comes "
+        "from the north-south pixel size (30 m for 1 arc-second DEMs). Writes "
+        "<write_fname>_<projection suffix>. Ignored if the first raster is already "
+        "projected.",
+        "Second raster and alignment", "param", ""};
+
+    string_default_map["vertical_units"] = "metres";
+    help_map["vertical_units"] = {"string","metres",
+        "Vertical unit of the first raster: metres, feet or us_survey_feet.",
+        "No raster format records this, so it cannot be detected. Lidar is often in "
+        "feet on a metre grid. Elevations are converted to metres before any output.",
+        "Vertical reference", "param", ""};
+
+    string_default_map["second_raster_vertical_units"] = "metres";
+    help_map["second_raster_vertical_units"] = {"string","metres",
+        "Vertical unit of the second raster: metres, feet or us_survey_feet.",
+        "See vertical_units.",
+        "Vertical reference", "param", ""};
+
+    string_default_map["first_raster_vertical_datum"] = "unspecified";
+    help_map["first_raster_vertical_datum"] = {"string","unspecified",
+        "Geoid of the first raster: unspecified, egm96 or egm2008.",
+        "SRTM, NASADEM and AW3D30 use EGM96; Copernicus GLO-30 uses EGM2008. Set both "
+        "datums to convert the second raster to the first raster's geoid. The "
+        "difference varies across a DEM, so a constant vertical shift does not remove "
+        "it. Needs PROJ's geoid grids: a missing grid stops the run.",
+        "Vertical reference", "param", ""};
+
+    string_default_map["second_raster_vertical_datum"] = "unspecified";
+    help_map["second_raster_vertical_datum"] = {"string","unspecified",
+        "Geoid of the second raster: unspecified, egm96 or egm2008.",
+        "See first_raster_vertical_datum. Give both or neither.",
+        "Vertical reference", "param", ""};
 
     bool_default_map["verbose_alignment_report"] = true;
     help_map["verbose_alignment_report"] = {"bool","true",
@@ -174,6 +242,15 @@ int main(int argc, char* argv[])
         "Allowed values: nuth_kaab. Method reference: Nuth and Kaab (2011), "
         "https://doi.org/10.5194/tc-5-271-2011. This implementation was "
         "ported from xdem.",
+        "DEM coregistration", "param", "run_dem_coregistration"};
+
+    string_default_map["dem_coregistration_stable_mask_fname"] = "";
+    help_map["dem_coregistration_stable_mask_fname"] = {"string","",
+        "Raster of stable terrain used to fit the shift (non-zero = stable).",
+        "Exclude landslides, lakes, ice, forest change and other real change, so that "
+        "they do not bias the shift. Read from read_path if the path is relative, and "
+        "warped to the first raster's grid with nearest neighbour. Also used for the "
+        "reported difference statistics.",
         "DEM coregistration", "param", "run_dem_coregistration"};
 
     bool_default_map["write_second_coregistered_raster"] = false;
@@ -408,6 +485,36 @@ int main(int argc, char* argv[])
     const lsdtt::raster_output_format out_fmt =
         lsdtt::resolve_raster_output_format(sf["write_output_format"]);
 
+    lsdtt::vertical_unit first_units = lsdtt::vertical_unit::metres;
+    lsdtt::vertical_unit second_units = lsdtt::vertical_unit::metres;
+    lsdtt::lsdtt_vertical_datum first_datum = lsdtt::lsdtt_vertical_datum::unspecified;
+    lsdtt::lsdtt_vertical_datum second_datum = lsdtt::lsdtt_vertical_datum::unspecified;
+    try
+    {
+        first_units = lsdtt::parse_vertical_unit(sf["vertical_units"]);
+        second_units = lsdtt::parse_vertical_unit(sf["second_raster_vertical_units"]);
+        first_datum = lsdtt::parse_vertical_datum(sf["first_raster_vertical_datum"]);
+        second_datum = lsdtt::parse_vertical_datum(sf["second_raster_vertical_datum"]);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    }
+    if ((first_datum == lsdtt::lsdtt_vertical_datum::unspecified) !=
+        (second_datum == lsdtt::lsdtt_vertical_datum::unspecified))
+    {
+        std::cerr << "FATAL: set both first_raster_vertical_datum and "
+                  << "second_raster_vertical_datum, or neither.\n";
+        return 1;
+    }
+    if (!sf["dem_coregistration_stable_mask_fname"].empty() && !bf["run_dem_coregistration"])
+    {
+        std::cerr << "FATAL: dem_coregistration_stable_mask_fname needs "
+                  << "run_dem_coregistration: true.\n";
+        return 1;
+    }
+
     std::cout << "\n--- Parameter checks complete ---\n";
 
     // -------------------------------------------------------------------------
@@ -424,7 +531,7 @@ int main(int argc, char* argv[])
         output_ext = pp.get_read_ext().empty() ? ".tif" : pp.get_read_ext();
     }
 
-    const std::string first_raster_path = pp.get_full_read_path();
+    std::string first_raster_path = pp.get_full_read_path();
 
     const std::filesystem::path second_read_path_obj(sf["second_raster_read_fname"]);
 
@@ -506,8 +613,167 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const lsdtt::lsdtt_raster_meta first_meta  = first_loader.get_meta();
-    lsdtt::lsdtt_raster_meta       second_meta = second_loader.get_meta();
+    const lsdtt::lsdtt_raster_meta second_source_meta = second_loader.get_meta();
+
+    // Global DEMs come in degrees. The reprojection only defines the metric
+    // grid: below, each DEM is warped onto it from its native grid by the same
+    // routine, so a kernel difference between two warp paths cannot look like a
+    // shift between the DEMs.
+    const std::string first_native_path = first_raster_path;
+    const lsdtt::lsdtt_raster_meta first_native_meta = first_loader.get_meta();
+    bool first_needs_metric_warp = false;
+    if (bf["reproject_to_metric_grid"] && first_native_meta.is_geographic())
+    {
+        lsdtt::lsdtt_reproject_options ropt;
+        ropt.resampling_method = "near";
+        // From the north-south pixel: a degree of latitude has a nearly fixed
+        // length, while the east-west width shrinks with latitude and would give
+        // a different grid for each DEM product.
+        ropt.force_resampling = true;
+        ropt.forced_grid_spacing =
+            lsdtt::snap_grid_spacing(first_native_meta.pixel_height() * 111320.0);
+        try
+        {
+            const lsdtt::lsdtt_reproject_result rr = lsdtt::lsdtt_reproject_if_needed(
+                first_raster_path, pp.get_write_path(), pp.get_write_fname(),
+                first_native_meta, ropt);
+            if (rr.reprojected)
+            {
+                first_raster_path = rr.out_path;
+                first_loader.close_raster();
+                first_loader.open_raster(first_raster_path);
+                first_needs_metric_warp = true;
+                std::cout << "First raster goes on a " << rr.grid_spacing_used
+                          << " m grid: " << first_raster_path << "\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error defining the metric grid: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    const lsdtt::lsdtt_raster_meta first_meta = first_loader.get_meta();
+
+    if (bf["run_dem_coregistration"] && first_meta.is_geographic())
+    {
+        std::cerr << "FATAL: DEM coregistration needs metres, and the first raster is in "
+                  << "degrees. Set reproject_to_metric_grid: true.\n";
+        return 1;
+    }
+
+    // Same numbers in two CRSs are not the same grid.
+    const bool grids_match =
+        lsdtt::same_grid(first_meta, second_source_meta) &&
+        lsdtt::crs_equal_semantically(first_meta.crs_wkt, second_source_meta.crs_wkt);
+
+    lsdtt::lsdtt_raster_cpu first_raster(first_loader);
+    if (first_needs_metric_warp)
+    {
+        try
+        {
+            lsdtt::lsdtt_warp_options first_options;
+            first_options.resampling_method =
+                warp_method_for(sf["resampling_method"], first_native_meta, first_meta);
+            first_options.force_float32 = true;
+            first_options.invalidate_incomplete_kernels = true;
+            std::cout << "Warping first raster with '" << first_options.resampling_method << "'.\n";
+            lsdtt::lsdtt_raster_tile tile =
+                lsdtt::warp_raster_to_grid_in_memory(first_native_path, first_meta, first_options);
+            const float nodata = static_cast<float>(first_meta.no_data_value);
+            for (std::size_t i = 0; i < tile.data.size(); ++i)
+                if (tile.mask[i] == 0u || !std::isfinite(tile.data[i]) || tile.meta.is_nodata(tile.data[i]))
+                {
+                    tile.data[i] = nodata;
+                    tile.mask[i] = 0u;
+                }
+            first_raster = lsdtt::lsdtt_raster_cpu(std::move(tile.data), std::move(tile.mask), first_meta);
+            lsdtt::lsdtt_data_loader first_writer;
+            first_writer.write_full(first_raster.get_data(), first_meta, first_raster_path,
+                                    lsdtt::raster_output_format::gtiff);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error warping first raster to the metric grid: " << e.what() << "\n";
+            return 1;
+        }
+    }
+    if (first_units != lsdtt::vertical_unit::metres)
+    {
+        std::cout << "Converting first raster from " << sf["vertical_units"] << " to metres.\n";
+        first_raster = lsdtt::convert_vertical_units_to_metres(first_raster, first_units);
+    }
+
+    // On the first raster's grid, with its nodata value, whatever the source's.
+    const auto on_first_grid = [&](std::vector<float> data, std::vector<std::uint8_t> mask,
+                                   const lsdtt::lsdtt_raster_meta& source)
+    {
+        const float target_nodata = static_cast<float>(first_meta.no_data_value);
+        for (std::size_t i = 0; i < data.size(); ++i)
+            if (mask[i] == 0u || !std::isfinite(data[i]) || source.is_nodata(data[i]))
+            {
+                data[i] = target_nodata;
+                mask[i] = 0u;
+            }
+        return lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), first_meta);
+    };
+
+    lsdtt::lsdtt_warp_options wopt;
+    wopt.resampling_method = warp_method_for(sf["resampling_method"], second_source_meta, first_meta);
+    wopt.output_format = lsdtt::raster_output_format::gtiff;
+    wopt.error_if_no_overlap = true;
+    wopt.force_float32 = true;
+    wopt.invalidate_incomplete_kernels = true;
+
+    // sample_grid is where the source is read: the first raster's grid, or that
+    // grid moved by a coregistration shift. The values go on the first's grid.
+    const auto warp_second = [&](const lsdtt::lsdtt_raster_meta& sample_grid)
+    {
+        lsdtt::lsdtt_raster_tile tile =
+            lsdtt::warp_raster_to_grid_in_memory(second_raster_path, sample_grid, wopt);
+        const lsdtt::lsdtt_raster_meta tile_meta = tile.meta;
+        return on_first_grid(std::move(tile.data), std::move(tile.mask), tile_meta);
+    };
+
+    std::vector<float> datum_shift;
+    if (first_datum != second_datum)
+    {
+        try
+        {
+            datum_shift = lsdtt::vertical_datum_shift(first_meta, second_datum, first_datum);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FATAL: " << e.what() << "\n";
+            return 1;
+        }
+        const auto range = std::minmax_element(datum_shift.begin(), datum_shift.end());
+        std::cout << "Geoid shift applied to second raster: " << *range.first << " to "
+                  << *range.second << " m\n";
+    }
+    else if (first_datum == lsdtt::lsdtt_vertical_datum::unspecified)
+    {
+        std::cout << "Note: vertical datums not declared. If the two DEMs use different "
+                     "geoids (EGM96 for SRTM, NASADEM and AW3D30; EGM2008 for Copernicus), "
+                     "the difference contains that smooth offset.\n";
+    }
+
+    // Units and geoid of the second raster, applied to every copy of it.
+    const auto to_first_vertical_reference = [&](lsdtt::lsdtt_raster_cpu raster)
+    {
+        if (second_units != lsdtt::vertical_unit::metres)
+            raster = lsdtt::convert_vertical_units_to_metres(raster, second_units);
+        if (!datum_shift.empty())
+        {
+            std::vector<float> data = raster.get_data();
+            std::vector<std::uint8_t> mask = raster.get_mask();
+            for (std::size_t i = 0; i < data.size(); ++i)
+                if (mask[i] != 0u) data[i] += datum_shift[i];
+            raster = lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), first_meta);
+        }
+        return raster;
+    };
 
     // -------------------------------------------------------------------------
     // Step 2 - Align second raster to first raster grid (optional warp)
@@ -515,127 +781,63 @@ int main(int argc, char* argv[])
     std::cout << "\n--- Align second raster to first grid ---\n";
 
     bool second_was_resampled = false;
-    if (!lsdtt::same_grid(first_meta, second_meta))
+    lsdtt::lsdtt_raster_cpu second_raster;
+    try
     {
-        if (!bf["resample_second_to_first_grid"])
+        if (!grids_match)
         {
-            std::cerr << "FATAL: rasters are not on the same grid and "
-                      << "resample_second_to_first_grid is false.\n";
-            return 1;
+            if (!bf["resample_second_to_first_grid"])
+            {
+                std::cerr << "FATAL: rasters are not on the same grid and "
+                          << "resample_second_to_first_grid is false.\n";
+                return 1;
+            }
+            second_raster = warp_second(first_meta);
+            second_was_resampled = true;
+
+            const std::string aligned_second_path =
+                pp.get_write_path() + second_write_fname +
+                "_resampled_to_" + pp.get_write_fname() + ".tif";
+            lsdtt::lsdtt_data_loader aligned_writer;
+            aligned_writer.write_full(second_raster.get_data(), second_raster.get_meta(),
+                                      aligned_second_path, lsdtt::raster_output_format::gtiff);
+            std::cout << "Resampled second raster to first raster grid using method '"
+                      << wopt.resampling_method << "'.\n";
+            std::cout << "Wrote resampled second raster: " << aligned_second_path << "\n";
         }
-
-        const std::string aligned_second_path =
-            pp.get_write_path() + second_write_fname +
-            "_resampled_to_" + pp.get_write_fname() + ".tif";
-
-        lsdtt::lsdtt_warp_options wopt;
-        wopt.resampling_method = sf["resampling_method"];
-        wopt.output_format     = lsdtt::raster_output_format::gtiff;
-        wopt.error_if_no_overlap = false;
-
-        try
+        else
         {
-            lsdtt::warp_raster_to_reference_grid(
-                second_raster_path,
-                first_raster_path,
-                aligned_second_path,
-                wopt
-            );
+            const lsdtt::lsdtt_raster_cpu native(second_loader);
+            second_raster = on_first_grid(native.get_data(), native.get_mask(), second_source_meta);
+            std::cout << "Second raster already on first raster grid; no resampling needed.\n";
         }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error warping second raster to first grid: "
-                      << e.what() << "\n";
-            return 1;
-        }
-
-        second_loader.close_raster();
-        try
-        {
-            second_loader.open_raster(aligned_second_path);
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "Error re-opening aligned second raster: "
-                      << e.what() << "\n";
-            return 1;
-        }
-
-        second_meta = second_loader.get_meta();
-        second_was_resampled = true;
-
-        std::cout << "Resampled second raster to first raster grid using method '"
-                  << sf["resampling_method"] << "'.\n";
-        std::cout << "Wrote resampled second raster: " << aligned_second_path << "\n";
     }
-    else
+    catch (const std::exception& e)
     {
-        std::cout << "Second raster already on first raster grid; no resampling needed.\n";
+        std::cerr << "Error aligning second raster to first grid: " << e.what() << "\n";
+        return 1;
     }
+    second_raster = to_first_vertical_reference(std::move(second_raster));
 
     if (bf["verbose_alignment_report"])
     {
+        const double dx = std::fmod(second_source_meta.x_min - first_meta.x_min, first_meta.cell_size) /
+                          first_meta.cell_size;
+        const double dy = std::fmod(second_source_meta.y_min - first_meta.y_min, first_meta.pixel_height()) /
+                          first_meta.pixel_height();
         std::cout << "\nRaster alignment report:\n";
         std::cout << "  first path : " << first_raster_path << "\n";
         std::cout << "  second path: " << second_raster_path << "\n";
-        std::cout << "  same grid  : "
-                  << (lsdtt::same_grid(first_meta, second_meta) ? "yes" : "no")
+        std::cout << "  same grid  : " << (grids_match ? "yes" : "no") << "\n";
+        std::cout << "  same CRS   : "
+                  << (lsdtt::crs_equal_semantically(first_meta.crs_wkt, second_source_meta.crs_wkt) ? "yes" : "no")
                   << "\n";
-        std::cout << "  intersect  : "
-                  << (lsdtt::rasters_intersect(first_meta, second_meta) ? "yes" : "no")
-                  << "\n";
-        std::cout << "  resampled  : "
-                  << (second_was_resampled ? "yes" : "no")
-                  << "\n\n";
-    }
-
-    // -------------------------------------------------------------------------
-    // Step 3 - Load CPU rasters and harmonise nodata metadata
-    // -------------------------------------------------------------------------
-    std::cout << "\n--- Load CPU rasters ---\n";
-
-    lsdtt::lsdtt_raster_cpu first_raster(first_loader);
-    lsdtt::lsdtt_raster_cpu second_raster(second_loader);
-
-    // Harmonise nodata sentinel to first raster if the two rasters differ.
-    // Algebra functions are mask-driven, but assert_compatible currently
-    // requires matching nodata metadata. We standardise to first raster
-    // (the lsdtt3 default is commonly -9999) and rewrite invalid pixels.
-    if (first_raster.get_meta().no_data_value != second_raster.get_meta().no_data_value)
-    {
-        std::cout << "\n--- Harmonise nodata metadata ---\n";
-        std::vector<float> second_data = second_raster.get_data();
-        std::vector<uint8_t> second_mask = second_raster.get_mask();
-        lsdtt::lsdtt_raster_meta second_meta_harmonised = second_raster.get_meta();
-
-        const double old_nodata_value = second_raster.get_meta().no_data_value;
-        const float target_nodata = static_cast<float>(first_raster.get_meta().no_data_value);
-        const lsdtt::lsdtt_raster_meta old_second_meta = second_raster.get_meta();
-
-        for (std::size_t i = 0; i < second_data.size(); ++i)
-        {
-            const bool invalid =
-                second_mask[i] == 0u ||
-                !std::isfinite(second_data[i]) ||
-                old_second_meta.is_nodata(second_data[i]);
-
-            if (invalid)
-            {
-                second_data[i] = target_nodata;
-                second_mask[i] = 0u;
-            }
-        }
-
-        second_meta_harmonised.no_data_value = first_raster.get_meta().no_data_value;
-        second_raster = lsdtt::lsdtt_raster_cpu(
-            std::move(second_data),
-            std::move(second_mask),
-            second_meta_harmonised
-        );
-
-        std::cout << "Harmonised second raster nodata from "
-                  << old_nodata_value << " to "
-                  << first_raster.get_meta().no_data_value << "\n";
+        std::cout << "  cell size  : " << first_meta.cell_size << " x " << first_meta.pixel_height()
+                  << " (first), " << second_source_meta.cell_size << " x "
+                  << second_source_meta.pixel_height() << " (second)\n";
+        if (lsdtt::crs_equal_semantically(first_meta.crs_wkt, second_source_meta.crs_wkt))
+            std::cout << "  origin offset (first raster cells): " << dx << ", " << dy << "\n";
+        std::cout << "  resampled  : " << (second_was_resampled ? "yes" : "no") << "\n\n";
     }
 
     // -------------------------------------------------------------------------
@@ -650,6 +852,34 @@ int main(int argc, char* argv[])
         std::cerr << "FATAL: rasters are not compatible after alignment: "
                   << e.what() << "\n";
         return 1;
+    }
+
+    std::vector<std::uint8_t> stable_mask;
+    if (!sf["dem_coregistration_stable_mask_fname"].empty())
+    {
+        try
+        {
+            lsdtt::lsdtt_warp_options mask_options;
+            mask_options.resampling_method = "near";
+            mask_options.force_float32 = true;
+            const lsdtt::lsdtt_raster_tile mask_tile = lsdtt::warp_raster_to_grid_in_memory(
+                pp.add_read_path_if_needed(sf["dem_coregistration_stable_mask_fname"]),
+                first_meta, mask_options);
+            stable_mask.assign(mask_tile.data.size(), 0u);
+            std::int64_t n_stable = 0;
+            for (std::size_t i = 0; i < stable_mask.size(); ++i)
+                if (mask_tile.mask[i] != 0u && mask_tile.data[i] != 0.0f)
+                {
+                    stable_mask[i] = 1u;
+                    ++n_stable;
+                }
+            std::cout << "Stable terrain: " << n_stable << " cells\n";
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error reading stable terrain mask: " << e.what() << "\n";
+            return 1;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -695,6 +925,8 @@ int main(int argc, char* argv[])
             ff["nuth_kaab_coreg_initial_dy_metres"];
         coreg_options.nuth_kaab.nuth_kaab_coreg_initial_dz_m =
             ff["nuth_kaab_coreg_initial_dz_metres"];
+        if (!stable_mask.empty())
+            coreg_options.nuth_kaab.stable_terrain_mask = &stable_mask;
 
         lsdtt::dem_coreg_result coreg_result;
         try
@@ -716,7 +948,37 @@ int main(int argc, char* argv[])
                   << coreg_result.iterations_run << ", converged: "
                   << (coreg_result.converged ? "yes" : "no") << "\n";
 
-        second_raster = std::move(coreg_result.corrected_moving);
+        if (!coreg_result.converged)
+            std::cout << "WARNING: DEM coregistration did not converge in "
+                      << coreg_result.iterations_run << " iterations. Check the shift, or raise "
+                      << "nuth_kaab_coreg_max_iterations.\n";
+
+        if (bf["resample_second_to_first_grid"])
+        {
+            // Read the source once at the shifted positions, rather than
+            // interpolating an already interpolated raster.
+            try
+            {
+                lsdtt::lsdtt_raster_meta shifted = first_meta;
+                shifted.x_min += coreg_result.dx_m;
+                shifted.y_min += coreg_result.dy_m;
+                second_raster = to_first_vertical_reference(warp_second(shifted));
+                std::vector<float> data = second_raster.get_data();
+                std::vector<std::uint8_t> mask = second_raster.get_mask();
+                for (std::size_t i = 0; i < data.size(); ++i)
+                    if (mask[i] != 0u) data[i] += static_cast<float>(coreg_result.dz_m);
+                second_raster = lsdtt::lsdtt_raster_cpu(std::move(data), std::move(mask), first_meta);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Error applying the coregistration shift: " << e.what() << "\n";
+                return 1;
+            }
+        }
+        else
+        {
+            second_raster = std::move(coreg_result.corrected_moving);
+        }
 
         if (bf["write_dem_coreg_diagnostics_csv"])
         {
@@ -823,6 +1085,31 @@ int main(int argc, char* argv[])
 
     std::cout << "Valid overlap pixels: " << overlap_pixels << " / "
               << first_data.size() << "\n";
+    if (overlap_pixels == 0)
+    {
+        std::cerr << "FATAL: the two rasters have no valid cells in common.\n";
+        return 1;
+    }
+
+    // first - second, over stable terrain if a mask was given.
+    {
+        std::vector<double> dh;
+        dh.reserve(static_cast<std::size_t>(overlap_pixels));
+        const std::vector<float>& overlap = overlap_raster.get_data();
+        for (std::size_t i = 0; i < overlap.size(); ++i)
+            if (overlap[i] != 0.0f && (stable_mask.empty() || stable_mask[i] != 0u))
+                dh.push_back(static_cast<double>(first_data[i]) - static_cast<double>(second_data[i]));
+        if (!dh.empty())
+        {
+            const double median = lsdtt::compute_median(dh);
+            const double nmad = 1.482602218505602 * lsdtt::compute_mad(dh);
+            std::cout << "First minus second" << (stable_mask.empty() ? "" : " on stable terrain")
+                      << ": median " << median << " m, NMAD " << nmad << " m, n " << dh.size() << "\n";
+            lsdtt::lsdtt_run_record::add_provenance("difference_median_metres", std::to_string(median));
+            lsdtt::lsdtt_run_record::add_provenance("difference_nmad_metres", std::to_string(nmad));
+            lsdtt::lsdtt_run_record::add_provenance("difference_n_cells", std::to_string(dh.size()));
+        }
+    }
 
     lsdtt::lsdtt_data_loader writer;
 

@@ -38,7 +38,8 @@ For development from a clone, see
    [floodplains, terraces and valleys](fluvial_surfaces.md),
    [ridgeline profiles](ridgelines.md),
    [slope-area and low-concavity reaches](slope_area.md),
-   [slope stability](slope_stability.md), or the cosmogenic
+   [slope stability](slope_stability.md),
+   [hillslope-channel tagging](hillslope_channel_tagging.md), or the cosmogenic
    and GraphFlood tools as needed.
 
 ## Core ideas

@@ -1,0 +1,15 @@
+# lsdtt-slope-stability: potential landslides from a DEM of difference.
+read_path: __READ_PATH__
+read_fname: change_dem.tif
+write_path: __WRITE_PATH__
+write_fname: sdc
+n_threads: 1
+run_sinmap: false
+run_rupture_planes: false
+run_dem_change_landslides: true
+dem_difference_fname: change_difference.tif
+dem_difference_stable_mask_fname: change_stable.tif
+dem_change_sign: both
+dem_change_detection_sigma: 4.5
+dem_change_seed_sigma: 5
+dem_change_n_null_simulations: 3

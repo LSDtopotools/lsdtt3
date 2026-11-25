@@ -162,12 +162,15 @@ struct frequency_area_result
 // region / by_region: as given to compute_rupture_planes (for F_L)
 // min_daylight_neighbours: the 1-D rule (step 3); 2 is the MATLAB's iopt = 2,
 //           0 the paper's catalogue. Must be 0..8.
+// seismic_coefficient: as given to compute_rupture_planes. F_L then uses the
+//           pseudo-static stresses at each cell (rupture header, SHAKING).
 // Throws std::invalid_argument on a size mismatch or a bad option.
 [[nodiscard]] landslide_catalogues build_landslide_catalogues(
     const rupture_rasters& rupture,
     const lsdtt_raster_meta& meta,
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
-    int min_daylight_neighbours = 2);
+    int min_daylight_neighbours = 2,
+    const std::vector<double>& seismic_coefficient = {});
 
 } // namespace lsdtt

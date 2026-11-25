@@ -91,7 +91,7 @@ nb::dict coregister_dem(
     double offset_threshold_pixels, int aspect_bin_count, int min_samples,
     int subsample_count, bool apply_vertical_shift,
     double max_horizontal_step_metres, double initial_dx_metres,
-    double initial_dy_metres, double initial_dz_metres)
+    double initial_dy_metres, double initial_dz_metres, nb::object stable_mask)
 {
     if (!lsdtt::same_grid(reference.native().get_meta(), moving.native().get_meta()))
         throw nb::value_error(
@@ -111,6 +111,20 @@ nb::dict coregister_dem(
     nk.nuth_kaab_coreg_initial_dx_m = initial_dx_metres;
     nk.nuth_kaab_coreg_initial_dy_m = initial_dy_metres;
     nk.nuth_kaab_coreg_initial_dz_m = initial_dz_metres;
+
+    std::vector<std::uint8_t> stable;
+    if (!stable_mask.is_none())
+    {
+        const Raster& mask = nb::cast<const Raster&>(stable_mask);
+        if (!lsdtt::same_grid(reference.native().get_meta(), mask.native().get_meta()))
+            throw nb::value_error("coregister_dem: stable_mask must be on the grid of reference");
+        const auto& d = mask.native().get_data();
+        const auto& m = mask.native().get_mask();
+        stable.assign(d.size(), 0u);
+        for (std::size_t i = 0; i < d.size(); ++i)
+            stable[i] = (m[i] && std::isfinite(d[i]) && d[i] != 0.0f) ? 1u : 0u;
+        nk.stable_terrain_mask = &stable;
+    }
 
     lsdtt::dem_coreg_result result =
         lsdtt::dem_coregister_to_reference(reference.native(), moving.native(), options);
@@ -273,7 +287,13 @@ Raster
         nb::arg("subsample_count") = 500000, nb::arg("apply_vertical_shift") = true,
         nb::arg("max_horizontal_step_metres") = 0.0,
         nb::arg("initial_dx_metres") = 0.0, nb::arg("initial_dy_metres") = 0.0,
-        nb::arg("initial_dz_metres") = 0.0,
+        nb::arg("initial_dz_metres") = 0.0, nb::arg("stable_mask") = nb::none(),
+        nb::sig("def coregister_dem(reference: Raster, moving: Raster, max_iterations: int = 8, "
+                "offset_threshold_pixels: float = 0.001, aspect_bin_count: int = 72, min_samples: int = 500, "
+                "subsample_count: int = 500000, apply_vertical_shift: bool = True, "
+                "max_horizontal_step_metres: float = 0.0, initial_dx_metres: float = 0.0, "
+                "initial_dy_metres: float = 0.0, initial_dz_metres: float = 0.0, "
+                "stable_mask: Raster | None = None) -> dict"),
         R"doc(Coregister a DEM to a reference with the Nuth and Kaab (2011) method.
 
 Iteratively fits the horizontal and vertical shift that best explains the
@@ -303,7 +323,12 @@ apply_vertical_shift : bool, default=True
 max_horizontal_step_metres : float, default=0.0
     Cap (m) on each iteration's horizontal step; 0 means none.
 initial_dx_metres, initial_dy_metres, initial_dz_metres : float, default=0.0
-    Starting shift (m) in x, y and z.
+    Starting shift (m) in x, y and z. The final vertical shift is measured, so
+    ``initial_dz_metres`` does not change it when ``apply_vertical_shift`` is true.
+stable_mask : Raster or None, default=None
+    Non-zero on stable terrain, on the grid of ``reference``. Only these cells are
+    used to fit the shift, so that landslides, lakes or ice do not bias it. The
+    same as ``dem_coregistration_stable_mask_fname`` in lsdtt-raster-calculator.
 
 Returns
 -------

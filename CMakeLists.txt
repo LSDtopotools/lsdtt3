@@ -298,6 +298,9 @@ set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_coastal_mask.cpp
     src/core/lsdtt_dem_grouping.cpp
     src/core/lsdtt_csv_table.cpp
+    src/core/lsdtt_channel_attribute_input.cpp
+    src/core/lsdtt_channel_network_ingest.cpp
+    src/core/lsdtt_vertical_datum.cpp
     src/core/lsdtt_distributed_hydrology_forcing.cpp
     src/core/lsdtt_stat_csv.cpp
     src/core/lsdtt_outlet_clusters.cpp
@@ -462,9 +465,13 @@ set(LSDTT3_CPU_SOURCES
     src/cpu/lsdtt_slope_stability_sinmap_cpu.cpp
     src/cpu/lsdtt_slope_stability_rupture_cpu.cpp
     src/cpu/lsdtt_slope_stability_catalogue_cpu.cpp
+    src/cpu/lsdtt_slope_stability_dem_change_cpu.cpp
+    src/cpu/lsdtt_slope_stability_hazard_area_cpu.cpp
+    src/cpu/lsdtt_slope_stability_scar_drape_cpu.cpp
     src/cpu/lsdtt_slope_stability_slip_surface_cpu.cpp
     src/cpu/lsdtt_slope_stability_columns_cpu.cpp
     src/cpu/lsdtt_groundwater_dupuit_cpu.cpp
+    src/cpu/lsdtt_hillslope_channel_tagging_cpu.cpp
     src/cpu/lsdtt_channel_point_attributes_cpu.cpp
     src/cpu/lsdtt_sea_mask_cpu.cpp
     src/cpu/lsdtt_chi_disorder_cpu.cpp
@@ -672,6 +679,7 @@ lsdtt_cli(lsdtt-slope-stability        cli/lsdtt-slope-stability.cpp)
 lsdtt_cli(lsdtt-channel-extraction     cli/lsdtt-channel-extraction.cpp)
 lsdtt_cli(lsdtt-internal-drainage      cli/lsdtt-internal-drainage.cpp)
 lsdtt_cli(lsdtt-hillslope-channel-coupling cli/lsdtt-hillslope-channel-coupling.cpp)
+lsdtt_cli(lsdtt-hillslope-channel-tagging cli/lsdtt-hillslope-channel-tagging.cpp)
 lsdtt_cli(lsdtt-drainage-analysis      cli/lsdtt-drainage-analysis.cpp)
 lsdtt_cli(lsdtt-distributed-hydrology  cli/lsdtt-distributed-hydrology.cpp)
 lsdtt_cli(lsdtt-feature-finder         cli/lsdtt-feature-finder.cpp)

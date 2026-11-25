@@ -441,6 +441,18 @@ void declare_basin_outlet_parameters(
     const std::string&                  prefix = "");
 
 // -----------------------------------------------------------------------------
+// Carve before fill: breach_before_fill (bool, true), breach_algorithm_choice
+// (least_cost | lindsay2016) and the breach_lc_* options, group "DEM preparation".
+// -----------------------------------------------------------------------------
+void declare_breach_before_fill_parameters(
+    std::map<std::string, bool>&        bool_default_map,
+    std::map<std::string, int>&         int_default_map,
+    std::map<std::string, float>&       float_default_map,
+    std::map<std::string, std::string>& string_default_map,
+    lsdtt_help_registry&                help_map,
+    int                                 default_max_dist);  // k_breach_lc_default_max_dist_outlet
+
+// -----------------------------------------------------------------------------
 // Polynomial surface fitting.
 //
 //   polyfit_lambda_metres  float   70.0    (HALF-WAVELENGTH, not a radius)

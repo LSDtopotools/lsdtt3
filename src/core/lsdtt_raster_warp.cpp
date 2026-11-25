@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <gdal.h>
 #include <gdal_priv.h>
@@ -68,6 +69,7 @@ struct warp_request
 
     int n_threads   = 0;
     int warp_mem_mb = 512;
+    bool force_float32 = false;
 
     // Oblique-frame warps (warp_raster_to_frame, rotate_back_raster). GDAL
     // sizes its resampling kernel from each warp chunk's source bounding box;
@@ -306,6 +308,13 @@ char** build_gdalwarp_options(
     opts = CSLAddString(opts, "-of");
     opts = CSLAddString(opts, driver_name.c_str());
 
+    if (req.force_float32)
+    {
+        opts = CSLAddString(opts, "-ot");
+        opts = CSLAddString(opts, "Float32");
+        source_type = GDT_Float32;   // the compression predictor follows the output
+    }
+
     // See tiff_predictor_for() in lsdtt_pixel_type.hpp: the predictor depends
     // on the band type, and 2 on float data is spec-invalid and reads as NaN in
     // strict TIFF readers even though GDAL round-trips it happily.
@@ -532,7 +541,103 @@ warp_request grid_warp_request(
     req.dst_nodata        = source_meta.no_data_value;
     req.n_threads         = opts.n_threads;
     req.warp_mem_mb       = opts.warp_mem_mb;
+    req.force_float32     = opts.force_float32;
     return req;
+}
+
+// 1 where the kernel used only valid source cells. Warps a 0/1 validity raster,
+// padded with zeros so that running off the source also counts, with the same
+// kernel. Any weight on a 0 moves the result away from 1, up or down, since
+// cubic and Lanczos kernels have negative lobes.
+std::vector<std::uint8_t> complete_kernel_mask(
+    const std::string&       in_path,
+    const lsdtt_raster_meta& source_meta,
+    const lsdtt_raster_meta& target_grid,
+    warp_request             req)
+{
+    const std::size_t n_target = static_cast<std::size_t>(target_grid.n_rows) *
+                                 static_cast<std::size_t>(target_grid.n_cols);
+    if (normalise_resampling_method(req.resampling_method) == "near")
+        return std::vector<std::uint8_t>(n_target, 1u);
+
+    const auto metres_per_unit = [](const lsdtt_raster_meta& m) {
+        OGRSpatialReference srs;
+        const bool geographic = !m.crs_wkt.empty() &&
+                                srs.importFromWkt(m.crs_wkt.c_str()) == OGRERR_NONE &&
+                                srs.IsGeographic();
+        return geographic ? 111320.0 : 1.0;
+    };
+    const double ratio = (target_grid.cell_size * metres_per_unit(target_grid)) /
+                         (source_meta.cell_size * metres_per_unit(source_meta));
+    const int pad = 6 * static_cast<int>(std::ceil(std::max(1.0, ratio))) + 2;
+
+    GDALDatasetH src = GDALOpen(in_path.c_str(), GA_ReadOnly);
+    if (!src) throw std::runtime_error("lsdtt_raster_warp: cannot open " + in_path);
+    const int nx = GDALGetRasterXSize(src), ny = GDALGetRasterYSize(src);
+    double gt[6];
+    GDALGetGeoTransform(src, gt);
+    std::vector<float> row(static_cast<std::size_t>(nx));
+
+    static std::atomic<int> counter{0};
+    const int id = ++counter;
+    const std::string mask_path = "/vsimem/lsdtt_warp_kernel_mask_" + std::to_string(id) + ".tif";
+    const std::string warped_path = "/vsimem/lsdtt_warp_kernel_out_" + std::to_string(id) + ".tif";
+
+    GDALDatasetH mask = GDALCreate(GDALGetDriverByName("GTiff"), mask_path.c_str(),
+                                   nx + 2 * pad, ny + 2 * pad, 1, GDT_Float32, nullptr);
+    if (!mask)
+    {
+        GDALClose(src);
+        throw std::runtime_error("lsdtt_raster_warp: cannot create the validity raster");
+    }
+    double padded[6] = {gt[0] - pad * gt[1], gt[1], 0.0, gt[3] - pad * gt[5], 0.0, gt[5]};
+    GDALSetGeoTransform(mask, padded);
+    GDALSetProjection(mask, GDALGetProjectionRef(src));
+    GDALRasterBandH src_band = GDALGetRasterBand(src, 1);
+    GDALRasterBandH mask_band = GDALGetRasterBand(mask, 1);
+    std::vector<float> valid(static_cast<std::size_t>(nx));
+    bool io_ok = true;
+    for (int y = 0; y < ny && io_ok; ++y)
+    {
+        io_ok = GDALRasterIO(src_band, GF_Read, 0, y, nx, 1, row.data(), nx, 1, GDT_Float32, 0, 0) == CE_None;
+        for (int x = 0; x < nx; ++x)
+            valid[static_cast<std::size_t>(x)] =
+                (std::isfinite(row[static_cast<std::size_t>(x)]) &&
+                 !source_meta.is_nodata(row[static_cast<std::size_t>(x)])) ? 1.0f : 0.0f;
+        io_ok = io_ok && GDALRasterIO(mask_band, GF_Write, pad, y + pad, nx, 1, valid.data(), nx, 1,
+                                      GDT_Float32, 0, 0) == CE_None;
+    }
+    GDALClose(mask);
+    GDALClose(src);
+    if (!io_ok)
+    {
+        VSIUnlink(mask_path.c_str());
+        throw std::runtime_error("lsdtt_raster_warp: cannot read " + in_path);
+    }
+
+    req.output_format = raster_output_format::gtiff;
+    req.force_float32 = true;
+    req.src_nodata = -9999.0;   // never present in a 0/1 raster
+    req.dst_nodata = -9999.0;
+    std::vector<std::uint8_t> out(n_target, 0u);
+    try
+    {
+        run_gdalwarp(mask_path, warped_path, req);
+        lsdtt_data_loader loader;
+        loader.open_raster(warped_path);
+        const lsdtt_raster_tile tile = loader.read_full();
+        for (std::size_t i = 0; i < n_target; ++i)
+            out[i] = (tile.mask[i] != 0u && std::abs(tile.data[i] - 1.0f) <= 1.0e-3f) ? 1u : 0u;
+    }
+    catch (...)
+    {
+        VSIUnlink(mask_path.c_str());
+        VSIUnlink(warped_path.c_str());
+        throw;
+    }
+    VSIUnlink(mask_path.c_str());
+    VSIUnlink(warped_path.c_str());
+    return out;
 }
 
 } // anonymous namespace
@@ -728,6 +833,17 @@ lsdtt_raster_tile warp_raster_to_grid_in_memory(
         lsdtt_data_loader loader;
         loader.open_raster(mem_path);
         tile = loader.read_full();
+        if (opts.invalidate_incomplete_kernels)
+        {
+            const std::vector<std::uint8_t> complete =
+                complete_kernel_mask(in_path, source_meta, target_grid, req);
+            for (std::size_t i = 0; i < tile.mask.size(); ++i)
+                if (complete[i] == 0u)
+                {
+                    tile.mask[i] = 0u;
+                    tile.data[i] = static_cast<float>(tile.meta.no_data_value);
+                }
+        }
     }
     catch (...)
     {

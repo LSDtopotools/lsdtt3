@@ -357,10 +357,16 @@ static dem_coreg_result run_nuth_kaab(
     std::vector<std::size_t> candidate_indices;
     candidate_indices.reserve(ref_data.size());
 
+    if (opt.stable_terrain_mask != nullptr && opt.stable_terrain_mask->size() != ref_data.size())
+    {
+        throw std::invalid_argument("Nuth-Kaab coreg: stable_terrain_mask has the wrong size");
+    }
+
     const double deg_per_rad = 180.0 / M_PI;
     for (std::size_t idx = 0; idx < ref_data.size(); ++idx)
     {
         if (ref_mask[idx] == 0u || !std::isfinite(ref_data[idx])) continue;
+        if (opt.stable_terrain_mask != nullptr && (*opt.stable_terrain_mask)[idx] == 0u) continue;
         if (!std::isfinite(slope_tan[idx]) || !std::isfinite(aspect[idx])) continue;
 
         const double slope_deg = std::atan(slope_tan[idx]) * deg_per_rad;
@@ -483,7 +489,9 @@ static dem_coreg_result run_nuth_kaab(
         dy_m += ddy;
         if (opt.nuth_kaab_coreg_apply_vertical_shift)
         {
-            dz_m = opt.nuth_kaab_coreg_initial_dz_m + ddz;
+            // ddz is the whole median difference from the unshifted-in-z
+            // moving DEM, so it replaces the initial guess.
+            dz_m = ddz;
         }
 
         dem_coreg_iteration_diagnostics di;
@@ -506,6 +514,24 @@ static dem_coreg_result run_nuth_kaab(
             result.converged = true;
             break;
         }
+    }
+
+    // The vertical shift belongs to the FINAL horizontal shift. The value from
+    // the loop was measured before the last horizontal step.
+    if (opt.nuth_kaab_coreg_apply_vertical_shift)
+    {
+        std::vector<double> final_dh;
+        final_dh.reserve(candidate_indices.size());
+        for (const std::size_t idx : candidate_indices)
+        {
+            const int row = static_cast<int>(idx / static_cast<std::size_t>(ref_meta.n_cols));
+            const int col = static_cast<int>(idx % static_cast<std::size_t>(ref_meta.n_cols));
+            const lsdtt_xy xy = cell_center_from_row_col(ref_meta, row, col);
+            const sampled_value smp = bilinear_sample_raster(moving, xy.x + dx_m, xy.y + dy_m);
+            if (smp.valid)
+                final_dh.push_back(static_cast<double>(ref_data[idx]) - static_cast<double>(smp.value));
+        }
+        if (!final_dh.empty()) dz_m = compute_median(final_dh);
     }
 
     result.dx_m = dx_m;

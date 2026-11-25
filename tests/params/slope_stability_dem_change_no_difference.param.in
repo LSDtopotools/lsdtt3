@@ -1,0 +1,9 @@
+# Refused: no DEM of difference.
+read_path: __READ_PATH__
+read_fname: change_dem.tif
+write_path: __WRITE_PATH__
+write_fname: sdc
+n_threads: 1
+run_sinmap: false
+run_rupture_planes: false
+run_dem_change_landslides: true

@@ -86,6 +86,7 @@
 
 #include "../core/lsdtt_raster_meta.hpp"
 #include "lsdtt_chi_network_analysis_cpu.hpp"
+#include "lsdtt_hillslope_channel_tagging_cpu.hpp"
 #include "lsdtt_raster_cpu.hpp"
 #include "lsdtt_ridgeline_cpu.hpp"
 
@@ -488,35 +489,8 @@ struct lsdtt_hillslope_metrics_result
 // testing.
 // =============================================================================
 
-struct lsdtt_channel_properties
-{
-    double       k_sn              = std::numeric_limits<double>::quiet_NaN();
-    double       chi               = std::numeric_limits<double>::quiet_NaN();
-    double       channel_elevation = std::numeric_limits<double>::quiet_NaN();
-    double       flow_distance_m   = std::numeric_limits<double>::quiet_NaN();
-    double       drainage_area_m2  = std::numeric_limits<double>::quiet_NaN();
-    std::int32_t basin_index       = -1;
-    std::int32_t branch_id         = -1;
-    std::int32_t segment_id        = -1;
-};
-
-// A per-DEM-cell lookup of channel properties, empty where the cell is not a
-// fitted channel node.
-using lsdtt_channel_property_map =
-    std::unordered_map<std::int64_t, lsdtt_channel_properties>;
-
-// =============================================================================
-// build_channel_property_map
-//
-// nodes / segments come from export_chi_network_fit_nodes / _segments.
-// flow_distance and drainage_area are optional per-cell rasters; pass nullptr
-// to leave those columns undefined rather than zero.
-// =============================================================================
-[[nodiscard]] lsdtt_channel_property_map build_channel_property_map(
-    const lsdtt_chi_network_fit_node_table&    nodes,
-    const lsdtt_chi_network_fit_segment_table& segments,
-    const std::vector<float>*                  flow_distance,
-    const std::vector<float>*                  drainage_area);
+// lsdtt_channel_properties, lsdtt_channel_property_map and
+// build_channel_property_map are in lsdtt_hillslope_channel_tagging_cpu.hpp.
 
 // =============================================================================
 // attach_channel_properties

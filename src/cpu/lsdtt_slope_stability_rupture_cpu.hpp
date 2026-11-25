@@ -87,6 +87,23 @@
 //   mean F = sum_s w_s F_min,s,   SD F = sqrt(sum_s w_s (F_min,s - mean)^2)
 // A single sample of weight 1 reproduces compute_rupture_planes exactly.
 // Catalogues are built from the central-value run only.
+//
+// SHAKING (pseudo-static; an addition to scaLr, not in the paper). A horizontal
+// inertial force k W acts on the column, directed down the dip of the plane
+// (the least stable direction), with k = ratio * PGA / g supplied per cell. On
+// the plane, with T = tan(theta) = s / dx and s = dz - h:
+//   sigma_n = rho g h cos theta (cos theta - k sin theta)
+//   tau     = rho g h cos theta (sin theta + k cos theta)
+//   F_k(h)  = [ C (dx^2 + s^2) / (h dx) + mu max(dx - k s, 0) ] / (s + k dx),  C = c / (rho g)
+// Friction is zero where the inertial force unloads the plane (k T > 1). Without
+// that limit dF/dh = 0 reduces to a quadratic (the h^3 terms cancel) whose
+// smaller positive root is, with E = dz + k dx and L^2 = dx^2 + dz^2,
+//   h* = C L^2 E / ( C L^2 + dx sqrt((1 + k^2) C L^2 (C + mu E)) )
+// which is the dry form above at k = 0. Unlike the static case F_k stays finite
+// at h -> dz, so the minimum is taken over h*, the limit h -> dz, and, when h*
+// falls where the plane is unloaded, the frictionless optimum and the point
+// k s = dx. k = 0 calls the static routine, so results are bit-identical.
+// Not combined with a water table: the two together throw.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -150,6 +167,16 @@ struct rupture_pair
     double dx, double dz, double water_table_depth, const rupture_parameters& p,
     double cutoff = std::numeric_limits<double>::infinity());
 
+// F_k(h) under a pseudo-static coefficient k >= 0 (SHAKING above). +inf outside
+// 0 < h < dz or for dx <= 0. k = 0 equals rupture_safety_factor.
+[[nodiscard]] double rupture_safety_factor_seismic(
+    double h, double dx, double dz, double k, const rupture_parameters& p);
+
+// The minimum of F_k over 0 < h < dz, in closed form. k = 0 is
+// rupture_optimal_depth exactly.
+[[nodiscard]] rupture_pair rupture_optimal_depth_seismic(
+    double dx, double dz, double k, const rupture_parameters& p);
+
 // A lower bound on F_wet over the wet part, max(d, 0) < h < dz. Writing
 // s = dz - h, F_wet = (A + mu) dx / s + A s / dx with A(h) = k / h - mu r,
 // k = c / (rho g) + mu r d, r = rho_w / rho. If k >= 0, A >= A_min = k/dz - mu r
@@ -210,7 +237,8 @@ struct rupture_probability_rasters
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, std::vector<rupture_parameter_sample>>& samples_by_region,
     int n_threads = 0,
-    const std::vector<double>& water_table_depth = {});
+    const std::vector<double>& water_table_depth = {},
+    const std::vector<double>& seismic_coefficient = {});
 
 inline constexpr std::int32_t k_rupture_region_nodata = std::numeric_limits<std::int32_t>::min();
 
@@ -239,6 +267,9 @@ struct rupture_rasters
 // water_table_depth: empty (dry), or one depth (m) below the geometry
 //             surface per cell; the value at R applies to every candidate
 //             plane from R. Non-finite = dry at that cell.
+// seismic_coefficient: empty (static), or k >= 0 per cell; the value at R
+//             applies to every candidate plane from R. A non-finite k leaves
+//             the cell out. Cannot be combined with water_table_depth.
 // OpenMP over sources; the result does not depend on n_threads.
 // Throws std::invalid_argument on grid mismatches, invalid parameters, or a
 // valid source whose region id has no entry.
@@ -249,6 +280,7 @@ struct rupture_rasters
     const std::vector<std::int32_t>& region,
     const std::map<std::int32_t, rupture_parameters>& by_region,
     int n_threads = 0,
-    const std::vector<double>& water_table_depth = {});
+    const std::vector<double>& water_table_depth = {},
+    const std::vector<double>& seismic_coefficient = {});
 
 } // namespace lsdtt

@@ -24,6 +24,8 @@
 //      circular arcs, bilinear and structural surfaces),
 //      src/cpu/lsdtt_slope_stability_slip_surface_cpu, and 3-D ellipsoids by
 //      the method of columns, src/cpu/lsdtt_slope_stability_columns_cpu;
+//   D. the coseismic hazard area, SHALRUN-EQ of Milledge et al. (2019),
+//      src/cpu/lsdtt_slope_stability_hazard_area_cpu;
 //   pore pressure from a Dupuit-Boussinesq water table
 //      (src/cpu/lsdtt_groundwater_dupuit_cpu).
 //
@@ -73,6 +75,10 @@
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_hazard_area_cpu.hpp"
+#include "../src/cpu/lsdtt_slope_stability_scar_drape_cpu.hpp"
+#include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_slip_surface_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_columns_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_rupture_cpu.hpp"
@@ -327,6 +333,131 @@ static void write_frequency_area(const std::string& base, const std::string& wha
     std::cout << "  wrote " << pd << "\n  wrote " << pf << "\n";
 }
 
+// Potential landslides from a DEM of difference: tables and rasters.
+static void write_dem_change_outputs(const std::string& base, const lsdtt::dem_change_result& r,
+                                     const lsdtt::lsdtt_raster_meta& meta, int bins_per_decade, int min_tail)
+{
+    const auto open = [](const std::string& path) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("Cannot write " + path);
+        f << std::setprecision(10);
+        return f;
+    };
+    const lsdtt::dem_change_uncertainty& u = r.uncertainty;
+    {
+        std::ofstream f = open(base + "_dem_change_uncertainty.csv");
+        f << "quantity,value\n"
+          << "used_stable_mask," << (u.used_stable_mask ? 1 : 0) << "\nn_stable_cells," << u.n_stable
+          << "\nn_clipped_cells," << u.n_clipped << "\nbias_metres," << u.bias_m << "\nnmad_metres," << u.nmad_m
+          << "\nstandard_deviation_metres," << u.standard_deviation_m << "\nrmse_metres," << u.rmse_m
+          << "\np2.5_metres," << u.p025_m << "\np97.5_metres," << u.p975_m << "\nvariogram_fitted,"
+          << (u.variogram_fitted ? 1 : 0) << "\nnugget_fraction," << u.nugget_fraction
+          << "\ncorrelation_range_metres," << u.correlation_range_m << "\nsill," << u.sill << "\n";
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_uncertainty_by_slope.csv");
+        f << "slope_lower,slope_upper,slope_median,n_cells,bias_metres,nmad_metres\n";
+        for (std::size_t k = 0; k < u.slope_median.size(); ++k)
+            f << u.slope_lower[k] << ',' << u.slope_upper[k] << ',' << u.slope_median[k] << ',' << u.slope_n[k] << ','
+              << u.slope_bias_m[k] << ',' << u.slope_nmad_m[k] << '\n';
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_variogram.csv");
+        f << "lag_metres,semivariance,n_pairs,fitted_semivariance\n";
+        for (std::size_t k = 0; k < u.lag_m.size(); ++k)
+        {
+            double fitted = std::numeric_limits<double>::quiet_NaN();
+            if (u.variogram_fitted)
+            {
+                const double q = u.lag_m[k] / u.correlation_range_m;
+                const double sph = q >= 1.0 ? 1.0 : 1.5 * q - 0.5 * q * q * q;
+                fitted = u.sill * (u.nugget_fraction + (1.0 - u.nugget_fraction) * sph);
+            }
+            f << u.lag_m[k] << ',' << u.semivariance[k] << ',' << u.lag_n_pairs[k] << ',';
+            if (std::isfinite(fitted)) f << fitted;
+            f << '\n';
+        }
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_patches.csv");
+        f << "patch_id,change,n_cells,area_m2,area_uncertainty_m2,perimeter_m,centroid_x,centroid_y,length_m,width_m,"
+             "mean_change_m,extreme_change_m,mean_change_sigma_m,significance,volume_m3,volume_sigma_m3,mean_slope\n";
+        for (const auto& p : r.patches)
+            f << p.id << ',' << (p.sign < 0 ? "loss" : "gain") << ',' << p.n_cells << ',' << p.area_m2 << ','
+              << p.area_uncertainty_m2 << ',' << p.perimeter_m << ',' << p.centroid_x << ',' << p.centroid_y << ','
+              << p.length_m << ',' << p.width_m << ',' << p.mean_change_m << ',' << p.extreme_change_m << ','
+              << p.mean_change_sigma_m << ',' << p.significance << ',' << p.volume_m3 << ',' << p.volume_sigma_m3 << ','
+              << p.mean_slope << '\n';
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_coverage.csv");
+        std::int64_t n_loss = 0, n_gain = 0;
+        for (const auto& p : r.patches) (p.sign < 0 ? n_loss : n_gain)++;
+        f << "change,n_patches,area_m2,area_uncertainty_m2,fraction_of_assessed_area,volume_m3,volume_sigma_m3,assessed_area_m2\n";
+        const auto row = [&](const char* name, std::int64_t c, double a, double au, double v, double vs) {
+            f << name << ',' << c << ',' << a << ',' << au << ',' << (r.valid_area_m2 > 0 ? a / r.valid_area_m2 : 0.0) << ','
+              << v << ',' << vs << ',' << r.valid_area_m2 << '\n';
+        };
+        row("loss", n_loss, r.loss_area_m2, r.loss_area_uncertainty_m2, r.loss_volume_m3, r.loss_volume_sigma_m3);
+        row("gain", n_gain, r.gain_area_m2, r.gain_area_uncertainty_m2, r.gain_volume_m3, r.gain_volume_sigma_m3);
+    }
+    {
+        std::ofstream f = open(base + "_dem_change_sensitivity.csv");
+        f << "detection_sigma,seed_sigma,n_patches,area_m2,fraction_of_assessed_area,volume_m3\n";
+        for (const auto& row : r.sensitivity)
+            f << row.detection_sigma << ',' << row.seed_sigma << ',' << row.n_patches << ',' << row.area_m2 << ','
+              << row.coverage_fraction << ',' << row.volume_m3 << '\n';
+    }
+    if (r.null_simulation.n_simulations > 0)
+    {
+        const lsdtt::dem_change_null_summary& q = r.null_simulation;
+        {
+            std::ofstream f = open(base + "_dem_change_false_detection.csv");
+            f << "quantity,value\nn_simulations," << q.n_simulations << "\nmean_false_patches," << q.mean_n_patches
+              << "\np05_false_patches," << q.p05_n_patches << "\np95_false_patches," << q.p95_n_patches
+              << "\nmean_false_area_m2," << q.mean_area_m2 << "\np05_false_area_m2," << q.p05_area_m2
+              << "\np95_false_area_m2," << q.p95_area_m2 << "\narea_false_discovery_ratio,";
+            if (std::isfinite(q.area_false_discovery_ratio)) f << q.area_false_discovery_ratio;
+            f << '\n';
+        }
+        std::ofstream f = open(base + "_dem_change_false_detection_by_area.csv");
+        f << "area_lower_m2,area_upper_m2,n_observed,mean_n_simulated,false_discovery_ratio\n";
+        for (const auto& b : q.by_area)
+        {
+            f << b.area_lower_m2 << ',' << b.area_upper_m2 << ',' << b.n_observed << ',' << b.mean_n_simulated << ',';
+            if (std::isfinite(b.false_discovery_ratio)) f << b.false_discovery_ratio;
+            f << '\n';
+        }
+    }
+
+    lsdtt::lsdtt_data_loader writer;
+    const std::size_t n = r.label.size();
+    const float nodata = static_cast<float>(meta.no_data_value);
+    std::vector<float> label(n, nodata), change(n, nodata);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (r.corrected_m[i] == nodata) continue;
+        change[i] = static_cast<float>(r.change_class[i]);
+        if (r.label[i] > 0) label[i] = static_cast<float>(r.label[i]);
+    }
+    writer.write_full(r.corrected_m, meta, base + "_dem_change_corrected.tif");
+    writer.write_full(r.sigma_m, meta, base + "_dem_change_sigma.tif");
+    writer.write_full(r.z, meta, base + "_dem_change_z.tif");
+    writer.write_full(change, meta, base + "_dem_change_class.tif");
+    writer.write_full(label, meta, base + "_dem_change_label.tif");
+
+    std::vector<std::pair<std::string, std::vector<double>>> catalogues;
+    for (const int sign : {-1, 1})
+    {
+        std::vector<double> areas;
+        for (const auto& p : r.patches)
+            if (p.sign == sign) areas.push_back(p.area_m2);
+        if (!areas.empty()) catalogues.emplace_back(sign < 0 ? "loss" : "gain", std::move(areas));
+    }
+    if (!catalogues.empty())
+        write_frequency_area(base, "dem_change", catalogues, meta.cell_size * meta.cell_size, bins_per_decade, min_tail);
+}
+
 // =============================================================================
 // main
 // =============================================================================
@@ -350,55 +481,9 @@ int main(int argc, char* argv[])
         "Minimum slope imposed during pit filling.",
         "Used when fill_before_routing is true.",
         "DEM preparation", "param", "fill_before_routing"};
-    bool_default_map["breach_before_fill"] = true;
-    help_map["breach_before_fill"] = {"bool", "true",
-        "Breach (carve) depressions before filling pits.",
-        "The carve comes first, then the fill (fill_before_routing) takes only the "
-        "pits the carve could not solve, so large filled areas (and their "
-        "artificially low slopes) are avoided. SINMAP itself only fills: false "
-        "reproduces that.",
-        "DEM preparation", "switch", ""};
-    string_default_map["breach_algorithm_choice"] = "least_cost";
-    help_map["breach_algorithm_choice"] = {"string", "least_cost",
-        "Algorithm for depression breaching.",
-        "lindsay2016: Lindsay (2016) efficient breaching. "
-        "least_cost: Lindsay (2020) pit-centric least-cost breaching.",
-        "DEM preparation", "param", "breach_before_fill"};
-    int_default_map["breach_lc_max_dist"] = lsdtt::k_breach_lc_default_max_dist_outlet;
-    help_map["breach_lc_max_dist"] = {"int", "1000 (outlet) / 100 (whitebox)",
-        "Maximum breach path length in cells for least-cost breaching.",
-        "Counted in steps from the pit. Pits that need a longer path are left "
-        "unbreached (and filled if fill_before_routing is true). 1 to 32767. If "
-        "not set, 1000 with breach_lc_edge_policy outlet and 100 with whitebox. "
-        "Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    float_default_map["breach_lc_max_cost"] = std::numeric_limits<float>::max();
-    help_map["breach_lc_max_cost"] = {"float", "unlimited",
-        "Maximum cost of a least-cost breach path.",
-        "The summed depth each cell on the path is lowered (m; m x cells with "
-        "breach_lc_minimize_dist). A pit whose cheapest path costs more is left "
-        "unbreached. Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    bool_default_map["breach_lc_minimize_dist"] = false;
-    help_map["breach_lc_minimize_dist"] = {"bool", "false",
-        "Weight least-cost breach paths by their length.",
-        "false: a path costs the total depth lowered (m). true: each step is "
-        "weighted by its length in cells. Only used when breach_algorithm_choice "
-        "is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    string_default_map["breach_lc_edge_policy"] = "outlet";
-    help_map["breach_lc_edge_policy"] = {"string", "outlet",
-        "Whether a least-cost breach may drain off the raster edge.",
-        "outlet: the raster edge is an outlet. whitebox: it is not (as in "
-        "WhiteboxTools). Only used when breach_algorithm_choice is least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
-    float_default_map["breach_lc_flat_increment"] = 0.0f;
-    help_map["breach_lc_flat_increment"] = {"float", "0.0",
-        "Elevation drop (m) per cell along a least-cost breach channel.",
-        "0 or less selects the automatic value (twice the float32 spacing at the "
-        "largest absolute elevation). Only used when breach_algorithm_choice is "
-        "least_cost.",
-        "DEM preparation", "param", "breach_before_fill"};
+    lsdtt::declare_breach_before_fill_parameters(bool_default_map, int_default_map, float_default_map,
+                                                 string_default_map, help_map,
+                                                 lsdtt::k_breach_lc_default_max_dist_outlet);
     bool_default_map["write_conditioned_pixels_raster"] = false;
     help_map["write_conditioned_pixels_raster"] = {"bool", "false",
         "Write the conditioned-pixels raster.",
@@ -531,6 +616,173 @@ int main(int argc, char* argv[])
         "SINMAP", "switch", "run_sinmap"};
 
     // --- Planar rupture surfaces (scaLr) -----------------------------------------
+    // --- Potential landslides from a DEM of difference ---
+    bool_default_map["run_dem_change_landslides"] = false;
+    help_map["run_dem_change_landslides"] = {"bool", "false",
+        "Find potential landslides in a DEM of difference, with their uncertainty.",
+        "Needs dem_difference_fname. read_fname is the newer DEM on the same grid, used "
+        "for slope. The results are CANDIDATE areas of change: vegetation, snow, water, "
+        "radar penetration and DEM artefacts also change elevation between two products.",
+        "DEM of difference", "switch", ""};
+    string_default_map["dem_difference_fname"] = "";
+    help_map["dem_difference_fname"] = {"string", "",
+        "DEM of difference (metres), for example from lsdtt-raster-calculator.",
+        "On the grid of read_fname. Read from read_path if the path is relative.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    bool_default_map["dem_difference_is_newer_minus_older"] = true;
+    help_map["dem_difference_is_newer_minus_older"] = {"bool", "true",
+        "The difference is newer minus older, so a loss of elevation is negative.",
+        "false: older minus newer, which is converted. lsdtt-raster-calculator writes "
+        "first minus second.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    string_default_map["dem_difference_stable_mask_fname"] = "";
+    help_map["dem_difference_stable_mask_fname"] = {"string", "",
+        "Raster of stable terrain (non-zero = stable), for the error model.",
+        "On the grid of read_fname. Without it every assessable cell within 4 NMAD of the "
+        "median is treated as stable, which is reasonable only where change is rare.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    string_default_map["dem_change_sign"] = "loss";
+    help_map["dem_change_sign"] = {"string", "loss",
+        "Which change to detect: loss, gain or both.",
+        "loss finds source areas (scars). Gain finds deposits, and also vegetation growth.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_detection_sigma"] = 1.96f;
+    help_map["dem_change_detection_sigma"] = {"float", "1.96",
+        "Multiple of the slope-dependent error at which a cell can belong to a patch.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_seed_sigma"] = 3.0f;
+    help_map["dem_change_seed_sigma"] = {"float", "3.0",
+        "A connected group of candidate cells needs one cell at this multiple.",
+        "This hysteresis keeps weak cells attached to a strong signal and drops isolated "
+        "weak groups.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_patch_significance"] = 1.96f;
+    help_map["dem_change_patch_significance"] = {"float", "1.96",
+        "Minimum |mean change| / its standard error for a patch to be kept.",
+        "The standard error allows for spatially correlated DEM error.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_min_patch_pixels"] = 5;
+    help_map["dem_change_min_patch_pixels"] = {"int", "5",
+        "Smallest patch, in pixels.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_aggregation_radius_pixels"] = 2;
+    help_map["dem_change_aggregation_radius_pixels"] = {"int", "2",
+        "Join changed cells with up to this many unchanged cells between them.",
+        "0 joins only cells that touch. Unchanged cells between them are not added to the "
+        "patch's area or volume. Larger values merge neighbouring landslides.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_min_slope"] = 0.0f;
+    help_map["dem_change_min_slope"] = {"float", "0.0",
+        "Ignore cells with a gradient (m/m) below this.",
+        "Useful for excluding valley floors, reservoirs and farmland.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_n_slope_bins"] = 10;
+    help_map["dem_change_n_slope_bins"] = {"int", "10",
+        "Quantile bins of slope for the error model.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_n_null_simulations"] = 20;
+    help_map["dem_change_n_null_simulations"] = {"int", "20",
+        "Noise simulations used to estimate false detections.",
+        "Each runs the detection on Gaussian noise with the fitted error and spatial "
+        "correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 "
+        "turns it off.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_random_seed"] = 33;
+    help_map["dem_change_random_seed"] = {"int", "33",
+        "Seed for the variogram sample and the noise simulations.", "",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+
+    bool_default_map["run_coseismic_hazard_area"] = false;
+    help_map["run_coseismic_hazard_area"] = {"bool", "false",
+        "Compute the coseismic landslide hazard area (SHALRUN-EQ, Milledge et al. 2019).",
+        "The area of cells steep enough to initiate whose debris can reach each cell by "
+        "slope-weighted multiple flow directions without crossing a cell gentler than the "
+        "stopping slope. A relative index of exposure. Runs on the routing surface. Outputs: "
+        "<write_fname>_hazard_area.tif (m2/m), _hazard_area_steepest_slope.tif, "
+        "_hazard_area_zone.tif (0 transit, 1 source, 2 stopping), "
+        "_hazard_area_edge_influenced.tif and _hazard_area_summary.csv.",
+        "Coseismic hazard area", "switch", ""};
+    float_default_map["coseismic_hazard_initiation_slope"] = 0.839f;
+    help_map["coseismic_hazard_initiation_slope"] = {"float", "0.839",
+        "Gradient (m/m) at or above which a cell can initiate a landslide.",
+        "Default from the six-earthquake average of Milledge et al. (2019) on 30 m DEMs. An "
+        "effective value that depends on DEM resolution, not a material property.",
+        "Coseismic hazard area", "param", "run_coseismic_hazard_area"};
+    float_default_map["coseismic_hazard_stopping_slope"] = 0.176f;
+    help_map["coseismic_hazard_stopping_slope"] = {"float", "0.176",
+        "Gradient (m/m) below which run-out stops.",
+        "A gentler cell is still reached and counted, but passes nothing on. Must be above 0 "
+        "and below coseismic_hazard_initiation_slope. Default from Milledge et al. (2019) on "
+        "30 m DEMs; depends on DEM resolution.",
+        "Coseismic hazard area", "param", "run_coseismic_hazard_area"};
+
+    // --- Scar volumes from a cloth draped over a landslide inventory ---
+    bool_default_map["run_scar_drape_volumes"] = false;
+    help_map["run_scar_drape_volumes"] = {"bool", "false",
+        "Estimate the volume of each mapped landslide scar with a cloth draped over it.",
+        "read_fname is the POST-event DEM; landslide_inventory_fname holds the scar polygons. "
+        "For each scar a cloth is held at the ground on a ring just outside the scar "
+        "(scar_drape_rim_buffer_pixels) and is free inside it, but may not pass below the "
+        "ground. Its resting shape estimates the pre-event surface; the volume is the cloth "
+        "minus the DEM. A taut cloth interpolates linearly across the scar, so it is exact "
+        "on a planar slope, too shallow across a convex nose and too deep across a hollow. "
+        "Uses the input DEM (no carving or filling). Outputs: <write_fname>_scar_drape_volumes.csv, "
+        "_scar_drape_volume_area_fit.csv and (write_scar_drape_rasters) _scar_drape_surface.tif, "
+        "_scar_drape_depth.tif, _scar_drape_label.tif.",
+        "Scar drape volumes", "switch", ""};
+    string_default_map["landslide_inventory_fname"] = "";
+    help_map["landslide_inventory_fname"] = {"string", "",
+        "Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...).",
+        "Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it "
+        "around the source area only, not the runout, and to the crown, so that the ring "
+        "outside it is undisturbed ground. Read from read_path if the path is relative.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["landslide_inventory_layer_name"] = "";
+    help_map["landslide_inventory_layer_name"] = {"string", "",
+        "Layer of landslide_inventory_fname to read.", "Empty: the first layer.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["landslide_inventory_id_field_name"] = "";
+    help_map["landslide_inventory_id_field_name"] = {"string", "",
+        "Attribute that identifies each scar in the outputs.",
+        "Empty: the feature's position in the layer (0-based). The run stops, listing the "
+        "fields, if the layer has no such field.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_rim_buffer_pixels"] = 1;
+    help_map["scar_drape_rim_buffer_pixels"] = {"int", "1",
+        "Cells added around each scar polygon before the cloth is held at the ground.",
+        "The cloth is free over the polygon grown by this many cells (8-connected) and held "
+        "on the ring of cells just outside that. 1 tolerates a polygon drawn slightly inside "
+        "the crown; larger values move the ring further onto stable ground but take in more "
+        "of the surrounding slope. Volumes are reported over the polygon and over the free "
+        "area.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_sag_curvature_per_metre"] = 0.0f;
+    help_map["scar_drape_sag_curvature_per_metre"] = {"float", "0.0",
+        "Curvature (1/m) the cloth takes where it hangs clear of the ground.",
+        "0: a taut cloth (harmonic surface between the rim and the ground it rests on). A "
+        "positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so "
+        "0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the "
+        "result does not depend on the grid.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_tolerance_metres"] = 1.0e-5f;
+    help_map["scar_drape_tolerance_metres"] = {"float", "1e-05",
+        "Stop when the cloth moves less than this in one sweep (m).",
+        "Scars that reach scar_drape_max_iterations first are reported with status "
+        "not_converged.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_max_iterations"] = 100000;
+    help_map["scar_drape_max_iterations"] = {"int", "100000",
+        "Largest number of relaxation sweeps per scar.",
+        "Over-relaxation needs a few times the scar's width in cells.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    bool_default_map["write_scar_drape_rasters"] = true;
+    help_map["write_scar_drape_rasters"] = {"bool", "true",
+        "Write the draped surface, the depth and the scar labels as rasters.",
+        "<write_fname>_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth "
+        "minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where "
+        "scars overlap the deeper cloth is kept.",
+        "Scar drape volumes", "switch", "run_scar_drape_volumes"};
+
     bool_default_map["run_rupture_planes"] = true;
     help_map["run_rupture_planes"] = {"bool", "true",
         "Compute planar rupture surfaces after scaLr (Steer et al. 2026).",
@@ -560,6 +812,20 @@ int main(int argc, char* argv[])
         "Bulk density rho of the slope material (kg/m3).",
         "As in scaLr. Gravity is 9.81 m/s2.",
         "Rupture planes", "param", "run_rupture_planes"};
+    string_default_map["rupture_peak_ground_acceleration_fname"] = "";
+    help_map["rupture_peak_ground_acceleration_fname"] = {"string", "",
+        "Peak ground acceleration raster, in g, for a pseudo-static earthquake load.",
+        "Must be on the DEM's grid; nodata cells are left out. Adds a horizontal force "
+        "k W down the dip of each plane, k = rupture_seismic_coefficient_ratio x PGA. "
+        "Empty means static. Cannot be combined with water_table_method or "
+        "slip_surface_family.",
+        "Rupture planes", "param", "run_rupture_planes"};
+    float_default_map["rupture_seismic_coefficient_ratio"] = 0.5f;
+    help_map["rupture_seismic_coefficient_ratio"] = {"float", "0.5",
+        "Pseudo-static coefficient k as a fraction of PGA (in g).",
+        "0.5 follows Hynes-Griffin and Franklin (1984). It is an empirical choice, and "
+        "F depends on it directly, so test a range.",
+        "Rupture planes", "param", "rupture_peak_ground_acceleration_fname"};
     bool_default_map["write_rupture_rasters"] = true;
     help_map["write_rupture_rasters"] = {"bool", "true",
         "Write the rupture-plane rasters.",
@@ -1127,6 +1393,17 @@ int main(int argc, char* argv[])
         if (ii.at("rupture_min_daylight_neighbours") < 0 || ii.at("rupture_min_daylight_neighbours") > 8)
             throw std::runtime_error("rupture_min_daylight_neighbours must be 0 to 8");
         const std::string water_table_method = sf.at("water_table_method");
+        const std::string pga_fname = sf.at("rupture_peak_ground_acceleration_fname");
+        if (!pga_fname.empty())
+        {
+            if (!run_rupture) throw std::runtime_error("rupture_peak_ground_acceleration_fname needs run_rupture_planes");
+            if (water_table_method != "none")
+                throw std::runtime_error("rupture_peak_ground_acceleration_fname cannot be combined with water_table_method");
+            if (run_slip)
+                throw std::runtime_error("rupture_peak_ground_acceleration_fname cannot be combined with slip_surface_family");
+            if (!(ff.at("rupture_seismic_coefficient_ratio") >= 0.0f) || !std::isfinite(ff.at("rupture_seismic_coefficient_ratio")))
+                throw std::runtime_error("rupture_seismic_coefficient_ratio must be finite and >= 0");
+        }
         if (water_table_method != "none" && water_table_method != "dupuit_steady" && water_table_method != "dupuit_transient")
             throw std::runtime_error("water_table_method must be none, dupuit_steady or dupuit_transient");
         const bool use_groundwater = water_table_method != "none";
@@ -1246,9 +1523,57 @@ int main(int argc, char* argv[])
             }
         }
 
-        if (!run_sinmap && !run_rupture)
+        const bool run_dem_change = bf.at("run_dem_change_landslides");
+        lsdtt::dem_change_options dem_change;
+        if (run_dem_change)
         {
-            std::cout << "run_sinmap and run_rupture_planes are both false: nothing to compute.\n";
+            if (sf.at("dem_difference_fname").empty())
+                throw std::runtime_error("run_dem_change_landslides needs dem_difference_fname");
+            dem_change.change_sign = sf.at("dem_change_sign");
+            dem_change.detection_sigma = ff.at("dem_change_detection_sigma");
+            dem_change.seed_sigma = ff.at("dem_change_seed_sigma");
+            dem_change.patch_significance = ff.at("dem_change_patch_significance");
+            dem_change.min_patch_cells = ii.at("dem_change_min_patch_pixels");
+            dem_change.aggregation_radius_pixels = ii.at("dem_change_aggregation_radius_pixels");
+            dem_change.min_slope = ff.at("dem_change_min_slope");
+            dem_change.n_slope_bins = ii.at("dem_change_n_slope_bins");
+            dem_change.n_null_simulations = ii.at("dem_change_n_null_simulations");
+            dem_change.random_seed = static_cast<std::uint64_t>(ii.at("dem_change_random_seed"));
+            dem_change.n_threads = ii.at("n_threads");
+            if (dem_change.change_sign != "loss" && dem_change.change_sign != "gain" && dem_change.change_sign != "both")
+                throw std::runtime_error("dem_change_sign must be loss, gain or both");
+            if (!(dem_change.detection_sigma > 0.0f) || dem_change.seed_sigma < dem_change.detection_sigma)
+                throw std::runtime_error("need 0 < dem_change_detection_sigma <= dem_change_seed_sigma");
+        }
+
+        const bool run_hazard_area = bf.at("run_coseismic_hazard_area");
+        lsdtt::coseismic_hazard_area_options hazard_area;
+        if (run_hazard_area)
+        {
+            hazard_area.initiation_slope = ff.at("coseismic_hazard_initiation_slope");
+            hazard_area.stopping_slope = ff.at("coseismic_hazard_stopping_slope");
+            hazard_area.boundary_conditions = sf.at("boundary_conditions");
+            hazard_area.n_threads = ii.at("n_threads");
+            lsdtt::validate_coseismic_hazard_area_options(hazard_area);
+        }
+
+        const bool run_scar_drape = bf.at("run_scar_drape_volumes");
+        lsdtt::scar_drape_options scar_drape;
+        if (run_scar_drape)
+        {
+            if (sf.at("landslide_inventory_fname").empty())
+                throw std::runtime_error("run_scar_drape_volumes needs landslide_inventory_fname");
+            scar_drape.rim_buffer_pixels = ii.at("scar_drape_rim_buffer_pixels");
+            scar_drape.sag_curvature_per_metre = ff.at("scar_drape_sag_curvature_per_metre");
+            scar_drape.tolerance_metres = ff.at("scar_drape_tolerance_metres");
+            scar_drape.max_iterations = ii.at("scar_drape_max_iterations");
+            scar_drape.n_threads = ii.at("n_threads");
+            lsdtt::validate_scar_drape_options(scar_drape);
+        }
+
+        if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area && !run_scar_drape)
+        {
+            std::cout << "No analysis is switched on: nothing to compute.\n";
             parser.print_parameters();
             return run_record.succeed();
         }
@@ -1265,6 +1590,163 @@ int main(int argc, char* argv[])
                          ii.at("nodata_fill_max_iter"), ii.at("n_threads"))
                   << "\n";
         const lsdtt::lsdtt_raster_cpu input_dem = dem;
+
+        // Scar volumes from a cloth draped over a landslide inventory. Uses the
+        // input DEM (no carving or filling).
+        if (run_scar_drape)
+        {
+            std::cout << "\n--- Scar volumes from a draped cloth ---\n";
+            const std::string inv_path = resolve_input(parser.get_read_path(), sf.at("landslide_inventory_fname"));
+            const lsdtt::polygon_features_on_grid inv = lsdtt::rasterise_polygon_features_separately(
+                input_dem, inv_path, sf.at("landslide_inventory_layer_name"), sf.at("landslide_inventory_id_field_name"));
+            std::cout << "Inventory " << inv_path << " (layer " << inv.layer_name << "): " << inv.features.size()
+                      << " scars on the DEM; " << inv.n_outside_grid << " off it; " << inv.n_not_polygon
+                      << " not polygons\n";
+            std::vector<lsdtt::scar_drape_feature> features;
+            features.reserve(inv.features.size());
+            for (const auto& f : inv.features)
+                features.push_back({f.id, f.feature_index, f.cells, f.used_all_touched});
+            const lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+
+            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0;
+            double v_total = 0.0, a_total = 0.0;
+            for (const auto& r : drape.records)
+            {
+                if (r.status == "ok") ++n_ok;
+                if (r.status == "not_converged") ++n_not_conv;
+                if (r.touches_grid_edge) ++n_edge;
+                if (r.n_rim_invalid > 0) ++n_rim_gap;
+                v_total += r.mapped_volume_m3;
+                a_total += r.mapped_area_m2;
+            }
+            const lsdtt::scar_volume_area_fit fit = lsdtt::fit_scar_volume_area(drape.records);
+            std::cout << "Scars: " << drape.records.size() << " (" << n_ok << " ok, " << n_not_conv
+                      << " not converged, " << n_edge << " at the DEM edge, " << n_rim_gap
+                      << " with gaps in the rim); area " << number_string(a_total) << " m2, volume "
+                      << number_string(v_total) << " m3\n";
+            if (fit.n >= 3)
+                std::cout << "Volume - area: V = " << number_string(fit.alpha) << " A^" << number_string(fit.gamma)
+                          << " (+/- " << number_string(fit.gamma_standard_error) << ", r2 "
+                          << number_string(fit.r_squared) << ", n " << fit.n << ")\n";
+            if (drape.n_overlap_cells > 0)
+                std::cout << "Note: " << drape.n_overlap_cells << " cells lie in more than one scar; each scar's "
+                             "volume counts them.\n";
+
+            const std::string vol_path = base + "_scar_drape_volumes.csv";
+            {
+                std::ofstream f(vol_path);
+                if (!f) throw std::runtime_error("Cannot write " + vol_path);
+                f << std::setprecision(10);
+                f << "scar_id,feature_index,status,mapped_area_m2,mapped_volume_m3,mean_depth_m,max_depth_m,"
+                     "free_area_m2,free_volume_m3,centroid_x,centroid_y,n_mapped_cells,n_free_cells,n_rim_cells,"
+                     "n_rim_invalid,n_nodata_inside,n_contact_cells,touches_grid_edge,used_all_touched,iterations,"
+                     "final_change_m\n";
+                for (const auto& r : drape.records)
+                {
+                    std::string id = r.id;
+                    if (id.find_first_of(",\"\n") != std::string::npos)
+                    {
+                        std::string q = "\"";
+                        for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                        id = q + "\"";
+                    }
+                    f << id << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
+                      << r.mapped_volume_m3 << ',' << r.mean_depth_m << ',' << r.max_depth_m << ',' << r.free_area_m2
+                      << ',' << r.volume_m3 << ',' << r.centroid_x << ',' << r.centroid_y << ',' << r.n_mapped_cells
+                      << ',' << r.n_free_cells << ',' << r.n_rim_cells << ',' << r.n_rim_invalid << ','
+                      << r.n_nodata_inside << ',' << r.n_contact_cells << ',' << (r.touches_grid_edge ? 1 : 0) << ','
+                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << '\n';
+                }
+            }
+            std::cout << "  wrote " << vol_path << "\n";
+            const std::string fit_path = base + "_scar_drape_volume_area_fit.csv";
+            {
+                std::ofstream f(fit_path);
+                if (!f) throw std::runtime_error("Cannot write " + fit_path);
+                f << std::setprecision(10) << "quantity,value\n"
+                  << "n_scars_fitted," << fit.n << "\nalpha_m3_per_m2gamma," << fit.alpha << "\ngamma," << fit.gamma
+                  << "\ngamma_standard_error," << fit.gamma_standard_error << "\nr_squared," << fit.r_squared
+                  << "\ntotal_mapped_area_m2," << a_total << "\ntotal_mapped_volume_m3," << v_total
+                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels << "\nsag_curvature_per_metre,"
+                  << scar_drape.sag_curvature_per_metre << "\n";
+            }
+            std::cout << "  wrote " << fit_path << "\n";
+            if (bf.at("write_scar_drape_rasters"))
+            {
+                write_raster(drape.surface, base + "_scar_drape_surface.tif");
+                write_raster(drape.depth, base + "_scar_drape_depth.tif");
+                write_raster(drape.label, base + "_scar_drape_label.tif");
+            }
+            lsdtt::lsdtt_run_record::add_provenance("scar_drape_n_scars", std::to_string(drape.records.size()));
+            lsdtt::lsdtt_run_record::add_provenance("scar_drape_total_volume_m3", number_string(v_total));
+
+            if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
+            }
+        }
+
+        // Potential landslides from a DEM of difference. It uses the input DEM
+        // (no carving or filling), so it runs before the routing surface.
+        if (run_dem_change)
+        {
+            std::cout << "\n--- Potential landslides from a DEM of difference ---\n";
+            lsdtt::lsdtt_raster_cpu difference =
+                read_raster(resolve_input(parser.get_read_path(), sf.at("dem_difference_fname")));
+            require_same_grid(dem.get_meta(), difference.get_meta(), "dem_difference_fname");
+            std::vector<float> dv = difference.get_data();
+            std::vector<std::uint8_t> dm = difference.get_mask();
+            if (!bf.at("dem_difference_is_newer_minus_older"))
+                for (std::size_t i = 0; i < dv.size(); ++i)
+                    if (dm[i]) dv[i] = -dv[i];
+            lsdtt::lsdtt_raster_meta difference_meta = dem.get_meta();
+            difference_meta.no_data_value = difference.get_meta().no_data_value;
+            difference = lsdtt::lsdtt_raster_cpu(std::move(dv), std::move(dm), difference_meta);
+
+            std::vector<std::uint8_t> stable;
+            if (!sf.at("dem_difference_stable_mask_fname").empty())
+            {
+                const lsdtt::lsdtt_raster_cpu mask_raster =
+                    read_raster(resolve_input(parser.get_read_path(), sf.at("dem_difference_stable_mask_fname")));
+                require_same_grid(dem.get_meta(), mask_raster.get_meta(), "dem_difference_stable_mask_fname");
+                stable.assign(mask_raster.get_data().size(), 0u);
+                for (std::size_t i = 0; i < stable.size(); ++i)
+                    stable[i] = (mask_raster.get_mask()[i] && mask_raster.get_data()[i] != 0.0f) ? 1u : 0u;
+            }
+
+            const lsdtt::dem_change_result change = lsdtt::detect_dem_change_landslides(
+                difference, lsdtt::dem_change_slope(input_dem), stable.empty() ? nullptr : &stable, dem_change);
+            const auto& u = change.uncertainty;
+            std::cout << "Error on " << (u.used_stable_mask ? "stable terrain" : "all terrain, clipped") << " ("
+                      << u.n_stable << " cells): bias " << number_string(u.bias_m) << " m, NMAD "
+                      << number_string(u.nmad_m) << " m\n"
+                      << "Spatial correlation: nugget fraction " << number_string(u.nugget_fraction) << ", range "
+                      << number_string(u.correlation_range_m) << " m\n"
+                      << "Patches: " << change.patches.size() << "; loss "
+                      << number_string(change.loss_area_m2) << " m2, gain " << number_string(change.gain_area_m2)
+                      << " m2, of " << number_string(change.valid_area_m2) << " m2 assessed\n";
+            if (change.null_simulation.n_simulations > 0)
+                std::cout << "Noise alone: " << number_string(change.null_simulation.mean_n_patches) << " patches, "
+                          << number_string(change.null_simulation.mean_area_m2) << " m2 (lower bound on false detections)\n";
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_bias_metres", number_string(u.bias_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_nmad_metres", number_string(u.nmad_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_correlation_range_metres", number_string(u.correlation_range_m));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_n_patches", std::to_string(change.patches.size()));
+            const std::string change_base = parser.get_write_path() + "/" + parser.get_write_fname();
+            write_dem_change_outputs(change_base, change, dem.get_meta(), ii.at("frequency_area_bins_per_decade"),
+                                     ii.at("frequency_area_min_tail"));
+            std::cout << "Wrote " << change_base << "_dem_change_*\n";
+
+            if (!run_sinmap && !run_rupture && !run_hazard_area)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
+            }
+        }
+
         if (bf.at("breach_before_fill"))
         {
             if (breach_choice == "least_cost")
@@ -1301,6 +1783,45 @@ int main(int argc, char* argv[])
                 std::vector<float> fv(conditioned.begin(), conditioned.end());
                 lsdtt::lsdtt_data_loader loader;
                 loader.write_full(fv, dem.get_meta(), base + "_conditioned_pixels.tif");
+            }
+        }
+
+        // Coseismic hazard area, on the routing surface.
+        if (run_hazard_area)
+        {
+            std::cout << "\n--- Coseismic hazard area (SHALRUN-EQ) ---\n";
+            const lsdtt::coseismic_hazard_area_result hazard =
+                lsdtt::compute_coseismic_hazard_area(dem, hazard_area);
+            const double n_valid = static_cast<double>(std::max<std::int64_t>(hazard.n_valid, 1));
+            std::cout << "Sources: " << hazard.n_source << " cells (" << number_string(100.0 * hazard.n_source / n_valid)
+                      << "%); stopping: " << hazard.n_stopping << "; Ah = 0: " << hazard.n_zero_hazard << " ("
+                      << number_string(100.0 * hazard.n_zero_hazard / n_valid) << "%); influenced by the DEM edge: "
+                      << hazard.n_edge_influenced << "\n";
+            write_raster(hazard.hazard_area, base + "_hazard_area.tif");
+            write_raster(hazard.steepest_slope, base + "_hazard_area_steepest_slope.tif");
+            write_raster(hazard.zone, base + "_hazard_area_zone.tif");
+            write_raster(hazard.edge_influenced, base + "_hazard_area_edge_influenced.tif");
+            const std::string summary = base + "_hazard_area_summary.csv";
+            std::ofstream out(summary);
+            if (!out) throw std::runtime_error("Cannot write " + summary);
+            out << "quantity,value\n"
+                << "initiation_slope," << number_string(hazard_area.initiation_slope) << '\n'
+                << "stopping_slope," << number_string(hazard_area.stopping_slope) << '\n'
+                << "n_valid_cells," << hazard.n_valid << '\n'
+                << "n_source_cells," << hazard.n_source << '\n'
+                << "n_stopping_cells," << hazard.n_stopping << '\n'
+                << "n_zero_hazard_cells," << hazard.n_zero_hazard << '\n'
+                << "n_edge_influenced_cells," << hazard.n_edge_influenced << '\n'
+                << "source_area_m2," << number_string(hazard.source_area_m2) << '\n';
+            std::cout << "  wrote " << summary << "\n";
+            lsdtt::lsdtt_run_record::add_provenance("hazard_area_n_source_cells", std::to_string(hazard.n_source));
+            lsdtt::lsdtt_run_record::add_provenance("hazard_area_n_zero_hazard_cells", std::to_string(hazard.n_zero_hazard));
+
+            if (!run_sinmap && !run_rupture)
+            {
+                parser.print_help(help_map, parser.get_write_fname() + "_README", k_status, k_citation);
+                parser.print_parameters();
+                return run_record.succeed();
             }
         }
 
@@ -1612,8 +2133,32 @@ int main(int argc, char* argv[])
 
             if (run_rupture)
             {
+            // Pseudo-static coefficient per cell from the PGA raster (g); nodata leaves the cell out.
+            std::vector<double> seismic_coefficient;
+            if (!pga_fname.empty())
+            {
+                const lsdtt::lsdtt_raster_cpu pga = read_raster(resolve_input(parser.get_read_path(), pga_fname));
+                require_same_grid(dem.get_meta(), pga.get_meta(), "rupture_peak_ground_acceleration_fname");
+                const double ratio = static_cast<double>(ff.at("rupture_seismic_coefficient_ratio"));
+                seismic_coefficient.assign(pga.get_data().size(), std::numeric_limits<double>::quiet_NaN());
+                double pga_min = std::numeric_limits<double>::infinity(), pga_max = -pga_min;
+                for (std::size_t q = 0; q < seismic_coefficient.size(); ++q)
+                {
+                    if (!pga.get_mask()[q] || !std::isfinite(pga.get_data()[q])) continue;
+                    const double v = static_cast<double>(pga.get_data()[q]);
+                    if (v < 0.0) throw std::runtime_error("rupture_peak_ground_acceleration_fname: PGA must be >= 0 (g)");
+                    pga_min = std::min(pga_min, v);
+                    pga_max = std::max(pga_max, v);
+                    seismic_coefficient[q] = ratio * v;
+                }
+                std::cout << "Pseudo-static shaking: PGA " << number_string(pga_min) << " to " << number_string(pga_max)
+                          << " g, k = " << number_string(ratio) << " x PGA\n";
+                lsdtt::lsdtt_run_record::add_provenance("rupture_pga_min_g", number_string(pga_min));
+                lsdtt::lsdtt_run_record::add_provenance("rupture_pga_max_g", number_string(pga_max));
+            }
             const lsdtt::rupture_rasters rup = lsdtt::compute_rupture_planes(
-                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), water_table_depth);
+                *d8, input_dem, channel, region, rupture_by_region, ii.at("n_threads"), water_table_depth,
+                seismic_coefficient);
             if (water_table_method == "dupuit_transient")
             {
                 std::ofstream ts(base + "_groundwater_time_series.csv", std::ios::app);
@@ -1637,7 +2182,8 @@ int main(int argc, char* argv[])
             if (use_uncertainty)
             {
                 const lsdtt::rupture_probability_rasters pf = lsdtt::compute_rupture_failure_probability(
-                    *d8, input_dem, channel, region, samples_by_region, ii.at("n_threads"), water_table_depth);
+                    *d8, input_dem, channel, region, samples_by_region, ii.at("n_threads"), water_table_depth,
+                    seismic_coefficient);
                 std::cout << "Rupture probability of failure: " << pf.max_samples
                           << " (c, mu) combinations per cell (equal density); " << pf.n_possible_failure
                           << " cells with Pf > 0, " << pf.n_certain_failure << " with Pf = 1, of "
@@ -1815,7 +2361,8 @@ int main(int argc, char* argv[])
             if (want_catalogue || want_labels)
             {
                 const lsdtt::landslide_catalogues cat = lsdtt::build_landslide_catalogues(
-                    rup, dem.get_meta(), region, rupture_by_region, ii.at("rupture_min_daylight_neighbours"));
+                    rup, dem.get_meta(), region, rupture_by_region, ii.at("rupture_min_daylight_neighbours"),
+                    seismic_coefficient);
                 std::cout << "Landslide catalogues: " << cat.by_daylight.size() << " by daylight point ("
                           << cat.n_daylight_points_removed << " of " << cat.n_daylight_points
                           << " daylight points dropped by the 1-D rule), " << cat.amalgamated.size()

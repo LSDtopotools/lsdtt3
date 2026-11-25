@@ -157,6 +157,23 @@ class CoregistrationTest(unittest.TestCase):
         self.assertGreaterEqual(len(result["diagnostics"]), 1)
         self.assertIn("nmad_residual_metres", result["diagnostics"].columns)
 
+    @pytest.mark.property
+    def test_stable_mask_excludes_real_change(self):
+        """Change over most of the grid sets the vertical shift unless a mask excludes it."""
+        reference = self._hills()
+        values = reference.to_numpy().astype(float).copy()
+        stable = np.ones(values.shape)
+        split = int(0.7 * values.shape[1])
+        values[:, :split] -= 30.0
+        stable[:, :split] = 0.0
+        meta = reference.metadata
+        moved = lsdtt3.Raster.from_numpy(values.astype(np.float32), np.ones(values.shape, dtype=bool), meta)
+        mask = lsdtt3.Raster.from_numpy(stable.astype(np.float32), np.ones(values.shape, dtype=bool), meta)
+        plain = lsdtt3.coregister_dem(reference, moved, min_samples=25)
+        masked = lsdtt3.coregister_dem(reference, moved, min_samples=25, stable_mask=mask)
+        self.assertAlmostEqual(plain["dz_metres"], 30.0, delta=1.0)
+        self.assertAlmostEqual(masked["dz_metres"], 0.0, delta=0.05)
+
     @pytest.mark.negative
     def test_rasters_must_share_a_grid(self):
         """coregister_dem refuses two rasters on different grids and points to
