@@ -70,9 +70,19 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra
 
 Before you read this section, if you don't like installing software, just go to [our notebooks repositories](https://github.com/LSDtopotools/lsdtt3_notebooks) to see examples where you can just run some cells in google colab and everything should just work. 
 
-Still here? Great. Everything below installs a pre-built release package: no compiler, no GDAL
-install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
-and troubleshooting, are in [the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
+Still here? Great. lsdtt3 is its **command-line tools** (`lsdtt-*`, 46 of them);
+the Python bindings expose part of the same library for scripts. There are two
+ways to get the tools, both pre-built, with no compiler and no GDAL install:
+
+| Route | Command | Gives you | Best when |
+|---|---|---|---|
+| **Release package** | download, unpack, `source setenv.sh` (below) | all 46 tools on Linux; the 9 QGIS-plugin tools on native Windows and macOS | no Python needed: servers, containers, the QGIS plugin |
+| **pip** | `python -m pip install lsdtt3` (Python 3.12 or later) | all 46 tools **and** the Python bindings, on Linux, macOS and Windows | you already use conda, pixi or a virtual environment; native macOS or Windows |
+
+Both carry their own GDAL and PROJ. Use one route per machine: if both are on
+your `PATH`, whichever comes first runs. **Full instructions, including
+Windows, macOS, Google Colab, having both installed, and troubleshooting, are in
+[the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
 
 **Get the packages from [GitHub Releases](../../releases/latest).** The
 commands below always fetch the latest release, so there is no version number
@@ -80,7 +90,7 @@ to look up. (A copy of some packages on Simon Mudd's university web space is
 for when GitHub is unreachable only: it is updated by hand and usually well out
 of date.)
 
-### Linux (and Windows via WSL2, and macOS via a Multipass VM)
+### Release package: Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
 wget https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz
@@ -96,14 +106,15 @@ applies to the current terminal; append the same line (with the full path) to
 
 On **Windows**, first `wsl --install` from an administrator PowerShell, install
 **Ubuntu 22.04 LTS** from the Microsoft Store, then run the above inside it.
-Your Windows drives are visible under `/mnt/c/`. A native Windows `.zip` also
-exists but ships a reduced tool set — see the install guide.
+Your Windows drives are visible under `/mnt/c/`. For native Windows tools,
+`pip install lsdtt3` gives the full set; a native Windows `.zip` also exists but
+ships a reduced tool set, as the QGIS plugin's backend — see the install guide.
 
-On **macOS**, run the Linux package inside a Multipass Ubuntu VM
-(`brew install --cask multipass`) for the full tool set. Releases from 0.9.1
-also include native macOS packages (Apple Silicon and Intel, macOS 15 or later)
-with the reduced QGIS tool set, as the backend for the QGIS plugin, and the
-Python package runs natively on macOS. The install guide has the steps for
+On **macOS**, `pip install lsdtt3` (macOS 15 or later) gives the full tool set
+natively; so does the Linux package inside a Multipass Ubuntu VM
+(`brew install --cask multipass`). Releases from 0.9.1 also include native macOS
+packages (Apple Silicon and Intel, macOS 15 or later) with the reduced QGIS tool
+set, as the backend for the QGIS plugin. The install guide has the steps for
 each, including clearing macOS's quarantine flag on the native package.
 
 On **Google Colab**, the simplest route is `!pip install lsdtt3`, which
@@ -117,13 +128,14 @@ package; the install guide has the steps. The backend packages, the QGIS
 plugin and the Python package share one version number: files from the same
 release go together.
 
-### Python package
+### Python package (and all the command-line tools, via pip)
 
 Install it from PyPI into a virtual, conda or pixi environment (Python 3.12
 or later; Linux, macOS and Windows):
 
 ```bash
 python -m pip install lsdtt3
+lsdtt-channel-extraction -v       # the command-line tools are installed too
 ```
 
 **It also installs every command-line tool** (`lsdtt-*`, the same set as the
@@ -425,7 +437,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_spectral_analysis.html) |
 | `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_surface_metrics.html) |
 | `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_area.html) |
-| `lsdtt-slope-stability` | Where slopes are prone to failure: stability index, rupture and slip surfaces, landslide catalogues. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_stability.html) |
+| `lsdtt-slope-stability` | Where slopes are prone to failure: stability index, rupture and slip surfaces, landslide catalogues; landslides from a DEM of difference; scar volumes of a mapped inventory. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_stability.html) |
 | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_swath_profile.html) |
 | `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_ridgeline_analysis.html) |
 | `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fluvial_surfaces.html) |

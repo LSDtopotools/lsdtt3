@@ -4,8 +4,10 @@
     This CLI is under development. Its components so far (a SINMAP-style
     stability index, planar rupture surfaces after scaLr, a Dupuit - Boussinesq
     water table, a probability of failure, 2-D slip surfaces by the method of
-    slices and 3-D ellipsoids by the method of columns) are tested against
-    analytic solutions. How to choose between them, what the results mean and
+    slices, 3-D ellipsoids by the method of columns, the coseismic hazard area,
+    candidate landslides from a DEM of difference, scar volumes of a mapped
+    inventory, and the match of an inventory to the DEM of difference) are
+    tested against analytic solutions or synthetic cases with known answers. How to choose between them, what the results mean and
     how they were checked are in
     [Slope stability](../design_and_algorithms/slope_stability.md); the
     [Python guide](../python/slope_stability.md) shows the same steps in Python.
@@ -13,7 +15,12 @@
 ## Intent
 
 `lsdtt-slope-stability` estimates where slopes are prone to failure, as maps
-and statistics. It is not a tool for mapping individual landslides.
+and statistics. The stability models are not tools for mapping individual
+landslides. Three components work with landslides that happened: candidate
+landslides from a DEM of difference (`run_dem_change_landslides`), the volumes
+of mapped scars (`run_scar_drape_volumes`), and, with both, the match of a mapped
+inventory to the detected change. Their scaling statistics (volume - area,
+depth - area, frequency) are the observed reference for the models.
 
 This version computes a stability index inspired by SINMAP (Pack, Tarboton,
 Goodwin & Prasad 2005), which itself built on SHALSTAB (Montgomery & Dietrich

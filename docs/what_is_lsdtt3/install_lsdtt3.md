@@ -71,7 +71,8 @@ lsdtt3-qgis-plugin-0.7.1.zip                       QGIS plugin (shares the numbe
 `core` and `qgis` are **profiles** — which set of command-line tools the
 package contains. `core` is the general-purpose set; `qgis` is the smaller
 subset the QGIS plugin drives. Native Windows and macOS packages are `qgis`
-only: for the full tool set on those systems, run the Linux package under
+only: for the full tool set on those systems, `pip install lsdtt3` (see
+[Python package](#python-package)), or run the Linux package under
 [WSL2](#windows-via-wsl2) or in a [Linux VM](#macos).
 
 > lsdtt3 has **one version number** for everything: the command-line tools,
@@ -104,8 +105,8 @@ only: for the full tool set on those systems, run the Linux package under
 |---|---|
 | Linux | [Linux package](#linux-package) |
 | Windows | [Windows, via WSL2](#windows-via-wsl2) — **recommended**, full functionality |
-| Windows, and I want native `.exe` files | [Windows native package](#windows-native-package) — reduced tool set |
-| macOS | [macOS](#macos) |
+| Windows, and I want native `.exe` files | [Python package](#python-package) (`pip install lsdtt3`) for the full tool set, or the [Windows native package](#windows-native-package) — reduced tool set, the QGIS plugin's backend |
+| macOS | [Python package](#python-package) (`pip install lsdtt3`) for the full tool set natively, or [macOS](#macos) for the native QGIS package and the Linux VM |
 
 ### Release package or pip?
 
@@ -345,6 +346,10 @@ build** and exists mainly as the backend for the QGIS plugin:
 - it is generally *slower* than the same machine running the Linux package
   under WSL2.
 
+For every tool natively on Windows, use `pip install lsdtt3` instead: the
+Windows wheel carries all the tools, built with Eigen. See
+[Python package](#python-package).
+
 Unless you specifically need `.exe` files — for the QGIS plugin, or because
 WSL2 is unavailable on a managed machine — use [WSL2](#windows-via-wsl2).
 
@@ -424,7 +429,9 @@ report any problem with it.
 For Intel Macs, use `x86_64` in place of `arm64` in these names. The
 package's own `README.md` repeats these steps. To use it with QGIS, select the
 unpacked folder in the plugin's settings; see [QGIS plugin](#qgis-plugin). For
-the tools the package does not include, use the VM below.
+the tools the package does not include, `pip install lsdtt3` (macOS 15 or later;
+see [Python package](#python-package)) gives all of them natively, or use the VM
+below.
 
 ### The full tool set in a Linux VM
 

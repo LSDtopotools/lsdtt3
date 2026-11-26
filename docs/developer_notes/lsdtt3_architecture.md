@@ -207,7 +207,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_binary_mask_cpu.hpp/.cpp             — binary mask morphology (dilation, erosion, opening, closing, labelling)
 │   │   ├── lsdtt_raster_binary_mask_vectorise_cpu.hpp/.cpp   — binary mask to vector polygon conversion
 │   │   ├── lsdtt_raster_skeleton_graph_cpu.hpp/.cpp          — 1-pixel skeleton graph analysis, pruning, reconnection
-│   │   ├── lsdtt_raster_vectorise_cpu.hpp/.cpp               — raster to vector conversion
+│   │   ├── lsdtt_raster_vectorise_cpu.hpp/.cpp               — raster to vector conversion; labelled rasters to polygons (parts, holes, attribute table)
 │   │   ├── lsdtt_raster_mosaic_cpu.hpp/.cpp                  — raster mosaicking
 │   │   ├── lsdtt_raster_contours_cpu.hpp/.cpp                — contour extraction and vectorisation
 │   │   ├── lsdtt_raster_coregistration_cpu.hpp/.cpp          — raster coregistration and alignment
@@ -339,7 +339,8 @@ lsdtt3/
 │   │   ├── lsdtt_slope_stability_sinmap_cpu.hpp/.cpp         — SINMAP-style stability index
 │   │   ├── lsdtt_slope_stability_rupture_cpu.hpp/.cpp        — planar rupture surfaces after scaLr
 │   │   ├── lsdtt_slope_stability_catalogue_cpu.hpp/.cpp      — landslide catalogues from rupture surfaces
-│   │   ├── lsdtt_slope_stability_dem_change_cpu.hpp/.cpp     — potential landslides from a DEM of difference, with uncertainty
+│   │   ├── lsdtt_slope_stability_dem_change_cpu.hpp/.cpp     — potential landslides from a DEM of difference: uncertainty, exclusions, channel mask, scaling fits, inventory match
+│   │   ├── lsdtt_slope_stability_scar_drape_cpu.hpp/.cpp     — scar volumes from a draped cloth or rim-fitted surface; validation and uncertainty
 │   │   ├── lsdtt_slope_stability_hazard_area_cpu.hpp/.cpp    — coseismic hazard area (SHALRUN-EQ) on the MFD graph
 │   │   ├── lsdtt_slope_stability_slip_surface_cpu.hpp/.cpp   — 2-D slip surfaces by the method of slices
 │   │   ├── lsdtt_slope_stability_columns_cpu.hpp/.cpp        — 3-D ellipsoids by the method of columns
@@ -360,6 +361,7 @@ lsdtt3/
 │       ├── lsdtt_image_filters.hpp/.cpp     — 8-bit/float image primitives: box mean, Gaussian, Sobel, Otsu, Canny, probabilistic Hough, line drawing
 │       ├── lsdtt_binary_array2d_tracing.hpp/.cpp — binary array tracing utilities
 │       ├── lsdtt_distributions.hpp/.cpp     — parametric distribution fitting: normal, exponential, Weibull, Pareto (MLE + KS)
+│       ├── lsdtt_scaling_fit.hpp/.cpp       — power-law scaling y = alpha x^gamma by OLS and RMA, bootstrap intervals
 │       ├── lsdtt_statistics.hpp/.cpp        — descriptive statistics (median, MAD, stddev, etc.)
 │       ├── lsdtt_histogram.hpp/.cpp         — histogram, PDF, CDF
 │       ├── lsdtt_statistical_tests.hpp/.cpp — nonparametric tests, KS, circular statistics
@@ -423,7 +425,7 @@ parameter parsing, projection and vector plumbing:
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
 raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 
-`lsdtt_binary_array2d_tracing`, `lsdtt_distributions`, `lsdtt_histogram`, `lsdtt_image_filters`, `lsdtt_natural_breaks`, `lsdtt_regression`, `lsdtt_signal1d`, `lsdtt_splines`, `lsdtt_statistical_tests`, `lsdtt_statistics`, `lsdtt_threshold_selection`
+`lsdtt_binary_array2d_tracing`, `lsdtt_distributions`, `lsdtt_scaling_fit`, `lsdtt_histogram`, `lsdtt_image_filters`, `lsdtt_natural_breaks`, `lsdtt_regression`, `lsdtt_signal1d`, `lsdtt_splines`, `lsdtt_statistical_tests`, `lsdtt_statistics`, `lsdtt_threshold_selection`
 
 
 **`lsdtt3_cpu` sources** (`src/cpu/`), by subsystem:
@@ -462,7 +464,7 @@ raster or GDAL dependency (see [`lsdtt_utils_guide.md`](lsdtt_utils_guide.md)):
 *Landslides*: `lsdtt_landslide_crn_cpu`, `lsdtt_landslide_event_cpu`, `lsdtt_landslide_placement_cpu`, `lsdtt_landslide_size_cpu`
 
 
-*Slope stability*: `lsdtt_slope_stability_dem_change_cpu`, `lsdtt_slope_stability_hazard_area_cpu`, `lsdtt_slope_stability_sinmap_cpu`, `lsdtt_slope_stability_rupture_cpu`, `lsdtt_slope_stability_catalogue_cpu`, `lsdtt_slope_stability_slip_surface_cpu`, `lsdtt_slope_stability_columns_cpu`, `lsdtt_groundwater_dupuit_cpu`
+*Slope stability*: `lsdtt_slope_stability_dem_change_cpu`, `lsdtt_slope_stability_scar_drape_cpu`, `lsdtt_slope_stability_hazard_area_cpu`, `lsdtt_slope_stability_sinmap_cpu`, `lsdtt_slope_stability_rupture_cpu`, `lsdtt_slope_stability_catalogue_cpu`, `lsdtt_slope_stability_slip_surface_cpu`, `lsdtt_slope_stability_columns_cpu`, `lsdtt_groundwater_dupuit_cpu`
 
 
 *Valleys, floodplains and terraces*: `lsdtt_valley_centreline_cpu`, `lsdtt_valley_cross_sections_cpu`, `lsdtt_valley_spacing_cpu`, `lsdtt_cross_sections_cpu`, `lsdtt_terrace_edge_tracer_cpu`, `lsdtt_flat_surface_finder`, `lsdtt_flat_surface_plane_analysis`, `lsdtt_flat_surface_channel_classify_cpu`, `lsdtt_water_area_centreline_cpu`, `lsdtt_swath_cpu`, `lsdtt_proximity_cpu`, `lsdtt_floodplain_thresholds_cpu`, `lsdtt_surface_training_cpu`, `lsdtt_surface_level_clustering_cpu`, `lsdtt_surface_method_comparison_cpu`, `lsdtt_valley_width_network_cpu`, `lsdtt_valley_relative_elevation_cpu`, `lsdtt_valley_terrace_profile_cpu`
@@ -852,6 +854,19 @@ Beyond registering drivers it pins the runtime data directories:
 resolve a datum differently and return coordinates that are plausible and wrong.
 `-v` therefore reports the GDAL and PROJ versions and which data directories are
 in force; that is the first thing to ask for in a projection bug report.
+
+**Packaging rule.** Every release package and wheel must ship `share/proj`
+and `share/gdal` as real directories, not symlinks. Homebrew's `share/proj` is
+a symlink into the Cellar; copied as a link, it left the v0.10.0 macOS packages
+and wheel without `proj.db`, and CI did not notice because the runners' own
+Homebrew PROJ was found instead. `tools/package_macos_backend.sh` and
+`tools/package_linux_backend.sh` copy the resolved directory and refuse a
+staged `share/proj` without a real `proj.db`; the macOS script also refuses any
+symlink in the bundle that dangles, is absolute or leaves the bundle.
+`python_bindings/CMakeLists.txt` installs the data from the resolved paths, and
+`python_bindings/tools/check_installed_wheel.py` (cibuildwheel's test command)
+fails if the installed wheel has no `proj.db` of its own or a tool's `-v` does
+not report `proj data: bundled:`.
 
 `set_bundled_data_root()` overrides the probe root before first init, for hosts
 where `executable_path()` is not the right anchor — the Python extension module
@@ -1386,9 +1401,12 @@ Current CLI programs are:
   Maps where slopes are prone to failure, as maps and statistics rather than
   individual landslides: a SINMAP-style stability index, planar rupture surfaces
   after scaLr with a probability of failure, landslide catalogues, 2-D slip
-  surfaces, 3-D ellipsoids, a Dupuit - Boussinesq water table, and candidate
-  landslides from a DEM of difference with their uncertainty. See "Slope
-  stability" below.
+  surfaces, 3-D ellipsoids, a Dupuit - Boussinesq water table, candidate
+  landslides from a DEM of difference with their uncertainty, exclusions,
+  patch polygons and scaling fits, scar volumes of a mapped landslide
+  inventory (draped cloth or rim-fitted surface, with validation against a
+  pre-event DEM and Monte Carlo uncertainty), and the match of the inventory
+  to the detected patches. See "Slope stability" below.
 
 - **`lsdtt-outlet-matching.cpp`**  
   Matches reference-DEM outlets to target-DEM cells by comparing reference and
@@ -3434,6 +3452,8 @@ Does NOT perform DEM feature scoring, polygon conversion, or skeleton analysis �
 
 **`lsdtt_distributions.hpp/.cpp`** — parametric distribution fitting on valid flat samples (no nodata filtering). Supported families: `normal`, `exponential`, `weibull`, `pareto`. All use MLE. KS goodness-of-fit test computed for each. `max_divergence_x` marks where the empirical CDF departs most from the fitted CDF — useful as a threshold candidate for roughness distributions.
 
+**`lsdtt_scaling_fit.hpp/.cpp`** — `fit_power_law_scaling(x, y, n_bootstrap, seed)`: y = alpha x^gamma on log10 of the positive, finite pairs (others dropped and counted). Reports both OLS (attenuated by lambda with error in x) and reduced major axis (sign(r) sd(log y)/sd(log x); attenuated by sqrt(lambda)), their standard errors, r^2, and optional bootstrap 95 % percentile intervals of gamma and alpha. Fewer than 3 pairs or no spread gives `valid = false` with a message.
+
 **`lsdtt_linear_algebra.hpp`** — header-only lightweight linear algebra (no GDAL, no lsdtt3 headers):
 - `sym3x3_eigenvalues(M)` — analytical Cardano eigenvalues of a real symmetric 3×3 matrix
 - `sym2x2_eigen(a, b, c)` — eigenvalues + major-axis orientation of a symmetric 2×2 matrix (inertia-tensor / shape-orientation analysis)
@@ -3524,8 +3544,11 @@ struct lsdtt_cloth_drape_result {
 ## Slope stability (`src/cpu/lsdtt_slope_stability_*`)
 
 `lsdtt-slope-stability` assembles independent components. Each is one routine
-shared by the CLI and the Python binding
-(`python_bindings/bindings/slope_stability.cpp`). The science, the choice between
+in `src/cpu`, called by the CLI and, where bound, by the Python binding
+(`python_bindings/bindings/slope_stability.cpp`). Not yet bound: the scar drape,
+and the DoD exclusions, channel mask, mean-change filter, patch polygons,
+scaling fits and inventory match (the binding exposes
+`detect_dem_change_landslides` with the original options). The science, the choice between
 models and the validation are in
 [Slope stability](../design_and_algorithms/slope_stability.md).
 
@@ -3534,14 +3557,30 @@ models and the validation are in
 | `lsdtt_slope_stability_sinmap_cpu` | SINMAP-style stability index: infinite slope with steady wetness, parameters uncertain between bounds |
 | `lsdtt_slope_stability_rupture_cpu` | Planar rupture surfaces after scaLr along each D8 path, and their probability of failure |
 | `lsdtt_slope_stability_catalogue_cpu` | Landslide catalogues (statistics of potential landslides) and frequency - area fits |
-| `lsdtt_slope_stability_dem_change_cpu` | Candidate landslides in a DEM of difference: error model, detection, aggregation, patch uncertainty, simulated false detections |
+| `lsdtt_slope_stability_dem_change_cpu` | Candidate landslides in a DEM of difference: error model, detection, aggregation, patch uncertainty, simulated false detections; exclusion masks and the channel mask (D-infinity specific catchment on the carved and filled DEM); mean-change filter; volume - area, depth - area and frequency - volume fits (`fit_dem_change_scaling`); the error model alone (`estimate_dem_change_error_model`) and its noise generator (`simulate_dem_error_noise`); a mapped inventory matched to the patches through their cells (`match_inventory_to_dem_change`) |
+| `lsdtt_slope_stability_scar_drape_cpu` | Scar volumes of a mapped inventory: a membrane (projected SOR obstacle problem) or a least-squares plane or quadric through a band of rim cells, never below the ground; rim descriptors; validation against a reference DEM with a control drape; Monte Carlo DEM-error uncertainty and the spread over rim buffers |
 | `lsdtt_slope_stability_hazard_area_cpu` | Coseismic hazard area (SHALRUN-EQ): slope-threshold sources routed by MFD fractions, stopped on gentle cells |
 | `lsdtt_slope_stability_slip_surface_cpu` | 2-D slip surfaces by the method of slices: plane, circular, bilinear, structural |
 | `lsdtt_slope_stability_columns_cpu` | 3-D ellipsoids by the method of columns |
 | `lsdtt_groundwater_dupuit_cpu` | Dupuit - Boussinesq water table with seepage, for pore pressure |
 
 The CLI routes on a carved-then-filled surface. The rupture planes follow its D8
-paths but measure heights on the input DEM.
+paths but measure heights on the input DEM. The DEM-of-difference detection and
+the scar drape use the input DEM; only the DoD channel mask is found on the
+carved and filled copy.
+
+Shared pieces used here and elsewhere:
+- `lsdtt_scaling_fit` (`src/utils`): OLS and reduced-major-axis power-law fits
+  with bootstrap intervals, for volume - area and depth - area relations, from
+  the DoD patches, the drape and the reference volumes.
+- `fit_power_law_tail` (`lsdtt_distributions`): the frequency tails, discrete
+  for areas in cells and continuous for volumes.
+- `trace_labelled_polygons` (`lsdtt_raster_vectorise_cpu`): the overload taking
+  an `lsdtt_label_attributes` table writes one feature per 4-connected part of a
+  label, with its holes (4-connected background), and the table's fields; the
+  older overload is kept for the marsh polygons.
+- `rasterise_polygon_features_separately` (`lsdtt_vector_rasterise_cpu`): the
+  cells of each inventory polygon, overlaps kept, ids from a field.
 
 ## Hillslope-channel tagging (`lsdtt_hillslope_channel_tagging_cpu`)
 
