@@ -33,7 +33,16 @@ def main() -> int:
     if actual != expected:
         raise RuntimeError("installed wheel public API differs from the manifest")
 
-    package_bin = Path(lsdtt3.__file__).resolve().parent / "bin"
+    package_dir = Path(lsdtt3.__file__).resolve().parent
+    # The wheel must carry its own PROJ and GDAL data as real files. The v0.10.0
+    # macOS wheels had no share/proj (a Homebrew symlink was dropped), which CI
+    # missed because the runner's own PROJ data was found instead.
+    proj_db = package_dir / "share" / "proj" / "proj.db"
+    if not proj_db.is_file() or proj_db.is_symlink():
+        raise RuntimeError(f"wheel has no bundled proj.db at {proj_db}")
+    if not any((package_dir / "share" / "gdal").glob("*")):
+        raise RuntimeError("wheel has no bundled GDAL data in share/gdal")
+    package_bin = package_dir / "bin"
     decisions = json.loads((root / "api" / "decisions.json").read_text(encoding="utf-8"))
     conditional_drivers = {
         feature["conditional_driver"]: feature["name"]
@@ -60,6 +69,8 @@ def main() -> int:
             )
             if result.returncode != 0:
                 raise RuntimeError(f"console script failed: {name}\n{result.stderr}")
+            if "proj data: bundled:" not in result.stdout + result.stderr:
+                raise RuntimeError(f"{name} -v does not report the bundled PROJ data:\n{result.stdout}")
     if missing:
         raise RuntimeError(f"wheel lacks declared native drivers: {missing}")
     print(f"installed wheel API and {len(expected['declared_drivers'])} drivers are current")

@@ -34,12 +34,9 @@ anything.
 
 lsdtt3 is a C++ library, a set of command-line tools and a Python package for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support (well it will when we write it).
 
-If you use this software for research, please also cite the original LSDTopoTools2:
+If you use this software please cite (you may need to cite a different version):
 
-> Mudd, S. M., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Gailleton,
-> B., Hurst, M. D., Valters, D. V., Wickert, A. D., & Hutton, E. W. H. (2023).
-> LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9. Zenodo.
-> https://doi.org/10.5281/zenodo.8076231
+Mudd, S. M., Vervoordeldonk, R., Gailleton, B., Hawksworth, M. E., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Valters, D., & Hurst, M. D. (2026). LSDTopoTools3 (lsdtt3): topographic analysis for geomorphology (Version v0.10.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24371283
 
 **lsdtt3 is not backward-compatible with LSDTopoTools2.**
 
@@ -70,9 +67,19 @@ Developers of `lsdtt3` have used various LLMs (GPT Codex 5.3, GPT 5.6 Sol, Terra
 
 Before you read this section, if you don't like installing software, just go to [our notebooks repositories](https://github.com/LSDtopotools/lsdtt3_notebooks) to see examples where you can just run some cells in google colab and everything should just work. 
 
-Still here? Great. Everything below installs a pre-built release package: no compiler, no GDAL
-install, no `sudo`. **Full instructions, including Windows, macOS, Google Colab
-and troubleshooting, are in [the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
+Still here? Great. lsdtt3 is its **command-line tools** (`lsdtt-*`, 46 of them);
+the Python bindings expose part of the same library for scripts. There are two
+ways to get the tools, both pre-built, with no compiler and no GDAL install:
+
+| Route | Command | Gives you | Best when |
+|---|---|---|---|
+| **Release package** | download, unpack, `source setenv.sh` (below) | all 46 tools on Linux; the 9 QGIS-plugin tools on native Windows and macOS | no Python needed: servers, containers, the QGIS plugin |
+| **pip** | `python -m pip install lsdtt3` (Python 3.12 or later) | all 46 tools **and** the Python bindings, on Linux, macOS and Windows | you already use conda, pixi or a virtual environment; native macOS or Windows |
+
+Both carry their own GDAL and PROJ. Use one route per machine: if both are on
+your `PATH`, whichever comes first runs. **Full instructions, including
+Windows, macOS, Google Colab, having both installed, and troubleshooting, are in
+[the installation guide](https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/install_lsdtt3.html).**
 
 **Get the packages from [GitHub Releases](../../releases/latest).** The
 commands below always fetch the latest release, so there is no version number
@@ -80,7 +87,7 @@ to look up. (A copy of some packages on Simon Mudd's university web space is
 for when GitHub is unreachable only: it is updated by hand and usually well out
 of date.)
 
-### Linux (and Windows via WSL2, and macOS via a Multipass VM)
+### Release package: Linux (and Windows via WSL2, and macOS via a Multipass VM)
 
 ```bash
 wget https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-backend-linux-x86_64-core.tar.gz
@@ -96,18 +103,21 @@ applies to the current terminal; append the same line (with the full path) to
 
 On **Windows**, first `wsl --install` from an administrator PowerShell, install
 **Ubuntu 22.04 LTS** from the Microsoft Store, then run the above inside it.
-Your Windows drives are visible under `/mnt/c/`. A native Windows `.zip` also
-exists but ships a reduced tool set — see the install guide.
+Your Windows drives are visible under `/mnt/c/`. For native Windows tools,
+`pip install lsdtt3` gives the full set; a native Windows `.zip` also exists but
+ships a reduced tool set, as the QGIS plugin's backend — see the install guide.
 
-On **macOS**, run the Linux package inside a Multipass Ubuntu VM
-(`brew install --cask multipass`) for the full tool set. Releases from 0.9.1
-also include native macOS packages (Apple Silicon and Intel, macOS 15 or later)
-with the reduced QGIS tool set, as the backend for the QGIS plugin, and the
-Python package runs natively on macOS. The install guide has the steps for
+On **macOS**, `pip install lsdtt3` (macOS 15 or later) gives the full tool set
+natively; so does the Linux package inside a Multipass Ubuntu VM
+(`brew install --cask multipass`). Releases from 0.9.1 also include native macOS
+packages (Apple Silicon and Intel, macOS 15 or later) with the reduced QGIS tool
+set, as the backend for the QGIS plugin. The install guide has the steps for
 each, including clearing macOS's quarantine flag on the native package.
 
-On **Google Colab**, `!source setenv.sh` does not work — set the environment
-from Python instead. The install guide has the cell to paste.
+On **Google Colab**, the simplest route is `!pip install lsdtt3`, which
+installs every command-line tool as well as the Python package. To use the
+Linux package there instead, note that `!source setenv.sh` does not work — set
+the environment from Python; the install guide has the cell to paste.
 
 The **QGIS plugin** is [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip)
 from the same release, installed with *Install from ZIP*, plus a backend
@@ -115,14 +125,21 @@ package; the install guide has the steps. The backend packages, the QGIS
 plugin and the Python package share one version number: files from the same
 release go together.
 
-### Python package
+### Python package (and all the command-line tools, via pip)
 
 Install it from PyPI into a virtual, conda or pixi environment (Python 3.12
 or later; Linux, macOS and Windows):
 
 ```bash
 python -m pip install lsdtt3
+lsdtt-channel-extraction -v       # the command-line tools are installed too
 ```
+
+**It also installs every command-line tool** (`lsdtt-*`, the same set as the
+Linux package, on Linux, macOS and Windows). The Python bindings cover part of
+lsdtt3; the complete software is the command-line tools, and pip gives you
+both. Use one route per machine: if a release package is also on your `PATH`,
+whichever comes first runs (the install guide explains how to check).
 
 In Google Colab, `!pip install lsdtt3` in a cell. The same wheels, and those of
 older versions that are not on PyPI, are attached to each GitHub release. The wheel bundles
@@ -137,6 +154,8 @@ or an AI assistant such as Gemini in Colab. Worked examples are in the
 
 Then you need to compile it:
 [Building lsdtt3 from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html).
+
+**Do not do this unless you are a developer**
 
 ### Reporting bugs
 
@@ -389,10 +408,6 @@ lsdtt-drainage-analysis     my_params.driver
 
 **Detailed parameter references for each program are in `docs/`.**
 
-> **Command rename:** `lsdtt-synthetic-surfaces` replaces
-> `lsdtt-raster-synthetic-tests`. The old executable is not retained; update
-> scripts and reinstall lsdtt3 when upgrading.
-
 ### DEM preparation
 
 | Program | Description | Reference |
@@ -417,7 +432,7 @@ lsdtt-drainage-analysis     my_params.driver
 | `lsdtt-spectral-analysis` *(requires FFTW3)* | Spectral surface analysis using the FFTW double API. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_spectral_analysis.html) |
 | `lsdtt-basin-surface-metrics` | Multiscale basin divide and slope-area morphometrics. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_basin_surface_metrics.html) |
 | `lsdtt-slope-area` | Polyfit slope against logarithmic drainage area. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_area.html) |
-| `lsdtt-slope-stability` | Where slopes are prone to failure: stability index, rupture and slip surfaces, landslide catalogues. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_stability.html) |
+| `lsdtt-slope-stability` | Where slopes are prone to failure: stability index, rupture and slip surfaces, landslide catalogues; landslides from a DEM of difference; scar volumes of a mapped inventory. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_slope_stability.html) |
 | `lsdtt-swath-profile` | Percentiles of a raster binned along a baseline polyline. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_swath_profile.html) |
 | `lsdtt-ridgeline-analysis` | Drainage divides and their ridgelines. | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_ridgeline_analysis.html) |
 | `lsdtt-fluvial-surfaces` | Sorts flat ground into fluvial levels (floodplains, terrace treads, fan lobes). | [reference](https://lsdtopotools.github.io/lsdtt3/cli_reference/cli_reference_lsdtt_fluvial_surfaces.html) |

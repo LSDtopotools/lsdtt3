@@ -29,7 +29,7 @@ Documents folder. Do not unpack the plugin zip.
 - Windows: right-click the zip, **Extract All…**
 - macOS: double-click the `.tar.gz`, then, in Terminal, clear the quarantine
   flag the browser set, or macOS blocks the tools:
-  `xattr -dr com.apple.quarantine <unpacked folder>`. The backend's own
+  `xattr -drs com.apple.quarantine <unpacked folder>`. The backend's own
   `README.md` has the details.
 - Linux: `tar -xzf lsdtt3-backend-linux-x86_64-core.tar.gz`
 

@@ -4,8 +4,10 @@
     This CLI is under development. Its components so far (a SINMAP-style
     stability index, planar rupture surfaces after scaLr, a Dupuit - Boussinesq
     water table, a probability of failure, 2-D slip surfaces by the method of
-    slices and 3-D ellipsoids by the method of columns) are tested against
-    analytic solutions. How to choose between them, what the results mean and
+    slices, 3-D ellipsoids by the method of columns, the coseismic hazard area,
+    candidate landslides from a DEM of difference, scar volumes of a mapped
+    inventory, and the match of an inventory to the DEM of difference) are
+    tested against analytic solutions or synthetic cases with known answers. How to choose between them, what the results mean and
     how they were checked are in
     [Slope stability](../design_and_algorithms/slope_stability.md); the
     [Python guide](../python/slope_stability.md) shows the same steps in Python.
@@ -13,7 +15,12 @@
 ## Intent
 
 `lsdtt-slope-stability` estimates where slopes are prone to failure, as maps
-and statistics. It is not a tool for mapping individual landslides.
+and statistics. The stability models are not tools for mapping individual
+landslides. Three components work with landslides that happened: candidate
+landslides from a DEM of difference (`run_dem_change_landslides`), the volumes
+of mapped scars (`run_scar_drape_volumes`), and, with both, the match of a mapped
+inventory to the detected change. Their scaling statistics (volume - area,
+depth - area, frequency) are the observed reference for the models.
 
 This version computes a stability index inspired by SINMAP (Pack, Tarboton,
 Goodwin & Prasad 2005), which itself built on SHALSTAB (Montgomery & Dietrich
@@ -388,8 +395,32 @@ newer DEM as the first raster. If the difference is older minus newer, set
 | `_dem_change_false_detection.csv` | Patches and area from noise alone |
 | `_dem_change_false_detection_by_area.csv` | Patches found and from noise alone, by size |
 | `_dem_change_frequency_area.csv`, `_fit.csv` | Binned p(A) and its power-law tail |
+| `_dem_change_volume_area_fit.csv` | \|V\| = αA^γ for loss and gain, OLS and RMA (bootstrap intervals with `scaling_fit_bootstrap_samples`) |
+| `_dem_change_depth_area_fit.csv` | \|mean change\| = αA^γ, as above |
+| `_dem_change_frequency_volume.csv`, `_fit.csv` | Binned p(V) and its power-law tail (continuous maximum likelihood) |
 | `_dem_change_corrected`, `_sigma`, `_z` | Bias-corrected change, error, and change / error |
 | `_dem_change_class`, `_label` | -1 loss, 1 gain, 0 none; patch id |
+| `_dem_change_exclusion.tif` | With `write_dem_change_exclusion_raster`: 1 excluded (masks and channels) |
+| `_dem_change_patches.fgb` or `.gpkg` | With `write_dem_change_patch_polygons`: one feature per 4-connected part of a patch, with holes and the patch table's fields |
+| `_inventory_dod_match.csv` | With `landslide_inventory_fname`: per mapped polygon, area detected as loss and gain, DoD net, loss and gain volume inside it, the patches touched, `matched` (touches a loss patch) |
+| `_inventory_dod_patch_match.csv` | Per patch: cells inside polygons, fraction, and the polygons (ids) it overlaps |
+| `_inventory_dod_summary.csv` | Polygons and loss patches matched; fraction of mapped area detected and of detected loss area mapped |
+
+**Exclusions.** `dem_change_exclusion_mask_fname` takes one or more rasters,
+comma separated (canopy from both surveys, water, buildings); their union is
+removed from the detection and the error model. Channel beds aggrade and incise
+without landsliding: `dem_change_channel_specific_catchment_metres` removes cells
+whose D-infinity specific catchment area on the carved and filled DEM is at least
+that, grown by `dem_change_channel_buffer_pixels`. Detection itself stays on the
+input DEM. `dem_change_min_patch_mean_change_metres` drops shallow patches.
+
+```
+dem_change_exclusion_mask_fname: canopy_older.tif, canopy_newer.tif, water.tif
+dem_change_channel_specific_catchment_metres: 5000
+dem_change_channel_buffer_pixels: 2
+write_dem_change_patch_polygons: true
+scaling_fit_bootstrap_samples: 1000
+```
 
 Draw them with `lsdviz3-slope-stability` from lsdviztools3.
 
@@ -438,10 +469,21 @@ The inventory can be any vector format GDAL reads (shapefile, GeoPackage,
 FlatGeobuf), in any CRS. Draw each polygon around the source area only, out
 to the crown, so that the ring outside it is undisturbed ground.
 
+**Testing against a pre-event DEM.** Where a pre-event DEM exists, give it as
+`scar_drape_reference_dem_fname` (on the same grid; `lsdtt-raster-calculator`
+with `write_second_coregistered_raster: true` gives one). Each scar then also
+gets the volume removed between the two DEMs, and the drape is repeated on the
+pre-event DEM as a control. A perfect method gives zero there, so the control
+measures concavity that existed before the event and that the cloth counts
+wrongly. Each scar also gets rim descriptors: the relief of the rim, the
+gradient of the plane through it, and how far the rim departs from that plane
+(`rim_plane_residual_m`), which is the curvature a taut cloth cannot follow.
+
 | Output | Content |
 |---|---|
-| `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence |
-| `_scar_drape_volume_area_fit.csv` | Least-squares fit of V = α A^γ over the scars with status `ok` |
+| `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence; rim descriptors; for `rim_plane` / `rim_quadric` the band size and fit residual; with the uncertainty options `n_uncertainty_samples`, `volume_sigma_m3`, `volume_noise_bias_m3` and `volume_buffer_min_m3`, `_max_m3`, `_spread_m3` |
+| `_scar_drape_volume_area_fit.csv` | V = α A^γ over the scars with status `ok`, by OLS and by reduced major axis (RMA), with bootstrap 95 % intervals when `scaling_fit_bootstrap_samples` > 0; with a reference DEM, the same for the reference volumes |
+| `_scar_drape_validation.csv` | With `scar_drape_reference_dem_fname`: totals, drape / reference ratio, median and quartiles of the per-scar ratio, correlation of log volumes, and the control as a fraction of the reference |
 | `_scar_drape_surface.tif`, `_depth.tif`, `_label.tif` | Draped surface, depth (m) and scar label (position in the layer + 1); where scars overlap, the deeper cloth |
 
 **What it gets right and wrong.** A taut cloth spans a scar linearly between
@@ -452,6 +494,27 @@ buffer trades two errors against each other. With no buffer, a polygon drawn
 inside the crown puts the ring on disturbed ground and the volume is too small.
 A wide buffer takes in more of the surrounding slope's curvature.
 `scar_drape_sag_curvature_per_metre` lets the cloth sag, which lowers volumes.
+`scar_drape_surface_type: rim_quadric` fits a quadratic surface through a band
+of cells around the scar instead, which is exact where the pre-event slope had
+uniform curvature (a bowl, hollow or nose); `rim_plane` fits a plane.
+
+**Uncertainty.** `scar_drape_uncertainty_samples` (e.g. 50) re-drapes every
+scar with Gaussian DEM error added, and writes `volume_sigma_m3` and
+`volume_noise_bias_m3` (a positive noise floor: a cloth bridges noise). The
+error is `scar_drape_dem_sigma_metres`, or, if that is 0, the error model of
+the reference DEM of difference. `scar_drape_buffer_spread_max_pixels: 2`
+writes the range of each volume over rim buffers 0–2. Report the two
+separately: they are different kinds of error.
+
+```text
+run_scar_drape_volumes: true
+landslide_inventory_fname: scars.gpkg
+scar_drape_reference_dem_fname: pre_event_dtm.tif
+scar_drape_surface_type: rim_quadric
+scar_drape_uncertainty_samples: 50
+scar_drape_buffer_spread_max_pixels: 2
+```
+
 The method and a test against repeat lidar are in
 [Slope stability](../design_and_algorithms/slope_stability.md#scar-volumes-from-a-draped-cloth).
 
@@ -638,6 +701,18 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `dem_change_n_slope_bins` | `int` | `10` | `param` | `run_dem_change_landslides` | Quantile bins of slope for the error model. | - |
 | `dem_change_n_null_simulations` | `int` | `20` | `param` | `run_dem_change_landslides` | Noise simulations used to estimate false detections. | Each runs the detection on Gaussian noise with the fitted error and spatial correlation. Real DEM errors have heavier tails, so this is a lower bound. 0 turns it off. |
 | `dem_change_random_seed` | `int` | `33` | `param` | `run_dem_change_landslides` | Seed for the variogram sample and the noise simulations. | - |
+| `dem_change_exclusion_mask_fname` | `string` | - | `param` | `run_dem_change_landslides` | Rasters of cells to exclude (non-zero = excluded), comma separated. | Their union is used: canopy masks from both surveys, water, buildings. Excluded cells are never detected and are not in the error model. On the grid of read_fname; read from read_path if relative. |
+| `dem_change_channel_specific_catchment_metres` | `float` | `0.0` | `param` | `run_dem_change_landslides` | Exclude channels: cells whose D-infinity specific catchment area (m) is at least this. | Computed on the carved and filled DEM (breach_before_fill, fill_before_routing); detection stays on the input DEM. Channel beds aggrade and incise, which is not landsliding. 0 turns it off. |
+| `dem_change_channel_buffer_pixels` | `int` | `1` | `param` | `dem_change_channel_specific_catchment_metres` | Grow the channel exclusion by this many pixels (Euclidean). | - |
+| `dem_change_min_patch_mean_change_metres` | `float` | `0.0` | `param` | `run_dem_change_landslides` | Drop patches whose \|mean change\| (m) is below this. | Applied to the magnitude; the sign is set by dem_change_sign. Also applied in the sensitivity runs and the noise simulations. |
+| `write_dem_change_exclusion_raster` | `bool` | `false` | `switch` | `run_dem_change_landslides` | Write the union of the exclusions (masks and channels) as a raster. | &lt;write_fname&gt;_dem_change_exclusion.tif: 1 excluded, 0 not. |
+| `write_dem_change_patch_polygons` | `bool` | `false` | `switch` | `run_dem_change_landslides` | Write the patches as polygons, with the fields of the patch table. | &lt;write_fname&gt;_dem_change_patches.fgb or .gpkg (write_vector_format). One feature per 4-connected part, with holes; a patch joined across unchanged cells has several parts, each carrying the patch's fields. |
+
+### Output
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `write_vector_format` | `string` | `flatgeobuf` | `io` | - | Vector output format: flatgeobuf or gpkg. | Governs every vector layer this tool writes. FlatGeobuf is preferred: it is compact, carries its own georeferencing, and does not have GeoPackage's problems writing across drives (a common WSL2 situation). CSV is available only through selectors for point/table outputs. Per-output overrides exist only where a container genuinely differs. Raster outputs are governed separately by write_output_format. |
 
 ### Coseismic hazard area
 
@@ -652,14 +727,35 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | Parameter | Type | Default | Role | Parent | Description | Guidance |
 |---|---|---|---|---|---|---|
 | `run_scar_drape_volumes` | `bool` | `false` | `switch` | - | Estimate the volume of each mapped landslide scar with a cloth draped over it. | read_fname is the POST-event DEM; landslide_inventory_fname holds the scar polygons. For each scar a cloth is held at the ground on a ring just outside the scar (scar_drape_rim_buffer_pixels) and is free inside it, but may not pass below the ground. Its resting shape estimates the pre-event surface; the volume is the cloth minus the DEM. A taut cloth interpolates linearly across the scar, so it is exact on a planar slope, too shallow across a convex nose and too deep across a hollow. Uses the input DEM (no carving or filling). Outputs: &lt;write_fname&gt;_scar_drape_volumes.csv, _scar_drape_volume_area_fit.csv and (write_scar_drape_rasters) _scar_drape_surface.tif, _scar_drape_depth.tif, _scar_drape_label.tif. |
-| `landslide_inventory_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...). | Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it around the source area only, not the runout, and to the crown, so that the ring outside it is undisturbed ground. Read from read_path if the path is relative. |
-| `landslide_inventory_layer_name` | `string` | - | `param` | `run_scar_drape_volumes` | Layer of landslide_inventory_fname to read. | Empty: the first layer. |
-| `landslide_inventory_id_field_name` | `string` | - | `param` | `run_scar_drape_volumes` | Attribute that identifies each scar in the outputs. | Empty: the feature's position in the layer (0-based). The run stops, listing the fields, if the layer has no such field. |
 | `scar_drape_rim_buffer_pixels` | `int` | `1` | `param` | `run_scar_drape_volumes` | Cells added around each scar polygon before the cloth is held at the ground. | The cloth is free over the polygon grown by this many cells (8-connected) and held on the ring of cells just outside that. 1 tolerates a polygon drawn slightly inside the crown; larger values move the ring further onto stable ground but take in more of the surrounding slope. Volumes are reported over the polygon and over the free area. |
 | `scar_drape_sag_curvature_per_metre` | `float` | `0.0` | `param` | `run_scar_drape_volumes` | Curvature (1/m) the cloth takes where it hangs clear of the ground. | 0: a taut cloth (harmonic surface between the rim and the ground it rests on). A positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so 0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the result does not depend on the grid. |
 | `scar_drape_tolerance_metres` | `float` | `1e-05` | `param` | `run_scar_drape_volumes` | Stop when the cloth moves less than this in one sweep (m). | Scars that reach scar_drape_max_iterations first are reported with status not_converged. |
 | `scar_drape_max_iterations` | `int` | `100000` | `param` | `run_scar_drape_volumes` | Largest number of relaxation sweeps per scar. | Over-relaxation needs a few times the scar's width in cells. |
+| `scar_drape_surface_type` | `string` | `membrane` | `param` | `run_scar_drape_volumes` | Surface spanned across each scar: membrane, rim_plane or rim_quadric. | membrane: the draped cloth (harmonic; exact on a planar slope, too deep in a hollow or bowl, too shallow across a nose). rim_plane: the least-squares plane through a band of scar_drape_rim_fit_width_pixels cells outside the free area. rim_quadric: the least-squares quadratic through that band; exact where the pre-event surface had uniform curvature. Both are kept no lower than the ground. Scars whose band cannot fix the surface get status rim_fit_failed. |
+| `scar_drape_rim_fit_width_pixels` | `int` | `2` | `param` | `scar_drape_surface_type` | Width (cells) of the band outside the free area used by rim_plane and rim_quadric. | At least 1 for rim_plane and 2 for rim_quadric: values on a one-cell ring barely constrain a quadratic's curvature, so noise would set the depth. Wider bands are steadier but reach further from the scar. |
+| `scar_drape_uncertainty_samples` | `int` | `0` | `param` | `run_scar_drape_volumes` | Monte Carlo samples for each scar's volume uncertainty from DEM error (0 = none). | Each sample adds Gaussian error to the DEM (scar_drape_dem_sigma_metres, or the error model of the reference DEM of difference) and re-drapes every scar. Writes volume_sigma_m3 (the spread, which includes the rim's error carried by the cloth) and volume_noise_bias_m3 (mean change: a cloth over noise bridges it, so this is a positive noise floor). Costs one drape per sample; 50 is reasonable. |
+| `scar_drape_dem_sigma_metres` | `float` | `0.0` | `param` | `scar_drape_uncertainty_samples` | Elevation error (1 sigma, m) of the post-event DEM for the uncertainty samples. | 0: take it from the reference DEM of difference (scar_drape_reference_dem_fname): its slope-binned NMAD divided by sqrt 2 (equal, independent errors in the two DEMs), with its fitted nugget and range, estimated off the scars. Required (&gt; 0) without a reference DEM. |
+| `scar_drape_error_nugget_fraction` | `float` | `1.0` | `param` | `scar_drape_dem_sigma_metres` | Fraction of the DEM error variance that is uncorrelated, with scar_drape_dem_sigma_metres. | 1: white error. The rest is correlated over scar_drape_error_correlation_range_metres. Error correlated over the scar and its rim moves cloth and ground together and cancels. |
+| `scar_drape_error_correlation_range_metres` | `float` | `0.0` | `param` | `scar_drape_dem_sigma_metres` | Correlation range (m) of the correlated DEM error, with scar_drape_dem_sigma_metres. | Approximately spherical, as in the DEM-of-difference error model. |
+| `scar_drape_uncertainty_random_seed` | `int` | `41` | `param` | `scar_drape_uncertainty_samples` | Seed of the uncertainty samples. | The same seed gives the same result for any thread count. |
+| `scar_drape_buffer_spread_max_pixels` | `int` | `0` | `param` | `run_scar_drape_volumes` | Report the spread of each scar's volume over rim buffers 0 to this many cells (0 = none). | Writes volume_buffer_min_m3, volume_buffer_max_m3 and volume_buffer_spread_m3 (max - min of the mapped volume). This is the uncertainty from where the rim is put, a different kind from DEM error, and is not added to it. 2 is the usual choice; costs one drape per buffer. |
+| `scar_drape_reference_dem_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Pre-event DEM on the post-event DEM's grid, to validate the drape volumes. | When given, each scar also gets the volume removed between this DEM and read_fname over its mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a perfect method would give 0 there, so the control measures older concavity the cloth wrongly counts. Writes &lt;write_fname&gt;_scar_drape_validation.csv. Make the grids match with lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative. |
+| `scar_drape_min_reference_volume_m3` | `float` | `1.0` | `param` | `scar_drape_reference_dem_fname` | Smallest net reference volume (m3) for a scar to enter the per-scar ratios. | Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals. |
 | `write_scar_drape_rasters` | `bool` | `true` | `switch` | `run_scar_drape_volumes` | Write the draped surface, the depth and the scar labels as rasters. | &lt;write_fname&gt;_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where scars overlap the deeper cloth is kept. |
+
+### Landslide inventory
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `landslide_inventory_fname` | `string` | - | `param` | - | Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...). | Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it around the source area only, not the runout, and to the crown, so that the ring outside it is undisturbed ground. Read from read_path if the path is relative. Used by run_scar_drape_volumes and, with run_dem_change_landslides, to match the mapped polygons to the detected patches through their cells: &lt;write_fname&gt;_inventory_dod_match.csv (per polygon: area detected as loss or gain, the DoD's net, loss and gain volume inside it, the patches touched, matched = touches a loss patch), _inventory_dod_patch_match.csv (per patch: cells inside polygons and the polygons it overlaps) and _inventory_dod_summary.csv. |
+| `landslide_inventory_layer_name` | `string` | - | `param` | `landslide_inventory_fname` | Layer of landslide_inventory_fname to read. | Empty: the first layer. |
+| `landslide_inventory_id_field_name` | `string` | - | `param` | `landslide_inventory_fname` | Attribute that identifies each scar in the outputs. | Empty: the feature's position in the layer (0-based). The run stops, listing the fields, if the layer has no such field. |
+
+### Scaling fits
+
+| Parameter | Type | Default | Role | Parent | Description | Guidance |
+|---|---|---|---|---|---|---|
+| `scaling_fit_bootstrap_samples` | `int` | `0` | `param` | - | Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none). | Applies to the volume - area and depth - area fits, OLS and RMA, of the scar drape and of the DEM of difference. 1000 is a reasonable choice. |
 
 ### Rupture planes
 

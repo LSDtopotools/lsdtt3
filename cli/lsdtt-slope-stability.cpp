@@ -74,8 +74,10 @@
 #include "../src/cpu/lsdtt_raster_flow_preprocessing_cpu.hpp"
 #include "../src/cpu/lsdtt_raster_nodata_filling_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_area_cpu.hpp"
+#include "../src/cpu/lsdtt_raster_vectorise_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_catalogue_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
+#include "../src/utils/lsdtt_histogram.hpp"
 #include "../src/cpu/lsdtt_slope_stability_hazard_area_cpu.hpp"
 #include "../src/cpu/lsdtt_slope_stability_scar_drape_cpu.hpp"
 #include "../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
@@ -333,10 +335,112 @@ static void write_frequency_area(const std::string& base, const std::string& wha
     std::cout << "  wrote " << pd << "\n  wrote " << pf << "\n";
 }
 
+struct dem_change_output_options
+{
+    int bins_per_decade = 10;
+    int min_tail = 50;
+    int n_bootstrap = 0;
+    std::uint64_t seed = 33;
+    bool write_polygons = false;
+    std::string vector_format = "flatgeobuf";
+};
+
+// Volume - area, depth - area and frequency - volume of the patches, for loss
+// and gain separately.
+static void write_dem_change_scaling(const std::string& base, const lsdtt::dem_change_result& r,
+                                     const dem_change_output_options& o)
+{
+    const auto nan_or = [](double v) { return std::isfinite(v) ? number_string(v) : std::string(); };
+    const auto open = [](const std::string& path) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("Cannot write " + path);
+        f << std::setprecision(10);
+        return f;
+    };
+    const std::string header =
+        "change,method,n,valid,alpha,gamma,gamma_standard_error,r_squared,gamma_ci_low,gamma_ci_high,"
+        "alpha_ci_low,alpha_ci_high,n_bootstrap\n";
+    std::ofstream va = open(base + "_dem_change_volume_area_fit.csv"), da = open(base + "_dem_change_depth_area_fit.csv");
+    std::ofstream fv = open(base + "_dem_change_frequency_volume.csv"),
+                  fvf = open(base + "_dem_change_frequency_volume_fit.csv");
+    va << header;
+    da << header;
+    fv << "change,volume_lower_m3,volume_upper_m3,volume_centre_m3,n_patches,probability_density_per_m3\n";
+    fvf << "change,n_patches,method,volume_min_m3,eta,eta_standard_error,n_tail,ks_distance\n";
+    const auto rows = [&](std::ofstream& f, const char* what, const lsdtt::power_law_scaling_fit& q) {
+        for (const auto& [method, line] : {std::pair<const char*, const lsdtt::scaling_fit_line*>{"ols", &q.ols},
+                                           std::pair<const char*, const lsdtt::scaling_fit_line*>{"rma", &q.rma}})
+            f << what << ',' << method << ',' << q.n << ',' << (q.valid ? 1 : 0) << ',' << nan_or(line->alpha) << ','
+              << nan_or(line->gamma) << ',' << nan_or(line->gamma_standard_error) << ',' << nan_or(q.r_squared) << ','
+              << nan_or(line->gamma_ci_low) << ',' << nan_or(line->gamma_ci_high) << ',' << nan_or(line->alpha_ci_low)
+              << ',' << nan_or(line->alpha_ci_high) << ',' << q.n_bootstrap << '\n';
+    };
+    for (const int sign : {-1, 1})
+    {
+        const char* what = sign < 0 ? "loss" : "gain";
+        const lsdtt::dem_change_scaling sc = lsdtt::fit_dem_change_scaling(
+            r.patches, sign, o.n_bootstrap, o.seed, static_cast<std::size_t>(std::max(2, o.min_tail)));
+        if (sc.n_patches == 0) continue;
+        rows(va, what, sc.volume_area);
+        rows(da, what, sc.depth_area);
+        std::vector<double> volumes;
+        for (const auto& p : r.patches)
+            if (p.sign == sign) volumes.push_back(std::abs(p.volume_m3));
+        const lsdtt::log_binned_density d = lsdtt::compute_log_binned_density(volumes, o.bins_per_decade, false);
+        for (std::size_t k = 0; k < d.centre.size(); ++k)
+            fv << what << ',' << d.lower[k] << ',' << d.upper[k] << ',' << d.centre[k] << ','
+               << static_cast<long long>(d.count[k]) << ',' << d.density[k] << '\n';
+        const lsdtt::power_law_tail_fit& t = sc.volume_tail;
+        fvf << what << ',' << t.n_total << ",mle_continuous_ks_xmin," << nan_or(t.x_min) << ','
+            << nan_or(t.valid ? -t.alpha : std::numeric_limits<double>::quiet_NaN()) << ','
+            << nan_or(t.alpha_standard_error) << ',' << t.n_tail << ',' << nan_or(t.ks_distance) << '\n';
+        if (sc.volume_area.valid)
+            std::cout << "  volume - area (" << what << ", " << sc.n_patches << " patches): gamma OLS "
+                      << number_string(sc.volume_area.ols.gamma) << ", RMA " << number_string(sc.volume_area.rma.gamma)
+                      << "; depth - area gamma OLS " << number_string(sc.depth_area.ols.gamma) << "\n";
+        if (t.valid)
+            std::cout << "  frequency - volume (" << what << "): eta = " << number_string(-t.alpha) << " +/- "
+                      << number_string(t.alpha_standard_error) << " for V >= " << number_string(t.x_min) << " m3 ("
+                      << t.n_tail << " of " << t.n_total << ")\n";
+    }
+}
+
+// The patches as polygons, with the patch table's fields.
+static void write_dem_change_polygons(const std::string& base, const lsdtt::dem_change_result& r,
+                                      const lsdtt::lsdtt_raster_meta& meta, const std::string& format)
+{
+    using ft = lsdtt::lsdtt_vector_field_type;
+    lsdtt::lsdtt_label_attributes table;
+    table.schema.field_names = {"change", "patch_n_cells", "patch_area_m2", "area_uncertainty_m2", "perimeter_m",
+                                "length_m", "width_m", "mean_change_m", "extreme_change_m", "mean_change_sigma_m",
+                                "significance", "volume_m3", "volume_sigma_m3", "mean_slope"};
+    table.schema.field_types = {ft::string_type, ft::int64_type, ft::double_type, ft::double_type, ft::double_type,
+                                ft::double_type, ft::double_type, ft::double_type, ft::double_type, ft::double_type,
+                                ft::double_type, ft::double_type, ft::double_type, ft::double_type};
+    for (const auto& p : r.patches)
+        table.rows[p.id] = {std::string(p.sign < 0 ? "loss" : "gain"), static_cast<std::int64_t>(p.n_cells),
+                            p.area_m2, p.area_uncertainty_m2, p.perimeter_m, p.length_m, p.width_m, p.mean_change_m,
+                            p.extreme_change_m, p.mean_change_sigma_m, p.significance, p.volume_m3,
+                            p.volume_sigma_m3, p.mean_slope};
+    std::vector<float> lv(r.label.size(), 0.0f);
+    for (std::size_t i = 0; i < lv.size(); ++i) lv[i] = static_cast<float>(r.label[i]);
+    lsdtt::lsdtt_raster_meta lmeta = meta;
+    lmeta.no_data_value = -9999.0;
+    const lsdtt::lsdtt_raster_cpu labels(std::move(lv), std::vector<std::uint8_t>(r.label.size(), 1u), lmeta);
+    lsdtt::lsdtt_vectorise_options options;
+    options.layer_name = "dem_change_patches";
+    options.format = lsdtt::resolve_vector_output_format(format);
+    const std::string path = base + "_dem_change_patches" + lsdtt::output_extension(options.format);
+    lsdtt::lsdtt_data_loader loader;
+    lsdtt::trace_labelled_polygons(labels, loader, path, table, options);
+    std::cout << "  wrote " << path << "\n";
+}
+
 // Potential landslides from a DEM of difference: tables and rasters.
 static void write_dem_change_outputs(const std::string& base, const lsdtt::dem_change_result& r,
-                                     const lsdtt::lsdtt_raster_meta& meta, int bins_per_decade, int min_tail)
+                                     const lsdtt::lsdtt_raster_meta& meta, const dem_change_output_options& o)
 {
+    const int bins_per_decade = o.bins_per_decade, min_tail = o.min_tail;
     const auto open = [](const std::string& path) {
         std::ofstream f(path);
         if (!f) throw std::runtime_error("Cannot write " + path);
@@ -456,6 +560,8 @@ static void write_dem_change_outputs(const std::string& base, const lsdtt::dem_c
     }
     if (!catalogues.empty())
         write_frequency_area(base, "dem_change", catalogues, meta.cell_size * meta.cell_size, bins_per_decade, min_tail);
+    write_dem_change_scaling(base, r, o);
+    if (o.write_polygons) write_dem_change_polygons(base, r, meta, o.vector_format);
 }
 
 // =============================================================================
@@ -691,6 +797,43 @@ int main(int argc, char* argv[])
     help_map["dem_change_random_seed"] = {"int", "33",
         "Seed for the variogram sample and the noise simulations.", "",
         "DEM of difference", "param", "run_dem_change_landslides"};
+    string_default_map["dem_change_exclusion_mask_fname"] = "";
+    help_map["dem_change_exclusion_mask_fname"] = {"string", "",
+        "Rasters of cells to exclude (non-zero = excluded), comma separated.",
+        "Their union is used: canopy masks from both surveys, water, buildings. Excluded cells "
+        "are never detected and are not in the error model. On the grid of read_fname; read "
+        "from read_path if relative.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    float_default_map["dem_change_channel_specific_catchment_metres"] = 0.0f;
+    help_map["dem_change_channel_specific_catchment_metres"] = {"float", "0.0",
+        "Exclude channels: cells whose D-infinity specific catchment area (m) is at least this.",
+        "Computed on the carved and filled DEM (breach_before_fill, fill_before_routing); "
+        "detection stays on the input DEM. Channel beds aggrade and incise, which is not "
+        "landsliding. 0 turns it off.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    int_default_map["dem_change_channel_buffer_pixels"] = 1;
+    help_map["dem_change_channel_buffer_pixels"] = {"int", "1",
+        "Grow the channel exclusion by this many pixels (Euclidean).", "",
+        "DEM of difference", "param", "dem_change_channel_specific_catchment_metres"};
+    float_default_map["dem_change_min_patch_mean_change_metres"] = 0.0f;
+    help_map["dem_change_min_patch_mean_change_metres"] = {"float", "0.0",
+        "Drop patches whose |mean change| (m) is below this.",
+        "Applied to the magnitude; the sign is set by dem_change_sign. Also applied in the "
+        "sensitivity runs and the noise simulations.",
+        "DEM of difference", "param", "run_dem_change_landslides"};
+    bool_default_map["write_dem_change_exclusion_raster"] = false;
+    help_map["write_dem_change_exclusion_raster"] = {"bool", "false",
+        "Write the union of the exclusions (masks and channels) as a raster.",
+        "<write_fname>_dem_change_exclusion.tif: 1 excluded, 0 not.",
+        "DEM of difference", "switch", "run_dem_change_landslides"};
+    bool_default_map["write_dem_change_patch_polygons"] = false;
+    help_map["write_dem_change_patch_polygons"] = {"bool", "false",
+        "Write the patches as polygons, with the fields of the patch table.",
+        "<write_fname>_dem_change_patches.fgb or .gpkg (write_vector_format). One feature per "
+        "4-connected part, with holes; a patch joined across unchanged cells has several "
+        "parts, each carrying the patch's fields.",
+        "DEM of difference", "switch", "run_dem_change_landslides"};
+    lsdtt::declare_vector_output_format_parameter(string_default_map, help_map);
 
     bool_default_map["run_coseismic_hazard_area"] = false;
     help_map["run_coseismic_hazard_area"] = {"bool", "false",
@@ -735,18 +878,23 @@ int main(int argc, char* argv[])
         "Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...).",
         "Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it "
         "around the source area only, not the runout, and to the crown, so that the ring "
-        "outside it is undisturbed ground. Read from read_path if the path is relative.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "outside it is undisturbed ground. Read from read_path if the path is relative. Used by "
+        "run_scar_drape_volumes and, with run_dem_change_landslides, to match the mapped polygons "
+        "to the detected patches through their cells: <write_fname>_inventory_dod_match.csv "
+        "(per polygon: area detected as loss or gain, the DoD's net, loss and gain volume inside it, "
+        "the patches touched, matched = touches a loss patch), _inventory_dod_patch_match.csv (per "
+        "patch: cells inside polygons and the polygons it overlaps) and _inventory_dod_summary.csv.",
+        "Landslide inventory", "param", ""};
     string_default_map["landslide_inventory_layer_name"] = "";
     help_map["landslide_inventory_layer_name"] = {"string", "",
         "Layer of landslide_inventory_fname to read.", "Empty: the first layer.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "Landslide inventory", "param", "landslide_inventory_fname"};
     string_default_map["landslide_inventory_id_field_name"] = "";
     help_map["landslide_inventory_id_field_name"] = {"string", "",
         "Attribute that identifies each scar in the outputs.",
         "Empty: the feature's position in the layer (0-based). The run stops, listing the "
         "fields, if the layer has no such field.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "Landslide inventory", "param", "landslide_inventory_fname"};
     int_default_map["scar_drape_rim_buffer_pixels"] = 1;
     help_map["scar_drape_rim_buffer_pixels"] = {"int", "1",
         "Cells added around each scar polygon before the cloth is held at the ground.",
@@ -775,6 +923,79 @@ int main(int argc, char* argv[])
         "Largest number of relaxation sweeps per scar.",
         "Over-relaxation needs a few times the scar's width in cells.",
         "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["scar_drape_surface_type"] = "membrane";
+    help_map["scar_drape_surface_type"] = {"string", "membrane",
+        "Surface spanned across each scar: membrane, rim_plane or rim_quadric.",
+        "membrane: the draped cloth (harmonic; exact on a planar slope, too deep in a hollow or bowl, "
+        "too shallow across a nose). rim_plane: the least-squares plane through a band of "
+        "scar_drape_rim_fit_width_pixels cells outside the free area. rim_quadric: the least-squares "
+        "quadratic through that band; exact where the pre-event surface had uniform curvature. Both are "
+        "kept no lower than the ground. Scars whose band cannot fix the surface get status rim_fit_failed.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_rim_fit_width_pixels"] = 2;
+    help_map["scar_drape_rim_fit_width_pixels"] = {"int", "2",
+        "Width (cells) of the band outside the free area used by rim_plane and rim_quadric.",
+        "At least 1 for rim_plane and 2 for rim_quadric: values on a one-cell ring barely constrain a "
+        "quadratic's curvature, so noise would set the depth. Wider bands are steadier but reach "
+        "further from the scar.",
+        "Scar drape volumes", "param", "scar_drape_surface_type"};
+    int_default_map["scar_drape_uncertainty_samples"] = 0;
+    help_map["scar_drape_uncertainty_samples"] = {"int", "0",
+        "Monte Carlo samples for each scar's volume uncertainty from DEM error (0 = none).",
+        "Each sample adds Gaussian error to the DEM (scar_drape_dem_sigma_metres, or the error model of the "
+        "reference DEM of difference) and re-drapes every scar. Writes volume_sigma_m3 (the spread, which "
+        "includes the rim's error carried by the cloth) and volume_noise_bias_m3 (mean change: a cloth over "
+        "noise bridges it, so this is a positive noise floor). Costs one drape per sample; 50 is reasonable.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_dem_sigma_metres"] = 0.0f;
+    help_map["scar_drape_dem_sigma_metres"] = {"float", "0.0",
+        "Elevation error (1 sigma, m) of the post-event DEM for the uncertainty samples.",
+        "0: take it from the reference DEM of difference (scar_drape_reference_dem_fname): its slope-binned "
+        "NMAD divided by sqrt 2 (equal, independent errors in the two DEMs), with its fitted nugget and "
+        "range, estimated off the scars. Required (> 0) without a reference DEM.",
+        "Scar drape volumes", "param", "scar_drape_uncertainty_samples"};
+    float_default_map["scar_drape_error_nugget_fraction"] = 1.0f;
+    help_map["scar_drape_error_nugget_fraction"] = {"float", "1.0",
+        "Fraction of the DEM error variance that is uncorrelated, with scar_drape_dem_sigma_metres.",
+        "1: white error. The rest is correlated over scar_drape_error_correlation_range_metres. Error "
+        "correlated over the scar and its rim moves cloth and ground together and cancels.",
+        "Scar drape volumes", "param", "scar_drape_dem_sigma_metres"};
+    float_default_map["scar_drape_error_correlation_range_metres"] = 0.0f;
+    help_map["scar_drape_error_correlation_range_metres"] = {"float", "0.0",
+        "Correlation range (m) of the correlated DEM error, with scar_drape_dem_sigma_metres.",
+        "Approximately spherical, as in the DEM-of-difference error model.",
+        "Scar drape volumes", "param", "scar_drape_dem_sigma_metres"};
+    int_default_map["scar_drape_uncertainty_random_seed"] = 41;
+    help_map["scar_drape_uncertainty_random_seed"] = {"int", "41",
+        "Seed of the uncertainty samples.", "The same seed gives the same result for any thread count.",
+        "Scar drape volumes", "param", "scar_drape_uncertainty_samples"};
+    int_default_map["scar_drape_buffer_spread_max_pixels"] = 0;
+    help_map["scar_drape_buffer_spread_max_pixels"] = {"int", "0",
+        "Report the spread of each scar's volume over rim buffers 0 to this many cells (0 = none).",
+        "Writes volume_buffer_min_m3, volume_buffer_max_m3 and volume_buffer_spread_m3 (max - min of the "
+        "mapped volume). This is the uncertainty from where the rim is put, a different kind from DEM "
+        "error, and is not added to it. 2 is the usual choice; costs one drape per buffer.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["scar_drape_reference_dem_fname"] = "";
+    help_map["scar_drape_reference_dem_fname"] = {"string", "",
+        "Pre-event DEM on the post-event DEM's grid, to validate the drape volumes.",
+        "When given, each scar also gets the volume removed between this DEM and read_fname over its "
+        "mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a "
+        "perfect method would give 0 there, so the control measures older concavity the cloth wrongly "
+        "counts. Writes <write_fname>_scar_drape_validation.csv. Make the grids match with "
+        "lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_min_reference_volume_m3"] = 1.0f;
+    help_map["scar_drape_min_reference_volume_m3"] = {"float", "1.0",
+        "Smallest net reference volume (m3) for a scar to enter the per-scar ratios.",
+        "Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals.",
+        "Scar drape volumes", "param", "scar_drape_reference_dem_fname"};
+    int_default_map["scaling_fit_bootstrap_samples"] = 0;
+    help_map["scaling_fit_bootstrap_samples"] = {"int", "0",
+        "Bootstrap resamples for the 95 % intervals of the scaling fits (0 = none).",
+        "Applies to the volume - area and depth - area fits, OLS and RMA, of the scar drape and of "
+        "the DEM of difference. 1000 is a reasonable choice.",
+        "Scaling fits", "param", ""};
     bool_default_map["write_scar_drape_rasters"] = true;
     help_map["write_scar_drape_rasters"] = {"bool", "true",
         "Write the draped surface, the depth and the scar labels as rasters.",
@@ -1539,6 +1760,18 @@ int main(int argc, char* argv[])
             dem_change.n_slope_bins = ii.at("dem_change_n_slope_bins");
             dem_change.n_null_simulations = ii.at("dem_change_n_null_simulations");
             dem_change.random_seed = static_cast<std::uint64_t>(ii.at("dem_change_random_seed"));
+            dem_change.min_patch_mean_change_m = ff.at("dem_change_min_patch_mean_change_metres");
+            if (dem_change.min_patch_mean_change_m < 0.0)
+                throw std::runtime_error("dem_change_min_patch_mean_change_metres must be >= 0");
+            if (ff.at("dem_change_channel_specific_catchment_metres") < 0.0f)
+                throw std::runtime_error("dem_change_channel_specific_catchment_metres must be >= 0");
+            if (ii.at("dem_change_channel_buffer_pixels") < 0)
+                throw std::runtime_error("dem_change_channel_buffer_pixels must be >= 0");
+            if (ii.at("scaling_fit_bootstrap_samples") < 0)
+                throw std::runtime_error("scaling_fit_bootstrap_samples must be >= 0");
+            if (bf.at("write_dem_change_patch_polygons") && sf.at("write_vector_format") != "flatgeobuf" &&
+                sf.at("write_vector_format") != "fgb" && sf.at("write_vector_format") != "gpkg")
+                throw std::runtime_error("write_vector_format must be flatgeobuf, fgb or gpkg");
             dem_change.n_threads = ii.at("n_threads");
             if (dem_change.change_sign != "loss" && dem_change.change_sign != "gain" && dem_change.change_sign != "both")
                 throw std::runtime_error("dem_change_sign must be loss, gain or both");
@@ -1568,7 +1801,24 @@ int main(int argc, char* argv[])
             scar_drape.tolerance_metres = ff.at("scar_drape_tolerance_metres");
             scar_drape.max_iterations = ii.at("scar_drape_max_iterations");
             scar_drape.n_threads = ii.at("n_threads");
+            scar_drape.surface = lsdtt::parse_scar_drape_surface_type(sf.at("scar_drape_surface_type"));
+            scar_drape.rim_fit_width_pixels = ii.at("scar_drape_rim_fit_width_pixels");
             lsdtt::validate_scar_drape_options(scar_drape);
+            const int n_unc = ii.at("scar_drape_uncertainty_samples");
+            if (n_unc < 0 || n_unc == 1)
+                throw std::runtime_error("scar_drape_uncertainty_samples must be 0 or at least 2");
+            if (n_unc > 0 && !(ff.at("scar_drape_dem_sigma_metres") > 0.0f) &&
+                sf.at("scar_drape_reference_dem_fname").empty())
+                throw std::runtime_error("scar_drape_uncertainty_samples needs scar_drape_dem_sigma_metres > 0 or "
+                                         "scar_drape_reference_dem_fname");
+            if (ff.at("scar_drape_dem_sigma_metres") < 0.0f)
+                throw std::runtime_error("scar_drape_dem_sigma_metres must be >= 0");
+            const float nug = ff.at("scar_drape_error_nugget_fraction");
+            if (!(nug >= 0.0f && nug <= 1.0f) || !(ff.at("scar_drape_error_correlation_range_metres") >= 0.0f))
+                throw std::runtime_error("scar_drape_error_nugget_fraction must be in [0, 1] and "
+                                         "scar_drape_error_correlation_range_metres >= 0");
+            if (ii.at("scar_drape_buffer_spread_max_pixels") < 0)
+                throw std::runtime_error("scar_drape_buffer_spread_max_pixels must be >= 0");
         }
 
         if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area && !run_scar_drape)
@@ -1606,32 +1856,137 @@ int main(int argc, char* argv[])
             features.reserve(inv.features.size());
             for (const auto& f : inv.features)
                 features.push_back({f.id, f.feature_index, f.cells, f.used_all_touched});
-            const lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+            lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+            std::cout << "Surface: " << lsdtt::scar_drape_surface_type_name(scar_drape.surface) << "\n";
 
-            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0;
+            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0, n_fit_failed = 0;
             double v_total = 0.0, a_total = 0.0;
             for (const auto& r : drape.records)
             {
                 if (r.status == "ok") ++n_ok;
                 if (r.status == "not_converged") ++n_not_conv;
+                if (r.status == "rim_fit_failed") ++n_fit_failed;
                 if (r.touches_grid_edge) ++n_edge;
                 if (r.n_rim_invalid > 0) ++n_rim_gap;
                 v_total += r.mapped_volume_m3;
                 a_total += r.mapped_area_m2;
             }
-            const lsdtt::scar_volume_area_fit fit = lsdtt::fit_scar_volume_area(drape.records);
+            const int n_boot = ii.at("scaling_fit_bootstrap_samples");
+            if (n_boot < 0) throw std::runtime_error("scaling_fit_bootstrap_samples must be >= 0");
+            const lsdtt::power_law_scaling_fit fit = lsdtt::fit_scar_volume_area(drape.records, n_boot, 7);
             std::cout << "Scars: " << drape.records.size() << " (" << n_ok << " ok, " << n_not_conv
-                      << " not converged, " << n_edge << " at the DEM edge, " << n_rim_gap
+                      << " not converged, " << n_fit_failed << " rim fit failed, " << n_edge << " at the DEM edge, " << n_rim_gap
                       << " with gaps in the rim); area " << number_string(a_total) << " m2, volume "
                       << number_string(v_total) << " m3\n";
-            if (fit.n >= 3)
-                std::cout << "Volume - area: V = " << number_string(fit.alpha) << " A^" << number_string(fit.gamma)
-                          << " (+/- " << number_string(fit.gamma_standard_error) << ", r2 "
-                          << number_string(fit.r_squared) << ", n " << fit.n << ")\n";
+            if (fit.valid)
+                std::cout << "Volume - area: OLS V = " << number_string(fit.ols.alpha) << " A^"
+                          << number_string(fit.ols.gamma) << ", RMA V = " << number_string(fit.rma.alpha) << " A^"
+                          << number_string(fit.rma.gamma) << " (r2 " << number_string(fit.r_squared) << ", n "
+                          << fit.n << ")\n";
             if (drape.n_overlap_cells > 0)
                 std::cout << "Note: " << drape.n_overlap_cells << " cells lie in more than one scar; each scar's "
                              "volume counts them.\n";
 
+            // Validation against a reference (pre-event) DEM: reference volumes and a control drape.
+            const std::string ref_name = sf.at("scar_drape_reference_dem_fname");
+            const bool have_ref = !ref_name.empty();
+            std::vector<lsdtt::scar_reference_volume> refv;
+            lsdtt::scar_drape_result control;
+            lsdtt::scar_drape_validation val;
+            lsdtt::lsdtt_raster_cpu ref_dem;
+            if (have_ref)
+            {
+                ref_dem = read_raster(resolve_input(parser.get_read_path(), ref_name));
+                require_same_grid(input_dem.get_meta(), ref_dem.get_meta(), "scar_drape_reference_dem_fname");
+                refv = lsdtt::scar_reference_volumes(input_dem, ref_dem, features);
+                control = lsdtt::drape_landslide_scars(ref_dem, features, scar_drape);
+                val = lsdtt::validate_scar_drape(drape.records, control.records, refv,
+                                                 ff.at("scar_drape_min_reference_volume_m3"), n_boot, 11);
+                std::cout << "Against the reference DEM: net " << number_string(val.reference_net_total_m3)
+                          << " m3 (loss " << number_string(val.reference_loss_total_m3) << "); drape / reference "
+                          << number_string(val.total_ratio) << "; per scar median " << number_string(val.median_ratio)
+                          << " (" << number_string(val.ratio_p25) << " - " << number_string(val.ratio_p75) << ", n "
+                          << val.n_compared << "); r of log volumes " << number_string(val.log_volume_correlation)
+                          << "; control " << number_string(val.control_total_m3) << " m3 ("
+                          << number_string(val.control_fraction) << " of the reference)\n";
+            }
+
+            // Uncertainty: DEM error by Monte Carlo, and the spread over rim buffers.
+            const int n_unc = ii.at("scar_drape_uncertainty_samples");
+            const int max_spread = ii.at("scar_drape_buffer_spread_max_pixels");
+            lsdtt::scar_drape_error_model err;
+            std::string err_source;
+            if (n_unc > 0)
+            {
+                if (ff.at("scar_drape_dem_sigma_metres") > 0.0f)
+                {
+                    err.sigma_constant_m = ff.at("scar_drape_dem_sigma_metres");
+                    err.nugget_fraction = ff.at("scar_drape_error_nugget_fraction");
+                    err.correlation_range_m = ff.at("scar_drape_error_correlation_range_metres");
+                    err_source = "scar_drape_dem_sigma_metres";
+                }
+                else
+                {
+                    // Error model of the reference DoD (post minus reference), off the scars.
+                    const lsdtt::lsdtt_raster_meta& gm = input_dem.get_meta();
+                    const std::size_t n = static_cast<std::size_t>(gm.n_rows) * gm.n_cols;
+                    std::vector<float> dh(n, static_cast<float>(gm.no_data_value));
+                    std::vector<std::uint8_t> dm(n, 0u);
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (input_dem.get_mask()[i] && ref_dem.get_mask()[i])
+                        {
+                            dh[i] = input_dem.get_data()[i] - ref_dem.get_data()[i];
+                            dm[i] = 1u;
+                        }
+                    std::vector<std::uint8_t> on_scar(n, 0u);
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (drape.label.get_data()[i] > 0.0f || drape.depth.get_mask()[i]) on_scar[i] = 1u;
+                    for (const auto& f : features) for (const std::int64_t i : f.cells) on_scar[static_cast<std::size_t>(i)] = 1u;
+                    const lsdtt::lsdtt_raster_cpu dod(std::move(dh), std::move(dm), gm);
+                    lsdtt::dem_change_options eo;
+                    eo.n_threads = ii.at("n_threads");
+                    const lsdtt::dem_change_error_model em = lsdtt::estimate_dem_change_error_model(
+                        dod, lsdtt::dem_change_slope(input_dem), nullptr, eo, &on_scar);
+                    err.sigma_m = em.sigma_m;
+                    for (float& v : err.sigma_m) v = static_cast<float>(v / std::sqrt(2.0));
+                    err.nugget_fraction = em.uncertainty.variogram_fitted ? em.uncertainty.nugget_fraction : 1.0;
+                    err.correlation_range_m = em.uncertainty.variogram_fitted ? em.uncertainty.correlation_range_m : 0.0;
+                    err_source = "reference_dod";
+                    std::cout << "DEM error from the reference DEM of difference (off the scars): NMAD "
+                              << number_string(em.uncertainty.nmad_m) << " m, per DEM / sqrt 2; nugget "
+                              << number_string(err.nugget_fraction) << ", range "
+                              << number_string(err.correlation_range_m) << " m\n";
+                }
+                lsdtt::scar_drape_uncertainty(input_dem, features, scar_drape, err, n_unc,
+                                              static_cast<std::uint64_t>(ii.at("scar_drape_uncertainty_random_seed")),
+                                              drape.records);
+                double sum_var = 0.0, sum_bias = 0.0;
+                for (const auto& r : drape.records)
+                {
+                    if (std::isfinite(r.volume_sigma_m3)) sum_var += r.volume_sigma_m3 * r.volume_sigma_m3;
+                    if (std::isfinite(r.volume_noise_bias_m3)) sum_bias += r.volume_noise_bias_m3;
+                }
+                std::cout << "DEM error, " << n_unc << " samples: total volume sigma "
+                          << number_string(std::sqrt(sum_var)) << " m3 (scars independent), total noise bias "
+                          << number_string(sum_bias) << " m3\n";
+            }
+            if (max_spread > 0)
+            {
+                lsdtt::scar_drape_buffer_spread(input_dem, features, scar_drape, max_spread, drape.records);
+                double lo = 0.0, hi = 0.0;
+                for (const auto& r : drape.records)
+                    if (std::isfinite(r.volume_buffer_min_m3)) { lo += r.volume_buffer_min_m3; hi += r.volume_buffer_max_m3; }
+                std::cout << "Rim buffers 0 - " << max_spread << ": total volume " << number_string(lo) << " - "
+                          << number_string(hi) << " m3\n";
+            }
+
+            const auto csv_id = [](std::string id) {
+                if (id.find_first_of(",\"\n") == std::string::npos) return id;
+                std::string q = "\"";
+                for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                return q + "\"";
+            };
+            const auto nan_or = [](double v) { return std::isfinite(v) ? number_string(v) : std::string(); };
             const std::string vol_path = base + "_scar_drape_volumes.csv";
             {
                 std::ofstream f(vol_path);
@@ -1640,37 +1995,85 @@ int main(int argc, char* argv[])
                 f << "scar_id,feature_index,status,mapped_area_m2,mapped_volume_m3,mean_depth_m,max_depth_m,"
                      "free_area_m2,free_volume_m3,centroid_x,centroid_y,n_mapped_cells,n_free_cells,n_rim_cells,"
                      "n_rim_invalid,n_nodata_inside,n_contact_cells,touches_grid_edge,used_all_touched,iterations,"
-                     "final_change_m\n";
-                for (const auto& r : drape.records)
+                     "final_change_m,rim_relief_m,rim_plane_gradient,rim_plane_residual_m,compactness,"
+                     "surface_fit_n_cells,surface_fit_residual_m";
+                if (n_unc > 0) f << ",n_uncertainty_samples,volume_sigma_m3,volume_noise_bias_m3";
+                if (max_spread > 0) f << ",volume_buffer_min_m3,volume_buffer_max_m3,volume_buffer_spread_m3";
+                if (have_ref)
+                    f << ",reference_n_cells,reference_net_volume_m3,reference_loss_volume_m3,reference_gain_volume_m3,"
+                         "control_volume_m3,ratio_to_reference";
+                f << '\n';
+                for (std::size_t k = 0; k < drape.records.size(); ++k)
                 {
-                    std::string id = r.id;
-                    if (id.find_first_of(",\"\n") != std::string::npos)
-                    {
-                        std::string q = "\"";
-                        for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
-                        id = q + "\"";
-                    }
-                    f << id << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
+                    const auto& r = drape.records[k];
+                    f << csv_id(r.id) << ',' << r.feature_index << ',' << r.status << ',' << r.mapped_area_m2 << ','
                       << r.mapped_volume_m3 << ',' << r.mean_depth_m << ',' << r.max_depth_m << ',' << r.free_area_m2
                       << ',' << r.volume_m3 << ',' << r.centroid_x << ',' << r.centroid_y << ',' << r.n_mapped_cells
                       << ',' << r.n_free_cells << ',' << r.n_rim_cells << ',' << r.n_rim_invalid << ','
                       << r.n_nodata_inside << ',' << r.n_contact_cells << ',' << (r.touches_grid_edge ? 1 : 0) << ','
-                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << '\n';
+                      << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << ','
+                      << nan_or(r.rim_relief_m) << ',' << nan_or(r.rim_plane_gradient) << ','
+                      << nan_or(r.rim_plane_residual_m) << ',' << nan_or(r.compactness) << ','
+                      << r.surface_fit_n_cells << ',' << nan_or(r.surface_fit_residual_m);
+                    if (n_unc > 0)
+                        f << ',' << r.n_uncertainty_samples << ',' << nan_or(r.volume_sigma_m3) << ','
+                          << nan_or(r.volume_noise_bias_m3);
+                    if (max_spread > 0)
+                        f << ',' << nan_or(r.volume_buffer_min_m3) << ',' << nan_or(r.volume_buffer_max_m3) << ','
+                          << nan_or(r.volume_buffer_spread_m3);
+                    if (have_ref)
+                    {
+                        const auto& q = refv[k];
+                        const double ratio = q.net_volume_m3 > 0 ? r.mapped_volume_m3 / q.net_volume_m3
+                                                                 : std::numeric_limits<double>::quiet_NaN();
+                        f << ',' << q.n_cells << ',' << q.net_volume_m3 << ',' << q.loss_volume_m3 << ','
+                          << q.gain_volume_m3 << ',' << control.records[k].mapped_volume_m3 << ',' << nan_or(ratio);
+                    }
+                    f << '\n';
                 }
             }
             std::cout << "  wrote " << vol_path << "\n";
+            const auto fit_rows = [&](std::ofstream& f, const std::string& what, const lsdtt::power_law_scaling_fit& q) {
+                for (const auto& [method, line] : {std::pair<const char*, const lsdtt::scaling_fit_line*>{"ols", &q.ols},
+                                                   std::pair<const char*, const lsdtt::scaling_fit_line*>{"rma", &q.rma}})
+                    f << what << ',' << method << ',' << q.n << ',' << (q.valid ? 1 : 0) << ',' << nan_or(line->alpha)
+                      << ',' << nan_or(line->gamma) << ',' << nan_or(line->gamma_standard_error) << ','
+                      << nan_or(q.r_squared) << ',' << nan_or(line->gamma_ci_low) << ',' << nan_or(line->gamma_ci_high)
+                      << ',' << nan_or(line->alpha_ci_low) << ',' << nan_or(line->alpha_ci_high) << ','
+                      << q.n_bootstrap << '\n';
+            };
             const std::string fit_path = base + "_scar_drape_volume_area_fit.csv";
             {
                 std::ofstream f(fit_path);
                 if (!f) throw std::runtime_error("Cannot write " + fit_path);
-                f << std::setprecision(10) << "quantity,value\n"
-                  << "n_scars_fitted," << fit.n << "\nalpha_m3_per_m2gamma," << fit.alpha << "\ngamma," << fit.gamma
-                  << "\ngamma_standard_error," << fit.gamma_standard_error << "\nr_squared," << fit.r_squared
-                  << "\ntotal_mapped_area_m2," << a_total << "\ntotal_mapped_volume_m3," << v_total
-                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels << "\nsag_curvature_per_metre,"
-                  << scar_drape.sag_curvature_per_metre << "\n";
+                f << std::setprecision(10)
+                  << "volumes,method,n,valid,alpha,gamma,gamma_standard_error,r_squared,gamma_ci_low,gamma_ci_high,"
+                     "alpha_ci_low,alpha_ci_high,n_bootstrap\n";
+                fit_rows(f, "drape", fit);
+                if (have_ref) fit_rows(f, "reference_net", val.reference_fit);
             }
             std::cout << "  wrote " << fit_path << "\n";
+            if (have_ref)
+            {
+                const std::string vpath = base + "_scar_drape_validation.csv";
+                std::ofstream f(vpath);
+                if (!f) throw std::runtime_error("Cannot write " + vpath);
+                f << std::setprecision(10) << "quantity,value\n"
+                  << "n_scars," << val.n_scars << "\nn_compared," << val.n_compared
+                  << "\nmin_reference_volume_m3," << ff.at("scar_drape_min_reference_volume_m3")
+                  << "\ndrape_total_m3," << val.drape_total_m3 << "\ncontrol_total_m3," << val.control_total_m3
+                  << "\nreference_net_total_m3," << val.reference_net_total_m3
+                  << "\nreference_loss_total_m3," << val.reference_loss_total_m3
+                  << "\ntotal_ratio," << nan_or(val.total_ratio) << "\ncontrol_fraction," << nan_or(val.control_fraction)
+                  << "\nmedian_ratio," << nan_or(val.median_ratio) << "\nratio_p25," << nan_or(val.ratio_p25)
+                  << "\nratio_p75," << nan_or(val.ratio_p75)
+                  << "\nlog_volume_correlation," << nan_or(val.log_volume_correlation)
+                  << "\nsurface_type," << lsdtt::scar_drape_surface_type_name(scar_drape.surface)
+                  << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels
+                  << "\nsag_curvature_per_metre," << scar_drape.sag_curvature_per_metre << "\n";
+                std::cout << "  wrote " << vpath << "\n";
+                lsdtt::lsdtt_run_record::add_provenance("scar_drape_total_ratio", nan_or(val.total_ratio));
+            }
             if (bf.at("write_scar_drape_rasters"))
             {
                 write_raster(drape.surface, base + "_scar_drape_surface.tif");
@@ -1716,8 +2119,59 @@ int main(int argc, char* argv[])
                     stable[i] = (mask_raster.get_mask()[i] && mask_raster.get_data()[i] != 0.0f) ? 1u : 0u;
             }
 
+            // Exclusions: the union of the masks, and channels.
+            std::vector<std::uint8_t> exclusion;
+            {
+                std::stringstream list(sf.at("dem_change_exclusion_mask_fname"));
+                std::string item;
+                while (std::getline(list, item, ','))
+                {
+                    const auto a = item.find_first_not_of(" \t"), b = item.find_last_not_of(" \t");
+                    if (a == std::string::npos) continue;
+                    const std::string name = item.substr(a, b - a + 1);
+                    const lsdtt::lsdtt_raster_cpu m = read_raster(resolve_input(parser.get_read_path(), name));
+                    require_same_grid(dem.get_meta(), m.get_meta(), "dem_change_exclusion_mask_fname (" + name + ")");
+                    if (exclusion.empty()) exclusion.assign(m.get_data().size(), 0u);
+                    std::int64_t n_in = 0;
+                    for (std::size_t i = 0; i < exclusion.size(); ++i)
+                        if (m.get_mask()[i] && m.get_data()[i] != 0.0f) { exclusion[i] = 1u; ++n_in; }
+                    std::cout << "Exclusion mask " << name << ": " << n_in << " cells\n";
+                }
+            }
+            const double channel_threshold = ff.at("dem_change_channel_specific_catchment_metres");
+            if (channel_threshold > 0.0)
+            {
+                // Channels are found on the carved and filled surface (D37).
+                lsdtt::lsdtt_raster_cpu routing = input_dem;
+                if (bf.at("breach_before_fill"))
+                    routing = breach_choice == "least_cost"
+                                  ? lsdtt::breach_depressions_least_cost(routing, breach_lc_options, nullptr)
+                                  : lsdtt::breach_depressions(routing, ii.at("n_threads"));
+                if (bf.at("fill_before_routing"))
+                    routing = lsdtt::fill_pits(routing, ff.at("fill_min_slope"), sf.at("boundary_conditions"),
+                                               ii.at("n_threads"));
+                const std::vector<std::uint8_t> channel = lsdtt::dem_change_channel_mask(
+                    routing, channel_threshold, ii.at("dem_change_channel_buffer_pixels"),
+                    sf.at("boundary_conditions"), ii.at("n_threads"));
+                if (exclusion.empty()) exclusion.assign(channel.size(), 0u);
+                std::int64_t n_channel = 0;
+                for (std::size_t i = 0; i < channel.size(); ++i)
+                    if (channel[i]) { exclusion[i] = 1u; ++n_channel; }
+                std::cout << "Channel exclusion (a >= " << number_string(channel_threshold) << " m, buffer "
+                          << ii.at("dem_change_channel_buffer_pixels") << " px): " << n_channel << " cells\n";
+            }
+            if (!exclusion.empty() && bf.at("write_dem_change_exclusion_raster"))
+            {
+                std::vector<float> ev(exclusion.begin(), exclusion.end());
+                lsdtt::lsdtt_data_loader loader;
+                loader.write_full(ev, dem.get_meta(), base + "_dem_change_exclusion.tif");
+            }
+
             const lsdtt::dem_change_result change = lsdtt::detect_dem_change_landslides(
-                difference, lsdtt::dem_change_slope(input_dem), stable.empty() ? nullptr : &stable, dem_change);
+                difference, lsdtt::dem_change_slope(input_dem), stable.empty() ? nullptr : &stable, dem_change,
+                exclusion.empty() ? nullptr : &exclusion);
+            if (!exclusion.empty())
+                std::cout << "Excluded: " << change.n_excluded_cells << " cells with a difference\n";
             const auto& u = change.uncertainty;
             std::cout << "Error on " << (u.used_stable_mask ? "stable terrain" : "all terrain, clipped") << " ("
                       << u.n_stable << " cells): bias " << number_string(u.bias_m) << " m, NMAD "
@@ -1734,10 +2188,102 @@ int main(int argc, char* argv[])
             lsdtt::lsdtt_run_record::add_provenance("dem_change_nmad_metres", number_string(u.nmad_m));
             lsdtt::lsdtt_run_record::add_provenance("dem_change_correlation_range_metres", number_string(u.correlation_range_m));
             lsdtt::lsdtt_run_record::add_provenance("dem_change_n_patches", std::to_string(change.patches.size()));
+            lsdtt::lsdtt_run_record::add_provenance("dem_change_n_excluded_cells", std::to_string(change.n_excluded_cells));
             const std::string change_base = parser.get_write_path() + "/" + parser.get_write_fname();
-            write_dem_change_outputs(change_base, change, dem.get_meta(), ii.at("frequency_area_bins_per_decade"),
-                                     ii.at("frequency_area_min_tail"));
+            dem_change_output_options out_options;
+            out_options.bins_per_decade = ii.at("frequency_area_bins_per_decade");
+            out_options.min_tail = ii.at("frequency_area_min_tail");
+            out_options.n_bootstrap = ii.at("scaling_fit_bootstrap_samples");
+            out_options.seed = static_cast<std::uint64_t>(ii.at("dem_change_random_seed"));
+            out_options.write_polygons = bf.at("write_dem_change_patch_polygons");
+            out_options.vector_format = sf.at("write_vector_format");
+            write_dem_change_outputs(change_base, change, dem.get_meta(), out_options);
             std::cout << "Wrote " << change_base << "_dem_change_*\n";
+
+            // A mapped inventory against the detected patches (R6).
+            if (!sf.at("landslide_inventory_fname").empty())
+            {
+                const std::string inv_path = resolve_input(parser.get_read_path(), sf.at("landslide_inventory_fname"));
+                const lsdtt::polygon_features_on_grid inv = lsdtt::rasterise_polygon_features_separately(
+                    input_dem, inv_path, sf.at("landslide_inventory_layer_name"), sf.at("landslide_inventory_id_field_name"));
+                std::vector<std::vector<std::int64_t>> cells;
+                cells.reserve(inv.features.size());
+                for (const auto& f : inv.features) cells.push_back(f.cells);
+                const lsdtt::inventory_dod_match mt = lsdtt::match_inventory_to_dem_change(change, dem.get_meta(), cells);
+                const auto quoted = [](const std::string& id) {
+                    if (id.find_first_of(",\";\n") == std::string::npos) return id;
+                    std::string q = "\"";
+                    for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                    return q + "\"";
+                };
+                const auto join_ids = [](const std::vector<std::int32_t>& v) {
+                    std::string t;
+                    for (std::size_t k = 0; k < v.size(); ++k) t += (k ? ";" : "") + std::to_string(v[k]);
+                    return t;
+                };
+                const auto nan_or = [](double v) { return std::isfinite(v) ? number_string(v) : std::string(); };
+                {
+                    const std::string path = change_base + "_inventory_dod_match.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    f << std::setprecision(10)
+                      << "scar_id,feature_index,n_cells,area_m2,n_valid_cells,dod_net_change_m3,dod_loss_volume_m3,"
+                         "dod_gain_volume_m3,detected_loss_area_m2,detected_loss_fraction,detected_loss_volume_m3,"
+                         "detected_gain_area_m2,detected_gain_volume_m3,n_loss_patches,loss_patch_ids,n_gain_patches,"
+                         "gain_patch_ids,matched\n";
+                    for (std::size_t q = 0; q < mt.polygons.size(); ++q)
+                    {
+                        const auto& m = mt.polygons[q];
+                        f << quoted(inv.features[q].id) << ',' << inv.features[q].feature_index << ',' << m.n_cells << ','
+                          << m.area_m2 << ',' << m.n_valid_cells << ',' << m.dod_net_change_m3 << ','
+                          << m.dod_loss_volume_m3 << ',' << m.dod_gain_volume_m3 << ',' << m.detected_loss_area_m2 << ','
+                          << nan_or(m.area_m2 > 0 ? m.detected_loss_area_m2 / m.area_m2 : std::nan("")) << ','
+                          << m.detected_loss_volume_m3 << ',' << m.detected_gain_area_m2 << ','
+                          << m.detected_gain_volume_m3 << ',' << m.loss_patch_ids.size() << ','
+                          << join_ids(m.loss_patch_ids) << ',' << m.gain_patch_ids.size() << ','
+                          << join_ids(m.gain_patch_ids) << ',' << (m.matched ? 1 : 0) << '\n';
+                    }
+                }
+                {
+                    const std::string path = change_base + "_inventory_dod_patch_match.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    const double a = dem.get_meta().cell_size * dem.get_meta().cell_size;
+                    f << std::setprecision(10)
+                      << "patch_id,change,n_cells,area_m2,n_cells_in_polygons,fraction_in_polygons,n_polygons,scar_ids\n";
+                    for (const auto& p : mt.patches)
+                    {
+                        std::string ids;
+                        for (std::size_t k = 0; k < p.polygons.size(); ++k)
+                            ids += (k ? ";" : "") + inv.features[static_cast<std::size_t>(p.polygons[k])].id;
+                        f << p.patch_id << ',' << (p.sign < 0 ? "loss" : "gain") << ',' << p.n_cells << ','
+                          << p.n_cells * a << ',' << p.n_cells_in_polygons << ','
+                          << nan_or(p.n_cells > 0 ? static_cast<double>(p.n_cells_in_polygons) / p.n_cells : std::nan(""))
+                          << ',' << p.polygons.size() << ',' << quoted(ids) << '\n';
+                    }
+                }
+                {
+                    const std::string path = change_base + "_inventory_dod_summary.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    f << std::setprecision(10) << "quantity,value\n"
+                      << "n_polygons," << mt.polygons.size() << "\nn_polygons_matched," << mt.n_polygons_matched
+                      << "\nn_polygons_off_grid," << inv.n_outside_grid
+                      << "\nn_loss_patches," << mt.n_loss_patches << "\nn_loss_patches_matched," << mt.n_loss_patches_matched
+                      << "\npolygon_union_area_m2," << mt.polygon_union_area_m2
+                      << "\ndetected_loss_area_m2," << mt.detected_loss_area_m2
+                      << "\ndetected_loss_in_polygons_m2," << mt.detected_loss_in_polygons_m2
+                      << "\nmapped_area_detected_fraction," << nan_or(mt.mapped_area_detected_fraction)
+                      << "\ndetected_area_mapped_fraction," << nan_or(mt.detected_area_mapped_fraction) << "\n";
+                }
+                std::cout << "Inventory against the DoD: " << mt.n_polygons_matched << " of " << mt.polygons.size()
+                          << " polygons touch a loss patch; " << mt.n_loss_patches_matched << " of " << mt.n_loss_patches
+                          << " loss patches touch a polygon; mapped area detected "
+                          << nan_or(mt.mapped_area_detected_fraction) << ", detected loss area mapped "
+                          << nan_or(mt.detected_area_mapped_fraction) << "\n";
+                std::cout << "Wrote " << change_base << "_inventory_dod_*.csv\n";
+                lsdtt::lsdtt_run_record::add_provenance("inventory_dod_n_polygons_matched", std::to_string(mt.n_polygons_matched));
+            }
 
             if (!run_sinmap && !run_rupture && !run_hazard_area)
             {

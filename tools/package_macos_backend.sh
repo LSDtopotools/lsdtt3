@@ -691,8 +691,22 @@ if [[ -z "$PROJ_DATA_DIR" ]]; then
     exit 1
 fi
 
-cp -R "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
-cp -R "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
+# Homebrew's share/proj (and sometimes share/gdal) is a symlink into the
+# Cellar. BSD cp -R copies a symlink as a symlink, which left v0.10.0's bundles
+# with share/proj -> ../Cellar/... dangling and no proj.db. Resolve the real
+# directories and dereference while copying.
+GDAL_DATA_DIR="$(cd "$GDAL_DATA_DIR" && pwd -P)"
+PROJ_DATA_DIR="$(cd "$PROJ_DATA_DIR" && pwd -P)"
+cp -RL "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
+cp -RL "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
+if [[ -L "$STAGE_SHARE/proj" || ! -f "$STAGE_SHARE/proj/proj.db" || -L "$STAGE_SHARE/proj/proj.db" ]]; then
+    echo "ERROR: staged share/proj has no real proj.db" >&2
+    exit 1
+fi
+if [[ -L "$STAGE_SHARE/gdal" || ! -d "$STAGE_SHARE/gdal" ]]; then
+    echo "ERROR: staged share/gdal is not a real directory" >&2
+    exit 1
+fi
 
 # lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3).
 # Missing data is fatal when a cosmo CLI is in the bundle: those tools would
@@ -781,7 +795,7 @@ install and no admin rights are needed. Just unpack and run.
    they are not from the App Store:
 
    ```bash
-   xattr -dr com.apple.quarantine @BUNDLE_NAME@
+   xattr -drs com.apple.quarantine @BUNDLE_NAME@
    ```
 
 4. Activate the tools for the current Terminal session (note the `source` --
@@ -941,6 +955,29 @@ PY
 mkdir -p "$OUT_ABS"
 TARBALL="$OUT_ABS/$BUNDLE_NAME.tar.gz"
 rm -f "$TARBALL"
+# No symlink in the bundle may dangle or point outside it: such a link works
+# on the build machine and breaks on the user's (and makes xattr -r fail).
+bad_links=0
+while IFS= read -r link; do
+    target="$(readlink "$link")"
+    if [[ ! -e "$link" ]]; then
+        echo "ERROR: dangling symlink in bundle: ${link#$OUT_ABS/} -> $target" >&2
+        bad_links=1
+    elif [[ "$target" == /* ]]; then
+        echo "ERROR: absolute symlink in bundle: ${link#$OUT_ABS/} -> $target" >&2
+        bad_links=1
+    else
+        resolved="$(cd "$(dirname "$link")" && cd "$(dirname "$target")" && pwd -P)"
+        case "$resolved" in
+            "$(cd "$STAGE_DIR" && pwd -P)"*) ;;
+            *) echo "ERROR: symlink leaves the bundle: ${link#$OUT_ABS/} -> $target" >&2; bad_links=1 ;;
+        esac
+    fi
+done < <(find "$STAGE_DIR" -type l)
+if [[ "$bad_links" -ne 0 ]]; then
+    exit 1
+fi
+
 tar -C "$OUT_ABS" -czf "$TARBALL" "$BUNDLE_NAME"
 
 echo "Created backend bundle: $TARBALL"

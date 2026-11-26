@@ -95,6 +95,7 @@ nav:
     - Hillslope-channel tagging: design_and_algorithms/hillslope_channel_tagging.md
     - Burning mapped rivers into a DEM: design_and_algorithms/burning_river_lines.md
   - Command-line reference:
+    - Using the command-line tools: cli_reference/index.md
     - DEM preparation:
       - Fetch a DEM: cli_reference/cli_reference_lsdtt_fetch_raster.md
       - Fetch erosion rates (OCTOPUS): cli_reference/cli_reference_lsdtt_fetch_erosion_rates.md

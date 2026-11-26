@@ -385,15 +385,24 @@ if(LSDTT_PYTHON_RELEASE_WHEEL)
                 "LSDTT_PYTHON_RELEASE_WHEEL=ON. Set it explicitly to the "
                 "corresponding runtime-data directory.")
         endif()
+        # Homebrew's share/proj is a symlink into the Cellar. Installed as is,
+        # the wheel (a zip, which cannot hold the link) got no PROJ data at
+        # all: the v0.10.0 macOS wheels have no proj.db. Install from the real
+        # directory.
+        get_filename_component(_lsdtt_real_data_dir "${${LSDTT_PYTHON_RUNTIME_DATA}}" REALPATH)
+        set(${LSDTT_PYTHON_RUNTIME_DATA}_REAL "${_lsdtt_real_data_dir}")
     endforeach()
+    if(NOT EXISTS "${LSDTT_PYTHON_PROJ_DATA_DIR_REAL}/proj.db")
+        message(FATAL_ERROR "No proj.db in ${LSDTT_PYTHON_PROJ_DATA_DIR_REAL}")
+    endif()
 
     # share/gdal and share/proj, NOT gdal_data/proj_data: lsdtt::gdal_init()
     # probes <root>/share/gdal and <root>/share/proj, and lsdtt3/__init__ points
     # that probe at this package directory. Matching the layout is what lets the
     # wheel's own data win over whatever PROJ data the interpreter's environment
     # happens to have -- see bindings/geospatial_runtime.cpp.
-    install(DIRECTORY "${LSDTT_PYTHON_GDAL_DATA_DIR}/"
+    install(DIRECTORY "${LSDTT_PYTHON_GDAL_DATA_DIR_REAL}/"
         DESTINATION lsdtt3/share/gdal)
-    install(DIRECTORY "${LSDTT_PYTHON_PROJ_DATA_DIR}/"
+    install(DIRECTORY "${LSDTT_PYTHON_PROJ_DATA_DIR_REAL}/"
         DESTINATION lsdtt3/share/proj)
 endif()

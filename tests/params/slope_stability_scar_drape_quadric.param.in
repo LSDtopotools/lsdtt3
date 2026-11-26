@@ -1,0 +1,15 @@
+# lsdtt-slope-stability: scar drape, rim_quadric (exact on the fixture's bowl), with DEM-error samples.
+read_path: __READ_PATH__
+read_fname: drape_post.tif
+write_path: __WRITE_PATH__
+write_fname: sdq
+n_threads: 1
+run_sinmap: false
+run_rupture_planes: false
+run_scar_drape_volumes: true
+landslide_inventory_fname: drape_scars.gpkg
+landslide_inventory_id_field_name: scar_id
+scar_drape_reference_dem_fname: drape_reference.tif
+scar_drape_surface_type: rim_quadric
+scar_drape_uncertainty_samples: 20
+scar_drape_dem_sigma_metres: 0.01

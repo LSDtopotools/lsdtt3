@@ -888,7 +888,7 @@ wrong names what is wrong instead of shipping a broken bundle.
 - copies GDAL/PROJ data; writes `setenv.sh` (PATH + data dirs only; sourced
   from bash or zsh, and sets no shell options),
   end-user `README.md` (including the Gatekeeper quarantine step:
-  `xattr -dr com.apple.quarantine <bundle>`), `manifest.json`,
+  `xattr -drs com.apple.quarantine <bundle>`), `manifest.json`,
   `THIRD_PARTY_NOTICES.txt`; builds the tar.gz
 
 ### Requirements

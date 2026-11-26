@@ -256,6 +256,43 @@ which noise becomes negligible. The simulated noise is Gaussian and real DEM
 errors have heavier tails, so this is a **lower bound** on false detections. It
 does not include systematic change such as forestry.
 
+**Exclusions.** Cells in any exclusion mask, and channel cells, are neither
+detected nor used for the error model, exactly like cells gentler than
+`dem_change_min_slope`. Channels are cells whose D-infinity specific catchment
+area $a = A/b$ ($b$ the cell size) on the carved and filled DEM reaches
+`dem_change_channel_specific_catchment_metres`, grown by a Euclidean buffer. The
+carved surface is used only to route flow; the change is measured on the input
+DEM. Without this, aggradation and incision along channels form long patches
+that are not landslides.
+
+**Polygons and scaling.** Patches are written as polygons along cell edges, one
+feature per 4-connected part, with holes. A patch joined across unchanged cells
+has several parts, and each carries the patch's fields, so summing `area_m2`
+over a patch's parts gives its area. For loss and gain separately the tool fits
+$|V| = \alpha A^\gamma$ and $|\bar h| = \alpha A^\gamma$ by ordinary least
+squares and reduced major axis on the logarithms (both are reported because
+detection truncates small, shallow patches and areas carry error, which biases
+OLS low; see `src/utils/lsdtt_scaling_fit.hpp`), and the frequency - volume tail
+$p(V) \propto V^{\eta}$ by the continuous maximum likelihood of Clauset et al.
+(2009), with $V_{min}$ chosen by the Kolmogorov - Smirnov distance. Areas are
+whole numbers of cells, so the frequency - area fit is discrete; volumes are not.
+A DEM-of-difference inventory gives the observed scaling against which the
+models' potential-landslide catalogues are compared.
+
+**A mapped inventory against the DoD.** With `landslide_inventory_fname`, each
+mapped polygon is matched to the detected patches through shared cells
+(`match_inventory_to_dem_change`). Per polygon: the area detected as loss and
+gain, the DoD's net, loss and gain volume over all its cells (detected or not),
+and the patches it touches; it is matched if it touches a loss patch. Per
+patch: its cells inside polygons and the polygons it overlaps. The summary
+gives two area fractions: of the mapped area (union of polygons) detected as
+loss, and of the detected loss inside the polygons. Overlapping polygons each
+count the shared cells; the union counts them once. On East San Lorenzo, 39 of
+81 mapped source polygons touch a loss patch, 24 % of the mapped area is
+detected and 0.7 % of the detected loss is mapped: at an NMAD of 0.33 m most
+shallow scars are below detection, and most detected loss is noise, channels
+not removed, or unmapped change.
+
 Run the same analysis on a nearby area with no known landslide event. Patches
 found there show how much of the signal comes from land-cover change and sensor
 differences.
@@ -380,6 +417,66 @@ exact on a planar slope. Across a convex nose it lies too low (volume too
 small), and across a hollow, or a scar cut into an older gully, too high (volume
 too large). Deposits left in the scar, or a polygon drawn inside the crown, put
 the ring or the floor too high and the volume too low.
+
+**Fitted surfaces** (`scar_drape_surface_type`). Two alternatives to the
+membrane, both kept no lower than the ground ($z = \max(z_{\text{DEM}}, f)$):
+- `rim_plane`: $f$ is the least-squares plane through the band of cells up to
+  `scar_drape_rim_fit_width_pixels` (8-connected rings) outside $\Omega$. Exact
+  on a planar slope, like the membrane.
+- `rim_quadric`: $f = a + bx + cy + dx^2 + exy + fy^2$ by least squares through
+  the same band. Exact wherever the pre-event surface had uniform curvature: a
+  bowl, a hollow or a nose, where the membrane is too deep or too shallow. The
+  band must be at least two cells wide. On a closed ring the six coefficients
+  are barely determined: on a circle $x^2 + y^2$ is constant, so its
+  coefficient (the mean curvature, which sets the depth at the centre) is not
+  fixed by the ring at all. A band of width $w$ fixes it through the radial
+  change across the band.
+
+Coordinates are centred and scaled before the normal equations are solved
+(Gaussian elimination with partial pivoting); a band that cannot determine the
+surface (a pivot below $10^{-10}$ of the largest diagonal) gives status
+`rim_fit_failed`. `surface_fit_n_cells` and `surface_fit_residual_m` (RMS misfit
+in the band) are reported; a large residual means the surface is not a good
+description of the ground around the scar.
+
+**Uncertainty.** Two kinds are reported separately and not added:
+- *DEM error* (`scar_drape_uncertainty_samples`): Monte Carlo. Each sample adds
+  Gaussian error to the post-event DEM and re-drapes every scar.
+  `volume_sigma_m3` is the sample standard deviation of each scar's mapped
+  volume, and `volume_noise_bias_m3` the mean sample volume minus the volume.
+  Because the cloth is re-solved, the error of the rim is carried through the
+  surface, and error correlated over the scar and its rim cancels (a uniform
+  offset moves cloth and ground together). For a linear surface (`rim_plane`,
+  no contact) with white error of standard deviation $\sigma$,
+  $\mathrm{var}\,V = a^2\sigma^2\,[\,n + s^\top (X^\top X)^{-1} s\,]$, with $n$
+  mapped cells of area $a$, $X$ the band cells' $(1, x, y)$ and $s$ the sum of
+  $(1, x, y)$ over the mapped cells; the Monte Carlo reproduces it. The noise
+  bias is positive for the membrane: a cloth over a noisy surface rests on the
+  highs, so it measures a noise floor. The error is either
+  `scar_drape_dem_sigma_metres` with `scar_drape_error_nugget_fraction` and
+  `scar_drape_error_correlation_range_metres`, or, when it is 0, the error
+  model of the reference DEM of difference: its slope-binned NMAD divided by
+  √2 (equal, independent errors in both DEMs), nugget and range, estimated off
+  the scars. The noise generator is the one behind the DoD false-detection
+  simulations; each sample's seed is a splitmix64 hash of the seed and sample
+  number, and results do not depend on the thread count.
+- *Rim placement* (`scar_drape_buffer_spread_max_pixels`): the mapped volume
+  with rim buffers 0 to that number; `volume_buffer_spread_m3` is max − min.
+
+On East San Lorenzo (81 scars, reference = 2015 DTM), the drape / reference
+total is 1.71 (membrane), 1.88 (`rim_plane`) and 1.40 (`rim_quadric`), and the
+control 1.01, 0.95 and 0.52 of the reference. With the DoD error model (NMAD
+0.32 m, nugget 0.35, range 15 m) and 50 samples, the total volume sigma is
+48 m³ and the noise bias +262 m³, while buffers 0–2 span 1,980–4,485 m³: where
+the rim is placed matters far more than DEM error.
+
+**Validation outputs.** With `scar_drape_reference_dem_fname` the tool computes
+the reference volume of each scar (net, loss and gain), the control drape on the
+reference DEM, and a summary (`_scar_drape_validation.csv`). Volume - area fits
+use the shared scaling fit (`src/utils/lsdtt_scaling_fit`): OLS and reduced
+major axis, with optional bootstrap intervals. With error in area, OLS γ is
+attenuated by λ = var(log A) / (var(log A) + var(error)) and RMA by √λ, so both
+are reported.
 
 **Test against repeat lidar.** In Gleann Easan Biorach (Arran) the 2012
 Phase 2 and 2025 National LiDAR Programme DTMs (1 m) give 115 scars of at least

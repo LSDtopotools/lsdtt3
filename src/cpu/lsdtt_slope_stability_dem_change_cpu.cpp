@@ -22,6 +22,7 @@
 #include "../utils/lsdtt_connected_components.hpp"
 #include "../utils/lsdtt_statistics.hpp"
 #include "../utils/lsdtt_thread_utils.hpp"
+#include "lsdtt_flowgraph_cpu.hpp"
 #include "lsdtt_raster_central_difference_cpu.hpp"
 #include "lsdtt_slope_stability_catalogue_cpu.hpp"
 
@@ -249,6 +250,7 @@ struct detection_context
     std::vector<std::pair<int, int>> disc;
     bool want_loss = true, want_gain = false;
     double patch_significance = 1.96;
+    double min_mean_change = 0.0;
     int min_patch_cells = 5;
     bool full_records = true;
 };
@@ -381,6 +383,7 @@ void detect_one_sign(const detection_context& ctx, const std::vector<float>& cor
         const double mean = sum_change[g] / c;
         const double significance = std::abs(mean) / std::max(sigma_mean, 1e-12);
         if (significance < ctx.patch_significance) continue;
+        if (std::abs(mean) < ctx.min_mean_change) continue;
 
         dem_change_patch p;
         p.id = static_cast<std::int32_t>(out.patches.size()) + 1;
@@ -528,11 +531,146 @@ std::vector<double> dem_change_slope(const lsdtt_raster_cpu& dem)
     return out;
 }
 
+inventory_dod_match match_inventory_to_dem_change(
+    const dem_change_result&                      result,
+    const lsdtt_raster_meta&                      meta,
+    const std::vector<std::vector<std::int64_t>>& polygon_cells)
+{
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (result.label.size() != n || result.corrected_m.size() != n)
+        throw std::invalid_argument("match_inventory_to_dem_change: the result does not match the grid");
+    const double a = meta.cell_size * meta.cell_size;
+    const float nodata = static_cast<float>(meta.no_data_value);
+    // Patch id -> position, and sign.
+    std::vector<std::size_t> pos_of(result.patches.size() + 1, 0);
+    inventory_dod_match out;
+    out.patches.resize(result.patches.size());
+    for (std::size_t k = 0; k < result.patches.size(); ++k)
+    {
+        const auto& p = result.patches[k];
+        if (p.id < 1 || static_cast<std::size_t>(p.id) >= pos_of.size())
+            throw std::invalid_argument("match_inventory_to_dem_change: unexpected patch id");
+        pos_of[static_cast<std::size_t>(p.id)] = k;
+        out.patches[k].patch_id = p.id;
+        out.patches[k].sign = p.sign;
+        if (p.sign < 0) ++out.n_loss_patches;
+    }
+    const auto patch_at = [&](std::size_t i) -> const dem_change_patch* {
+        const std::int32_t id = result.label[i];
+        if (id < 1 || static_cast<std::size_t>(id) >= pos_of.size()) return nullptr;
+        return &result.patches[pos_of[static_cast<std::size_t>(id)]];
+    };
+    for (std::size_t i = 0; i < n; ++i)
+        if (const dem_change_patch* p = patch_at(i))
+        {
+            ++out.patches[pos_of[static_cast<std::size_t>(p->id)]].n_cells;
+            if (p->sign < 0) out.detected_loss_area_m2 += a;
+        }
+
+    std::vector<std::uint8_t> in_union(n, 0u);
+    out.polygons.resize(polygon_cells.size());
+    for (std::size_t q = 0; q < polygon_cells.size(); ++q)
+    {
+        inventory_dod_polygon_match& m = out.polygons[q];
+        for (const std::int64_t ci : polygon_cells[q])
+        {
+            if (ci < 0 || static_cast<std::size_t>(ci) >= n)
+                throw std::invalid_argument("match_inventory_to_dem_change: a polygon cell is off the grid");
+            const std::size_t i = static_cast<std::size_t>(ci);
+            ++m.n_cells;
+            in_union[i] = 1u;
+            const float c = result.corrected_m[i];
+            const bool valid = c != nodata && std::isfinite(c);
+            if (valid)
+            {
+                ++m.n_valid_cells;
+                m.dod_net_change_m3 += c * a;
+                if (c < 0) m.dod_loss_volume_m3 -= c * a; else m.dod_gain_volume_m3 += c * a;
+            }
+            if (const dem_change_patch* p = patch_at(i))
+            {
+                const double mag = valid ? std::abs(static_cast<double>(c)) * a : 0.0;
+                if (p->sign < 0) { m.detected_loss_area_m2 += a; m.detected_loss_volume_m3 += mag; m.loss_patch_ids.push_back(p->id); }
+                else { m.detected_gain_area_m2 += a; m.detected_gain_volume_m3 += mag; m.gain_patch_ids.push_back(p->id); }
+                auto& pl = out.patches[pos_of[static_cast<std::size_t>(p->id)]].polygons;
+                if (pl.empty() || pl.back() != static_cast<int>(q)) pl.push_back(static_cast<int>(q));
+            }
+        }
+        m.area_m2 = static_cast<double>(m.n_cells) * a;
+        for (auto* ids : {&m.loss_patch_ids, &m.gain_patch_ids})
+        {
+            std::sort(ids->begin(), ids->end());
+            ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+        }
+        m.matched = !m.loss_patch_ids.empty();
+        if (m.matched) ++out.n_polygons_matched;
+    }
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!in_union[i]) continue;
+        out.polygon_union_area_m2 += a;
+        if (const dem_change_patch* p = patch_at(i))
+        {
+            ++out.patches[pos_of[static_cast<std::size_t>(p->id)]].n_cells_in_polygons;
+            if (p->sign < 0) out.detected_loss_in_polygons_m2 += a;
+        }
+    }
+    for (const auto& p : out.patches)
+        if (p.sign < 0 && p.n_cells_in_polygons > 0) ++out.n_loss_patches_matched;
+    if (out.polygon_union_area_m2 > 0)
+        out.mapped_area_detected_fraction = out.detected_loss_in_polygons_m2 / out.polygon_union_area_m2;
+    if (out.detected_loss_area_m2 > 0)
+        out.detected_area_mapped_fraction = out.detected_loss_in_polygons_m2 / out.detected_loss_area_m2;
+    return out;
+}
+
+std::vector<float> simulate_dem_error_noise(
+    int nr, int nc, double cell_size, double nugget_fraction, double correlation_range_m, std::uint64_t seed)
+{
+    if (nr < 1 || nc < 1 || !(cell_size > 0.0) || !(nugget_fraction >= 0.0 && nugget_fraction <= 1.0) ||
+        !(correlation_range_m >= 0.0))
+        throw std::invalid_argument("simulate_dem_error_noise: an argument is out of range");
+    return simulate_noise(nr, nc, cell_size, nugget_fraction, correlation_range_m, seed);
+}
+
+dem_change_error_model estimate_dem_change_error_model(
+    const lsdtt_raster_cpu&          difference,
+    const std::vector<double>&       slope,
+    const std::vector<std::uint8_t>* stable_mask,
+    const dem_change_options&        options,
+    const std::vector<std::uint8_t>* exclusion_mask)
+{
+    if (options.min_slope < 0.0 || options.n_slope_bins < 1 || options.n_variogram_pairs < 0)
+        throw std::invalid_argument("estimate_dem_change_error_model: an option is out of range");
+    const lsdtt_raster_meta& meta = difference.get_meta();
+    meta.check_projected_metres();
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (slope.size() != n || (stable_mask && stable_mask->size() != n) || (exclusion_mask && exclusion_mask->size() != n))
+        throw std::invalid_argument(
+            "estimate_dem_change_error_model: slope, stable_mask and exclusion_mask need one value per cell");
+    const std::vector<float>& dh = difference.get_data();
+    const std::vector<std::uint8_t>& mask = difference.get_mask();
+    std::vector<std::uint8_t> assessable(n, 0u);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!mask[i] || !std::isfinite(dh[i])) continue;
+        if (exclusion_mask && (*exclusion_mask)[i]) continue;
+        if (std::isfinite(slope[i]) && slope[i] >= options.min_slope) assessable[i] = 1u;
+    }
+    dem_change_error_model out;
+    out.uncertainty = estimate_uncertainty(meta, dh, assessable, slope, stable_mask, options);
+    out.sigma_m.assign(n, std::numeric_limits<float>::quiet_NaN());
+    for (std::size_t i = 0; i < n; ++i)
+        if (std::isfinite(slope[i])) out.sigma_m[i] = static_cast<float>(sigma_at(out.uncertainty, slope[i]));
+    return out;
+}
+
 dem_change_result detect_dem_change_landslides(
     const lsdtt_raster_cpu&          difference,
     const std::vector<double>&       slope,
     const std::vector<std::uint8_t>* stable_mask,
-    const dem_change_options&        options)
+    const dem_change_options&        options,
+    const std::vector<std::uint8_t>* exclusion_mask)
 {
     if (options.change_sign != "loss" && options.change_sign != "gain" && options.change_sign != "both")
         throw std::invalid_argument("detect_dem_change_landslides: change_sign must be loss, gain or both");
@@ -540,26 +678,31 @@ dem_change_result detect_dem_change_landslides(
         throw std::invalid_argument("detect_dem_change_landslides: need 0 < detection_sigma <= seed_sigma");
     if (options.patch_significance < 0.0 || options.min_patch_cells < 1 || options.aggregation_radius_pixels < 0 ||
         options.min_slope < 0.0 || options.n_slope_bins < 1 || options.n_null_simulations < 0 ||
-        options.n_variogram_pairs < 0)
+        options.n_variogram_pairs < 0 || !(options.min_patch_mean_change_m >= 0.0))
         throw std::invalid_argument("detect_dem_change_landslides: an option is out of range");
 
     const lsdtt_raster_meta& meta = difference.get_meta();
     meta.check_projected_metres();
     const int nr = meta.n_rows, nc = meta.n_cols;
     const std::size_t n = static_cast<std::size_t>(nr) * nc;
-    if (slope.size() != n || (stable_mask && stable_mask->size() != n))
-        throw std::invalid_argument("detect_dem_change_landslides: slope and stable_mask need one value per cell");
+    if (slope.size() != n || (stable_mask && stable_mask->size() != n) || (exclusion_mask && exclusion_mask->size() != n))
+        throw std::invalid_argument(
+            "detect_dem_change_landslides: slope, stable_mask and exclusion_mask need one value per cell");
 
     const std::vector<float>& dh = difference.get_data();
     const std::vector<std::uint8_t>& mask = difference.get_mask();
     std::vector<std::uint8_t> assessable(n, 0u);
     dem_change_result out;
     for (std::size_t i = 0; i < n; ++i)
-        if (mask[i] && std::isfinite(dh[i]) && std::isfinite(slope[i]) && slope[i] >= options.min_slope)
+    {
+        if (!mask[i] || !std::isfinite(dh[i])) continue;
+        if (exclusion_mask && (*exclusion_mask)[i]) { ++out.n_excluded_cells; continue; }
+        if (std::isfinite(slope[i]) && slope[i] >= options.min_slope)
         {
             assessable[i] = 1u;
             ++out.n_valid_cells;
         }
+    }
     const double cell_area = meta.cell_size * meta.cell_size;
     out.valid_area_m2 = static_cast<double>(out.n_valid_cells) * cell_area;
 
@@ -593,6 +736,7 @@ dem_change_result detect_dem_change_landslides(
     ctx.want_loss = options.change_sign != "gain";
     ctx.want_gain = options.change_sign != "loss";
     ctx.patch_significance = options.patch_significance;
+    ctx.min_mean_change = options.min_patch_mean_change_m;
     ctx.min_patch_cells = options.min_patch_cells;
     const int radius = options.aggregation_radius_pixels;
     // Half of the neighbourhood, since a union is symmetric. Radius 0 is the
@@ -718,6 +862,68 @@ dem_change_result detect_dem_change_landslides(
             null.by_area.push_back(bin);
         }
     }
+    return out;
+}
+
+std::vector<std::uint8_t> dem_change_channel_mask(const lsdtt_raster_cpu& routing_dem,
+                                                  double specific_catchment_threshold_m, int buffer_pixels,
+                                                  const std::string& boundary_conditions, int n_threads)
+{
+    if (!(specific_catchment_threshold_m > 0.0))
+        throw std::invalid_argument("dem_change_channel_mask: the specific catchment threshold must be > 0");
+    if (buffer_pixels < 0) throw std::invalid_argument("dem_change_channel_mask: the buffer must be >= 0");
+    const lsdtt_raster_meta& meta = routing_dem.get_meta();
+    meta.check_projected_metres();
+    lsdtt_flowgraph_options flow_options;
+    flow_options.method = lsdtt_flowgraph_method::d_infinity;
+    flow_options.boundary_conditions = boundary_conditions;
+    flow_options.n_threads = n_threads;
+    const lsdtt_flowgraph_cpu graph(routing_dem.get_data_array(), routing_dem.get_mask_array(), meta, flow_options);
+    const std::vector<double> area = graph.accumulate();
+    const std::vector<std::uint8_t>& valid = routing_dem.get_mask();
+    const int nr = meta.n_rows, nc = meta.n_cols;
+    const std::size_t n = static_cast<std::size_t>(nr) * nc;
+    const double area_threshold = specific_catchment_threshold_m * meta.cell_size;
+    std::vector<std::uint8_t> channel(n, 0u);
+    for (std::size_t i = 0; i < n; ++i)
+        if (valid[i] && area[i] >= area_threshold) channel[i] = 1u;
+    if (buffer_pixels == 0) return channel;
+    std::vector<std::pair<int, int>> disc;
+    for (int dr = -buffer_pixels; dr <= buffer_pixels; ++dr)
+        for (int dc = -buffer_pixels; dc <= buffer_pixels; ++dc)
+            if ((dr != 0 || dc != 0) && dr * dr + dc * dc <= buffer_pixels * buffer_pixels) disc.emplace_back(dr, dc);
+    std::vector<std::uint8_t> grown = channel;
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c)
+        {
+            if (!channel[static_cast<std::size_t>(r) * nc + c]) continue;
+            for (const auto& d : disc)
+            {
+                const int r2 = r + d.first, c2 = c + d.second;
+                if (r2 >= 0 && r2 < nr && c2 >= 0 && c2 < nc) grown[static_cast<std::size_t>(r2) * nc + c2] = 1u;
+            }
+        }
+    return grown;
+}
+
+dem_change_scaling fit_dem_change_scaling(const std::vector<dem_change_patch>& patches, int sign, int n_bootstrap,
+                                          std::uint64_t seed, std::size_t min_tail)
+{
+    if (sign != -1 && sign != 1) throw std::invalid_argument("fit_dem_change_scaling: sign must be -1 or +1");
+    dem_change_scaling out;
+    out.sign = sign;
+    std::vector<double> area, volume, depth;
+    for (const dem_change_patch& p : patches)
+    {
+        if (p.sign != sign) continue;
+        area.push_back(p.area_m2);
+        volume.push_back(std::abs(p.volume_m3));
+        depth.push_back(std::abs(p.mean_change_m));
+    }
+    out.n_patches = area.size();
+    out.volume_area = fit_power_law_scaling(area, volume, n_bootstrap, seed);
+    out.depth_area = fit_power_law_scaling(area, depth, n_bootstrap, seed + 1);
+    out.volume_tail = fit_power_law_tail(volume, false, std::max<std::size_t>(2, min_tail));
     return out;
 }
 

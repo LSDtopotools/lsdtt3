@@ -36,8 +36,9 @@
 //   grid.  The resulting polygon ring therefore traces the actual raster cell
 //   edges of the labelled region.
 //
-//   Interior holes (labels that form donuts) are not currently handled.  Only
-//   the outermost boundary is traced.
+//   The first overload traces only the outer boundary of each label, from its
+//   first pixel: a label in several pieces keeps one, and holes are filled.
+//   The overload with an attribute table writes every piece and its holes.
 //
 // Output schema
 // -------------
@@ -57,6 +58,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -108,6 +110,38 @@ void trace_labelled_polygons(
     const std::string&                   out_path,
     const lsdtt_vectorise_options&       options        = {},
     const std::vector<std::int32_t>&     label_source_id = {}
+);
+
+// -----------------------------------------------------------------------------
+// trace_labelled_polygons, with a per-label attribute table
+//
+// One feature per 4-connected PART of each label, with its holes, so that a
+// label made of separate pieces (a DEM-of-difference patch whose cells are
+// joined across unchanged cells, for instance) keeps every piece, and a ring of
+// cells keeps its hole. A hole is a group of cells outside the part that cannot
+// reach the part's bounding box edge through 8-connected cells outside it;
+// each 4-connected group of those is one inner ring.
+//
+// Fields: label_id, part (1.. in row-major order of the part's first cell),
+// n_parts, pixel_count and area_m2 of the part, then attributes.schema's
+// fields, with attributes.rows[label] (NULL for a label without a row).
+// Every part of a label carries the label's attributes.
+//
+// Throws std::invalid_argument if a row's length differs from the schema, or a
+// field name repeats one of the five fixed names.
+// -----------------------------------------------------------------------------
+struct lsdtt_label_attributes
+{
+    lsdtt_vector_schema schema;
+    std::map<std::int64_t, std::vector<lsdtt_vector_field_value>> rows;
+};
+
+void trace_labelled_polygons(
+    const lsdtt_raster_cpu&          labelled,
+    lsdtt_data_loader&               loader,
+    const std::string&               out_path,
+    const lsdtt_label_attributes&    attributes,
+    const lsdtt_vectorise_options&   options = {}
 );
 
 } // namespace lsdtt
