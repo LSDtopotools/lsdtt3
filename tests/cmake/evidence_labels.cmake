@@ -747,6 +747,8 @@ lsdtt_evidence(smoke_raster_preprocessing_sea_mask_lagoon system smoke exact_sol
 # pytest-marker plan); the exact messages and carried values are pinned by
 # hand (exact_solution).
 lsdtt_evidence(unit_param_parser_deprecation unit exact_solution negative conformance)
+lsdtt_evidence(unit_proj_grid_check unit property negative)  # WGS84->UTM needs no grid; BNG->UTM best = OSTN15 op, missing grid named with a less accurate fallback (or used when installed); warning once per pair, only when missing
+lsdtt_evidence(unit_proj_grid_lists unit conformance negative)  # C++ and Python default grid lists agree with checksums; fetch/list/where against file://; checksum, non-GeoTIFF, path and missing-grid refusals
 lsdtt_evidence(unit_output_file unit characterisation)  # removed pattern vs helper
 lsdtt_evidence(unit_hydraulic_routing unit property metamorphic)
 foreach(_t IN ITEMS wheel_cli_inventory version_consistency build_is_current

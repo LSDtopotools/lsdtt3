@@ -18,6 +18,11 @@
 
 #include "../utils/lsdtt_raster_geometry.hpp"
 #include "lsdtt_gdal_init.hpp"
+#include "lsdtt_proj_grid_check.hpp"
+
+#include <cstdlib>
+#include <filesystem>
+#include <sstream>
 
 namespace lsdtt
 {
@@ -30,15 +35,76 @@ const char* compound_crs(lsdtt_vertical_datum d)
     return d == lsdtt_vertical_datum::egm96 ? "EPSG:4326+5773" : "EPSG:4326+3855";
 }
 
-[[noreturn]] void missing_grid()
+const char* datum_name(lsdtt_vertical_datum d)
 {
-    throw std::runtime_error(
-        "vertical datum conversion: PROJ could not use the EGM96 and EGM2008 geoid grids. "
-        "Install them with: projsync --file us_nga_egm96_15 --file us_nga_egm08_25 "
-        "or allow PROJ to read them with the environment variable PROJ_NETWORK=ON");
+    return d == lsdtt_vertical_datum::egm96 ? "EGM96" : d == lsdtt_vertical_datum::egm2008 ? "EGM2008" : "unspecified";
+}
+
+[[noreturn]] void missing_grid(lsdtt_vertical_datum from, lsdtt_vertical_datum to)
+{
+    std::vector<std::string> missing = missing_vertical_datum_grids(from, to);
+    if (missing.empty()) missing = vertical_datum_grids(from, to);
+    throw std::runtime_error(missing_vertical_datum_grids_message(from, to, missing));
 }
 
 } // namespace
+
+std::vector<std::string> vertical_datum_grids(lsdtt_vertical_datum from, lsdtt_vertical_datum to)
+{
+    std::vector<std::string> g;
+    if (from == to || from == lsdtt_vertical_datum::unspecified || to == lsdtt_vertical_datum::unspecified)
+        return g;
+    for (lsdtt_vertical_datum d : {from, to})
+        g.push_back(d == lsdtt_vertical_datum::egm96 ? "us_nga_egm96_15.tif" : "us_nga_egm08_25.tif");
+    return g;
+}
+
+std::vector<std::string> missing_vertical_datum_grids(lsdtt_vertical_datum from, lsdtt_vertical_datum to)
+{
+    std::vector<std::string> missing;
+    const std::vector<std::string> needed = vertical_datum_grids(from, to);
+    if (needed.empty()) return missing;
+    const char* net = std::getenv("PROJ_NETWORK");
+    if (net && (std::string(net) == "ON" || std::string(net) == "on" || std::string(net) == "1")) return missing;
+    // Where lsdtt3 points PROJ: the bundled share/proj. Without one (a source
+    // build), ask PROJ itself through the grid check.
+    const std::string dir = pinned_proj_data_dir();
+    if (!dir.empty())
+    {
+        for (const auto& g : needed)
+        {
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(std::filesystem::path(dir) / g, ec)) missing.push_back(g);
+        }
+        return missing;
+    }
+    const proj_grid_check_result r =
+        check_proj_transformation_grids(compound_crs(from), compound_crs(to));
+    for (const auto& g : r.missing_grids)
+        for (const auto& n : needed)
+            if (g == n) missing.push_back(g);
+    return missing;
+}
+
+std::string missing_vertical_datum_grids_message(lsdtt_vertical_datum from, lsdtt_vertical_datum to,
+                                                 const std::vector<std::string>& missing)
+{
+    std::ostringstream s;
+    s << "vertical datum conversion " << datum_name(from) << " -> " << datum_name(to)
+      << " needs the PROJ geoid grid";
+    if (missing.size() > 1) s << "s";
+    for (std::size_t k = 0; k < missing.size(); ++k) s << (k ? ", " : " ") << missing[k];
+    s << ", which " << (missing.size() > 1 ? "are" : "is") << " not installed.";
+    for (const auto& g : missing)
+        if (g == "us_nga_egm08_25.tif")
+            s << " The EGM2008 grid (77 MB) is not bundled with lsdtt3 because of its size.";
+    s << " Install with: python3 fetch_proj_grids.py fetch";
+    for (const auto& g : missing) s << ' ' << g;
+    s << " (tools/fetch_proj_grids.py in the lsdtt3 repository; see "
+         "https://lsdtopotools.github.io/lsdtt3/what_is_lsdtt3/note_on_grids.html), or let PROJ read "
+         "them from its CDN with the environment variable PROJ_NETWORK=ON.";
+    return s.str();
+}
 
 lsdtt_vertical_datum parse_vertical_datum(const std::string& name)
 {
@@ -69,7 +135,7 @@ std::vector<float> vertical_datum_shift(
     lonlat.importFromEPSG(4326);
     if (source.SetFromUserInput(compound_crs(from)) != OGRERR_NONE ||
         target.SetFromUserInput(compound_crs(to)) != OGRERR_NONE)
-        missing_grid();
+        missing_grid(from, to);
     for (OGRSpatialReference* s : {&grid_srs, &lonlat, &source, &target})
         s->SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
@@ -79,7 +145,7 @@ std::vector<float> vertical_datum_shift(
     options.SetBallparkAllowed(false);   // a ballpark transform would return a zero shift
     std::unique_ptr<OGRCoordinateTransformation> geoid(
         OGRCreateCoordinateTransformation(&source, &target, options));
-    if (!to_lonlat || !geoid) missing_grid();
+    if (!to_lonlat || !geoid) missing_grid(from, to);
 
     const double cell_metres = grid_srs.IsGeographic() ? grid.cell_size * 111320.0 : grid.cell_size;
     const int step = std::max(1, static_cast<int>(std::floor(1000.0 / cell_metres)));
@@ -103,10 +169,10 @@ std::vector<float> vertical_datum_shift(
         std::fill(ok.begin(), ok.end(), 0);
         if (!geoid->Transform(lattice_cols, x.data(), y.data(), z.data(), ok.data()) ||
             !std::all_of(ok.begin(), ok.end(), [](int v) { return v != 0; }))
-            missing_grid();
+            missing_grid(from, to);
         for (int lc = 0; lc < lattice_cols; ++lc)
         {
-            if (!std::isfinite(z[lc])) missing_grid();
+            if (!std::isfinite(z[lc])) missing_grid(from, to);
             lattice[static_cast<std::size_t>(lr) * lattice_cols + lc] = z[lc];
         }
     }

@@ -19,6 +19,7 @@
 #include "../utils/lsdtt_output_file.hpp"
 
 #include "lsdtt_gdal_init.hpp"
+#include "lsdtt_proj_grid_check.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -1707,7 +1708,9 @@ lsdtt_cli_args lsdtt_param_parser::parse_args_deferred(
                 std::cout << ", PROJ " << proj_ver;
             std::cout << "\n"
                       << "  proj data: " << proj_data_description() << "\n"
-                      << "  GDAL data: " << gdal_data_description() << "\n";
+                      << "  GDAL data: " << gdal_data_description() << "\n"
+                      << "  proj grids: " << proj_grids_description() << "; grid check "
+                      << proj_grid_check_status() << "\n";
             std::exit(0);
         }
         if (is_flag(a, {"-c", "--cite", "citation", "-citation", "--citation"}))

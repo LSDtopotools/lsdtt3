@@ -13160,6 +13160,30 @@ lsdtt_set_tests_properties(unit_cli_reference_is_current PROPERTIES
     LABELS "cli;docs"
     TIMEOUT 900)
 
+# PROJ grid availability check (src/core/lsdtt_proj_grid_check).
+add_executable(lsdtt-test-proj-grid-check cpp/test_proj_grid_check.cpp)
+target_link_libraries(lsdtt-test-proj-grid-check PRIVATE lsdtt3_core)
+add_test(NAME unit_proj_grid_check COMMAND lsdtt-test-proj-grid-check)
+lsdtt_set_tests_properties(unit_proj_grid_check PROPERTIES
+    LABELS "gdal"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS")
+
+# tools/fetch_proj_grids.py: its default list matches the C++ one, and fetch,
+# list and where work against a local file:// server. No network, no build.
+if(LSDTT_ENABLE_PYTHON_TESTS)
+    add_test(NAME unit_proj_grid_lists
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_proj_grid_lists.py"
+            --repo-root "${CMAKE_SOURCE_DIR}")
+    lsdtt_mark_test_runtime(python unit_proj_grid_lists)
+else()
+    lsdtt_mark_test_unregistered(python unit_proj_grid_lists)
+endif()
+lsdtt_set_tests_properties(unit_proj_grid_lists PROPERTIES
+    LABELS "packaging;gdal"
+    PASS_REGULAR_EXPRESSION "RESULT: PASS"
+    TIMEOUT 60)
+
 # The pip wheel declares its CLIs in four hand-kept places, which must match the
 # root lsdtt_cli() targets. python_bindings/tests/test_cli_packaging.py checks
 # this too but needs pytest, so it never ran here, and four CLIs went missing
@@ -13348,6 +13372,7 @@ set(LSDTT_DOMAIN_RULES
     # data pinning (Phase 0), the header facade (Phase 1) and the format contract
     # (Phase 2 chunk 2a). Anyone touching that boundary wants `ctest -L gdal`.
     "gdal_"                  "gdal"
+    "proj_grid"              "gdal"
     # Library-level statistics (src/utils/lsdtt_statistics and relatives).
     "order_statistics"       "core"
     # Slope-stability numerics in src/utils (uniform-combination CDFs,

@@ -8,6 +8,7 @@
 // See LICENSE file or https://www.gnu.org/licenses/agpl-3.0.html
 
 #include "lsdtt_vector_utils.hpp"
+#include "lsdtt_proj_grid_check.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -117,6 +118,7 @@ void lsdtt_coordinate_transform::initialise(
         );
     }
 
+    warn_if_proj_grids_missing(impl_->src_srs, impl_->dst_srs, "reprojecting vector data");
     OGRCoordinateTransformation* raw =
         OGRCreateCoordinateTransformation(&impl_->src_srs, &impl_->dst_srs);
 
@@ -165,6 +167,7 @@ void lsdtt_coordinate_transform::initialise_from_epsg(
         );
     }
 
+    warn_if_proj_grids_missing(impl_->src_srs, impl_->dst_srs, "reprojecting vector data");
     OGRCoordinateTransformation* raw =
         OGRCreateCoordinateTransformation(&impl_->src_srs, &impl_->dst_srs);
 
@@ -223,6 +226,7 @@ void lsdtt_coordinate_transform::initialise_from_source_epsg(
         );
     }
 
+    warn_if_proj_grids_missing(impl_->src_srs, impl_->dst_srs, "reprojecting vector data");
     OGRCoordinateTransformation* raw =
         OGRCreateCoordinateTransformation(&impl_->src_srs, &impl_->dst_srs);
 
@@ -411,6 +415,7 @@ lsdtt_ogr_transform_ptr make_layer_to_raster_transform(
     if (src_srs.IsSame(&raster_srs))
         return nullptr;
 
+    warn_if_proj_grids_missing(src_srs, raster_srs, "reprojecting vector data to the raster's CRS");
     OGRCoordinateTransformation* ct =
         OGRCreateCoordinateTransformation(&src_srs, &raster_srs);
 

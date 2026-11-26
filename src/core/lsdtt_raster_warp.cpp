@@ -10,6 +10,7 @@
 // See lsdtt_raster_warp.hpp for full documentation.
 
 #include "lsdtt_raster_warp.hpp"
+#include "lsdtt_proj_grid_check.hpp"
 #include "lsdtt_pixel_type_gdal.hpp"
 #include "lsdtt_gdal_init.hpp"
 #include "lsdtt_crs_suggest.hpp"
@@ -180,6 +181,8 @@ lsdtt_extent transformed_extent_in_target_crs(
     src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     tgt_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
+    warn_if_proj_grids_missing(src_srs, tgt_srs, "warping the raster", source_meta.x_min, source_meta.y_min,
+                               source_meta.x_max(), source_meta.y_max());
     OGRCoordinateTransformation* ct =
         OGRCreateCoordinateTransformation(&src_srs, &tgt_srs);
 

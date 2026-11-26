@@ -68,6 +68,7 @@ nav:
     - Data:
       - Vector data: what_is_lsdtt3/vector_data.md
       - Raster data: what_is_lsdtt3/raster_data.md
+      - Datums and PROJ grids: what_is_lsdtt3/note_on_grids.md
     - Running benchmarks: what_is_lsdtt3/running_benchmarks.md
     - Workflows:
       - Running workflows: what_is_lsdtt3/workflows.md

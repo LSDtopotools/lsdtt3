@@ -208,6 +208,20 @@ if(Eigen3_FOUND)
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_EIGEN=1)
 endif()
 
+# PROJ C API for the grid-availability warning (src/core/lsdtt_proj_grid_check).
+find_path(LSDTT_PROJ_INCLUDE_DIR proj.h HINTS ${GDAL_INCLUDE_DIRS} "$ENV{CONDA_PREFIX}/include")
+find_library(LSDTT_PROJ_LIBRARY NAMES proj proj_9 proj_8 HINTS "$ENV{CONDA_PREFIX}/lib")
+if(LSDTT_PROJ_INCLUDE_DIR AND LSDTT_PROJ_LIBRARY)
+    target_include_directories(lsdtt3_runtime PRIVATE ${LSDTT_PROJ_INCLUDE_DIR})
+    target_link_libraries(lsdtt3_runtime PUBLIC ${LSDTT_PROJ_LIBRARY})
+    target_compile_definitions(lsdtt3_runtime PRIVATE LSDTT_HAS_PROJ_API=1)
+    message(STATUS "PROJ grid check: on (${LSDTT_PROJ_LIBRARY})")
+elseif(LSDTT_PYTHON_RELEASE_WHEEL)
+    message(FATAL_ERROR "A release wheel needs the PROJ headers and library for the grid check")
+else()
+    message(STATUS "PROJ grid check: off (proj.h or libproj not found)")
+endif()
+
 # Both shared objects are installed into the Python package. The platform
 # runtime path makes _core locate liblsdtt3_runtime beside it, independently
 # of the root build.
@@ -403,6 +417,28 @@ if(LSDTT_PYTHON_RELEASE_WHEEL)
     # happens to have -- see bindings/geospatial_runtime.cpp.
     install(DIRECTORY "${LSDTT_PYTHON_GDAL_DATA_DIR_REAL}/"
         DESTINATION lsdtt3/share/gdal)
+    # Datum grids excluded: Homebrew's PROJ installs PROJ-data (about 760 MB of
+    # GeoTIFF grids), which made the v0.11.0 macOS wheels 815 MB. The Linux and
+    # Windows wheels carry proj.db and the support files only.
     install(DIRECTORY "${LSDTT_PYTHON_PROJ_DATA_DIR_REAL}/"
-        DESTINATION lsdtt3/share/proj)
+        DESTINATION lsdtt3/share/proj
+        PATTERN "*.tif" EXCLUDE
+        PATTERN "*.tiff" EXCLUDE
+        PATTERN "*.gsb" EXCLUDE
+        PATTERN "*.gtx" EXCLUDE
+        PATTERN "*.byn" EXCLUDE
+        PATTERN "*.lla" EXCLUDE)
+    # The default datum-shift and geoid grids every platform carries (about
+    # 6 MB, checksums verified; see docs/what_is_lsdtt3/note_on_grids.md).
+    set(LSDTT_PYTHON_PROJ_GRIDS_DIR "${CMAKE_CURRENT_BINARY_DIR}/proj_default_grids")
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" "${LSDTT3_SOURCE_DIR}/tools/fetch_proj_grids.py"
+                --dir "${LSDTT_PYTHON_PROJ_GRIDS_DIR}" fetch --defaults
+        RESULT_VARIABLE _lsdtt_grids_result)
+    if(NOT _lsdtt_grids_result EQUAL 0)
+        message(FATAL_ERROR "Could not fetch the default PROJ grids into ${LSDTT_PYTHON_PROJ_GRIDS_DIR}")
+    endif()
+    install(DIRECTORY "${LSDTT_PYTHON_PROJ_GRIDS_DIR}/"
+        DESTINATION lsdtt3/share/proj
+        FILES_MATCHING PATTERN "*.tif")
 endif()
