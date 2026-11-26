@@ -117,4 +117,33 @@ if [[ $status -ne 0 ]]; then
     echo "FAIL: python_bindings/tests failed against this build (pytest exit $status)." >&2
     exit 1
 fi
-echo "PASS: bindings build and the whole python_bindings/tests suite passes."
+
+# The API contract checks the wheel workflow runs (python-wheels.yml "Check API
+# contracts and documentation", and the installed-wheel test that compares the
+# built API with api/public_api.json). Run here, against these bindings, so a
+# stale manifest or API reference stops the release before the wheel matrix
+# fails on it. Still from outside the source tree, so the installed package
+# is the one imported.
+echo "== API contract checks =="
+api_failed=()
+run_api_check() {
+    local label="$1"; shift
+    if "$VENV/bin/python" "$@"; then
+        echo "  ok: $label"
+    else
+        api_failed+=("$label")
+    fi
+}
+TOOLS="$REPO_ROOT/python_bindings/tools"
+run_api_check "public API manifest (api/public_api.json)" "$TOOLS/generate_public_api_manifest.py" --check
+run_api_check "API naming" "$TOOLS/check_api_naming.py"
+run_api_check "API examples" "$TOOLS/check_api_examples.py"
+run_api_check "API reference pages (docs/python_api)" "$TOOLS/generate_api_reference.py" --check
+if [[ ${#api_failed[@]} -gt 0 ]]; then
+    echo "FAIL: API contract checks failed: ${api_failed[*]}." >&2
+    echo "      Regenerate with: python python_bindings/tools/generate_public_api_manifest.py --update" >&2
+    echo "      and: python python_bindings/tools/generate_api_reference.py --update" >&2
+    echo "      (with these bindings installed), then commit the result." >&2
+    exit 1
+fi
+echo "PASS: bindings build, the whole python_bindings/tests suite and the API contract checks pass."

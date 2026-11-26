@@ -19,8 +19,10 @@
 #   4. Smoke-check every packaged CLI (runs each with -v and checks the output
 #      reports GDAL, not merely that the process exited 0). Then build the
 #      Python bindings once and run the whole python_bindings/tests suite
-#      against them (tests/scripts/check_python_bindings_smoke.sh). This is
-#      mandatory: a release whose C++ breaks the bindings does not ship.
+#      against them (tests/scripts/check_python_bindings_smoke.sh), then the
+#      API contract checks the wheel workflow runs (public API manifest, API
+#      naming, examples, API reference pages). This is mandatory: a release
+#      whose C++ breaks the bindings, or whose API docs are stale, does not ship.
 #   5. Package the Linux backend bundle (tools/package_linux_backend.sh).
 #   6. Optionally publish to a GitHub release with gh (--publish).
 
