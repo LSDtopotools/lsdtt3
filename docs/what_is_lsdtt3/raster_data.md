@@ -50,6 +50,15 @@ therefore require a projected CRS with horizontal units in metres. A geographic
 latitude/longitude raster should normally be reprojected before analysis, and in fact our `lsdtt-raster-preprocessing` enforces this. 
 You should use `lsdtt-raster-preprocessing` before you do any serious analysis: it ensures your raster is in the right format, and it can additionally inspect, reproject, crop, and prepare a DEM.
 
+Reprojecting between coordinate systems on the same datum (for example WGS 84
+to UTM) is exact. Changing datum, for example from British National Grid
+(OSGB36) or NAD27 to UTM, is only accurate to the metre if PROJ has the
+national correction grid; otherwise it is quietly off by a metre or more, and
+lsdtt3 prints a warning naming the missing grid. Converting heights between
+geoids (EGM96 and EGM2008, with `lsdtt-raster-calculator`) also needs a grid,
+and the EGM2008 one is not bundled. Which grids lsdtt3 carries, where this
+matters, and how to add a grid are in [A note on datums and PROJ grids](note_on_grids.md).
+
 We also have tools to make synthetic rasters, which receive a projected default georeference unless the generating
 tool (you have three choices, see command line reference) provides another CRS option. Synthetic rasters end up being geolocated in [Watopia](https://zwiftmap.com/watopia), where you can often find the lead developer of this software. 
 

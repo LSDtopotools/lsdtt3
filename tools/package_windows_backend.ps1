@@ -403,6 +403,10 @@ Copy-MsvcRuntime -TargetBin $stageBin
 Assert-SelfContained -TargetBin $stageBin
 Copy-Item -Path $gdalData -Destination (Join-Path $stageShare "gdal") -Recurse -Force
 Copy-Item -Path $projData -Destination (Join-Path $stageShare "proj") -Recurse -Force
+# The default datum-shift and geoid grids every platform carries (about 6 MB,
+# checksums verified; see docs/what_is_lsdtt3/note_on_grids.md).
+& python (Join-Path $repoRoot "tools/fetch_proj_grids.py") --dir (Join-Path $stageShare "proj") fetch --defaults
+if ($LASTEXITCODE -ne 0) { throw "Could not fetch the default PROJ grids" }
 
 # lsdtt3 bundled runtime data. The cosmo tools resolve crn_parameters.nc as
 # <exe>\..\share\lsdtt3, the same bin/../share contract as the GDAL and PROJ

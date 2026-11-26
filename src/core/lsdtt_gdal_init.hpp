@@ -83,6 +83,9 @@ bool set_bundled_data_root(const std::string& dir);
 //   "PROJ built-in search"    - not bundled and no environment override
 std::string proj_data_description();
 
+// The bundled PROJ data directory gdal_init() pinned, or "" if none.
+std::string pinned_proj_data_dir();
+
 // As above for GDAL's own data directory (gdalvrt.xsd and friends).
 std::string gdal_data_description();
 

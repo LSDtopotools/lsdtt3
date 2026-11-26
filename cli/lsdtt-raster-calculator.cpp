@@ -212,7 +212,9 @@ int main(int argc, char* argv[])
         "SRTM, NASADEM and AW3D30 use EGM96; Copernicus GLO-30 uses EGM2008. Set both "
         "datums to convert the second raster to the first raster's geoid. The "
         "difference varies across a DEM, so a constant vertical shift does not remove "
-        "it. Needs PROJ's geoid grids: a missing grid stops the run.",
+        "it. Needs PROJ's geoid grids: EGM96 is bundled, EGM2008 (77 MB) is not; a "
+        "missing grid stops the run before any raster is read, naming the command that "
+        "installs it (tools/fetch_proj_grids.py; see the note on datums and PROJ grids).",
         "Vertical reference", "param", ""};
 
     string_default_map["second_raster_vertical_datum"] = "unspecified";
@@ -508,6 +510,19 @@ int main(int argc, char* argv[])
                   << "second_raster_vertical_datum, or neither.\n";
         return 1;
     }
+    // Converting between geoids needs PROJ's geoid grids. EGM96 is bundled;
+    // EGM2008 (77 MB) is not. Stop now, naming the fix, rather than after
+    // reading both rasters.
+    if (first_datum != second_datum)
+    {
+        const std::vector<std::string> missing = lsdtt::missing_vertical_datum_grids(second_datum, first_datum);
+        if (!missing.empty())
+        {
+            std::cerr << "FATAL: " << lsdtt::missing_vertical_datum_grids_message(second_datum, first_datum, missing)
+                      << "\n";
+            return 1;
+        }
+    }
     if (!sf["dem_coregistration_stable_mask_fname"].empty() && !bf["run_dem_coregistration"])
     {
         std::cerr << "FATAL: dem_coregistration_stable_mask_fname needs "
@@ -756,7 +771,11 @@ int main(int argc, char* argv[])
     {
         std::cout << "Note: vertical datums not declared. If the two DEMs use different "
                      "geoids (EGM96 for SRTM, NASADEM and AW3D30; EGM2008 for Copernicus), "
-                     "the difference contains that smooth offset.\n";
+                     "the difference contains that smooth offset (typically decimetres, metres "
+                     "in high mountains). Declare both with first_raster_vertical_datum and "
+                     "second_raster_vertical_datum to remove it; an EGM2008 conversion needs a "
+                     "77 MB geoid grid that is not bundled (see the note on PROJ grids in the "
+                     "documentation).\n";
     }
 
     // Units and geoid of the second raster, applied to every copy of it.

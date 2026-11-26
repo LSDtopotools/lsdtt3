@@ -126,6 +126,7 @@ lsdtt3/
 │   │   ├── lsdtt_raster_base.hpp/.cpp       — abstract raster dispatch interface
 │   │   ├── lsdtt_raster_result.hpp          — plain data-transfer struct for rasters returned by core-layer engines
 │   │   ├── lsdtt_gdal_init.hpp/.cpp         — one-time GDAL/PROJ init and data pinning
+│   │   ├── lsdtt_proj_grid_check.hpp/.cpp   — warns when a transformation lacks a PROJ grid; the default grid list
 │   │   ├── lsdtt_pixel_type.hpp/.cpp        — GDAL-free sample-type enum
 │   │   ├── lsdtt_pixel_type_gdal.hpp        — the GDAL bridge (.cpp only)
 │   │   ├── lsdtt_data_loader.hpp/.cpp       — GDAL/OGR I/O, RAII, COG output
@@ -419,7 +420,7 @@ translation units, plus `lsdtt_chi_ksn_inversion_cpu` when Eigen3 is found.
 **`lsdtt3_core` sources** (`src/core/`) — GDAL-facing I/O, metadata,
 parameter parsing, projection and vector plumbing:
 
-`lsdtt_backend_factory`, `lsdtt_channel_attribute_input`, `lsdtt_channel_network_ingest`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_attribute_output`, `lsdtt_point_input`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_river_line_fetch`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`, `lsdtt_vertical_datum`
+`lsdtt_backend_factory`, `lsdtt_channel_attribute_input`, `lsdtt_channel_network_ingest`, `lsdtt_coastal_mask`, `lsdtt_common_parameters`, `lsdtt_crs_suggest`, `lsdtt_csv_table`, `lsdtt_data_loader`, `lsdtt_dem_grouping`, `lsdtt_distributed_hydrology_forcing`, `lsdtt_gdal_init`, `lsdtt_http_fetch`, `lsdtt_macrostrat_fetch`, `lsdtt_oblique_frame`, `lsdtt_octopus_fetch`, `lsdtt_outlet_bounds_discovery`, `lsdtt_outlet_clusters`, `lsdtt_param_parser`, `lsdtt_pixel_type`, `lsdtt_point_attribute_output`, `lsdtt_point_input`, `lsdtt_proj_grid_check`, `lsdtt_raster_base`, `lsdtt_raster_fetch`, `lsdtt_raster_meta`, `lsdtt_raster_reproject`, `lsdtt_raster_warp`, `lsdtt_rotation_frame_file`, `lsdtt_river_line_fetch`, `lsdtt_run_record`, `lsdtt_secret`, `lsdtt_stat_csv`, `lsdtt_true_north`, `lsdtt_vector_utils`, `lsdtt_vertical_datum`
 
 
 **`lsdtt3_utils` sources** (`src/utils/`) — backend-neutral numerics with no
@@ -854,6 +855,29 @@ Beyond registering drivers it pins the runtime data directories:
 resolve a datum differently and return coordinates that are plausible and wrong.
 `-v` therefore reports the GDAL and PROJ versions and which data directories are
 in force; that is the first thing to ask for in a projection bug report.
+
+**Grid check.** `src/core/lsdtt_proj_grid_check` is the one place that calls
+the PROJ C API directly (GDAL cannot say which grids an operation needs). The
+raster reprojection and warp paths and the vector reprojection paths call
+`warn_if_proj_grids_missing`, which asks PROJ for the operations over the
+data's area with grid availability ignored and warns, once per CRS pair, when
+the most accurate one needs a grid that is not installed. Built only when
+`proj.h` and libproj are found (release wheels require them); `-v` reports
+`proj grids: N of 4 default; grid check on|off`. `lsdtt_vertical_datum`
+names the missing geoid grids (`missing_vertical_datum_grids`) and
+`lsdtt-raster-calculator` checks them before reading any raster.
+
+**PROJ grids in packages.** Every release package and wheel carries proj.db,
+the support files and the default grid set only (`default_proj_grids()`, about
+6 MB: OSTN15, EGM96, NADCON and NADCON5 CONUS). Homebrew's PROJ installs the
+whole PROJ-data collection (about 760 MB), which made the v0.11.0 macOS
+packages and wheels 815 MB; the macOS packager deletes every grid and the
+wheel's CMake excludes them, then all four builds fetch the default set with
+`tools/fetch_proj_grids.py --dir <share/proj> fetch --defaults` (checksums
+verified). That script is also the user's way to add a grid; it finds the
+release package or wheel `share/proj` itself. Its list must match the C++ one
+(`unit_proj_grid_lists`). The macOS packager and `check_installed_wheel.py`
+fail if `share/proj` exceeds 50 MB.
 
 **Packaging rule.** Every release package and wheel must ship `share/proj`
 and `share/gdal` as real directories, not symlinks. Homebrew's `share/proj` is

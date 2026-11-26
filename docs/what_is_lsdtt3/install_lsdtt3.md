@@ -665,7 +665,7 @@ To paste the whole guide into a chat, use `print(lsdtt3.helper_for_llm("all"))`.
 |---|---|
 | `bin/` | the `lsdtt-*` command-line tools |
 | `lib/` | every shared library they need (GDAL, PROJ, …) |
-| `share/gdal`, `share/proj` | support data those libraries read at runtime |
+| `share/gdal`, `share/proj` | support data those libraries read at runtime, with a small default set of PROJ datum grids; see [A note on datums and PROJ grids](note_on_grids.md) |
 | `share/lsdtt3` | lsdtt3's own data (the cosmogenic-nuclide parameter file) |
 | `setenv.sh` / `setenv.ps1` | sets `PATH` and the library/data variables |
 | `manifest.json` | version and a SHA256 checksum of every file |

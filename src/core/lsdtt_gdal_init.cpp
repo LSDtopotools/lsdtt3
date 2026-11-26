@@ -185,6 +185,12 @@ std::string proj_data_description()
     return "PROJ built-in search";
 }
 
+std::string pinned_proj_data_dir()
+{
+    gdal_init();
+    return g_pinned_proj_dir;
+}
+
 std::string gdal_data_description()
 {
     gdal_init();

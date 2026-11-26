@@ -40,6 +40,16 @@ def main() -> int:
     proj_db = package_dir / "share" / "proj" / "proj.db"
     if not proj_db.is_file() or proj_db.is_symlink():
         raise RuntimeError(f"wheel has no bundled proj.db at {proj_db}")
+    proj_bytes = sum(f.stat().st_size for f in proj_db.parent.rglob("*") if f.is_file())
+    if proj_bytes > 50 * 1024 * 1024:
+        raise RuntimeError(
+            f"wheel share/proj is {proj_bytes / 1048576:.0f} MB: datum grids bundled "
+            "(v0.11.0 macOS wheels were 815 MB); expected proj.db and support files only")
+    # The default PROJ grids every release carries (tools/fetch_proj_grids.py).
+    for grid in ("uk_os_OSTN15_NTv2_OSGBtoETRS.tif", "us_nga_egm96_15.tif", "us_noaa_conus.tif",
+                 "us_noaa_nadcon5_nad27_nad83_1986_conus.tif"):
+        if not (proj_db.parent / grid).is_file():
+            raise RuntimeError(f"wheel lacks the default PROJ grid {grid}")
     if not any((package_dir / "share" / "gdal").glob("*")):
         raise RuntimeError("wheel has no bundled GDAL data in share/gdal")
     package_bin = package_dir / "bin"
@@ -71,6 +81,8 @@ def main() -> int:
                 raise RuntimeError(f"console script failed: {name}\n{result.stderr}")
             if "proj data: bundled:" not in result.stdout + result.stderr:
                 raise RuntimeError(f"{name} -v does not report the bundled PROJ data:\n{result.stdout}")
+            if "proj grids: 4 of 4 default; grid check on" not in result.stdout + result.stderr:
+                raise RuntimeError(f"{name} -v does not report the default grids and the grid check:\n{result.stdout}")
     if missing:
         raise RuntimeError(f"wheel lacks declared native drivers: {missing}")
     print(f"installed wheel API and {len(expected['declared_drivers'])} drivers are current")

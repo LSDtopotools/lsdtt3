@@ -53,3 +53,10 @@ Vector inputs that are documented as accepting any CRS are reprojected to the
 raster CRS internally. Other vector inputs must already use the raster's
 projected coordinate system. Check the individual CLI parameter guidance for
 the applicable contract.
+
+A reprojection that changes datum, for example a landslide inventory or field
+points in British National Grid (OSGB36) or NAD27 read onto a UTM DEM, is only
+accurate to the metre if PROJ has the national correction grid. lsdtt3 carries
+the British (OSTN15) and US NAD27 grids, and warns when a conversion needs one
+it does not have; without it, polygons and points can be shifted by a metre or
+more relative to the DEM. See [A note on datums and PROJ grids](note_on_grids.md).

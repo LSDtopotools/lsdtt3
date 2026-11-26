@@ -10,6 +10,7 @@
 // See lsdtt_raster_reproject.hpp for full documentation.
 
 #include "lsdtt_raster_reproject.hpp"
+#include "lsdtt_proj_grid_check.hpp"
 #include "lsdtt_gdal_init.hpp"
 #include "lsdtt_crs_suggest.hpp"
 
@@ -103,6 +104,8 @@ static double estimate_projected_pixel_size(
     src_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     tgt_srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
+    warn_if_proj_grids_missing(src_srs, tgt_srs, "reprojecting the raster", meta.x_min, meta.y_min,
+                               meta.x_max(), meta.y_max());
     OGRCoordinateTransformation* ct =
         OGRCreateCoordinateTransformation(&src_srs, &tgt_srs);
     if (!ct)

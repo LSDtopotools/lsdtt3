@@ -699,6 +699,18 @@ GDAL_DATA_DIR="$(cd "$GDAL_DATA_DIR" && pwd -P)"
 PROJ_DATA_DIR="$(cd "$PROJ_DATA_DIR" && pwd -P)"
 cp -RL "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
 cp -RL "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
+# Homebrew's PROJ also installs the PROJ-data datum grids (about 760 MB of
+# GeoTIFFs), which made the v0.11.0 macOS packages 815 MB. Remove them, then add
+# the default set every platform carries (about 6 MB, checksums verified; see
+# docs/what_is_lsdtt3/note_on_grids.md).
+find "$STAGE_SHARE/proj" -type f \( -name '*.tif' -o -name '*.tiff' -o -name '*.gsb' \
+    -o -name '*.gtx' -o -name '*.byn' -o -name '*.lla' \) -delete
+python3 "$REPO_ROOT/tools/fetch_proj_grids.py" --dir "$STAGE_SHARE/proj" fetch --defaults
+proj_mb=$(du -sm "$STAGE_SHARE/proj" | cut -f1)
+if [[ "$proj_mb" -gt 50 ]]; then
+    echo "ERROR: staged share/proj is ${proj_mb} MB; expected proj.db and support files only" >&2
+    exit 1
+fi
 if [[ -L "$STAGE_SHARE/proj" || ! -f "$STAGE_SHARE/proj/proj.db" || -L "$STAGE_SHARE/proj/proj.db" ]]; then
     echo "ERROR: staged share/proj has no real proj.db" >&2
     exit 1

@@ -393,6 +393,9 @@ if [[ ! -f "$STAGE_SHARE/proj/proj.db" || -L "$STAGE_SHARE/proj" ]]; then
     echo "ERROR: staged share/proj has no real proj.db" >&2
     exit 1
 fi
+# The default datum-shift and geoid grids every platform carries (about 6 MB,
+# checksums verified; see docs/what_is_lsdtt3/note_on_grids.md).
+python3 "$REPO_ROOT/tools/fetch_proj_grids.py" --dir "$STAGE_SHARE/proj" fetch --defaults
 
 # lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3).
 # Missing data is fatal when a cosmo CLI is in the bundle: those tools would

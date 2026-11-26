@@ -272,6 +272,7 @@ endif()
 # =============================================================================
 set(LSDTT3_CORE_SOURCES
     src/core/lsdtt_gdal_init.cpp
+    src/core/lsdtt_proj_grid_check.cpp
     src/core/lsdtt_pixel_type.cpp
     src/core/lsdtt_raster_meta.cpp
     src/core/lsdtt_raster_base.cpp
@@ -325,6 +326,21 @@ target_link_libraries(lsdtt3_core
     PUBLIC
         ${GDAL_LIBRARIES}
 )
+
+# The PROJ C API, for the grid-availability warning only
+# (src/core/lsdtt_proj_grid_check). Everything else goes through GDAL. PROJ is
+# always installed with GDAL; if its headers are missing the check is compiled
+# out and `-v` says so.
+find_path(LSDTT_PROJ_INCLUDE_DIR proj.h HINTS ${GDAL_INCLUDE_DIRS} "$ENV{CONDA_PREFIX}/include")
+find_library(LSDTT_PROJ_LIBRARY NAMES proj proj_9 proj_8 HINTS "$ENV{CONDA_PREFIX}/lib")
+if(LSDTT_PROJ_INCLUDE_DIR AND LSDTT_PROJ_LIBRARY)
+    target_include_directories(lsdtt3_core PRIVATE ${LSDTT_PROJ_INCLUDE_DIR})
+    target_link_libraries(lsdtt3_core PUBLIC ${LSDTT_PROJ_LIBRARY})
+    target_compile_definitions(lsdtt3_core PRIVATE LSDTT_HAS_PROJ_API=1)
+    message(STATUS "PROJ grid check: on (${LSDTT_PROJ_LIBRARY})")
+else()
+    message(STATUS "PROJ grid check: off (proj.h or libproj not found)")
+endif()
 
 # =============================================================================
 # lsdtt3_utils  (static library)
