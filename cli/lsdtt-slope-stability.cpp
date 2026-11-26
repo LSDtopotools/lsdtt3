@@ -878,18 +878,23 @@ int main(int argc, char* argv[])
         "Landslide inventory: polygons of the scars (shapefile, GeoPackage, FlatGeobuf, ...).",
         "Any OGR vector format. Reprojected to the DEM's CRS. Each polygon is one scar; draw it "
         "around the source area only, not the runout, and to the crown, so that the ring "
-        "outside it is undisturbed ground. Read from read_path if the path is relative.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "outside it is undisturbed ground. Read from read_path if the path is relative. Used by "
+        "run_scar_drape_volumes and, with run_dem_change_landslides, to match the mapped polygons "
+        "to the detected patches through their cells: <write_fname>_inventory_dod_match.csv "
+        "(per polygon: area detected as loss or gain, the DoD's net, loss and gain volume inside it, "
+        "the patches touched, matched = touches a loss patch), _inventory_dod_patch_match.csv (per "
+        "patch: cells inside polygons and the polygons it overlaps) and _inventory_dod_summary.csv.",
+        "Landslide inventory", "param", ""};
     string_default_map["landslide_inventory_layer_name"] = "";
     help_map["landslide_inventory_layer_name"] = {"string", "",
         "Layer of landslide_inventory_fname to read.", "Empty: the first layer.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "Landslide inventory", "param", "landslide_inventory_fname"};
     string_default_map["landslide_inventory_id_field_name"] = "";
     help_map["landslide_inventory_id_field_name"] = {"string", "",
         "Attribute that identifies each scar in the outputs.",
         "Empty: the feature's position in the layer (0-based). The run stops, listing the "
         "fields, if the layer has no such field.",
-        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+        "Landslide inventory", "param", "landslide_inventory_fname"};
     int_default_map["scar_drape_rim_buffer_pixels"] = 1;
     help_map["scar_drape_rim_buffer_pixels"] = {"int", "1",
         "Cells added around each scar polygon before the cloth is held at the ground.",
@@ -2194,6 +2199,91 @@ int main(int argc, char* argv[])
             out_options.vector_format = sf.at("write_vector_format");
             write_dem_change_outputs(change_base, change, dem.get_meta(), out_options);
             std::cout << "Wrote " << change_base << "_dem_change_*\n";
+
+            // A mapped inventory against the detected patches (R6).
+            if (!sf.at("landslide_inventory_fname").empty())
+            {
+                const std::string inv_path = resolve_input(parser.get_read_path(), sf.at("landslide_inventory_fname"));
+                const lsdtt::polygon_features_on_grid inv = lsdtt::rasterise_polygon_features_separately(
+                    input_dem, inv_path, sf.at("landslide_inventory_layer_name"), sf.at("landslide_inventory_id_field_name"));
+                std::vector<std::vector<std::int64_t>> cells;
+                cells.reserve(inv.features.size());
+                for (const auto& f : inv.features) cells.push_back(f.cells);
+                const lsdtt::inventory_dod_match mt = lsdtt::match_inventory_to_dem_change(change, dem.get_meta(), cells);
+                const auto quoted = [](const std::string& id) {
+                    if (id.find_first_of(",\";\n") == std::string::npos) return id;
+                    std::string q = "\"";
+                    for (char ch : id) { if (ch == '"') q += '"'; q += ch; }
+                    return q + "\"";
+                };
+                const auto join_ids = [](const std::vector<std::int32_t>& v) {
+                    std::string t;
+                    for (std::size_t k = 0; k < v.size(); ++k) t += (k ? ";" : "") + std::to_string(v[k]);
+                    return t;
+                };
+                const auto nan_or = [](double v) { return std::isfinite(v) ? number_string(v) : std::string(); };
+                {
+                    const std::string path = change_base + "_inventory_dod_match.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    f << std::setprecision(10)
+                      << "scar_id,feature_index,n_cells,area_m2,n_valid_cells,dod_net_change_m3,dod_loss_volume_m3,"
+                         "dod_gain_volume_m3,detected_loss_area_m2,detected_loss_fraction,detected_loss_volume_m3,"
+                         "detected_gain_area_m2,detected_gain_volume_m3,n_loss_patches,loss_patch_ids,n_gain_patches,"
+                         "gain_patch_ids,matched\n";
+                    for (std::size_t q = 0; q < mt.polygons.size(); ++q)
+                    {
+                        const auto& m = mt.polygons[q];
+                        f << quoted(inv.features[q].id) << ',' << inv.features[q].feature_index << ',' << m.n_cells << ','
+                          << m.area_m2 << ',' << m.n_valid_cells << ',' << m.dod_net_change_m3 << ','
+                          << m.dod_loss_volume_m3 << ',' << m.dod_gain_volume_m3 << ',' << m.detected_loss_area_m2 << ','
+                          << nan_or(m.area_m2 > 0 ? m.detected_loss_area_m2 / m.area_m2 : std::nan("")) << ','
+                          << m.detected_loss_volume_m3 << ',' << m.detected_gain_area_m2 << ','
+                          << m.detected_gain_volume_m3 << ',' << m.loss_patch_ids.size() << ','
+                          << join_ids(m.loss_patch_ids) << ',' << m.gain_patch_ids.size() << ','
+                          << join_ids(m.gain_patch_ids) << ',' << (m.matched ? 1 : 0) << '\n';
+                    }
+                }
+                {
+                    const std::string path = change_base + "_inventory_dod_patch_match.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    const double a = dem.get_meta().cell_size * dem.get_meta().cell_size;
+                    f << std::setprecision(10)
+                      << "patch_id,change,n_cells,area_m2,n_cells_in_polygons,fraction_in_polygons,n_polygons,scar_ids\n";
+                    for (const auto& p : mt.patches)
+                    {
+                        std::string ids;
+                        for (std::size_t k = 0; k < p.polygons.size(); ++k)
+                            ids += (k ? ";" : "") + inv.features[static_cast<std::size_t>(p.polygons[k])].id;
+                        f << p.patch_id << ',' << (p.sign < 0 ? "loss" : "gain") << ',' << p.n_cells << ','
+                          << p.n_cells * a << ',' << p.n_cells_in_polygons << ','
+                          << nan_or(p.n_cells > 0 ? static_cast<double>(p.n_cells_in_polygons) / p.n_cells : std::nan(""))
+                          << ',' << p.polygons.size() << ',' << quoted(ids) << '\n';
+                    }
+                }
+                {
+                    const std::string path = change_base + "_inventory_dod_summary.csv";
+                    std::ofstream f(path);
+                    if (!f) throw std::runtime_error("Cannot write " + path);
+                    f << std::setprecision(10) << "quantity,value\n"
+                      << "n_polygons," << mt.polygons.size() << "\nn_polygons_matched," << mt.n_polygons_matched
+                      << "\nn_polygons_off_grid," << inv.n_outside_grid
+                      << "\nn_loss_patches," << mt.n_loss_patches << "\nn_loss_patches_matched," << mt.n_loss_patches_matched
+                      << "\npolygon_union_area_m2," << mt.polygon_union_area_m2
+                      << "\ndetected_loss_area_m2," << mt.detected_loss_area_m2
+                      << "\ndetected_loss_in_polygons_m2," << mt.detected_loss_in_polygons_m2
+                      << "\nmapped_area_detected_fraction," << nan_or(mt.mapped_area_detected_fraction)
+                      << "\ndetected_area_mapped_fraction," << nan_or(mt.detected_area_mapped_fraction) << "\n";
+                }
+                std::cout << "Inventory against the DoD: " << mt.n_polygons_matched << " of " << mt.polygons.size()
+                          << " polygons touch a loss patch; " << mt.n_loss_patches_matched << " of " << mt.n_loss_patches
+                          << " loss patches touch a polygon; mapped area detected "
+                          << nan_or(mt.mapped_area_detected_fraction) << ", detected loss area mapped "
+                          << nan_or(mt.detected_area_mapped_fraction) << "\n";
+                std::cout << "Wrote " << change_base << "_inventory_dod_*.csv\n";
+                lsdtt::lsdtt_run_record::add_provenance("inventory_dod_n_polygons_matched", std::to_string(mt.n_polygons_matched));
+            }
 
             if (!run_sinmap && !run_rupture && !run_hazard_area)
             {

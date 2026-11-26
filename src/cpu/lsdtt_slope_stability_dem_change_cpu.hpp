@@ -227,6 +227,60 @@ struct dem_change_scaling
     const std::vector<dem_change_patch>& patches, int sign, int n_bootstrap = 0,
     std::uint64_t seed = 1, std::size_t min_tail = 50);
 
+// A mapped inventory against the detected change (R6). Each polygon is given
+// as its grid cells (row-major flat indices; overlapping polygons each keep
+// their cells). Matching is through shared cells: a polygon touches a patch if
+// any of its cells carries that patch's label. Volumes are magnitudes, from
+// the bias-corrected difference (newer minus older) over the polygon's cells
+// with a valid difference, whether detected or not.
+struct inventory_dod_polygon_match
+{
+    std::int64_t n_cells = 0;              // polygon cells on the grid
+    std::int64_t n_valid_cells = 0;        // with a valid difference
+    double area_m2 = 0.0;                  // n_cells x cell area
+    double dod_net_change_m3 = 0.0;        // signed: negative = lowering
+    double dod_loss_volume_m3 = 0.0;       // sum of lowering
+    double dod_gain_volume_m3 = 0.0;       // sum of raising
+    double detected_loss_area_m2 = 0.0;    // cells in loss patches
+    double detected_loss_volume_m3 = 0.0;  // lowering over those cells
+    double detected_gain_area_m2 = 0.0;
+    double detected_gain_volume_m3 = 0.0;
+    std::vector<std::int32_t> loss_patch_ids, gain_patch_ids;   // touched, ascending
+    bool matched = false;                  // touches at least one loss patch
+};
+
+struct inventory_dod_patch_match
+{
+    std::int32_t patch_id = 0;
+    int sign = -1;
+    std::int64_t n_cells = 0;
+    std::int64_t n_cells_in_polygons = 0;  // in at least one polygon
+    std::vector<int> polygons;             // positions in the polygon list, ascending
+};
+
+struct inventory_dod_match
+{
+    std::vector<inventory_dod_polygon_match> polygons;   // same order as the input
+    std::vector<inventory_dod_patch_match> patches;      // same order as result.patches
+    std::size_t n_polygons_matched = 0;
+    std::size_t n_loss_patches = 0, n_loss_patches_matched = 0;
+    double polygon_union_area_m2 = 0.0;
+    double detected_loss_area_m2 = 0.0;            // all loss patch cells
+    double detected_loss_in_polygons_m2 = 0.0;     // loss patch cells in the union
+    // Area agreement: the fraction of mapped area detected, and the fraction of
+    // detected loss that was mapped. NaN when the denominator is 0.
+    double mapped_area_detected_fraction = std::numeric_limits<double>::quiet_NaN();
+    double detected_area_mapped_fraction = std::numeric_limits<double>::quiet_NaN();
+};
+
+// result: from detect_dem_change_landslides on a grid of meta's size. Throws
+// std::invalid_argument if a cell index is off the grid or result's rasters
+// do not match meta.
+[[nodiscard]] inventory_dod_match match_inventory_to_dem_change(
+    const dem_change_result&                      result,
+    const lsdtt_raster_meta&                      meta,
+    const std::vector<std::vector<std::int64_t>>& polygon_cells);
+
 // The error model alone (step 1), for uses other than detection: the scar
 // drape's uncertainty takes the DoD's sigma(S), nugget and range from it.
 // Same inputs, refusals and exclusions as detect_dem_change_landslides

@@ -12,7 +12,9 @@
 // error model, detection, hysteresis, aggregation, patch statistics, the
 // simulated false detections, the refusals, exclusion masks and the channel
 // mask, the mean-change filter, and the volume - area, depth - area and
-// frequency - volume fits.
+// frequency - volume fits, and the match of a mapped inventory to the
+// patches (one polygon to many patches, many to one, unmatched polygons and
+// unmapped patches, gain patches, overlapping polygons, nodata, refusals).
 //
 // Usage:
 //   lsdtt-test-slope-stability-dem-change
@@ -28,7 +30,11 @@
 #include <string>
 #include <vector>
 
+#include <gdal_priv.h>
+#include <ogrsf_frmts.h>
+
 #include "../../src/core/lsdtt_data_loader.hpp"
+#include "../../src/core/lsdtt_gdal_init.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
 #include "../../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
 
@@ -544,6 +550,111 @@ void write_cli_fixture(const std::string& dir)
     std::vector<float> excluded(dem.size(), 0.0f);
     block(excluded, n, 125, 150, 115, 145, 1.0f);   // over the deposit
     w.write_full(excluded, m, dir + "/change_exclusion.tif", raster_output_format::gtiff);
+
+    // Inventory: one polygon exactly over the scar (rows 40-59, columns 40-69),
+    // one over undisturbed ground.
+    gdal_init();
+    const std::string path = dir + "/change_inventory.gpkg";
+    std::filesystem::remove(path);
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GPKG");
+    GDALDataset* ds = drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    OGRSpatialReference srs;
+    srs.importFromEPSG(32633);
+    OGRLayer* lyr = ds->CreateLayer("scars", &srs, wkbPolygon, nullptr);
+    OGRFieldDefn fd("scar_id", OFTString);
+    lyr->CreateField(&fd);
+    const auto add = [&](const char* id, const char* wkt) {
+        OGRFeature* feat = OGRFeature::CreateFeature(lyr->GetLayerDefn());
+        feat->SetField("scar_id", id);
+        OGRGeometry* g = nullptr;
+        OGRGeometryFactory::createFromWkt(wkt, nullptr, &g);
+        feat->SetGeometryDirectly(g);
+        if (lyr->CreateFeature(feat) != OGRERR_NONE) throw std::runtime_error("could not write the fixture GeoPackage");
+        OGRFeature::DestroyFeature(feat);
+    };
+    add("scar", "POLYGON((501200 4004200,502100 4004200,502100 4004800,501200 4004800,501200 4004200))");
+    add("quiet", "POLYGON((503000 4001000,503300 4001000,503300 4001300,503000 4001300,503000 4001000))");
+    GDALClose(ds);
+}
+
+// ---------------------------------------------------------------------------
+void test_inventory_match()
+{
+    std::cout << "Inventory against the DoD\n";
+    const int n = 10;
+    const lsdtt_raster_meta m = grid(n, 2.0);   // cell area 4 m2
+    const std::size_t nn = static_cast<std::size_t>(n) * n;
+    const auto at = [n](int r, int c) { return static_cast<std::int64_t>(r) * n + c; };
+    dem_change_result res;
+    res.label.assign(nn, 0);
+    res.corrected_m.assign(nn, -0.1f);        // a little lowering everywhere
+    const auto add_patch = [&](std::int32_t id, int sign, int r0, int r1, int c0, int c1, float dh) {
+        dem_change_patch p;
+        p.id = id;
+        p.sign = sign;
+        res.patches.push_back(p);
+        for (int r = r0; r <= r1; ++r)
+            for (int c = c0; c <= c1; ++c) { res.label[at(r, c)] = id; res.corrected_m[at(r, c)] = dh; }
+    };
+    add_patch(1, -1, 0, 1, 0, 1, -2.0f);   // 4 cells
+    add_patch(2, -1, 0, 1, 3, 4, -1.0f);   // 4 cells
+    add_patch(3, -1, 6, 7, 0, 3, -3.0f);   // 8 cells
+    add_patch(4, +1, 0, 1, 6, 6, 0.5f);    // 2 cells, gain
+    add_patch(5, -1, 9, 9, 8, 9, -1.0f);   // 2 cells, unmapped
+    res.corrected_m[at(5, 9)] = static_cast<float>(m.no_data_value);
+    const auto rect = [&](int r0, int r1, int c0, int c1) {
+        std::vector<std::int64_t> v;
+        for (int r = r0; r <= r1; ++r) for (int c = c0; c <= c1; ++c) v.push_back(at(r, c));
+        return v;
+    };
+    std::vector<std::vector<std::int64_t>> polys = {
+        rect(0, 1, 0, 6),    // A: over patches 1, 2 and the gain patch 4 (14 cells)
+        rect(6, 7, 0, 1),    // B: left half of patch 3
+        rect(6, 7, 1, 3),    // C: right part of patch 3, overlapping B in column 1
+        rect(4, 5, 8, 9),    // D: no patch, one nodata cell
+    };
+    const inventory_dod_match mt = match_inventory_to_dem_change(res, m, polys);
+    const auto& a = mt.polygons[0];
+    check("one polygon to many patches: loss 1 and 2, gain 4",
+          a.loss_patch_ids == std::vector<std::int32_t>{1, 2} && a.gain_patch_ids == std::vector<std::int32_t>{4} && a.matched);
+    check("polygon A areas and volumes",
+          a.n_cells == 14 && a.area_m2 == 56.0 && a.detected_loss_area_m2 == 32.0 && a.detected_gain_area_m2 == 8.0 &&
+          std::abs(a.detected_loss_volume_m3 - (4 * 2.0 + 4 * 1.0) * 4.0) < 1e-9 &&
+          std::abs(a.detected_gain_volume_m3 - 2 * 0.5 * 4.0) < 1e-9);
+    // A: patch 1 (4 cells at -2), patch 2 (4 at -1), columns 2 and 5 (4 at -0.1), gain 2 at +0.5.
+    check("polygon A DoD volumes over all its cells",
+          std::abs(a.dod_loss_volume_m3 - (4 * 2.0 + 4 * 1.0 + 4 * 0.1) * 4.0) < 1e-5 &&
+          std::abs(a.dod_gain_volume_m3 - 4.0) < 1e-6 &&
+          std::abs(a.dod_net_change_m3 - (a.dod_gain_volume_m3 - a.dod_loss_volume_m3)) < 1e-9,
+          std::to_string(a.dod_loss_volume_m3));
+    const auto& p3 = mt.patches[2];
+    check("many polygons to one patch: patch 3 overlaps B and C",
+          p3.polygons == std::vector<int>{1, 2} && p3.n_cells == 8 && p3.n_cells_in_polygons == 8);
+    check("overlapping polygons each count the shared cells",
+          mt.polygons[1].detected_loss_area_m2 == 16.0 && mt.polygons[2].detected_loss_area_m2 == 24.0);
+    const auto& d = mt.polygons[3];
+    check("unmatched polygon, nodata cell skipped",
+          !d.matched && d.loss_patch_ids.empty() && d.n_cells == 4 && d.n_valid_cells == 3 &&
+          std::abs(d.dod_loss_volume_m3 - 3 * 0.1 * 4.0) < 1e-6);
+    check("unmapped patch", mt.patches[4].polygons.empty() && mt.patches[4].n_cells_in_polygons == 0);
+    check("counts: 3 of 4 polygons, 3 of 4 loss patches matched",
+          mt.n_polygons_matched == 3 && mt.n_loss_patches == 4 && mt.n_loss_patches_matched == 3);
+    // Union: A 14 + B 4 + C 6 - 2 shared + D 4 = 26 cells; detected loss in it 8 + 8 = 16 of 18 loss cells.
+    check("area agreement fractions",
+          mt.polygon_union_area_m2 == 26 * 4.0 && mt.detected_loss_area_m2 == 18 * 4.0 &&
+          std::abs(mt.mapped_area_detected_fraction - 16.0 / 26.0) < 1e-12 &&
+          std::abs(mt.detected_area_mapped_fraction - 16.0 / 18.0) < 1e-12);
+    bool threw = false;
+    try { (void)match_inventory_to_dem_change(res, m, {{static_cast<std::int64_t>(nn)}}); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check("cell off the grid refused", threw);
+    threw = false;
+    try { (void)match_inventory_to_dem_change(res, grid(n + 1, 2.0), polys); }
+    catch (const std::invalid_argument&) { threw = true; }
+    check("result on another grid refused", threw);
+    const inventory_dod_match empty = match_inventory_to_dem_change(res, m, {});
+    check("no polygons: detected area mapped fraction 0", empty.detected_area_mapped_fraction == 0.0 &&
+          std::isnan(empty.mapped_area_detected_fraction));
 }
 
 } // namespace
@@ -566,6 +677,7 @@ int main(int argc, char** argv)
         test_exclusions_and_filter();
         test_channel_mask();
         test_scaling();
+        test_inventory_match();
     }
     catch (const std::exception& e)
     {

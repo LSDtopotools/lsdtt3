@@ -531,6 +531,99 @@ std::vector<double> dem_change_slope(const lsdtt_raster_cpu& dem)
     return out;
 }
 
+inventory_dod_match match_inventory_to_dem_change(
+    const dem_change_result&                      result,
+    const lsdtt_raster_meta&                      meta,
+    const std::vector<std::vector<std::int64_t>>& polygon_cells)
+{
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (result.label.size() != n || result.corrected_m.size() != n)
+        throw std::invalid_argument("match_inventory_to_dem_change: the result does not match the grid");
+    const double a = meta.cell_size * meta.cell_size;
+    const float nodata = static_cast<float>(meta.no_data_value);
+    // Patch id -> position, and sign.
+    std::vector<std::size_t> pos_of(result.patches.size() + 1, 0);
+    inventory_dod_match out;
+    out.patches.resize(result.patches.size());
+    for (std::size_t k = 0; k < result.patches.size(); ++k)
+    {
+        const auto& p = result.patches[k];
+        if (p.id < 1 || static_cast<std::size_t>(p.id) >= pos_of.size())
+            throw std::invalid_argument("match_inventory_to_dem_change: unexpected patch id");
+        pos_of[static_cast<std::size_t>(p.id)] = k;
+        out.patches[k].patch_id = p.id;
+        out.patches[k].sign = p.sign;
+        if (p.sign < 0) ++out.n_loss_patches;
+    }
+    const auto patch_at = [&](std::size_t i) -> const dem_change_patch* {
+        const std::int32_t id = result.label[i];
+        if (id < 1 || static_cast<std::size_t>(id) >= pos_of.size()) return nullptr;
+        return &result.patches[pos_of[static_cast<std::size_t>(id)]];
+    };
+    for (std::size_t i = 0; i < n; ++i)
+        if (const dem_change_patch* p = patch_at(i))
+        {
+            ++out.patches[pos_of[static_cast<std::size_t>(p->id)]].n_cells;
+            if (p->sign < 0) out.detected_loss_area_m2 += a;
+        }
+
+    std::vector<std::uint8_t> in_union(n, 0u);
+    out.polygons.resize(polygon_cells.size());
+    for (std::size_t q = 0; q < polygon_cells.size(); ++q)
+    {
+        inventory_dod_polygon_match& m = out.polygons[q];
+        for (const std::int64_t ci : polygon_cells[q])
+        {
+            if (ci < 0 || static_cast<std::size_t>(ci) >= n)
+                throw std::invalid_argument("match_inventory_to_dem_change: a polygon cell is off the grid");
+            const std::size_t i = static_cast<std::size_t>(ci);
+            ++m.n_cells;
+            in_union[i] = 1u;
+            const float c = result.corrected_m[i];
+            const bool valid = c != nodata && std::isfinite(c);
+            if (valid)
+            {
+                ++m.n_valid_cells;
+                m.dod_net_change_m3 += c * a;
+                if (c < 0) m.dod_loss_volume_m3 -= c * a; else m.dod_gain_volume_m3 += c * a;
+            }
+            if (const dem_change_patch* p = patch_at(i))
+            {
+                const double mag = valid ? std::abs(static_cast<double>(c)) * a : 0.0;
+                if (p->sign < 0) { m.detected_loss_area_m2 += a; m.detected_loss_volume_m3 += mag; m.loss_patch_ids.push_back(p->id); }
+                else { m.detected_gain_area_m2 += a; m.detected_gain_volume_m3 += mag; m.gain_patch_ids.push_back(p->id); }
+                auto& pl = out.patches[pos_of[static_cast<std::size_t>(p->id)]].polygons;
+                if (pl.empty() || pl.back() != static_cast<int>(q)) pl.push_back(static_cast<int>(q));
+            }
+        }
+        m.area_m2 = static_cast<double>(m.n_cells) * a;
+        for (auto* ids : {&m.loss_patch_ids, &m.gain_patch_ids})
+        {
+            std::sort(ids->begin(), ids->end());
+            ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+        }
+        m.matched = !m.loss_patch_ids.empty();
+        if (m.matched) ++out.n_polygons_matched;
+    }
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!in_union[i]) continue;
+        out.polygon_union_area_m2 += a;
+        if (const dem_change_patch* p = patch_at(i))
+        {
+            ++out.patches[pos_of[static_cast<std::size_t>(p->id)]].n_cells_in_polygons;
+            if (p->sign < 0) out.detected_loss_in_polygons_m2 += a;
+        }
+    }
+    for (const auto& p : out.patches)
+        if (p.sign < 0 && p.n_cells_in_polygons > 0) ++out.n_loss_patches_matched;
+    if (out.polygon_union_area_m2 > 0)
+        out.mapped_area_detected_fraction = out.detected_loss_in_polygons_m2 / out.polygon_union_area_m2;
+    if (out.detected_loss_area_m2 > 0)
+        out.detected_area_mapped_fraction = out.detected_loss_in_polygons_m2 / out.detected_loss_area_m2;
+    return out;
+}
+
 std::vector<float> simulate_dem_error_noise(
     int nr, int nc, double cell_size, double nugget_fraction, double correlation_range_m, std::uint64_t seed)
 {

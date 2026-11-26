@@ -3055,6 +3055,16 @@ add_dem_change_cli_test(smoke_slope_stability_dem_change_exclusion_polygons
     --expect-file-contains "sdx_dem_change_coverage.csv:loss,1,540000,"
     --expect-file-contains "sdx_dem_change_coverage.csv:gain,0,0,"
     --expect-file-contains "sdx_dem_change_volume_area_fit.csv:loss,ols,1,0,")
+# R6: the polygon over the scar matches its patch exactly; the other matches nothing.
+add_dem_change_cli_test(smoke_slope_stability_dem_change_inventory
+    slope_stability_dem_change_inventory.param.in sdi_inventory_dod_match.csv
+    --expect sdi_inventory_dod_patch_match.csv
+    --expect sdi_inventory_dod_summary.csv
+    --stdout-contains "Inventory against the DoD: 1 of 2 polygons touch a loss patch"
+    --expect-file-contains "sdi_inventory_dod_summary.csv:detected_area_mapped_fraction,1"
+    --expect-file-contains "sdi_inventory_dod_summary.csv:mapped_area_detected_fraction,0.8571428571"
+    --expect-file-contains "sdi_inventory_dod_match.csv:quiet,1,100,90000,100,"
+    --expect-file-contains "sdi_inventory_dod_patch_match.csv:1,loss,600,540000,600,1,1,scar")
 add_dem_change_cli_test(failure_slope_stability_dem_change_no_difference
     slope_stability_dem_change_no_difference.param.in unused_expected_output
     --expect-failure --stderr-contains "needs dem_difference_fname")

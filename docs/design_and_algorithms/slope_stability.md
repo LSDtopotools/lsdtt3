@@ -279,6 +279,20 @@ whole numbers of cells, so the frequency - area fit is discrete; volumes are not
 A DEM-of-difference inventory gives the observed scaling against which the
 models' potential-landslide catalogues are compared.
 
+**A mapped inventory against the DoD.** With `landslide_inventory_fname`, each
+mapped polygon is matched to the detected patches through shared cells
+(`match_inventory_to_dem_change`). Per polygon: the area detected as loss and
+gain, the DoD's net, loss and gain volume over all its cells (detected or not),
+and the patches it touches; it is matched if it touches a loss patch. Per
+patch: its cells inside polygons and the polygons it overlaps. The summary
+gives two area fractions: of the mapped area (union of polygons) detected as
+loss, and of the detected loss inside the polygons. Overlapping polygons each
+count the shared cells; the union counts them once. On East San Lorenzo, 39 of
+81 mapped source polygons touch a loss patch, 24 % of the mapped area is
+detected and 0.7 % of the detected loss is mapped: at an NMAD of 0.33 m most
+shallow scars are below detection, and most detected loss is noise, channels
+not removed, or unmapped change.
+
 Run the same analysis on a nearby area with no known landslide event. Patches
 found there show how much of the signal comes from land-cover change and sensor
 differences.
