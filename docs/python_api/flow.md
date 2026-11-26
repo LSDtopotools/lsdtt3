@@ -1295,7 +1295,7 @@ receiver_of(row: int, col: int) -> object
     Return the pixel this pixel drains to.
 row_col(flat_index: int) -> tuple
     Return the ``(row, col)`` of a flat index.
-rupture_planes(geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
+rupture_planes(geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, peak_ground_acceleration: Raster | None = None, seismic_coefficient_ratio: float = 0.5, n_threads: int = 0) -> RupturePlanes
     Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
 scope_from_heads(heads: ChannelHeads, outlets: object | None = None, outlet_snap_max_distance_metres: float = 0.0) -> ChannelScope
     Resolve ChannelHeads into explicit D8 source paths for channel and chi analysis.
@@ -2204,7 +2204,7 @@ def row_col(self, flat_index: int) -> tuple
 
 #### `rupture_planes`
 
-rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
+rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, peak_ground_acceleration: Raster | None = None, seismic_coefficient_ratio: float = 0.5, n_threads: int = 0) -> RupturePlanes
 
 Planar rupture surfaces of every hillslope cell (scaLr, Steer et al.).
 
@@ -2241,6 +2241,12 @@ region_parameters : dict or None, default=None, keyword-only
 water_table_depth : Raster or None, default=None, keyword-only
     Depth (m) of the water table below the geometry surface, e.g.
     ``GroundwaterDupuit.water_table_depth()``; None or nodata is dry.
+peak_ground_acceleration : Raster or None, default=None, keyword-only
+    PGA in g for a pseudo-static earthquake load (CLI
+    ``rupture_peak_ground_acceleration_fname``). Nodata cells are left out.
+    Cannot be combined with ``water_table_depth`` or slip surfaces.
+seismic_coefficient_ratio : float, default=0.5, keyword-only
+    The pseudo-static coefficient as a fraction of PGA, k = ratio x PGA.
 n_threads : int, default=0, keyword-only
     OpenMP threads; the result does not depend on it.
 
@@ -2251,7 +2257,7 @@ RupturePlanes
     catalogues and slip surfaces.
 
 ```python
-def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, n_threads: int = 0) -> RupturePlanes
+def rupture_planes(self, geometry: Raster, *, channel: Raster | None = None, threshold_contributing_pixels: int = 1000, cohesion_pa: float = 1000.0, friction_coefficient: float = 0.7002075382097097, density_kg_m3: float = 2600.0, region: Raster | None = None, region_parameters: dict | None = None, water_table_depth: Raster | None = None, peak_ground_acceleration: Raster | None = None, seismic_coefficient_ratio: float = 0.5, n_threads: int = 0) -> RupturePlanes
 ```
 
 #### `scope_from_heads`

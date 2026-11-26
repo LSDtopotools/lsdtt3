@@ -23,6 +23,9 @@ own with --inventory-build-dir, or skip with --skip-inventory. The configure
 needs what the full test suite needs: Python 3 with osgeo.gdal, numpy,
 rasterio, geopandas, shapely and pytest, and the GDAL programs (gdal-bin).
 
+A new X.Y.Z also checks the generated Python API reference and updates any
+stale pages from the checked-in public API manifest.
+
 A new X.Y.Z also resets the conda build number to 0, clears any .postN from
 pyproject.toml, and adds a "Release X.Y.Z." changelog entry.
 
@@ -86,6 +89,15 @@ def regenerate_test_inventory(root: Path, build_dir: Path) -> int:
               file=sys.stderr)
         return 1
     return generate_test_inventory.main(["--build-dir", str(build_dir), "--update"])
+
+
+def update_api_reference(root: Path) -> int:
+    """Check the generated Python API pages and rewrite any that are stale."""
+    import subprocess
+    script = root / "python_bindings" / "tools" / "generate_api_reference.py"
+    command = [sys.executable, str(script), "--update"]
+    print("Checking and updating the generated Python API reference if needed", flush=True)
+    return subprocess.run(command, cwd=root).returncode
 
 
 class Edit:
@@ -225,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         if new_version and not args.skip_inventory:
             print(f"  {'docs/developer_notes/test_inventory.md':40s} would be regenerated")
+        if new_version:
+            print("  Generated Python API pages would be checked and stale pages updated")
         print("Dry run: nothing written.")
         return 0
     for edit in edits:
@@ -233,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
 
     status = check_version_consistency.main(["--repo-root", str(root)])
     if status != 0 or not new_version:
+        return status
+    status = update_api_reference(root)
+    if status != 0:
         return status
     if args.skip_inventory:
         print("WARNING: --skip-inventory: docs/developer_notes/test_inventory.md still "

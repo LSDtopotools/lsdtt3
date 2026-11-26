@@ -26,9 +26,11 @@ and the top entry of `debian/changelog`. Never edit them by hand:
 tools/set_version.py 0.5.1        # rewrites all six, adds the changelog entry
 ```
 
-It also resets the conda build number and runs the check that the CTest test
-`unit_version_consistency` runs. `make_release.sh` and `make_all_packages.sh`
-run that check too, and refuse to build if the copies disagree.
+It also resets the conda build number, checks and updates any stale generated
+Python API pages, regenerates the test inventory, and runs the check that the
+CTest test `unit_version_consistency` runs. `make_release.sh` and
+`make_all_packages.sh` run that check too, and refuse to build if the copies
+disagree.
 
 Read it before quoting a version anywhere. Documentation that spells out a
 version in an example command is a snapshot and drifts; this line does not.
