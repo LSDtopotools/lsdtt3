@@ -1,6 +1,6 @@
 # Raster Data
 
-Rasters are the main data model in `lsdtt3`. A raster combines a regular grid of
+Rasters are the main data format in `lsdtt3`. A raster combines a regular grid of
 values with its dimensions, cell size, origin, coordinate reference system
 (CRS), data type, and nodata value. I'm not sure why we are telling you this because it is very difficult to imagine you looking for this software if you don't know what a raster is. But better safe than sorry, we guess. 
 
@@ -12,8 +12,8 @@ with the parameters `read_path` and `read_fname`; individual tools document any 
 raster inputs they require.
 
 In practice "supported by GDAL" is a big claim, so these are the raster formats
-we actually test that `lsdtt3` can open. If you have a raster format that is different from the ones below, 
-you have found your way onto some weird corner of the ancient internet. Anyway, to test formast, use
+we actually have made sure that `lsdtt3` can open. If you have a raster format that is different from the ones below, 
+you have found your way onto some weird corner of the ancient internet, I do hope you found Bruce Gitting's old website while you were at it. Anyway, to test formats, use
 `unit_gdal_format_support`: it writes a small raster in each format and
 checks that lsdtt3 reads the geometry, the CRS and the pixel values back:
 
@@ -51,14 +51,14 @@ latitude/longitude raster should normally be reprojected before analysis, and in
 You should use `lsdtt-raster-preprocessing` before you do any serious analysis: it ensures your raster is in the right format, and it can additionally inspect, reproject, crop, and prepare a DEM.
 
 We also have tools to make synthetic rasters, which receive a projected default georeference unless the generating
-tool (you have three choices, see command line reference) provides another CRS option.
+tool (you have three choices, see command line reference) provides another CRS option. Synthetic rasters end up being geolocated in [Watopia](https://zwiftmap.com/watopia), where you can often find the lead developer of this software. 
 
 ## Nodata and Masks
 
 Nodata cells are excluded from analysis. Internally, lsdtt3 keeps raster values
 and a validity mask together; output nodata cells carry the output raster's
 declared nodata value. Be careful around raster edges and interior voids because
-many flow-routing and neighbourhood operations depend on which cells are valid. Not literally around. This is not Tron and you don't live inside a computer. Just be careful if your raster has some holes, okay?
+many flow-routing and neighbourhood operations depend on which cells are valid. You don't literally need to be careful around the edge. This is not Tron and you don't live inside a computer. Just be careful if your raster has some holes, okay?
 
 `lsdtt-raster-preprocessing` provides tools for filling interior nodata holes,
 masking values, and preparing hydrologically suitable surfaces. We already told you to use `lsdtt-raster-preprocessing` before doing any serious analysis. Don't make us tell you that a third time. 
@@ -124,5 +124,5 @@ format support for each executable.
 Note that the output list is much shorter than the input list, and that is on
 purpose. lsdtt3 writes GeoTIFF because it is the format everything else can
 read. PNG is there so you can look at what you made without opening a GIS; it is
-an 8-bit stretch with the georeferencing in a sidecar, so do not feed it back in
+an 8-bit stretch with the georeferencing as an additional file, so do not feed it back in
 and expect your elevations to still be elevations.

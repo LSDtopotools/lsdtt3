@@ -34,12 +34,9 @@ anything.
 
 lsdtt3 is a C++ library, a set of command-line tools and a Python package for topographic analysis, and various geomorphic and hydrologic analyses. It follows on from [LSDTopoTools2](https://github.com/LSDtopotools/LSDTopoTools2) but has been rewritten from the ground up, while retaining the core scientific functionality of LSDTopoTools2. `lsdtt3` has updated architecture more suited to modern C++17, optional GPU support (well it will when we write it).
 
-If you use this software for research, please also cite the original LSDTopoTools2:
+If you use this software please cite (you may need to cite a different version):
 
-> Mudd, S. M., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Gailleton,
-> B., Hurst, M. D., Valters, D. V., Wickert, A. D., & Hutton, E. W. H. (2023).
-> LSDtopotools/LSDTopoTools2: LSDTopoTools2 v0.9. Zenodo.
-> https://doi.org/10.5281/zenodo.8076231
+Mudd, S. M., Vervoordeldonk, R., Gailleton, B., Hawksworth, M. E., Clubb, F. J., Grieve, S. W. D., Milodowski, D. T., Valters, D., & Hurst, M. D. (2026). LSDTopoTools3 (lsdtt3): topographic analysis for geomorphology (Version v0.10.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.24371283
 
 **lsdtt3 is not backward-compatible with LSDTopoTools2.**
 
@@ -157,6 +154,8 @@ or an AI assistant such as Gemini in Colab. Worked examples are in the
 
 Then you need to compile it:
 [Building lsdtt3 from source](https://lsdtopotools.github.io/lsdtt3/developer_notes/building_from_source.html).
+
+**Do not do this unless you are a developer**
 
 ### Reporting bugs
 
@@ -408,10 +407,6 @@ lsdtt-drainage-analysis     my_params.driver
 ```
 
 **Detailed parameter references for each program are in `docs/`.**
-
-> **Command rename:** `lsdtt-synthetic-surfaces` replaces
-> `lsdtt-raster-synthetic-tests`. The old executable is not retained; update
-> scripts and reinstall lsdtt3 when upgrading.
 
 ### DEM preparation
 

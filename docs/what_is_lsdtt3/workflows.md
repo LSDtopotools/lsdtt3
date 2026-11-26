@@ -6,6 +6,8 @@ tools with [Snakemake](https://snakemake.readthedocs.io). You describe the run
 in one configuration file, and Snakemake writes each tool's parameter file,
 runs the tools in order, and reruns only what a change affects.
 
+**These are still under development and their functionality is quite limited. Most of the time you will need to string analyses together yourself.**
+
 | Module | Chain | Guide |
 |---|---|---|
 | `valley_widths` | DEM(s) -> floodplain -> valley centrelines -> widths and cross sections | [Valley-floor widths](workflow_valley_widths.md) |
