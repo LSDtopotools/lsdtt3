@@ -3062,6 +3062,59 @@ add_dem_change_cli_test(failure_slope_stability_dem_change_bad_sign
     slope_stability_dem_change_bad_sign.param.in unused_expected_output
     --expect-failure --stderr-contains "dem_change_sign")
 
+# Scar drape through the CLI: a pit dug in a bowl, the bowl as the reference DEM.
+set(LSDTT_SCAR_DRAPE_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_scar_drape_fixture")
+add_test(NAME fixture_slope_stability_scar_drape
+    COMMAND lsdtt-test-slope-stability-scar-drape --write-cli-fixture "${LSDTT_SCAR_DRAPE_FIXTURE_DIR}")
+lsdtt_set_tests_properties(fixture_slope_stability_scar_drape PROPERTIES
+    LABELS "fixture;slope_stability"
+    FIXTURES_SETUP slope_stability_scar_drape_fixture)
+
+function(add_scar_drape_cli_test TEST_NAME PARAM_TEMPLATE EXPECTED_OUTPUT)
+    add_lsdtt_cli_smoke_test(${TEST_NAME} lsdtt-slope-stability
+        ${PARAM_TEMPLATE} "${EXPECTED_OUTPUT}"
+        --read-path "${LSDTT_SCAR_DRAPE_FIXTURE_DIR}"
+        ${ARGN})
+    if(TEST ${TEST_NAME})
+        lsdtt_set_tests_properties(${TEST_NAME} PROPERTIES
+            FIXTURES_REQUIRED slope_stability_scar_drape_fixture)
+    endif()
+endfunction()
+
+# Membrane on a bowl: too deep (2.12 x the reference), the control counts the
+# bowl; the buffer spread columns are written.
+add_scar_drape_cli_test(smoke_slope_stability_scar_drape
+    slope_stability_scar_drape.param.in sdm_scar_drape_volumes.csv
+    --expect sdm_scar_drape_volume_area_fit.csv
+    --expect sdm_scar_drape_validation.csv
+    --expect sdm_scar_drape_surface.tif
+    --expect sdm_scar_drape_depth.tif
+    --expect sdm_scar_drape_label.tif
+    --stdout-contains "drape / reference 2.12"
+    --expect-file-contains "sdm_scar_drape_volumes.csv:volume_buffer_spread_m3"
+    --expect-file-contains "sdm_scar_drape_validation.csv:surface_type,membrane"
+    --expect-raster-stat sdm_scar_drape_depth.tif:max:4.1:4.3)
+# rim_quadric is exact on the bowl (ratio 1, control 0); DEM-error samples.
+add_scar_drape_cli_test(smoke_slope_stability_scar_drape_quadric
+    slope_stability_scar_drape_quadric.param.in sdq_scar_drape_volumes.csv
+    --expect sdq_scar_drape_validation.csv
+    --stdout-contains "drape / reference 0.99999"
+    --expect-file-contains "sdq_scar_drape_validation.csv:surface_type,rim_quadric"
+    --expect-file-contains "sdq_scar_drape_volumes.csv:n_uncertainty_samples,volume_sigma_m3,volume_noise_bias_m3"
+    --expect-raster-stat sdq_scar_drape_depth.tif:max:2.17:2.20)
+# DEM error from the reference DoD: the fixture's 5 cm noise is recovered.
+add_scar_drape_cli_test(smoke_slope_stability_scar_drape_reference_error
+    slope_stability_scar_drape_reference_error.param.in sdr_scar_drape_volumes.csv
+    --expect-absent sdr_scar_drape_depth.tif
+    --stdout-contains "DEM error from the reference DEM of difference (off the scars): NMAD 0.050"
+    --expect-file-contains "sdr_scar_drape_volumes.csv:volume_sigma_m3")
+add_scar_drape_cli_test(failure_slope_stability_scar_drape_bad_quadric
+    slope_stability_scar_drape_bad_quadric.param.in unused_expected_output
+    --expect-failure --stderr-contains "rim_quadric needs a rim fit width of at least 2")
+add_scar_drape_cli_test(failure_slope_stability_scar_drape_no_sigma
+    slope_stability_scar_drape_no_sigma.param.in unused_expected_output
+    --expect-failure --stderr-contains "needs scar_drape_dem_sigma_metres > 0 or scar_drape_reference_dem_fname")
+
 # Coseismic hazard area: an exact profile through the CLI.
 set(LSDTT_HAZARD_AREA_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/slope_stability_hazard_area_fixture")
 add_test(NAME fixture_slope_stability_hazard_area

@@ -16,6 +16,22 @@
 //   - sag: a square with z = 0 on the ring has its centre at -0.0736713 s L^2
 //     (Poisson problem on a square), and the answer does not depend on the grid;
 //   - DEM edge, nodata, overlapping scars, the volume - area fit, refusals;
+//   - fitted surfaces: rim_plane and rim_quadric exact on a plane with a pit;
+//     on a bowl rim_quadric is exact and the membrane too deep; never below
+//     the ground; a degenerate band fails; refusals;
+//   - uncertainty: with white DEM error, the rim_plane volume sigma matches
+//     the analytic a sigma sqrt(n + s' (X'X)^-1 s); sigma scales with the DEM
+//     sigma; error correlated far beyond the scar cancels; a cloth over noisy
+//     undisturbed ground has a positive noise bias; same result for any
+//     thread count; the buffer spread is 0 on a plane and > 0 on a bowl;
+//   - estimate_dem_change_error_model: sigma of white noise, defined on
+//     excluded cells;
+//
+// CLI fixture (smoke tests in tests/CMakeLists.txt):
+//   lsdtt-test-slope-stability-scar-drape --write-cli-fixture <dir>
+// writes a bowl (drape_reference.tif), the bowl with a pit dug in it
+// (drape_post.tif), the post DEM with 5 cm white noise (drape_post_noisy.tif)
+// and the pit's polygon (drape_scars.gpkg, field scar_id).
 //   - polygons read from a GeoPackage: ids from a field, cell-centre rule,
 //     small polygons, overlap, reprojection, a missing field.
 // -----------------------------------------------------------------------------
@@ -24,6 +40,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,8 +48,10 @@
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 
+#include "../../src/core/lsdtt_data_loader.hpp"
 #include "../../src/core/lsdtt_gdal_init.hpp"
 #include "../../src/cpu/lsdtt_raster_cpu.hpp"
+#include "../../src/cpu/lsdtt_slope_stability_dem_change_cpu.hpp"
 #include "../../src/cpu/lsdtt_slope_stability_scar_drape_cpu.hpp"
 #include "../../src/cpu/lsdtt_vector_rasterise_cpu.hpp"
 
@@ -341,6 +360,268 @@ void test_fit_and_refusals()
 }
 
 // ---------------------------------------------------------------------------
+// A pit (rows r0..r1, columns c0..c1, depth d(r, c) >= 0.2 m) dug into the
+// surface base(r, c). Returns the DEM, the feature and the true volume.
+struct pit_case { lsdtt_raster_cpu dem; scar_drape_feature f; double volume = 0.0; };
+
+template <class Base>
+pit_case dug_pit(int nr, int nc, double cell, int r0, int r1, int c0, int c1, Base base)
+{
+    const lsdtt_raster_meta m = grid(nr, nc, cell);
+    std::vector<float> z(static_cast<std::size_t>(nr) * nc);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c) z[idx(r, c, nc)] = static_cast<float>(base(r, c));
+    pit_case out;
+    out.f.id = "pit";
+    out.f.feature_index = 0;
+    const double pi = 3.14159265358979323846;
+    for (int r = r0; r <= r1; ++r)
+        for (int c = c0; c <= c1; ++c)
+        {
+            const double d = 2.0 * std::sin(pi * (r - r0 + 1) / (r1 - r0 + 2)) * std::sin(pi * (c - c0 + 1) / (c1 - c0 + 2)) + 0.2;
+            z[idx(r, c, nc)] = static_cast<float>(base(r, c) - d);
+            out.volume += d * cell * cell;
+            out.f.cells.push_back(idx(r, c, nc));
+        }
+    out.dem = raster(z, m);
+    return out;
+}
+
+void test_fitted_surfaces()
+{
+    std::cout << "Fitted surfaces: rim_plane and rim_quadric\n";
+    const int nr = 40, nc = 50;
+    const double cell = 2.0;
+    const auto planar = [&](int r, int c) { return plane(r, c, nr, cell); };
+    const pit_case p = dug_pit(nr, nc, cell, 12, 27, 15, 34, planar);
+    for (auto t : {scar_drape_surface_type::rim_plane, scar_drape_surface_type::rim_quadric})
+    {
+        scar_drape_options o;
+        o.surface = t;
+        const scar_drape_record r = drape_landslide_scars(p.dem, {p.f}, o).records[0];
+        const std::string n = scar_drape_surface_type_name(t);
+        check(n + " exact on a planar pit", r.status == "ok" && std::abs(r.mapped_volume_m3 / p.volume - 1.0) < 1e-5,
+              num(r.mapped_volume_m3) + " vs " + num(p.volume));
+        check(n + " residual 0 on a plane", r.surface_fit_residual_m < 1e-4 && r.surface_fit_n_cells > 0,
+              num(r.surface_fit_residual_m));
+    }
+
+    // A bowl: Laplacian 4k > 0, so the harmonic membrane lies above it.
+    const double k = 0.004;
+    const auto bowl = [&](int r, int c) {
+        const double x = (c + 0.5) * cell - 50.0, y = (nr - r - 0.5) * cell - 40.0;
+        return 100.0 + 0.2 * x + k * (x * x + y * y);
+    };
+    const pit_case b = dug_pit(nr, nc, cell, 12, 27, 15, 34, bowl);
+    scar_drape_options o;
+    o.tolerance_metres = 1e-8;
+    const scar_drape_record mem = drape_landslide_scars(b.dem, {b.f}, o).records[0];
+    o.surface = scar_drape_surface_type::rim_quadric;
+    const scar_drape_record quad = drape_landslide_scars(b.dem, {b.f}, o).records[0];
+    o.surface = scar_drape_surface_type::rim_plane;
+    const scar_drape_record pl = drape_landslide_scars(b.dem, {b.f}, o).records[0];
+    check("rim_quadric exact on a bowl", std::abs(quad.mapped_volume_m3 / b.volume - 1.0) < 1e-4,
+          num(quad.mapped_volume_m3) + " vs " + num(b.volume));
+    check("membrane too deep on a bowl (> 10 %)", mem.mapped_volume_m3 > 1.1 * b.volume,
+          num(mem.mapped_volume_m3 / b.volume));
+    check("rim_plane residual > 0 on a bowl", pl.surface_fit_residual_m > 0.05, num(pl.surface_fit_residual_m));
+
+    // Never below the ground: a pillar standing in the pit.
+    std::vector<float> zp = p.dem.get_data();
+    zp[idx(20, 25, nc)] = static_cast<float>(plane(20, 25, nr, cell) + 5.0);
+    const lsdtt_raster_cpu dem_p = raster(zp, p.dem.get_meta());
+    o = {};
+    o.surface = scar_drape_surface_type::rim_quadric;
+    const scar_drape_result rp = drape_landslide_scars(dem_p, {p.f}, o);
+    bool above = true;
+    for (std::size_t i = 0; i < zp.size(); ++i)
+        if (rp.surface.get_mask()[i] && rp.surface.get_data()[i] < zp[i] - 1e-4f) above = false;
+    check("fitted surface never below the ground; rests on the pillar", above && rp.records[0].n_contact_cells >= 1);
+
+    // A one-cell scar whose band is nodata except two cells: no plane fits.
+    std::vector<float> zd(static_cast<std::size_t>(nr) * nc);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c) zd[idx(r, c, nc)] = static_cast<float>(plane(r, c, nr, cell));
+    for (int r = 8; r <= 12; ++r)
+        for (int c = 8; c <= 12; ++c)
+            if (!(r == 10 && c == 10) && !(r == 9 && c == 10) && !(r == 10 && c == 9)) zd[idx(r, c, nc)] = -9999.0f;
+    scar_drape_feature one;
+    one.id = "one";
+    one.feature_index = 0;
+    one.cells = {idx(10, 10, nc)};
+    o = {};
+    o.surface = scar_drape_surface_type::rim_plane;
+    o.rim_buffer_pixels = 0;
+    const scar_drape_record rf = drape_landslide_scars(raster(zd, p.dem.get_meta()), {one}, o).records[0];
+    check("degenerate band: status rim_fit_failed", rf.status == "rim_fit_failed" && rf.surface_fit_n_cells == 2,
+          rf.status + " " + std::to_string(rf.surface_fit_n_cells));
+
+    const auto refuses = [](scar_drape_options q) {
+        try { validate_scar_drape_options(q); return false; } catch (const std::invalid_argument&) { return true; }
+    };
+    o = {};
+    o.surface = scar_drape_surface_type::rim_quadric;
+    o.rim_fit_width_pixels = 1;
+    check("rim_quadric with a one-cell band refused", refuses(o));
+    o.surface = scar_drape_surface_type::rim_plane;
+    o.rim_fit_width_pixels = 0;
+    check("rim_plane with no band refused", refuses(o));
+    bool threw = false;
+    try { (void)parse_scar_drape_surface_type("thin_plate"); } catch (const std::invalid_argument&) { threw = true; }
+    check("unknown surface name refused", threw && parse_scar_drape_surface_type("rim_quadric") == scar_drape_surface_type::rim_quadric);
+}
+
+// ---------------------------------------------------------------------------
+void test_uncertainty()
+{
+    std::cout << "Uncertainty: Monte Carlo DEM error and the buffer spread\n";
+    const int nr = 40, nc = 50;
+    const double cell = 2.0;
+    const auto planar = [&](int r, int c) { return plane(r, c, nr, cell); };
+    const pit_case p = dug_pit(nr, nc, cell, 14, 25, 18, 31, planar);
+
+    // rim_plane, buffer 0, band 2: V is linear in the DEM, so with white error
+    // var V = a^2 sigma^2 (n + s' (X'X)^-1 s), s = sum over mapped cells of
+    // (1, x, y), X the band cells' (1, x, y).
+    scar_drape_options o;
+    o.surface = scar_drape_surface_type::rim_plane;
+    o.rim_buffer_pixels = 0;
+    o.rim_fit_width_pixels = 2;
+    std::vector<scar_drape_record> recs = drape_landslide_scars(p.dem, {p.f}, o).records;
+    double xtx[3][3] = {}, sv[3] = {0, 0, 0};
+    for (int r = 12; r <= 27; ++r)
+        for (int c = 16; c <= 33; ++c)
+        {
+            const bool inside = r >= 14 && r <= 25 && c >= 18 && c <= 31;
+            const double ph[3] = {1.0, static_cast<double>(c), static_cast<double>(r)};
+            for (int i = 0; i < 3; ++i)
+            {
+                if (inside) sv[i] += ph[i];
+                else for (int j = 0; j < 3; ++j) xtx[i][j] += ph[i] * ph[j];
+            }
+        }
+    // Solve (X'X) w = s by Cramer's rule.
+    const auto det3 = [](double a[3][3]) {
+        return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+               a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    };
+    const double d0 = det3(xtx);
+    double quad = 0.0;
+    for (int col = 0; col < 3; ++col)
+    {
+        double t[3][3];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) t[i][j] = j == col ? sv[i] : xtx[i][j];
+        quad += sv[col] * det3(t) / d0;
+    }
+    // sigma small against the 0.2 m pit margin, so the ground never rises
+    // above the plane and V stays linear.
+    const double sigma = 0.02, n_mapped = 12.0 * 14.0;
+    const double expected = cell * cell * sigma * std::sqrt(n_mapped + quad);
+    scar_drape_error_model e;
+    e.sigma_constant_m = sigma;
+    scar_drape_uncertainty(p.dem, {p.f}, o, e, 400, 5, recs);
+    check("rim_plane, white error: sigma matches the analytic value (12 %)",
+          recs[0].n_uncertainty_samples == 400 && std::abs(recs[0].volume_sigma_m3 / expected - 1.0) < 0.12,
+          num(recs[0].volume_sigma_m3) + " vs " + num(expected));
+    check("linear surface: noise bias small", std::abs(recs[0].volume_noise_bias_m3) < 0.25 * expected,
+          num(recs[0].volume_noise_bias_m3));
+    const double s1 = recs[0].volume_sigma_m3;
+    e.sigma_constant_m = 2.0 * sigma;
+    scar_drape_uncertainty(p.dem, {p.f}, o, e, 400, 5, recs);
+    check("sigma scales with the DEM sigma", std::abs(recs[0].volume_sigma_m3 / s1 - 2.0) < 1e-3,
+          num(recs[0].volume_sigma_m3 / s1));
+
+    // Membrane: white error against error correlated far beyond the scar.
+    scar_drape_options om;
+    std::vector<scar_drape_record> rm = drape_landslide_scars(p.dem, {p.f}, om).records;
+    e = {};
+    e.sigma_constant_m = 0.1;
+    scar_drape_uncertainty(p.dem, {p.f}, om, e, 60, 9, rm);
+    const double s_white = rm[0].volume_sigma_m3;
+    e.nugget_fraction = 0.0;
+    e.correlation_range_m = 2000.0;
+    scar_drape_uncertainty(p.dem, {p.f}, om, e, 60, 9, rm);
+    check("membrane: error correlated over the scar and rim cancels (< 0.15 of white)",
+          rm[0].volume_sigma_m3 < 0.15 * s_white, num(rm[0].volume_sigma_m3) + " vs " + num(s_white));
+
+    // Undisturbed ground: no true volume, but the cloth bridges the noise.
+    const lsdtt_raster_meta m = grid(nr, nc, cell);
+    std::vector<float> zf(static_cast<std::size_t>(nr) * nc);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c) zf[idx(r, c, nc)] = static_cast<float>(plane(r, c, nr, cell));
+    const lsdtt_raster_cpu flat = raster(zf, m);
+    std::vector<scar_drape_record> rf = drape_landslide_scars(flat, {p.f}, om).records;
+    e = {};
+    e.sigma_constant_m = 0.1;
+    scar_drape_uncertainty(flat, {p.f}, om, e, 30, 3, rf);
+    check("undisturbed ground: positive noise bias (the noise floor)",
+          rf[0].mapped_volume_m3 < 0.05 && rf[0].volume_noise_bias_m3 > 0.05 * rf[0].mapped_area_m2,
+          num(rf[0].volume_noise_bias_m3));
+
+    // Per-cell sigma, and thread count.
+    e = {};
+    e.sigma_m.assign(zf.size(), 0.1f);
+    e.nugget_fraction = 0.5;
+    e.correlation_range_m = 20.0;
+    std::vector<scar_drape_record> a = rm, bb = rm;
+    om.n_threads = 1;
+    scar_drape_uncertainty(p.dem, {p.f, p.f}, om, e, 10, 4, a = std::vector<scar_drape_record>(2, rm[0]));
+    om.n_threads = 4;
+    scar_drape_uncertainty(p.dem, {p.f, p.f}, om, e, 10, 4, bb = std::vector<scar_drape_record>(2, rm[0]));
+    check("same result for 1 and 4 threads", a[0].volume_sigma_m3 == bb[0].volume_sigma_m3 &&
+          a[1].volume_sigma_m3 == bb[1].volume_sigma_m3 && std::isfinite(a[0].volume_sigma_m3));
+
+    // Buffer spread.
+    om = {};
+    om.tolerance_metres = 1e-8;
+    scar_drape_buffer_spread(p.dem, {p.f}, om, 2, rm);
+    check("buffer spread ~0 on a planar pit", rm[0].volume_buffer_spread_m3 < 1e-3 * p.volume,
+          num(rm[0].volume_buffer_spread_m3));
+    const auto bowl = [&](int r, int c) {
+        const double x = (c + 0.5) * cell - 50.0, y = (nr - r - 0.5) * cell - 40.0;
+        return 100.0 + 0.004 * (x * x + y * y);
+    };
+    const pit_case b = dug_pit(nr, nc, cell, 14, 25, 18, 31, bowl);
+    std::vector<scar_drape_record> rb = drape_landslide_scars(b.dem, {b.f}, om).records;
+    scar_drape_buffer_spread(b.dem, {b.f}, om, 2, rb);
+    check("buffer spread > 0 on a bowl, min <= buffer-1 volume <= max",
+          rb[0].volume_buffer_spread_m3 > 0.05 * b.volume && rb[0].volume_buffer_min_m3 <= rb[0].mapped_volume_m3 + 1e-9 &&
+          rb[0].mapped_volume_m3 <= rb[0].volume_buffer_max_m3 + 1e-9,
+          num(rb[0].volume_buffer_spread_m3));
+
+    const auto throws = [&](auto fn) { try { fn(); return false; } catch (const std::invalid_argument&) { return true; } };
+    e = {};
+    check("zero sigma refused", throws([&] { scar_drape_uncertainty(p.dem, {p.f}, om, e, 10, 1, rm); }));
+    e.sigma_constant_m = 0.1;
+    check("one sample refused", throws([&] { scar_drape_uncertainty(p.dem, {p.f}, om, e, 1, 1, rm); }));
+    e.sigma_m.assign(3, 0.1f);
+    check("sigma raster of wrong size refused", throws([&] { scar_drape_uncertainty(p.dem, {p.f}, om, e, 10, 1, rm); }));
+    check("buffer spread with max 0 refused", throws([&] { scar_drape_buffer_spread(p.dem, {p.f}, om, 0, rm); }));
+}
+
+// ---------------------------------------------------------------------------
+void test_error_model()
+{
+    std::cout << "DoD error model alone (estimate_dem_change_error_model)\n";
+    const int nr = 120, nc = 120;
+    const lsdtt_raster_meta m = grid(nr, nc, 1.0);
+    std::mt19937_64 rng(2);
+    std::normal_distribution<double> g(0.0, 0.5);
+    std::vector<float> d(static_cast<std::size_t>(nr) * nc);
+    for (auto& v : d) v = static_cast<float>(0.1 + g(rng));
+    std::vector<double> slope(d.size(), 0.3);
+    std::vector<std::uint8_t> excl(d.size(), 0u);
+    for (int r = 40; r < 60; ++r) for (int c = 40; c < 60; ++c) excl[idx(r, c, nc)] = 1u;
+    dem_change_options opt;
+    opt.n_slope_bins = 1;
+    const dem_change_error_model em = estimate_dem_change_error_model(raster(d, m), slope, nullptr, opt, &excl);
+    check("white noise: sigma 0.5 (5 %) and bias 0.1",
+          std::abs(em.sigma_m[0] / 0.5 - 1.0) < 0.05 && std::abs(em.uncertainty.bias_m - 0.1) < 0.03,
+          num(em.sigma_m[0]) + ", bias " + num(em.uncertainty.bias_m));
+    check("sigma defined on excluded cells", std::isfinite(em.sigma_m[idx(50, 50, nc)]) && em.sigma_m[idx(50, 50, nc)] == em.sigma_m[0]);
+}
+
+// ---------------------------------------------------------------------------
 void test_polygon_reading()
 {
     std::cout << "Polygons from a GeoPackage\n";
@@ -415,17 +696,72 @@ void test_polygon_reading()
     std::filesystem::remove_all(dir);
 }
 
+// ---------------------------------------------------------------------------
+void write_cli_fixture(const std::string& dir)
+{
+    gdal_init();
+    std::filesystem::create_directories(dir);
+    const int nr = 60, nc = 70;
+    const double cell = 2.0;
+    const auto bowl = [&](int r, int c) {
+        const double x = (c + 0.5) * cell - 70.0, y = (nr - r - 0.5) * cell - 60.0;
+        return 100.0 + 0.2 * x + 0.004 * (x * x + y * y);
+    };
+    // Pit over rows 22..37, columns 25..44: x 50..90 m, y 44..76 m from the origin.
+    const pit_case p = dug_pit(nr, nc, cell, 22, 37, 25, 44, bowl);
+    const lsdtt_raster_meta& m = p.dem.get_meta();
+    std::vector<float> ref(static_cast<std::size_t>(nr) * nc);
+    for (int r = 0; r < nr; ++r)
+        for (int c = 0; c < nc; ++c) ref[idx(r, c, nc)] = static_cast<float>(bowl(r, c));
+    std::vector<float> noisy = p.dem.get_data();
+    std::mt19937_64 rng(17);
+    std::normal_distribution<double> g(0.0, 0.05);
+    for (float& v : noisy) v = static_cast<float>(v + g(rng));
+    lsdtt_data_loader w;
+    w.write_full(p.dem.get_data(), m, dir + "/drape_post.tif", raster_output_format::gtiff);
+    w.write_full(ref, m, dir + "/drape_reference.tif", raster_output_format::gtiff);
+    w.write_full(noisy, m, dir + "/drape_post_noisy.tif", raster_output_format::gtiff);
+
+    const std::string path = dir + "/drape_scars.gpkg";
+    std::filesystem::remove(path);
+    GDALDriver* drv = GetGDALDriverManager()->GetDriverByName("GPKG");
+    GDALDataset* ds = drv->Create(path.c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    OGRSpatialReference srs;
+    srs.importFromEPSG(32633);
+    OGRLayer* lyr = ds->CreateLayer("scars", &srs, wkbPolygon, nullptr);
+    OGRFieldDefn fd("scar_id", OFTString);
+    lyr->CreateField(&fd);
+    OGRFeature* feat = OGRFeature::CreateFeature(lyr->GetLayerDefn());
+    feat->SetField("scar_id", "pit");
+    OGRGeometry* geom = nullptr;
+    OGRGeometryFactory::createFromWkt(
+        "POLYGON((500050 4000044,500090 4000044,500090 4000076,500050 4000076,500050 4000044))", nullptr, &geom);
+    feat->SetGeometryDirectly(geom);
+    if (lyr->CreateFeature(feat) != OGRERR_NONE) throw std::runtime_error("could not write the fixture GeoPackage");
+    OGRFeature::DestroyFeature(feat);
+    GDALClose(ds);
+    std::cout << "fixture pit volume " << p.volume << " m3\n";
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
+        if (argc == 3 && std::string(argv[1]) == "--write-cli-fixture")
+        {
+            write_cli_fixture(argv[2]);
+            return 0;
+        }
         test_planar_pit();
         test_pillar();
         test_sag();
         test_edges_nodata_overlap();
         test_fit_and_refusals();
+        test_fitted_surfaces();
+        test_uncertainty();
+        test_error_model();
         test_polygon_reading();
     }
     catch (const std::exception& e)

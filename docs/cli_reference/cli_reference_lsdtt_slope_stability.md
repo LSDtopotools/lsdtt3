@@ -471,7 +471,7 @@ gradient of the plane through it, and how far the rim departs from that plane
 
 | Output | Content |
 |---|---|
-| `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence |
+| `_scar_drape_volumes.csv` | Per scar: id, status, mapped area and volume, mean and maximum depth, area and volume including the buffer, centroid, cell counts (rim, rim off the DEM or nodata, nodata inside, cells where the cloth rests on the ground), flags and convergence; rim descriptors; for `rim_plane` / `rim_quadric` the band size and fit residual; with the uncertainty options `n_uncertainty_samples`, `volume_sigma_m3`, `volume_noise_bias_m3` and `volume_buffer_min_m3`, `_max_m3`, `_spread_m3` |
 | `_scar_drape_volume_area_fit.csv` | V = α A^γ over the scars with status `ok`, by OLS and by reduced major axis (RMA), with bootstrap 95 % intervals when `scaling_fit_bootstrap_samples` > 0; with a reference DEM, the same for the reference volumes |
 | `_scar_drape_validation.csv` | With `scar_drape_reference_dem_fname`: totals, drape / reference ratio, median and quartiles of the per-scar ratio, correlation of log volumes, and the control as a fraction of the reference |
 | `_scar_drape_surface.tif`, `_depth.tif`, `_label.tif` | Draped surface, depth (m) and scar label (position in the layer + 1); where scars overlap, the deeper cloth |
@@ -484,6 +484,27 @@ buffer trades two errors against each other. With no buffer, a polygon drawn
 inside the crown puts the ring on disturbed ground and the volume is too small.
 A wide buffer takes in more of the surrounding slope's curvature.
 `scar_drape_sag_curvature_per_metre` lets the cloth sag, which lowers volumes.
+`scar_drape_surface_type: rim_quadric` fits a quadratic surface through a band
+of cells around the scar instead, which is exact where the pre-event slope had
+uniform curvature (a bowl, hollow or nose); `rim_plane` fits a plane.
+
+**Uncertainty.** `scar_drape_uncertainty_samples` (e.g. 50) re-drapes every
+scar with Gaussian DEM error added, and writes `volume_sigma_m3` and
+`volume_noise_bias_m3` (a positive noise floor: a cloth bridges noise). The
+error is `scar_drape_dem_sigma_metres`, or, if that is 0, the error model of
+the reference DEM of difference. `scar_drape_buffer_spread_max_pixels: 2`
+writes the range of each volume over rim buffers 0–2. Report the two
+separately: they are different kinds of error.
+
+```text
+run_scar_drape_volumes: true
+landslide_inventory_fname: scars.gpkg
+scar_drape_reference_dem_fname: pre_event_dtm.tif
+scar_drape_surface_type: rim_quadric
+scar_drape_uncertainty_samples: 50
+scar_drape_buffer_spread_max_pixels: 2
+```
+
 The method and a test against repeat lidar are in
 [Slope stability](../design_and_algorithms/slope_stability.md#scar-volumes-from-a-draped-cloth).
 
@@ -703,6 +724,14 @@ This section is generated from the executable's `-h json` registry. Do not edit 
 | `scar_drape_sag_curvature_per_metre` | `float` | `0.0` | `param` | `run_scar_drape_volumes` | Curvature (1/m) the cloth takes where it hangs clear of the ground. | 0: a taut cloth (harmonic surface between the rim and the ground it rests on). A positive value lets it sag: a span of L metres sags by about value x L^2 / 8, so 0.01 sags a 20 m scar by 0.5 m, giving smaller volumes. In physical units, so the result does not depend on the grid. |
 | `scar_drape_tolerance_metres` | `float` | `1e-05` | `param` | `run_scar_drape_volumes` | Stop when the cloth moves less than this in one sweep (m). | Scars that reach scar_drape_max_iterations first are reported with status not_converged. |
 | `scar_drape_max_iterations` | `int` | `100000` | `param` | `run_scar_drape_volumes` | Largest number of relaxation sweeps per scar. | Over-relaxation needs a few times the scar's width in cells. |
+| `scar_drape_surface_type` | `string` | `membrane` | `param` | `run_scar_drape_volumes` | Surface spanned across each scar: membrane, rim_plane or rim_quadric. | membrane: the draped cloth (harmonic; exact on a planar slope, too deep in a hollow or bowl, too shallow across a nose). rim_plane: the least-squares plane through a band of scar_drape_rim_fit_width_pixels cells outside the free area. rim_quadric: the least-squares quadratic through that band; exact where the pre-event surface had uniform curvature. Both are kept no lower than the ground. Scars whose band cannot fix the surface get status rim_fit_failed. |
+| `scar_drape_rim_fit_width_pixels` | `int` | `2` | `param` | `scar_drape_surface_type` | Width (cells) of the band outside the free area used by rim_plane and rim_quadric. | At least 1 for rim_plane and 2 for rim_quadric: values on a one-cell ring barely constrain a quadratic's curvature, so noise would set the depth. Wider bands are steadier but reach further from the scar. |
+| `scar_drape_uncertainty_samples` | `int` | `0` | `param` | `run_scar_drape_volumes` | Monte Carlo samples for each scar's volume uncertainty from DEM error (0 = none). | Each sample adds Gaussian error to the DEM (scar_drape_dem_sigma_metres, or the error model of the reference DEM of difference) and re-drapes every scar. Writes volume_sigma_m3 (the spread, which includes the rim's error carried by the cloth) and volume_noise_bias_m3 (mean change: a cloth over noise bridges it, so this is a positive noise floor). Costs one drape per sample; 50 is reasonable. |
+| `scar_drape_dem_sigma_metres` | `float` | `0.0` | `param` | `scar_drape_uncertainty_samples` | Elevation error (1 sigma, m) of the post-event DEM for the uncertainty samples. | 0: take it from the reference DEM of difference (scar_drape_reference_dem_fname): its slope-binned NMAD divided by sqrt 2 (equal, independent errors in the two DEMs), with its fitted nugget and range, estimated off the scars. Required (&gt; 0) without a reference DEM. |
+| `scar_drape_error_nugget_fraction` | `float` | `1.0` | `param` | `scar_drape_dem_sigma_metres` | Fraction of the DEM error variance that is uncorrelated, with scar_drape_dem_sigma_metres. | 1: white error. The rest is correlated over scar_drape_error_correlation_range_metres. Error correlated over the scar and its rim moves cloth and ground together and cancels. |
+| `scar_drape_error_correlation_range_metres` | `float` | `0.0` | `param` | `scar_drape_dem_sigma_metres` | Correlation range (m) of the correlated DEM error, with scar_drape_dem_sigma_metres. | Approximately spherical, as in the DEM-of-difference error model. |
+| `scar_drape_uncertainty_random_seed` | `int` | `41` | `param` | `scar_drape_uncertainty_samples` | Seed of the uncertainty samples. | The same seed gives the same result for any thread count. |
+| `scar_drape_buffer_spread_max_pixels` | `int` | `0` | `param` | `run_scar_drape_volumes` | Report the spread of each scar's volume over rim buffers 0 to this many cells (0 = none). | Writes volume_buffer_min_m3, volume_buffer_max_m3 and volume_buffer_spread_m3 (max - min of the mapped volume). This is the uncertainty from where the rim is put, a different kind from DEM error, and is not added to it. 2 is the usual choice; costs one drape per buffer. |
 | `scar_drape_reference_dem_fname` | `string` | - | `param` | `run_scar_drape_volumes` | Pre-event DEM on the post-event DEM's grid, to validate the drape volumes. | When given, each scar also gets the volume removed between this DEM and read_fname over its mapped cells (net, loss and gain), and the same drape is run on this DEM as a control: a perfect method would give 0 there, so the control measures older concavity the cloth wrongly counts. Writes &lt;write_fname&gt;_scar_drape_validation.csv. Make the grids match with lsdtt-raster-calculator (write_second_coregistered_raster). Read from read_path if relative. |
 | `scar_drape_min_reference_volume_m3` | `float` | `1.0` | `param` | `scar_drape_reference_dem_fname` | Smallest net reference volume (m3) for a scar to enter the per-scar ratios. | Scars with less, or with net gain, are left out of the ratio statistics but kept in the totals. |
 | `write_scar_drape_rasters` | `bool` | `true` | `switch` | `run_scar_drape_volumes` | Write the draped surface, the depth and the scar labels as rasters. | &lt;write_fname&gt;_scar_drape_surface.tif (cloth elevation), _scar_drape_depth.tif (cloth minus DEM, m) and _scar_drape_label.tif (feature position + 1, 0 off scars). Where scars overlap the deeper cloth is kept. |

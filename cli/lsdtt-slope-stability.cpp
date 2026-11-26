@@ -918,6 +918,59 @@ int main(int argc, char* argv[])
         "Largest number of relaxation sweeps per scar.",
         "Over-relaxation needs a few times the scar's width in cells.",
         "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    string_default_map["scar_drape_surface_type"] = "membrane";
+    help_map["scar_drape_surface_type"] = {"string", "membrane",
+        "Surface spanned across each scar: membrane, rim_plane or rim_quadric.",
+        "membrane: the draped cloth (harmonic; exact on a planar slope, too deep in a hollow or bowl, "
+        "too shallow across a nose). rim_plane: the least-squares plane through a band of "
+        "scar_drape_rim_fit_width_pixels cells outside the free area. rim_quadric: the least-squares "
+        "quadratic through that band; exact where the pre-event surface had uniform curvature. Both are "
+        "kept no lower than the ground. Scars whose band cannot fix the surface get status rim_fit_failed.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    int_default_map["scar_drape_rim_fit_width_pixels"] = 2;
+    help_map["scar_drape_rim_fit_width_pixels"] = {"int", "2",
+        "Width (cells) of the band outside the free area used by rim_plane and rim_quadric.",
+        "At least 1 for rim_plane and 2 for rim_quadric: values on a one-cell ring barely constrain a "
+        "quadratic's curvature, so noise would set the depth. Wider bands are steadier but reach "
+        "further from the scar.",
+        "Scar drape volumes", "param", "scar_drape_surface_type"};
+    int_default_map["scar_drape_uncertainty_samples"] = 0;
+    help_map["scar_drape_uncertainty_samples"] = {"int", "0",
+        "Monte Carlo samples for each scar's volume uncertainty from DEM error (0 = none).",
+        "Each sample adds Gaussian error to the DEM (scar_drape_dem_sigma_metres, or the error model of the "
+        "reference DEM of difference) and re-drapes every scar. Writes volume_sigma_m3 (the spread, which "
+        "includes the rim's error carried by the cloth) and volume_noise_bias_m3 (mean change: a cloth over "
+        "noise bridges it, so this is a positive noise floor). Costs one drape per sample; 50 is reasonable.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
+    float_default_map["scar_drape_dem_sigma_metres"] = 0.0f;
+    help_map["scar_drape_dem_sigma_metres"] = {"float", "0.0",
+        "Elevation error (1 sigma, m) of the post-event DEM for the uncertainty samples.",
+        "0: take it from the reference DEM of difference (scar_drape_reference_dem_fname): its slope-binned "
+        "NMAD divided by sqrt 2 (equal, independent errors in the two DEMs), with its fitted nugget and "
+        "range, estimated off the scars. Required (> 0) without a reference DEM.",
+        "Scar drape volumes", "param", "scar_drape_uncertainty_samples"};
+    float_default_map["scar_drape_error_nugget_fraction"] = 1.0f;
+    help_map["scar_drape_error_nugget_fraction"] = {"float", "1.0",
+        "Fraction of the DEM error variance that is uncorrelated, with scar_drape_dem_sigma_metres.",
+        "1: white error. The rest is correlated over scar_drape_error_correlation_range_metres. Error "
+        "correlated over the scar and its rim moves cloth and ground together and cancels.",
+        "Scar drape volumes", "param", "scar_drape_dem_sigma_metres"};
+    float_default_map["scar_drape_error_correlation_range_metres"] = 0.0f;
+    help_map["scar_drape_error_correlation_range_metres"] = {"float", "0.0",
+        "Correlation range (m) of the correlated DEM error, with scar_drape_dem_sigma_metres.",
+        "Approximately spherical, as in the DEM-of-difference error model.",
+        "Scar drape volumes", "param", "scar_drape_dem_sigma_metres"};
+    int_default_map["scar_drape_uncertainty_random_seed"] = 41;
+    help_map["scar_drape_uncertainty_random_seed"] = {"int", "41",
+        "Seed of the uncertainty samples.", "The same seed gives the same result for any thread count.",
+        "Scar drape volumes", "param", "scar_drape_uncertainty_samples"};
+    int_default_map["scar_drape_buffer_spread_max_pixels"] = 0;
+    help_map["scar_drape_buffer_spread_max_pixels"] = {"int", "0",
+        "Report the spread of each scar's volume over rim buffers 0 to this many cells (0 = none).",
+        "Writes volume_buffer_min_m3, volume_buffer_max_m3 and volume_buffer_spread_m3 (max - min of the "
+        "mapped volume). This is the uncertainty from where the rim is put, a different kind from DEM "
+        "error, and is not added to it. 2 is the usual choice; costs one drape per buffer.",
+        "Scar drape volumes", "param", "run_scar_drape_volumes"};
     string_default_map["scar_drape_reference_dem_fname"] = "";
     help_map["scar_drape_reference_dem_fname"] = {"string", "",
         "Pre-event DEM on the post-event DEM's grid, to validate the drape volumes.",
@@ -1743,7 +1796,24 @@ int main(int argc, char* argv[])
             scar_drape.tolerance_metres = ff.at("scar_drape_tolerance_metres");
             scar_drape.max_iterations = ii.at("scar_drape_max_iterations");
             scar_drape.n_threads = ii.at("n_threads");
+            scar_drape.surface = lsdtt::parse_scar_drape_surface_type(sf.at("scar_drape_surface_type"));
+            scar_drape.rim_fit_width_pixels = ii.at("scar_drape_rim_fit_width_pixels");
             lsdtt::validate_scar_drape_options(scar_drape);
+            const int n_unc = ii.at("scar_drape_uncertainty_samples");
+            if (n_unc < 0 || n_unc == 1)
+                throw std::runtime_error("scar_drape_uncertainty_samples must be 0 or at least 2");
+            if (n_unc > 0 && !(ff.at("scar_drape_dem_sigma_metres") > 0.0f) &&
+                sf.at("scar_drape_reference_dem_fname").empty())
+                throw std::runtime_error("scar_drape_uncertainty_samples needs scar_drape_dem_sigma_metres > 0 or "
+                                         "scar_drape_reference_dem_fname");
+            if (ff.at("scar_drape_dem_sigma_metres") < 0.0f)
+                throw std::runtime_error("scar_drape_dem_sigma_metres must be >= 0");
+            const float nug = ff.at("scar_drape_error_nugget_fraction");
+            if (!(nug >= 0.0f && nug <= 1.0f) || !(ff.at("scar_drape_error_correlation_range_metres") >= 0.0f))
+                throw std::runtime_error("scar_drape_error_nugget_fraction must be in [0, 1] and "
+                                         "scar_drape_error_correlation_range_metres >= 0");
+            if (ii.at("scar_drape_buffer_spread_max_pixels") < 0)
+                throw std::runtime_error("scar_drape_buffer_spread_max_pixels must be >= 0");
         }
 
         if (!run_sinmap && !run_rupture && !run_dem_change && !run_hazard_area && !run_scar_drape)
@@ -1781,14 +1851,16 @@ int main(int argc, char* argv[])
             features.reserve(inv.features.size());
             for (const auto& f : inv.features)
                 features.push_back({f.id, f.feature_index, f.cells, f.used_all_touched});
-            const lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+            lsdtt::scar_drape_result drape = lsdtt::drape_landslide_scars(input_dem, features, scar_drape);
+            std::cout << "Surface: " << lsdtt::scar_drape_surface_type_name(scar_drape.surface) << "\n";
 
-            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0;
+            std::int64_t n_ok = 0, n_not_conv = 0, n_edge = 0, n_rim_gap = 0, n_fit_failed = 0;
             double v_total = 0.0, a_total = 0.0;
             for (const auto& r : drape.records)
             {
                 if (r.status == "ok") ++n_ok;
                 if (r.status == "not_converged") ++n_not_conv;
+                if (r.status == "rim_fit_failed") ++n_fit_failed;
                 if (r.touches_grid_edge) ++n_edge;
                 if (r.n_rim_invalid > 0) ++n_rim_gap;
                 v_total += r.mapped_volume_m3;
@@ -1798,7 +1870,7 @@ int main(int argc, char* argv[])
             if (n_boot < 0) throw std::runtime_error("scaling_fit_bootstrap_samples must be >= 0");
             const lsdtt::power_law_scaling_fit fit = lsdtt::fit_scar_volume_area(drape.records, n_boot, 7);
             std::cout << "Scars: " << drape.records.size() << " (" << n_ok << " ok, " << n_not_conv
-                      << " not converged, " << n_edge << " at the DEM edge, " << n_rim_gap
+                      << " not converged, " << n_fit_failed << " rim fit failed, " << n_edge << " at the DEM edge, " << n_rim_gap
                       << " with gaps in the rim); area " << number_string(a_total) << " m2, volume "
                       << number_string(v_total) << " m3\n";
             if (fit.valid)
@@ -1816,9 +1888,10 @@ int main(int argc, char* argv[])
             std::vector<lsdtt::scar_reference_volume> refv;
             lsdtt::scar_drape_result control;
             lsdtt::scar_drape_validation val;
+            lsdtt::lsdtt_raster_cpu ref_dem;
             if (have_ref)
             {
-                const lsdtt::lsdtt_raster_cpu ref_dem = read_raster(resolve_input(parser.get_read_path(), ref_name));
+                ref_dem = read_raster(resolve_input(parser.get_read_path(), ref_name));
                 require_same_grid(input_dem.get_meta(), ref_dem.get_meta(), "scar_drape_reference_dem_fname");
                 refv = lsdtt::scar_reference_volumes(input_dem, ref_dem, features);
                 control = lsdtt::drape_landslide_scars(ref_dem, features, scar_drape);
@@ -1831,6 +1904,75 @@ int main(int argc, char* argv[])
                           << val.n_compared << "); r of log volumes " << number_string(val.log_volume_correlation)
                           << "; control " << number_string(val.control_total_m3) << " m3 ("
                           << number_string(val.control_fraction) << " of the reference)\n";
+            }
+
+            // Uncertainty: DEM error by Monte Carlo, and the spread over rim buffers.
+            const int n_unc = ii.at("scar_drape_uncertainty_samples");
+            const int max_spread = ii.at("scar_drape_buffer_spread_max_pixels");
+            lsdtt::scar_drape_error_model err;
+            std::string err_source;
+            if (n_unc > 0)
+            {
+                if (ff.at("scar_drape_dem_sigma_metres") > 0.0f)
+                {
+                    err.sigma_constant_m = ff.at("scar_drape_dem_sigma_metres");
+                    err.nugget_fraction = ff.at("scar_drape_error_nugget_fraction");
+                    err.correlation_range_m = ff.at("scar_drape_error_correlation_range_metres");
+                    err_source = "scar_drape_dem_sigma_metres";
+                }
+                else
+                {
+                    // Error model of the reference DoD (post minus reference), off the scars.
+                    const lsdtt::lsdtt_raster_meta& gm = input_dem.get_meta();
+                    const std::size_t n = static_cast<std::size_t>(gm.n_rows) * gm.n_cols;
+                    std::vector<float> dh(n, static_cast<float>(gm.no_data_value));
+                    std::vector<std::uint8_t> dm(n, 0u);
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (input_dem.get_mask()[i] && ref_dem.get_mask()[i])
+                        {
+                            dh[i] = input_dem.get_data()[i] - ref_dem.get_data()[i];
+                            dm[i] = 1u;
+                        }
+                    std::vector<std::uint8_t> on_scar(n, 0u);
+                    for (std::size_t i = 0; i < n; ++i)
+                        if (drape.label.get_data()[i] > 0.0f || drape.depth.get_mask()[i]) on_scar[i] = 1u;
+                    for (const auto& f : features) for (const std::int64_t i : f.cells) on_scar[static_cast<std::size_t>(i)] = 1u;
+                    const lsdtt::lsdtt_raster_cpu dod(std::move(dh), std::move(dm), gm);
+                    lsdtt::dem_change_options eo;
+                    eo.n_threads = ii.at("n_threads");
+                    const lsdtt::dem_change_error_model em = lsdtt::estimate_dem_change_error_model(
+                        dod, lsdtt::dem_change_slope(input_dem), nullptr, eo, &on_scar);
+                    err.sigma_m = em.sigma_m;
+                    for (float& v : err.sigma_m) v = static_cast<float>(v / std::sqrt(2.0));
+                    err.nugget_fraction = em.uncertainty.variogram_fitted ? em.uncertainty.nugget_fraction : 1.0;
+                    err.correlation_range_m = em.uncertainty.variogram_fitted ? em.uncertainty.correlation_range_m : 0.0;
+                    err_source = "reference_dod";
+                    std::cout << "DEM error from the reference DEM of difference (off the scars): NMAD "
+                              << number_string(em.uncertainty.nmad_m) << " m, per DEM / sqrt 2; nugget "
+                              << number_string(err.nugget_fraction) << ", range "
+                              << number_string(err.correlation_range_m) << " m\n";
+                }
+                lsdtt::scar_drape_uncertainty(input_dem, features, scar_drape, err, n_unc,
+                                              static_cast<std::uint64_t>(ii.at("scar_drape_uncertainty_random_seed")),
+                                              drape.records);
+                double sum_var = 0.0, sum_bias = 0.0;
+                for (const auto& r : drape.records)
+                {
+                    if (std::isfinite(r.volume_sigma_m3)) sum_var += r.volume_sigma_m3 * r.volume_sigma_m3;
+                    if (std::isfinite(r.volume_noise_bias_m3)) sum_bias += r.volume_noise_bias_m3;
+                }
+                std::cout << "DEM error, " << n_unc << " samples: total volume sigma "
+                          << number_string(std::sqrt(sum_var)) << " m3 (scars independent), total noise bias "
+                          << number_string(sum_bias) << " m3\n";
+            }
+            if (max_spread > 0)
+            {
+                lsdtt::scar_drape_buffer_spread(input_dem, features, scar_drape, max_spread, drape.records);
+                double lo = 0.0, hi = 0.0;
+                for (const auto& r : drape.records)
+                    if (std::isfinite(r.volume_buffer_min_m3)) { lo += r.volume_buffer_min_m3; hi += r.volume_buffer_max_m3; }
+                std::cout << "Rim buffers 0 - " << max_spread << ": total volume " << number_string(lo) << " - "
+                          << number_string(hi) << " m3\n";
             }
 
             const auto csv_id = [](std::string id) {
@@ -1848,7 +1990,10 @@ int main(int argc, char* argv[])
                 f << "scar_id,feature_index,status,mapped_area_m2,mapped_volume_m3,mean_depth_m,max_depth_m,"
                      "free_area_m2,free_volume_m3,centroid_x,centroid_y,n_mapped_cells,n_free_cells,n_rim_cells,"
                      "n_rim_invalid,n_nodata_inside,n_contact_cells,touches_grid_edge,used_all_touched,iterations,"
-                     "final_change_m,rim_relief_m,rim_plane_gradient,rim_plane_residual_m,compactness";
+                     "final_change_m,rim_relief_m,rim_plane_gradient,rim_plane_residual_m,compactness,"
+                     "surface_fit_n_cells,surface_fit_residual_m";
+                if (n_unc > 0) f << ",n_uncertainty_samples,volume_sigma_m3,volume_noise_bias_m3";
+                if (max_spread > 0) f << ",volume_buffer_min_m3,volume_buffer_max_m3,volume_buffer_spread_m3";
                 if (have_ref)
                     f << ",reference_n_cells,reference_net_volume_m3,reference_loss_volume_m3,reference_gain_volume_m3,"
                          "control_volume_m3,ratio_to_reference";
@@ -1863,7 +2008,14 @@ int main(int argc, char* argv[])
                       << r.n_nodata_inside << ',' << r.n_contact_cells << ',' << (r.touches_grid_edge ? 1 : 0) << ','
                       << (r.used_all_touched ? 1 : 0) << ',' << r.iterations << ',' << r.final_change_m << ','
                       << nan_or(r.rim_relief_m) << ',' << nan_or(r.rim_plane_gradient) << ','
-                      << nan_or(r.rim_plane_residual_m) << ',' << nan_or(r.compactness);
+                      << nan_or(r.rim_plane_residual_m) << ',' << nan_or(r.compactness) << ','
+                      << r.surface_fit_n_cells << ',' << nan_or(r.surface_fit_residual_m);
+                    if (n_unc > 0)
+                        f << ',' << r.n_uncertainty_samples << ',' << nan_or(r.volume_sigma_m3) << ','
+                          << nan_or(r.volume_noise_bias_m3);
+                    if (max_spread > 0)
+                        f << ',' << nan_or(r.volume_buffer_min_m3) << ',' << nan_or(r.volume_buffer_max_m3) << ','
+                          << nan_or(r.volume_buffer_spread_m3);
                     if (have_ref)
                     {
                         const auto& q = refv[k];
@@ -1911,6 +2063,7 @@ int main(int argc, char* argv[])
                   << "\nmedian_ratio," << nan_or(val.median_ratio) << "\nratio_p25," << nan_or(val.ratio_p25)
                   << "\nratio_p75," << nan_or(val.ratio_p75)
                   << "\nlog_volume_correlation," << nan_or(val.log_volume_correlation)
+                  << "\nsurface_type," << lsdtt::scar_drape_surface_type_name(scar_drape.surface)
                   << "\nrim_buffer_pixels," << scar_drape.rim_buffer_pixels
                   << "\nsag_curvature_per_metre," << scar_drape.sag_curvature_per_metre << "\n";
                 std::cout << "  wrote " << vpath << "\n";

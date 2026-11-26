@@ -531,6 +531,47 @@ std::vector<double> dem_change_slope(const lsdtt_raster_cpu& dem)
     return out;
 }
 
+std::vector<float> simulate_dem_error_noise(
+    int nr, int nc, double cell_size, double nugget_fraction, double correlation_range_m, std::uint64_t seed)
+{
+    if (nr < 1 || nc < 1 || !(cell_size > 0.0) || !(nugget_fraction >= 0.0 && nugget_fraction <= 1.0) ||
+        !(correlation_range_m >= 0.0))
+        throw std::invalid_argument("simulate_dem_error_noise: an argument is out of range");
+    return simulate_noise(nr, nc, cell_size, nugget_fraction, correlation_range_m, seed);
+}
+
+dem_change_error_model estimate_dem_change_error_model(
+    const lsdtt_raster_cpu&          difference,
+    const std::vector<double>&       slope,
+    const std::vector<std::uint8_t>* stable_mask,
+    const dem_change_options&        options,
+    const std::vector<std::uint8_t>* exclusion_mask)
+{
+    if (options.min_slope < 0.0 || options.n_slope_bins < 1 || options.n_variogram_pairs < 0)
+        throw std::invalid_argument("estimate_dem_change_error_model: an option is out of range");
+    const lsdtt_raster_meta& meta = difference.get_meta();
+    meta.check_projected_metres();
+    const std::size_t n = static_cast<std::size_t>(meta.n_rows) * meta.n_cols;
+    if (slope.size() != n || (stable_mask && stable_mask->size() != n) || (exclusion_mask && exclusion_mask->size() != n))
+        throw std::invalid_argument(
+            "estimate_dem_change_error_model: slope, stable_mask and exclusion_mask need one value per cell");
+    const std::vector<float>& dh = difference.get_data();
+    const std::vector<std::uint8_t>& mask = difference.get_mask();
+    std::vector<std::uint8_t> assessable(n, 0u);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!mask[i] || !std::isfinite(dh[i])) continue;
+        if (exclusion_mask && (*exclusion_mask)[i]) continue;
+        if (std::isfinite(slope[i]) && slope[i] >= options.min_slope) assessable[i] = 1u;
+    }
+    dem_change_error_model out;
+    out.uncertainty = estimate_uncertainty(meta, dh, assessable, slope, stable_mask, options);
+    out.sigma_m.assign(n, std::numeric_limits<float>::quiet_NaN());
+    for (std::size_t i = 0; i < n; ++i)
+        if (std::isfinite(slope[i])) out.sigma_m[i] = static_cast<float>(sigma_at(out.uncertainty, slope[i]));
+    return out;
+}
+
 dem_change_result detect_dem_change_landslides(
     const lsdtt_raster_cpu&          difference,
     const std::vector<double>&       slope,

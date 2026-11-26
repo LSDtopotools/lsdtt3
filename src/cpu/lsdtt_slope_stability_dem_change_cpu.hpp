@@ -227,6 +227,30 @@ struct dem_change_scaling
     const std::vector<dem_change_patch>& patches, int sign, int n_bootstrap = 0,
     std::uint64_t seed = 1, std::size_t min_tail = 50);
 
+// The error model alone (step 1), for uses other than detection: the scar
+// drape's uncertainty takes the DoD's sigma(S), nugget and range from it.
+// Same inputs, refusals and exclusions as detect_dem_change_landslides
+// (detection options are ignored). sigma_m: one value per cell, defined
+// wherever the slope is (also on excluded cells), else NaN.
+struct dem_change_error_model
+{
+    dem_change_uncertainty uncertainty;
+    std::vector<float> sigma_m;
+};
+[[nodiscard]] dem_change_error_model estimate_dem_change_error_model(
+    const lsdtt_raster_cpu&          difference,
+    const std::vector<double>&       slope,
+    const std::vector<std::uint8_t>* stable_mask,
+    const dem_change_options&        options = {},
+    const std::vector<std::uint8_t>* exclusion_mask = nullptr);
+
+// Unit-variance Gaussian noise on an nr x nc grid: a white part with variance
+// nugget_fraction and a smoothed part whose correlation approximates a
+// spherical model with the given range (m). The generator behind the false-
+// detection simulations.
+[[nodiscard]] std::vector<float> simulate_dem_error_noise(
+    int nr, int nc, double cell_size, double nugget_fraction, double correlation_range_m, std::uint64_t seed);
+
 // The mean spherical correlation (range L) between two points of a disc of
 // radius r. 1 for a very small disc, about L^2 / (5 r^2) for a large one.
 [[nodiscard]] double spherical_disc_mean_correlation(double r, double L);

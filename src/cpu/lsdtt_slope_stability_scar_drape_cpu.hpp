@@ -45,6 +45,29 @@
 // (a nose) and overestimates where it was concave (a hollow). The rim must be
 // on stable ground: a polygon drawn inside the crown, or deposits left in the
 // scar, bias the volume low.
+//
+// Other surfaces (scar_drape_surface_type), both kept no lower than the ground:
+//   rim_plane    the least-squares plane through a band of rim_fit_width
+//                cells outside the free area. Exact on a planar slope.
+//   rim_quadric  the least-squares quadratic z = a + bx + cy + dx^2 + exy +
+//                fy^2 through the same band. Exact on a bowl, a nose or a
+//                hollow of uniform curvature, where the membrane is not.
+//                The band must be wider than one cell: values on a closed
+//                ring alone barely constrain the curvature (on a circle they
+//                do not constrain x^2 + y^2 at all), so a one-cell ring lets
+//                noise set the depth.
+//
+// Uncertainty (scar_drape_uncertainty, scar_drape_buffer_spread), two kinds
+// reported separately and never added:
+//   DEM error   Monte Carlo: Gaussian error with sigma per cell, a nugget and
+//               a spherical-like correlation range is added to the DEM and
+//               every scar re-draped. The spread of each scar's volume is
+//               volume_sigma_m3. It includes the rim's error carried by the
+//               cloth and the cancellation of error correlated over the scar
+//               and its rim (a uniform offset moves cloth and ground together).
+//               The mean change is volume_noise_bias_m3: a cloth over a noisy
+//               surface bridges the noise, so it is positive, a noise floor.
+//   rim choice  the range of mapped volume over rim buffers 0..max_buffer.
 // -----------------------------------------------------------------------------
 
 #pragma once
@@ -59,8 +82,18 @@
 
 namespace lsdtt {
 
+enum class scar_drape_surface_type { membrane, rim_plane, rim_quadric };
+
+// membrane | rim_plane | rim_quadric; throws std::invalid_argument otherwise.
+[[nodiscard]] scar_drape_surface_type parse_scar_drape_surface_type(const std::string& name);
+[[nodiscard]] std::string scar_drape_surface_type_name(scar_drape_surface_type t);
+
 struct scar_drape_options
 {
+    scar_drape_surface_type surface = scar_drape_surface_type::membrane;
+    // rim_plane and rim_quadric: the fitted cells are this many cells outside
+    // the free area (8-connected rings). >= 1; >= 2 for rim_quadric.
+    int    rim_fit_width_pixels    = 2;
     // The free cloth is the mapped scar dilated by this many cells (8-connected);
     // the held ring lies just outside it. 0 holds the cloth on the first cells
     // outside the mapped polygon.
@@ -116,6 +149,16 @@ struct scar_drape_record
     // 4 pi A / P^2 of the mapped cells, P counted along cell edges: 1 for a
     // disc in the limit, pi / 4 for a square of cells.
     double       compactness           = std::numeric_limits<double>::quiet_NaN();
+    // rim_plane / rim_quadric: cells in the fit and the RMS misfit there.
+    std::int64_t surface_fit_n_cells   = 0;
+    double       surface_fit_residual_m = std::numeric_limits<double>::quiet_NaN();
+    // Uncertainty (NaN unless computed).
+    int          n_uncertainty_samples = 0;     // samples with status ok
+    double       volume_sigma_m3       = std::numeric_limits<double>::quiet_NaN();
+    double       volume_noise_bias_m3  = std::numeric_limits<double>::quiet_NaN();
+    double       volume_buffer_min_m3  = std::numeric_limits<double>::quiet_NaN();
+    double       volume_buffer_max_m3  = std::numeric_limits<double>::quiet_NaN();
+    double       volume_buffer_spread_m3 = std::numeric_limits<double>::quiet_NaN();  // max - min
 };
 
 struct scar_drape_result
@@ -134,6 +177,40 @@ scar_drape_result drape_landslide_scars(
     const lsdtt_raster_cpu&                dem,
     const std::vector<scar_drape_feature>& features,
     const scar_drape_options&              opts = {});
+
+// DEM error for the Monte Carlo: sigma per cell (sigma_m, one value per cell;
+// non-finite or <= 0 means no error added there) or, if sigma_m is empty, the
+// constant sigma_constant_m. Correlation as in the DoD error model.
+struct scar_drape_error_model
+{
+    std::vector<float> sigma_m;
+    double sigma_constant_m     = 0.0;
+    double nugget_fraction      = 1.0;
+    double correlation_range_m  = 0.0;
+};
+
+// Fills n_uncertainty_samples, volume_sigma_m3 (sample standard deviation of
+// mapped volume, >= 2 ok samples) and volume_noise_bias_m3 (mean sample volume
+// minus the record's volume) of records, which must be drape_landslide_scars'
+// output for the same dem, features and opts. Deterministic for a seed and any
+// thread count. Throws std::invalid_argument on bad arguments.
+void scar_drape_uncertainty(
+    const lsdtt_raster_cpu&                dem,
+    const std::vector<scar_drape_feature>& features,
+    const scar_drape_options&              opts,
+    const scar_drape_error_model&          error,
+    int                                    n_samples,
+    std::uint64_t                          seed,
+    std::vector<scar_drape_record>&        records);
+
+// Fills volume_buffer_min / max / spread_m3: mapped volume of the ok solutions
+// over rim buffers 0..max_buffer_pixels (other options as given).
+void scar_drape_buffer_spread(
+    const lsdtt_raster_cpu&                dem,
+    const std::vector<scar_drape_feature>& features,
+    const scar_drape_options&              opts,
+    int                                    max_buffer_pixels,
+    std::vector<scar_drape_record>&        records);
 
 // Volume - area scaling of the drape volumes: fit_power_law_scaling (OLS and RMA)
 // of mapped volume against mapped area, over records with status ok.

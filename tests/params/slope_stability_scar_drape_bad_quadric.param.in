@@ -1,0 +1,11 @@
+# lsdtt-slope-stability: rim_quadric with a one-cell band is refused.
+read_path: __READ_PATH__
+read_fname: drape_post.tif
+write_path: __WRITE_PATH__
+write_fname: sdb
+run_sinmap: false
+run_rupture_planes: false
+run_scar_drape_volumes: true
+landslide_inventory_fname: drape_scars.gpkg
+scar_drape_surface_type: rim_quadric
+scar_drape_rim_fit_width_pixels: 1
