@@ -156,7 +156,7 @@ they live in the dyld shared cache.
 it with:
 
 ```bash
-xattr -dr com.apple.quarantine lsdtt3-backend-macos-<arch>-qgis-v<version>
+xattr -drs com.apple.quarantine lsdtt3-backend-macos-<arch>-qgis-v<version>
 ```
 
 The bundle's own README tells end users the same. To use the bundle from QGIS,

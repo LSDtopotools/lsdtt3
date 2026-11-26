@@ -22,8 +22,13 @@ attached to each [GitHub release](https://github.com/LSDtopotools/lsdtt3/release
 the [installation guide](../what_is_lsdtt3/install_lsdtt3.md#python-package)
 shows how to install one of those.
 
-The wheel is self-contained: it bundles GDAL and PROJ and also installs the
-command-line tools as commands, so you do not need a backend package. The
+The bindings cover part of lsdtt3; the complete software is its
+command-line tools, and some analyses exist only as tools. The wheel installs
+all of them as commands too (`lsdtt-*`, the same set as the Linux release
+package), so with this package you have everything and do not need a backend
+package. It is self-contained: it bundles GDAL and PROJ. If you also have a
+release package on `PATH`, see
+[Having both installed](../what_is_lsdtt3/install_lsdtt3.md#having-both-installed). The
 `python_binding_examples` notebook in the lsdtt3_notebooks repository
 installs the package and runs a complete basin, slope-area and chi workflow.
 For development from a clone, see

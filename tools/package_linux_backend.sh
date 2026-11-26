@@ -385,7 +385,14 @@ if [[ -z "$PROJ_DATA_DIR" ]]; then
 fi
 
 cp -a "$GDAL_DATA_DIR" "$STAGE_SHARE/gdal"
+# Resolve a symlinked data directory first (as on Homebrew-style prefixes):
+# cp -a would copy the link itself and ship a dangling share/proj.
+PROJ_DATA_DIR="$(cd "$PROJ_DATA_DIR" && pwd -P)"
 cp -a "$PROJ_DATA_DIR" "$STAGE_SHARE/proj"
+if [[ ! -f "$STAGE_SHARE/proj/proj.db" || -L "$STAGE_SHARE/proj" ]]; then
+    echo "ERROR: staged share/proj has no real proj.db" >&2
+    exit 1
+fi
 
 # lsdtt3 bundled runtime data (the cosmo tools find it at bin/../share/lsdtt3).
 # Missing data is fatal when a cosmo CLI is in the bundle: those tools would

@@ -106,8 +106,10 @@ with the reduced QGIS tool set, as the backend for the QGIS plugin, and the
 Python package runs natively on macOS. The install guide has the steps for
 each, including clearing macOS's quarantine flag on the native package.
 
-On **Google Colab**, `!source setenv.sh` does not work — set the environment
-from Python instead. The install guide has the cell to paste.
+On **Google Colab**, the simplest route is `!pip install lsdtt3`, which
+installs every command-line tool as well as the Python package. To use the
+Linux package there instead, note that `!source setenv.sh` does not work — set
+the environment from Python; the install guide has the cell to paste.
 
 The **QGIS plugin** is [`lsdtt3-qgis-plugin.zip`](https://github.com/LSDtopotools/lsdtt3/releases/latest/download/lsdtt3-qgis-plugin.zip)
 from the same release, installed with *Install from ZIP*, plus a backend
@@ -123,6 +125,12 @@ or later; Linux, macOS and Windows):
 ```bash
 python -m pip install lsdtt3
 ```
+
+**It also installs every command-line tool** (`lsdtt-*`, the same set as the
+Linux package, on Linux, macOS and Windows). The Python bindings cover part of
+lsdtt3; the complete software is the command-line tools, and pip gives you
+both. Use one route per machine: if a release package is also on your `PATH`,
+whichever comes first runs (the install guide explains how to check).
 
 In Google Colab, `!pip install lsdtt3` in a cell. The same wheels, and those of
 older versions that are not on PyPI, are attached to each GitHub release. The wheel bundles

@@ -6,6 +6,20 @@ This method is the way the developers primarily use this software, and is built 
 
 However, you can also use `lsdtt3` in [Google Colab](#google-colab), in our [QGIS plugin](#qgis-plugin), and using our [Python package](#python-package)
 
+> **What lsdtt3 is made of.** The software is its **command-line tools**
+> (`lsdtt-*`, 46 of them on Linux), each driven by a parameter file. Everything
+> lsdtt3 can do, it does through these. The **Python bindings** (`import
+> lsdtt3`) expose part of the same C++ library for use in scripts and
+> notebooks; they do not cover everything the tools do. `pip install lsdtt3`
+> installs both: the bindings and every command-line tool.
+
+**`pip install lsdtt3` is a second way to get the command-line tools.** The
+Python package installs every `lsdtt-*` tool as a command, the same set as the
+Linux release package, on Linux, macOS and Windows. If you already work in a
+Python environment (conda, pixi or a virtual environment) this is often the
+quickest route, and on macOS and Windows it is the only native way to get the
+full tool set. See [Release package or pip?](#release-package-or-pip)
+
 For the **pre-built release package** you do not
 need a compiler, you do not need to install GDAL or any other library, and on
 Linux you do not need `sudo` — the package carries the command-line tools and
@@ -82,6 +96,7 @@ only: for the full tool set on those systems, run the Linux package under
 | In a browser, with nothing installed | [Google Colab](#google-colab) |
 | Inside QGIS | [QGIS plugin](#qgis-plugin) (plus a backend package from question 2) |
 | From Python scripts | [Python package](#python-package) |
+| From a terminal, and I already use Python environments | [Python package](#python-package): it installs all the command-line tools too |
 
 **2. What is your computer running?**
 
@@ -91,6 +106,80 @@ only: for the full tool set on those systems, run the Linux package under
 | Windows | [Windows, via WSL2](#windows-via-wsl2) — **recommended**, full functionality |
 | Windows, and I want native `.exe` files | [Windows native package](#windows-native-package) — reduced tool set |
 | macOS | [macOS](#macos) |
+
+### Release package or pip?
+
+Both give you the same command-line tools, built from the same release, each
+carrying its own GDAL and PROJ. They differ in what they need and in what they
+touch:
+
+| | Release package | `pip install lsdtt3` |
+|---|---|---|
+| Needs | nothing: download and unpack | Python 3.12 or later, in a conda, pixi or virtual environment |
+| Tools on Linux | all 46 (`core`) | the same 46 |
+| Tools on macOS and Windows | the 9 the QGIS plugin uses | all 46 |
+| Oldest Linux | Ubuntu 22.04 (glibc 2.35) | glibc 2.28 (e.g. RHEL 8, Ubuntu 20.04) |
+| macOS | 15 or later, Apple Silicon or Intel | 15 or later, Apple Silicon or Intel |
+| Its own GDAL, PROJ and their data | yes | yes |
+| Affects other software | sourcing `setenv.sh` puts its `lib/`, `GDAL_DATA` and `PROJ_DATA` into that shell, so other GDAL programs started from it may pick them up | no: only the `lsdtt-*` commands see the wheel's libraries and data |
+| Python bindings | no | yes |
+| Updating | download the new release | `python -m pip install -U lsdtt3` |
+| Removing | delete the folder | `python -m pip uninstall lsdtt3` |
+
+**GDAL and PROJ conflicts.** Neither route depends on a GDAL or PROJ you have
+installed, and both make the tools use their own `proj.db` even when
+`PROJ_DATA` or `PROJ_LIB` points elsewhere (check with any tool's `-v`, which
+should say `bundled:`; see
+[If you already have GDAL or PROJ installed](#if-you-already-have-gdal-or-proj-installed)).
+The wheel is, if anything, the better isolated of the two: its libraries carry
+renamed file names, and it changes nothing in your shell. The release package
+is the better choice when there is no Python to install into, on a shared
+server or in a container, or when you want one folder you can copy between
+machines.
+
+### Having both installed
+
+You can have a release package and a pip install on the same machine, and
+their GDAL, PROJ and data stay separate: each tool uses the libraries and
+`proj.db` that came with it. What is not separate is **which copy runs**. Both
+put `lsdtt-*` commands on your `PATH`, and the shell runs whichever it finds
+first:
+
+| Order in this shell | `lsdtt-*` runs from |
+|---|---|
+| `source setenv.sh`, then activate the environment (`conda activate`, `pixi shell`, `source venv/bin/activate`) | the pip install |
+| activate the environment, then `source setenv.sh` | the release package |
+| `pixi run lsdtt-…` | the pip install |
+| no environment active | the release package (if its `source` line is in `~/.bashrc`) |
+
+So if you have a release package in `~/.bashrc` and later `pip install` a newer
+lsdtt3 into an environment, you get the newer tools inside that environment and
+the older ones everywhere else, and a script can pick up either. Nothing warns
+you. Check before a run that matters:
+
+```bash
+type -a lsdtt-raster-preprocessing     # every copy on PATH, the one used first
+lsdtt-raster-preprocessing -v          # its version, and whose PROJ data it uses
+hash -r                                 # after changing PATH, if bash still runs the old one
+```
+
+**Our advice: use one route per machine.** If you move to pip, remove the
+`source …/setenv.sh` line from `~/.bashrc` and delete the package folder. Keep
+both only on purpose, for example an older release kept for a published
+analysis, and then call its tools by full path
+(`~/lsdtt3-backend-…-v0.9.3/bin/lsdtt-…`). Do not mix versions within one
+analysis: the Python package and the tools it calls share one version number,
+and so do their parameter names and outputs.
+
+`setenv.sh` also puts the package's `lib/` on `LD_LIBRARY_PATH`, which affects
+other programs started from that shell; see
+[If you already have GDAL or PROJ installed](#if-you-already-have-gdal-or-proj-installed).
+The pip install's own tools are not affected by it: they load their libraries
+from the wheel.
+
+> **macOS, v0.10.0:** both the macOS release packages and the macOS wheel of
+> v0.10.0 were built without PROJ data, so coordinate conversions fail. Use a
+> later release.
 
 ---
 
@@ -307,8 +396,19 @@ report any problem with it.
    macOS blocks the tools because they are not from the App Store:
 
    ```bash
-   xattr -dr com.apple.quarantine lsdtt3-backend-macos-arm64-qgis-v*
+   xattr -drs com.apple.quarantine lsdtt3-backend-macos-arm64-qgis-v*
    ```
+
+   `-s` acts on symbolic links themselves instead of following them. Without
+   it, `xattr` stops at the first link it cannot follow. In the v0.10.0 macOS
+   packages that is `share/proj`, with the error
+   `xattr: No such file: .../share/proj`.
+
+   **v0.10.0 on macOS only:** that `share/proj` is a broken link, so the
+   package has no PROJ data, and anything that converts between coordinate
+   systems fails. Use a later release. If you must use v0.10.0 and have
+   Homebrew PROJ 9.9 (arm64) or 9.8 (Intel), point the link at it:
+   `ln -sfn "$(brew --prefix proj)/share/proj" lsdtt3-backend-macos-arm64-qgis-v0.10.0/share/proj`.
 
 4. Activate the tools for this Terminal window, and check they run:
 
@@ -354,8 +454,18 @@ Stop and restart the VM later with `multipass stop lsdtt` /
 
 ## Google Colab
 
-Colab already runs Linux, so the Linux package works there with nothing
-installed on your own machine at all. Two things differ from a normal terminal.
+**The simplest way is pip.** Colab's Python is 3.12 or later, so one cell
+gives you the Python package and every command-line tool, with nothing else to
+set:
+
+```python
+!pip install lsdtt3
+!lsdtt-channel-extraction -v
+```
+
+**Or use the Linux release package.** Colab already runs Linux, so the Linux
+package works there with nothing installed on your own machine at all. Two
+things differ from a normal terminal.
 
 Download and unpack the latest release in a code cell (`!` runs a shell
 command):
@@ -432,6 +542,11 @@ notebooks, keeping rasters and results in memory instead of files. It shares
 the lsdtt3 version number, and is built for Linux, macOS and Windows on every
 release.
 
+The bindings cover part of what lsdtt3 does; the complete software is the
+command-line tools. The package installs all of those as well (see
+[The command-line tools from pip](#the-command-line-tools-from-pip)), so with
+Python 3.12 or later, `pip install lsdtt3` gets you everything.
+
 Install it from PyPI, into a virtual, conda or pixi environment rather than
 your system Python:
 
@@ -490,7 +605,37 @@ GDAL and PROJ data.
 
 The wheel is self-contained: it bundles GDAL and PROJ, and also installs the
 command-line tools as commands. Install it into a virtual environment, conda
-or pixi environment, not into your system Python. Check what you have with:
+or pixi environment, not into your system Python.
+
+### The command-line tools from pip
+
+After `python -m pip install lsdtt3`, every `lsdtt-*` tool is a command in
+that environment, used exactly as with the release package (parameter files,
+`-h`, `-v`); there is no `setenv.sh` to source. For example, with pixi:
+
+```bash
+pixi init lsdtt && cd lsdtt
+pixi add "python>=3.12" pip
+pixi run python -m pip install lsdtt3
+pixi run lsdtt-raster-preprocessing -v
+pixi shell          # a shell where the lsdtt-* commands are on PATH
+```
+
+or with a virtual environment:
+
+```bash
+python3.12 -m venv ~/lsdtt3-env
+source ~/lsdtt3-env/bin/activate      # Windows: ~\lsdtt3-env\Scripts\activate
+python -m pip install lsdtt3
+lsdtt-raster-preprocessing -v
+```
+
+The `-v` output should show `proj data: bundled:` with a path inside the
+environment's `site-packages/lsdtt3`. The commands are only on `PATH` while the
+environment is active. See [Release package or pip?](#release-package-or-pip)
+for how this compares with the release package.
+
+Check what you have with:
 
 ```bash
 python -c "import lsdtt3; print(lsdtt3.__version__, lsdtt3._core.lsdtt3_version())"
@@ -555,9 +700,10 @@ the more serious your GIS setup is. If you have QGIS, conda, `rasterio`,
 `geopandas` or a system `libgdal` — and anyone doing large-scale analysis
 does — then there is more than one GDAL and more than one PROJ on your machine.
 
-**The good news:** lsdtt3 pins its own data directories at startup. A `proj.db`
-bundled next to the binary always wins over `PROJ_DATA`, `PROJ_LIB` or
-`GDAL_DATA` in your environment. You do not have to unset anything, and you do
+**The good news:** lsdtt3 pins its own data directories at startup, in the
+release packages and in the pip wheel alike. A `proj.db` bundled next to the
+binary always wins over `PROJ_DATA`, `PROJ_LIB` or `GDAL_DATA` in your
+environment. You do not have to unset anything, and you do
 not have to source `setenv.sh` for the tools to find their own data — that
 matters in places like Google Colab where each `!` line is a separate shell.
 
@@ -579,7 +725,14 @@ GDAL 3.8.4, PROJ 9.3.1
 `bundled:` means lsdtt3 is using its own copy and your environment is being
 ignored, which is what you want from a package. If it says `PROJ_DATA=…` or
 `PROJ built-in search` instead, it is using something else — expected for a
-source build or a conda install, worth knowing about for a package.
+source build, worth knowing about for a package or a pip install.
+
+**The other direction.** `setenv.sh` exports the package's `lib/`,
+`GDAL_DATA` and `PROJ_DATA` into the shell you source it in. GDAL, PROJ or QGIS
+programs that you then start from that same shell may pick up lsdtt3's copies,
+and an older PROJ can fail on a newer `proj.db`. If that happens, run them from
+a shell where `setenv.sh` was not sourced, or use the pip route, which changes
+nothing outside the `lsdtt-*` commands.
 
 **Why we care so much about this.** A mismatched `proj.db` does not usually
 produce an error. It produces *coordinates*. They will be the right shape, in
