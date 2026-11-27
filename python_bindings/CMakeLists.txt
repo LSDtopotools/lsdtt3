@@ -208,18 +208,15 @@ if(Eigen3_FOUND)
     target_compile_definitions(lsdtt3_runtime PUBLIC LSDTT_HAS_EIGEN=1)
 endif()
 
-# PROJ C API for the grid-availability warning (src/core/lsdtt_proj_grid_check).
-find_path(LSDTT_PROJ_INCLUDE_DIR proj.h HINTS ${GDAL_INCLUDE_DIRS} "$ENV{CONDA_PREFIX}/include")
-find_library(LSDTT_PROJ_LIBRARY NAMES proj proj_9 proj_8 HINTS "$ENV{CONDA_PREFIX}/lib")
-if(LSDTT_PROJ_INCLUDE_DIR AND LSDTT_PROJ_LIBRARY)
+# PROJ C API for the grid-availability warning (src/core/lsdtt_proj_grid_check):
+# only the PROJ beside GDAL's own library (see the helper).
+include("${LSDTT3_SOURCE_DIR}/cmake/lsdtt_find_proj_api.cmake")
+if(LSDTT_PROJ_API_FOUND)
     target_include_directories(lsdtt3_runtime PRIVATE ${LSDTT_PROJ_INCLUDE_DIR})
     target_link_libraries(lsdtt3_runtime PUBLIC ${LSDTT_PROJ_LIBRARY})
     target_compile_definitions(lsdtt3_runtime PRIVATE LSDTT_HAS_PROJ_API=1)
-    message(STATUS "PROJ grid check: on (${LSDTT_PROJ_LIBRARY})")
 elseif(LSDTT_PYTHON_RELEASE_WHEEL)
-    message(FATAL_ERROR "A release wheel needs the PROJ headers and library for the grid check")
-else()
-    message(STATUS "PROJ grid check: off (proj.h or libproj not found)")
+    message(FATAL_ERROR "A release wheel needs the PROJ headers and library (beside GDAL's) for the grid check")
 endif()
 
 # Both shared objects are installed into the Python package. The platform

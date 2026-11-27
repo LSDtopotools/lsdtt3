@@ -328,18 +328,14 @@ target_link_libraries(lsdtt3_core
 )
 
 # The PROJ C API, for the grid-availability warning only
-# (src/core/lsdtt_proj_grid_check). Everything else goes through GDAL. PROJ is
-# always installed with GDAL; if its headers are missing the check is compiled
-# out and `-v` says so.
-find_path(LSDTT_PROJ_INCLUDE_DIR proj.h HINTS ${GDAL_INCLUDE_DIRS} "$ENV{CONDA_PREFIX}/include")
-find_library(LSDTT_PROJ_LIBRARY NAMES proj proj_9 proj_8 HINTS "$ENV{CONDA_PREFIX}/lib")
-if(LSDTT_PROJ_INCLUDE_DIR AND LSDTT_PROJ_LIBRARY)
+# (src/core/lsdtt_proj_grid_check). Everything else goes through GDAL. Only the
+# PROJ beside GDAL's own library is used (see the helper); otherwise the check
+# is compiled out and `-v` says so.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lsdtt_find_proj_api.cmake")
+if(LSDTT_PROJ_API_FOUND)
     target_include_directories(lsdtt3_core PRIVATE ${LSDTT_PROJ_INCLUDE_DIR})
     target_link_libraries(lsdtt3_core PUBLIC ${LSDTT_PROJ_LIBRARY})
     target_compile_definitions(lsdtt3_core PRIVATE LSDTT_HAS_PROJ_API=1)
-    message(STATUS "PROJ grid check: on (${LSDTT_PROJ_LIBRARY})")
-else()
-    message(STATUS "PROJ grid check: off (proj.h or libproj not found)")
 endif()
 
 # =============================================================================
